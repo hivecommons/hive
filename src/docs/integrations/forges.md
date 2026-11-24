@@ -65,7 +65,7 @@ The neutral interface is `forge.Forge` in `src/pkg/forge/forge.go`. Merging is a
 | `GetRepo`, `ListOpenIssues`, `ListOpenChangeRequests` | Yes | Yes | Yes |
 | `CreateIssueComment`, `AddLabels`, `RemoveLabel` | Yes | Yes | Yes |
 | `SetHold` (the `hold` label gate) | Yes | Yes | Yes |
-| `Merge` (`forge.Merger`) | No | Yes: accepts the MR with `merge`, `squash` or `rebase` (rebase, then merge), an optional head-SHA guard and branch removal | No |
+| `Merge` (`forge.Merger`) | No | Yes: accepts the MR with `merge`, `squash` or `rebase` (rebase, then merge), an optional head-SHA guard and branch removal | Yes: with a hold gate and an optional head-SHA guard, run against a real Forgejo by the nightly smoke workflow |
 | `CreateIssue`, `FindIssueByMarker` (`forge.IssueSeam`) | Yes | No | Yes: the issue is created, then its labels are added by name |
 | `CreateChangeRequest` (`forge.ChangeRequestCreator`) | No: GitHub opens pull requests through the GitHub client | No | Yes: reuses an open pull request from the same head, and resolves an empty base to the default branch |
 
@@ -121,4 +121,4 @@ Each adapter has unit tests against a fake HTTP server (`src/pkg/forge/*_test.go
 - The forge request relay serves only `hive-open-pr` and the issue, comment and label requests. Claim, close, review-request and PR-edit requests are refused on a forge-only hive.
 - There is no GitLab or Gitea webhook receiver, dashboard login provider or egress-proxy rule table.
 
-The complete list is in [What full support would require](../forge-app-setup.md#what-full-support-would-require).
+The complete list is in [What full support would require](../forge-app-setup.md#what-full-support-would-require). For Forgejo specifically, what works on v5 and what is in progress is on [Forgejo](forgejo.md).

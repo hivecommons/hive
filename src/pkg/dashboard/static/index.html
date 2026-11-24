@@ -9399,10 +9399,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📜</span><span class="oc-nav-text">Audit log</span></a>
     </div>
     <!-- Help mirrors the top bar "? Help" menu (#oc-help-menu): same labels,
-         same targets. A future Ask AI entry goes right after Getting started. -->
+         same targets. Ask Hive starts hidden and is shown by askShowHelpItems()
+         only once the Ask panel is built (ask_enabled on). -->
     <div class="oc-nav-group" id="help-nav-group">
       <div class="oc-nav-label">Help</div>
       <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting started checklist: one-time setup steps for a new hive, with a link to the full guide"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting started</span></a>
+      <a class="oc-nav-item" id="ask-nav-item" style="display:none" role="button" tabindex="0" data-action="openAskFromHelp" data-keydown-action="openAskFromHelp" data-keys="Enter, " data-prevent="1" title="Ask a question about using the dashboard. Answers come from the Hive docs, with sources. AI generated, may be wrong."><span class="oc-nav-emoji">✨</span><span class="oc-nav-text">Ask Hive</span></a>
       <a class="oc-nav-item" data-section="faq-section" data-action="ocNavigate" data-arg0="faq-section" title="Short answers to the questions people ask once a hive is running: levels and holds, the Evidence card, release channels, the Model Gateway, pausing, cost, and where to get help"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
       <a class="oc-nav-item" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer" title="The Hive documentation, including the Getting Started guide"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Docs</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">🔌</span><span class="oc-nav-text">API reference</span></a>
@@ -9494,11 +9496,13 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <!-- Help menu: mirrors the sidebar Help group (#help-nav-group) with the
            same labels and targets. It reuses the account menu's .avatar-menu
-           dropdown. A future Ask AI item goes right after Getting started. -->
+           dropdown. Ask Hive starts hidden and is shown by askShowHelpItems()
+           only once the Ask panel is built (ask_enabled on). -->
       <div id="oc-help-menu-wrap">
-        <button type="button" class="nav-chip nav-chip--primary" id="welcome-topbar-btn" data-action="toggleHelpMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="oc-help-menu" title="Help: Getting started, Docs, FAQ, Report an issue" aria-label="Help menu"><span class="nav-chip__icon" aria-hidden="true">?</span><span class="nav-chip__label">Help</span><span class="nav-chip__caret" aria-hidden="true">▾</span></button>
+        <button type="button" class="nav-chip nav-chip--primary" id="welcome-topbar-btn" data-action="toggleHelpMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="oc-help-menu" title="Help: Getting started, Ask Hive, Docs, FAQ, Report an issue" aria-label="Help menu"><span class="nav-chip__icon" aria-hidden="true">?</span><span class="nav-chip__label">Help</span><span class="nav-chip__caret" aria-hidden="true">▾</span></button>
         <div id="oc-help-menu" class="avatar-menu" role="menu" aria-label="Help" hidden>
           <button type="button" class="avatar-menu-item" role="menuitem" id="welcome-help-menu-item" style="display:none" data-action="openWelcomeDialog">🚀 Getting started</button>
+          <button type="button" class="avatar-menu-item" role="menuitem" id="ask-help-menu-item" style="display:none" data-action="openAskFromHelp" title="Ask a question about using the dashboard. Answers come from the Hive docs, with sources. AI generated, may be wrong.">✨ Ask Hive</button>
           <a class="avatar-menu-item" role="menuitem" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer">📖 Docs</a>
           <button type="button" class="avatar-menu-item" role="menuitem" data-action="ocNavigate" data-arg0="faq-section">❓ FAQ</button>
           <button type="button" class="avatar-menu-item" role="menuitem" data-action="openFeedbackModal" data-arg0="bug">🐛 Report an issue</button>
@@ -25963,11 +25967,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const enabled = !!decide.enabled && !!o.enabled;
         return Object.assign({}, o, { target: decide.target, enabled, why: enabled ? '' : (decide.enabled ? o.why : decide.why) });
       }
+      const fallback = stageTrackerFallbackLead(item, actions);
+      if (fallback) return fallback;
+      if (typeof stageTrackerDevWarn === 'function' && stageTrackerMaintainerMoved(item)) stageTrackerDevWarn('row ' + stageTrackerRefOf(item) + ' waits on the maintainer but offers no lead action');
+      return null;
+    }
+    // Pure: the lead when nothing else leads: Adopt, Adopt now or Let hive
+    // decide — all N PRs, from the row's ⋯ actions. Adopt now never leads on
+    // a person's PR (author_kind 'human', or takeover.person on a linked
+    // sub-row): taking over a person's work is an
+    // explicit operator choice, so it stays in the ⋯ menu only
+    // (hivecommons/hive#19645).
+    function stageTrackerFallbackLead(item, actions) {
+      const human = !!item && (item.author_kind === 'human' || !!(item.takeover && item.takeover.person));
       for (const id of ['decide:adopt', 'decide:adopt-now', 'decide:delegate-all']) {
-        const a = actions.find(x => x.id === id);
+        if (id === 'decide:adopt-now' && human) continue;
+        const a = (actions || []).find(x => x.id === id);
         if (a && (a.enabled || id !== 'decide:adopt-now')) return a;
       }
-      if (typeof stageTrackerDevWarn === 'function' && stageTrackerMaintainerMoved(item)) stageTrackerDevWarn('row ' + stageTrackerRefOf(item) + ' waits on the maintainer but offers no lead action');
       return null;
     }
     // Pure: whether the server says the next move is the maintainer's.
@@ -28366,6 +28383,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_GATE_SETTLING = 'settling…';
     const STAGE_TRACKER_GATE_VISIBLE = 3;
     const STAGE_TRACKER_GATE_FOLD_QUERY = '(max-width: 1100px)';
+    // The phone sheet's title for the folded verbs, before the row's ref.
+    const STAGE_TRACKER_GATE_SHEET_TITLE = 'More ways to settle';
     // Reason → verbs, in the order they stand on the pill. The same reason
     // always offers the same verbs (the maintainer's "consistent way").
     const STAGE_TRACKER_GATE_VERBS = {
@@ -28594,23 +28613,111 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (word) word.textContent = STAGE_TRACKER_GATE_SETTLING;
       gate.querySelectorAll('.ham-gate-act').forEach(b => b.setAttribute('aria-disabled', 'true'));
     }
-    // The `…` menu: open / close on its button, close on outside click or
-    // Escape, the same popover pattern the row's ⋯ menu uses.
+    // Whether the `…` menu opens as the phone sheet: the same query the
+    // row's ⋯ menu uses (STAGE_TRACKER_SHEET_QUERY, tracker-actions.js).
+    function stageTrackerHumanGateSheetOn() {
+      return typeof stageTrackerIsPhoneSheet === 'function' && stageTrackerIsPhoneSheet();
+    }
+    // Pure: one folded verb as a sheet item. The pill classes go (the sheet
+    // is not the row, so its taps are handled here, not by the row's lead
+    // listener) and the verb's hover text is written out under the label:
+    // what it posts, or why it is disabled. A phone has no hover, so a
+    // greyed verb otherwise never says why.
+    function stageTrackerHumanGateSheetItem(b) {
+      if (!b || !b.classList) return b;
+      b.classList.remove('ham-lead-act', 'ham-gate-act');
+      b.removeAttribute('tabindex');
+      const note = String(b.getAttribute('title') || '').trim();
+      if (note && typeof document !== 'undefined') {
+        const hint = document.createElement('span');
+        hint.className = 'ham-menu-hint';
+        hint.textContent = note;
+        b.classList.add('ham-menu-item-hinted');
+        b.appendChild(hint);
+      }
+      return b;
+    }
+    // Open the folded verbs as a full-screen sheet (phone tier,
+    // hivecommons/hive#19655): tap-sized items, ✕ / backdrop / Esc close,
+    // and a tap runs the verb on the row the `…` sits on, the same
+    // runRowAction path an inline verb takes.
+    function stageTrackerOpenHumanGateSheet(b, menu) {
+      if (typeof stageTrackerOpenSheet !== 'function') return false;
+      const sub = b.closest('[data-ham-sub-key]');
+      const row = b.closest('.ham-row[data-ham-key]');
+      const key = sub ? sub.dataset.hamSubKey : (row ? row.dataset.hamKey : '');
+      const find = () => key && typeof stageTrackerItemByKey === 'function' && typeof _stageTracker !== 'undefined' ? stageTrackerItemByKey(_stageTracker, key) : null;
+      const shown = find();
+      const ref = shown && typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(shown) : '';
+      const list = menu.cloneNode(true);
+      list.hidden = false;
+      list.classList.add('ham-menu-sheet');
+      list.querySelectorAll('[data-ham-act]').forEach(stageTrackerHumanGateSheetItem);
+      let host = null;
+      list.addEventListener('click', e => {
+        const i = e.target.closest ? e.target.closest('[data-ham-act]') : null;
+        if (!i) return;
+        e.preventDefault(); e.stopPropagation();
+        if (i.getAttribute('aria-disabled') === 'true') return;
+        const item = find();
+        if (host && host.hiveDialogClose) host.hiveDialogClose();
+        if (!item || typeof stageTrackerDecisionRun !== 'function') return;
+        const run = stageTrackerDecisionRun(item, i.dataset.hamAct);
+        if (run && typeof run.then === 'function') {
+          run.then(r => { if (r && !r.cancelled && Array.isArray(r.results) && r.results.length && r.results.every(x => x && x.ok) && document.contains(b)) stageTrackerHumanGateSettling(b); }, () => {});
+        }
+      });
+      b.setAttribute('aria-expanded', 'true');
+      host = stageTrackerOpenSheet(STAGE_TRACKER_GATE_SHEET_TITLE + (ref ? ' ' + ref : ''), list, 'ham-menu-dialog ham-gate-sheet', () => {
+        b.setAttribute('aria-expanded', 'false');
+        if (document.contains(b) && typeof b.focus === 'function') b.focus();
+      }, () => {
+        const f = document.activeElement && document.activeElement.closest ? document.activeElement.closest('[data-ham-act]') : null;
+        if (f && list.contains(f)) f.click();
+      });
+      const first = list.querySelector('[role="menuitem"]:not([aria-disabled="true"])') || list.querySelector('[role="menuitem"]');
+      if (first) setTimeout(() => first.focus(), 0);
+      return true;
+    }
+    // Anchor the popover under its button, clamped into the viewport. The
+    // menu is position: fixed; left unplaced it fell to its static spot,
+    // shifted by the page scroll, and opened off-screen (#19655).
+    function stageTrackerPlaceHumanGateMenu(b, menu) {
+      if (typeof stageTrackerMenuPosition !== 'function' || typeof b.getBoundingClientRect !== 'function') return;
+      const r = b.getBoundingClientRect();
+      const pos = stageTrackerMenuPosition(r.left, r.bottom, menu.offsetWidth, menu.offsetHeight, window.innerWidth, window.innerHeight);
+      menu.style.setProperty('left', pos.left + 'px');
+      menu.style.setProperty('top', pos.top + 'px');
+    }
+    // The `…` menu: open / close on its button, close on outside click,
+    // scroll, resize or Escape. On a phone it opens as the row menu's sheet;
+    // elsewhere as a popover anchored to the button.
     function stageTrackerWireHumanGate(el) {
       if (!el || el._hamGateWired) return;
       el._hamGateWired = true;
       const closeAll = () => el.querySelectorAll('.ham-gate-menu:not([hidden])').forEach(m => { m.hidden = true; const b = m.previousElementSibling; if (b) b.setAttribute('aria-expanded', 'false'); });
       el.addEventListener('click', e => {
         const b = e.target.closest ? e.target.closest('[data-ham-gate-more]') : null;
-        if (!b) { if (!(e.target.closest && e.target.closest('.ham-gate-menu'))) closeAll(); return; }
+        // Outside the menu, or a live verb picked in it: close.
+        if (!b) { if (!(e.target.closest && e.target.closest('.ham-gate-menu')) || e.target.closest('[data-ham-act]:not([aria-disabled="true"])')) closeAll(); return; }
         e.preventDefault(); e.stopPropagation();
         let menu = b.nextElementSibling;
         if (menu && menu.tagName === 'TEMPLATE') { const stamped = menu.content.firstElementChild.cloneNode(true); menu.replaceWith(stamped); menu = stamped; }
         const open = menu && menu.hidden;
         closeAll();
-        if (menu && open) { menu.hidden = false; b.setAttribute('aria-expanded', 'true'); const first = menu.querySelector('[role="menuitem"]'); if (first) first.focus(); }
+        if (!menu || !open) return;
+        if (stageTrackerHumanGateSheetOn() && stageTrackerOpenHumanGateSheet(b, menu)) return;
+        menu.hidden = false;
+        b.setAttribute('aria-expanded', 'true');
+        stageTrackerPlaceHumanGateMenu(b, menu);
+        const first = menu.querySelector('[role="menuitem"]');
+        if (first) first.focus({ preventScroll: true });
       });
       el.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('scroll', closeAll, true);
+        window.addEventListener('resize', closeAll);
+      }
     }
     /* ---- The human gate's one source of truth (hivecommons/hive#18769) ---
        The gate pill and its verbs used to read two different things: the
@@ -65175,6 +65282,9 @@ function burnAreaChart() {
     const ASK_PANEL_SCRIPT = '/ask-panel.js';
     const ASK_PANEL_STYLE = '/ask-panel.css';
     const ASK_SLOT_ID = 'hive-ask-slot';
+    // The Ask Hive items in the top bar Help menu and the sidebar Help group.
+    // They start hidden and are shown only once the panel is built.
+    const ASK_HELP_ITEM_IDS = ['ask-help-menu-item', 'ask-nav-item'];
     // A section counts as "current" once its top is above this fraction of
     // the viewport height.
     const ASK_SECTION_VIEWPORT_FRACTION = 3;
@@ -65210,6 +65320,25 @@ function burnAreaChart() {
       return dashboardDocsHref(DASHBOARD_HELP_PAGE, entry ? dashboardSectionHelpAnchor(entry.heading) : '');
     }
 
+    // askShowHelpItems shows or hides the Ask Hive Help items. They follow the
+    // panel itself: shown only when ask_enabled loaded it and the backend
+    // built it for this person, so an item never opens nothing.
+    function askShowHelpItems(show) {
+      ASK_HELP_ITEM_IDS.forEach(id => {
+        const item = document.getElementById(id);
+        if (item) item.style.display = show ? '' : 'none';
+      });
+    }
+
+    // openAskFromHelp runs from either Ask Hive item (click, tap, or Enter
+    // and Space on the sidebar entry): it closes the Help menu and the phone
+    // navigation drawer, then opens the panel, which moves focus into it.
+    function openAskFromHelp() {
+      if (typeof closeHelpMenu === 'function') closeHelpMenu(false);
+      if (typeof window.hiveCloseMobileDrawer === 'function') window.hiveCloseMobileDrawer();
+      if (window.HiveAsk && typeof window.HiveAsk.open === 'function') window.HiveAsk.open();
+    }
+
     function loadAskPanel(cfg) {
       if (!cfg || cfg.ask_enabled !== true || askPanelRequested) return;
       if (!document.getElementById(ASK_SLOT_ID)) return;
@@ -65222,7 +65351,8 @@ function burnAreaChart() {
       script.src = ASK_PANEL_SCRIPT;
       script.addEventListener('load', () => {
         if (window.HiveAsk && typeof window.HiveAsk.mount === 'function') {
-          window.HiveAsk.mount({ slot: ASK_SLOT_ID, base: '/api/ask', section: askCurrentSection, docsHref: askCurrentDocsHref });
+          Promise.resolve(window.HiveAsk.mount({ slot: ASK_SLOT_ID, base: '/api/ask', section: askCurrentSection, docsHref: askCurrentDocsHref }))
+            .then(panel => askShowHelpItems(!!panel));
         }
       });
       document.head.appendChild(script);

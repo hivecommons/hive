@@ -99,8 +99,7 @@ var outboundSites = map[string]outboundSite{
 	"worksource.(*jiraSource).doJSON":          filtered(),
 	"worksource.linearGraphQL":                 filtered(),
 	"notify.(*Notifier).sendNtfy":              via("notify.(*Notifier).Send", "ntfy alert"),
-	"notify.(*Notifier).sendSlack":             via("notify.(*Notifier).Send", "Slack webhook alert"),
-	"notify.(*Notifier).sendDiscordWebhook":    via("notify.(*Notifier).Send", "Discord webhook alert"),
+	"notify.(*Notifier).postWebhook":           via("notify.(*Notifier).Send", "Slack and Discord webhook alert"),
 	"main.hubSelfReportRelay":                  via("hub.postHubGitHubIssue", "spoke self-report; the hub files it"),
 	"dashboard.(*Server).forwardFeedbackToHub": via("hub.postHubGitHubIssue", "operator feedback; the hub files it"),
 

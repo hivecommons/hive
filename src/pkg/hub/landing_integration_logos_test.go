@@ -56,3 +56,39 @@ func TestLandingIsolationAndSecretsRow(t *testing.T) {
 		t.Errorf("Isolation and secrets group has %d chips, want 5", got)
 	}
 }
+
+// TestLandingForgesRow pins the Forges group (#19672): the Forgejo chip uses
+// the embedded official logo, stays marked as in progress until #19494 lands,
+// and the group carries the CC BY-SA 4.0 attribution the logo's license
+// requires.
+func TestLandingForgesRow(t *testing.T) {
+	b, err := fs.ReadFile(staticFS, "static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded index.html: %v", err)
+	}
+	html := string(b)
+	start := strings.Index(html, `id="forges-title"`)
+	if start < 0 {
+		t.Fatal("index.html has no Forges group")
+	}
+	end := strings.Index(html[start:], "</section>")
+	if end < 0 {
+		t.Fatal("Forges group is not closed")
+	}
+	group := html[start : start+end]
+	for _, want := range []string{
+		`class="hv-infra-logo-row"`,
+		`src="/static/integrations/forgejo.svg"`,
+		"partial, in progress",
+		"https://github.com/hivecommons/hive/issues/19494",
+		"Caesar Schinas",
+		"CC BY-SA 4.0",
+	} {
+		if !strings.Contains(group, want) {
+			t.Errorf("Forges group is missing %q", want)
+		}
+	}
+	if strings.Contains(strings.ToLower(group), "fully supported") {
+		t.Error("Forges group calls Forgejo fully supported before #19494 closes")
+	}
+}
