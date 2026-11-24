@@ -41,12 +41,25 @@ var (
 	cardGroupKeys     = []string{"your-turn", "waiting-elsewhere", "held", "blocked", "actionable-now", "outside"}
 )
 
-// validCardBandsFor returns the card band keys a band-read tool accepts.
+// cardBandYourTurnAlias is the single Your turn band of before the split. A
+// card_band filter still accepts it and returns the rows it held: every row
+// in the your-turn group but to-close and unexplained (cardTurnAction in
+// pkg/dashboard). card_group=your-turn returns the whole group.
+const cardBandYourTurnAlias = "your-turn"
+
+// cardTurnActionRow reports a row the your-turn card_band alias returns.
+func cardTurnActionRow(m map[string]any) bool {
+	return m["card_group"] == "your-turn" && m["card_band"] != "to-close" && m["card_band"] != "unexplained"
+}
+
+// validCardBandsFor returns the card band keys a band-read tool accepts:
+// the donut's keys, then the your-turn alias.
 func validCardBandsFor(tool string) []string {
+	keys := issueCardBandKeys
 	if tool == ToolPrsByBand {
-		return prCardBandKeys
+		keys = prCardBandKeys
 	}
-	return issueCardBandKeys
+	return append(append([]string{}, keys...), cardBandYourTurnAlias)
 }
 
 // validBandsFor returns the band keys a band-read tool accepts, or false if
@@ -90,15 +103,11 @@ func BandReadResult(tool string, data any, args map[string]any) (any, error) {
 	}
 	cardBand := strings.TrimSpace(stringArg(args, "card_band"))
 	if valid := validCardBandsFor(tool); cardBand != "" && !containsBand(valid, cardBand) {
-		reason := fmt.Sprintf("unknown card_band %q; valid card bands: %s", cardBand, strings.Join(valid, ", "))
-		if cardBand == "your-turn" {
-			reason += "; your-turn is no longer a card band; use card_group=your-turn for every Your turn row"
-		}
 		return RefusalData{
 			Type:      "refusal",
 			Operation: tool,
 			Kind:      RefusalKindInvalidArgument,
-			Reason:    reason,
+			Reason:    fmt.Sprintf("unknown card_band %q; valid card bands: %s", cardBand, strings.Join(valid, ", ")),
 		}, nil
 	}
 	cardGroup := strings.TrimSpace(stringArg(args, "card_group"))
@@ -131,7 +140,17 @@ func BandReadResult(tool string, data any, args map[string]any) (any, error) {
 	}
 	// card_band and card_group filter the same way, before paging, so
 	// card_bands[] and card_groups[] keep the full shape.
-	rows = filterRowsByField(rows, "card_band", cardBand)
+	if cardBand == cardBandYourTurnAlias {
+		filtered := make([]any, 0, len(rows))
+		for _, row := range rows {
+			if m, ok := row.(map[string]any); ok && cardTurnActionRow(m) {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	} else {
+		rows = filterRowsByField(rows, "card_band", cardBand)
+	}
 	rows = filterRowsByField(rows, "card_group", cardGroup)
 	if cardBand != "" || cardGroup != "" {
 		// The export lists every copy of an item listed twice; the card

@@ -644,7 +644,9 @@ func TestAdminMCPCardKeysMatchTheCard(t *testing.T) {
 		}
 		props, _ := tool["inputSchema"].(map[string]any)["properties"].(map[string]any)
 		band, _ := props["card_band"].(map[string]any)
-		if got, _ := band["enum"].([]string); !reflect.DeepEqual(got, bands) {
+		// The donut's keys, then the alias of the single Your turn band of
+		// before the split.
+		if got, _ := band["enum"].([]string); !reflect.DeepEqual(got, append(append([]string{}, bands...), cardBandYourTurnAlias)) {
 			t.Errorf("%s card_band enum = %v, card = %v", name, got, bands)
 		}
 		group, _ := props["card_group"].(map[string]any)
