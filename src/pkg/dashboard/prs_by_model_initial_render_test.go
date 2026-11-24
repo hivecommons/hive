@@ -58,8 +58,10 @@ async function fetch(url) {
 function renderGovernor(gov, cadenceMatrix, data) {
   renders.push({ gov, cadenceMatrix, data, loaded: govPRModelsData });
 }
+function isSectionCollapsed() { return false; }
+function toggleSection() { throw new Error('an expanded subsection must not be toggled'); }
 `)
-	for _, name := range []string{"normalizeGovernorPRModelsWindowName", "renderGovernorFromLastStatus", "setGovernorPRModelsWindow"} {
+	for _, name := range []string{"normalizeGovernorPRModelsWindowName", "renderGovernorFromLastStatus", "expandGovernorPRModelsSection", "setGovernorPRModelsWindow"} {
 		script.WriteString(jsFunc(t, html, name) + "\n")
 	}
 	script.WriteString(asyncJSFunc(t, html, "loadGovernorPRModels") + "\n")

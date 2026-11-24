@@ -448,13 +448,23 @@
       renderGovernor(lastStatus.governor || {}, lastStatus.cadenceMatrix || [], lastStatus);
     }
 
+    // A window or sort pill clicked on the collapsed subsection is a request to
+    // see the ranking: expand it and save that choice like the header toggle.
+    function expandGovernorPRModelsSection() {
+      if (isSectionCollapsed('governor-pr-models-section')) toggleSection('governor-pr-models-section', { collapsed: false });
+    }
     function setGovernorPRModelsWindow(windowName) {
       govPRModelsWindow = normalizeGovernorPRModelsWindowName(windowName);
+      expandGovernorPRModelsSection();
+      // Re-render now so the expanded tile shows the new pill as active and
+      // "Loading" instead of the previous window's ranking until the fetch lands.
+      renderGovernorFromLastStatus();
       return loadGovernorPRModels(true, govPRModelsWindow);
     }
     window.setGovernorPRModelsWindow = setGovernorPRModelsWindow;
     function setGovernorPRModelsSort(sortName) {
       govPRModelsSort = sortName === 'count' ? 'count' : 'effectiveness';
+      expandGovernorPRModelsSection();
       if (window._lastStatus?.governor) renderGovernor(window._lastStatus.governor, window._lastStatus.cadenceMatrix || [], window._lastStatus);
     }
     window.setGovernorPRModelsSort = setGovernorPRModelsSort;
@@ -664,6 +674,13 @@
       const topModel = modelRows[0] && (modelRows[0].model || 'unknown');
       const collapsedSummary = topModel ? `#1 ${escapeHtml(topModel)} · ${modelCount} model${modelCount === 1 ? '' : 's'}` : `${modelCount} model${modelCount === 1 ? '' : 's'}`;
       const subtitle = `${total} agent-authored PR${total === 1 ? '' : 's'} · rank requires ${minMerged} merged`;
+      // Emit the saved collapse state in the markup itself. renderGovernor
+      // replays sparklines (a layout read) before applySectionCollapse runs on
+      // this subsection, so a body emitted expanded and collapsed afterwards
+      // runs the .section-body max-height/opacity transition: the ranking
+      // flashed open on every re-render of a collapsed subsection.
+      const collapsed = isSectionCollapsed('governor-pr-models-section');
+      const collapsedCls = collapsed ? ' collapsed' : '';
       const rows = !data
         ? '<div class="gov-pr-models-empty">Loading PRs by model…</div>'
         : total === 0
@@ -749,14 +766,14 @@
           <div class="gov-pr-model-metrics">${GOV_PR_MODEL_COLUMNS.map(([, label, help]) => `<div class="gov-pr-model-metric"><span class="gov-pr-model-col" title="${escapeHtml(help)}">${label}<span class="gov-pr-model-help" aria-hidden="true">?</span></span></div>`).join('')}</div>
           <div class="gov-pr-model-share">PRs · share</div>
         </div>` : '';
-      return `<div id="governor-pr-models-section" class="advisory-subsection governor-subsection">
-        <div class="section-label section-header-toggle gov-pr-models-subheader" role="button" tabindex="0" aria-expanded="true" aria-controls="governor-pr-models-section-body" data-action="toggleSection" data-keydown-action="sectionHeaderKey" data-arg-types="e,s" data-arg0="governor-pr-models-section" data-arg1="governor-pr-models-section" data-keys="*">
-          <span class="section-chevron" aria-hidden="true">▼</span>
+      return `<div id="governor-pr-models-section" class="advisory-subsection governor-subsection${collapsedCls}">
+        <div class="section-label section-header-toggle gov-pr-models-subheader" role="button" tabindex="0" aria-expanded="${collapsed ? 'false' : 'true'}" aria-controls="governor-pr-models-section-body" data-action="toggleSection" data-keydown-action="sectionHeaderKey" data-arg-types="e,s" data-arg0="governor-pr-models-section" data-arg1="governor-pr-models-section" data-keys="*">
+          <span class="section-chevron${collapsedCls}" aria-hidden="true">▼</span>
           <span>PRS BY MODEL${dashboardSectionHelpMark('governor-pr-models-section')}<span class="gov-pr-models-subtitle">${escapeHtml(subtitle)}</span></span>
           <span class="gov-pr-models-summary">${collapsedSummary}</span>
           <span class="gov-pr-models-toggle" data-stop="1">${buttons}${sortButtons}</span>
         </div>
-        <div class="section-body" id="governor-pr-models-section-body"><div class="gov-pr-models">
+        <div class="section-body${collapsedCls}" id="governor-pr-models-section-body"><div class="gov-pr-models">
           ${coverageNote}
           ${hiveCostNote}
           ${header}
