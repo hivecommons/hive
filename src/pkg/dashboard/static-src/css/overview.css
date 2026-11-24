@@ -178,7 +178,7 @@
     .overview-chart-legend-group { font-weight: 700; background: color-mix(in srgb, var(--muted) 10%, transparent); }
     .overview-chart-legend-part { padding-left: calc(var(--sp-1) + var(--sp-7)); }
     .overview-chart-legend-zero { opacity: 0.55; }
-    /* The legend's two sections, To do (the Your turn group) and Status
+    /* The legend's two sections, Needs a person (the Your turn group) and Status
        (every other group): a small muted heading over a thin rule, and a
        bold subtotal row under a thin rule. The Status subtotal opens
        nothing, so it has no pointer or hover, and no dot. */
