@@ -248,10 +248,36 @@ func (s *HubServer) userOwnsHive(username, hiveID string) bool {
 	return false
 }
 
+// accessHive returns the record the access handlers authorize against: the
+// SaaS meta record of a hosted hive, else the ID and Owner of the registry
+// entry of a self-registered spoke. The handlers never save it, so a grant on
+// a self-registered spoke writes no meta.json. Nil when neither place has it.
+func (s *HubServer) accessHive(hiveID string) *SaaSHive {
+	if h := loadSaaSHive(hiveID); h != nil {
+		return h
+	}
+	for _, h := range s.registryAccessHives() {
+		if h.ID == hiveID {
+			return &h
+		}
+	}
+	return nil
+}
+
+func (s *HubServer) registryAccessHives() []SaaSHive {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	hives := make([]SaaSHive, 0, len(s.registry.Hives))
+	for _, e := range s.registry.Hives {
+		hives = append(hives, SaaSHive{ID: e.ID, Owner: e.Owner})
+	}
+	return hives
+}
+
 func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("id")
 	username := s.getAuthUser(r)
-	h := loadSaaSHive(hiveID)
+	h := s.accessHive(hiveID)
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
@@ -280,7 +306,7 @@ func (s *HubServer) handleGrantableUsers(w http.ResponseWriter, r *http.Request)
 	// bar as being able to open Manage Access at all. Admin always qualifies.
 	owns := isHubAdmin(username)
 	if !owns {
-		for _, h := range listSaaSHives() {
+		for _, h := range append(listSaaSHives(), s.registryAccessHives()...) {
 			h := h
 			if userIsHiveOwner(username, &h) {
 				owns = true
@@ -408,7 +434,7 @@ func grantableUserLabel(u *SaaSUser) string {
 func (s *HubServer) handleAccessAdd(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("id")
 	username := s.getAuthUser(r)
-	h := loadSaaSHive(hiveID)
+	h := s.accessHive(hiveID)
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
@@ -528,7 +554,7 @@ func (s *HubServer) handleAccessRemove(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("id")
 	targetUsername := r.PathValue("username")
 	username := s.getAuthUser(r)
-	h := loadSaaSHive(hiveID)
+	h := s.accessHive(hiveID)
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
@@ -653,7 +679,7 @@ func (s *HubServer) handleRequestAccess(w http.ResponseWriter, r *http.Request) 
 	hiveID := r.PathValue("id")
 	username := s.getAuthUser(r)
 
-	h := loadSaaSHive(hiveID)
+	h := s.accessHive(hiveID)
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
@@ -715,7 +741,7 @@ func (s *HubServer) handleGetRequests(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("id")
 	username := s.getAuthUser(r)
 
-	h := loadSaaSHive(hiveID)
+	h := s.accessHive(hiveID)
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
@@ -763,7 +789,7 @@ func (s *HubServer) handleApproveRequest(w http.ResponseWriter, r *http.Request)
 	targetUsername := r.PathValue("username")
 	approver := s.getAuthUser(r)
 
-	h := loadSaaSHive(hiveID)
+	h := s.accessHive(hiveID)
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
@@ -827,7 +853,7 @@ func (s *HubServer) handleDenyRequest(w http.ResponseWriter, r *http.Request) {
 	targetUsername := r.PathValue("username")
 	denier := s.getAuthUser(r)
 
-	h := loadSaaSHive(hiveID)
+	h := s.accessHive(hiveID)
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
@@ -864,7 +890,7 @@ func (s *HubServer) handleApproveAccess(w http.ResponseWriter, r *http.Request) 
 	targetUsername := r.PathValue("username")
 	approver := s.getAuthUser(r)
 
-	h := loadSaaSHive(hiveID)
+	h := s.accessHive(hiveID)
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
@@ -919,7 +945,7 @@ func (s *HubServer) handleDenyAccess(w http.ResponseWriter, r *http.Request) {
 	targetUsername := r.PathValue("username")
 	denier := s.getAuthUser(r)
 
-	h := loadSaaSHive(hiveID)
+	h := s.accessHive(hiveID)
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return

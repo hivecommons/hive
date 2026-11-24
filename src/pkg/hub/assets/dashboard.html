@@ -3539,6 +3539,10 @@
       return (rank[role] || 0) >= (rank[tier] || 0);
     }
 
+    function canManageAccess(h) {
+      return roleAtLeast(h.role, 'read-write');
+    }
+
     /* One-line description of what each grantable role allows. Shown as the
        native tooltip on every role <option>/<select> and as the inline hint
        under the Manage Access "Add User" role dropdown (#4144), so an owner
@@ -9194,9 +9198,9 @@
           if (h.role === 'owner') {
             actions += '<br class="mb-2"><button class="hv-btn btn-danger btn-sm" onclick="removeLocalHive(\'' + esc(h.id) + '\')" title="Remove from registry (does not delete the hive)">Remove</button>';
           }
-        } else if (isHosted && (roleAtLeast(h.role, 'read-write'))) {
+        } else if (canManageAccess(h)) {
           actions = '<button class="hv-btn btn-primary btn-sm" onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')">Permissions</button>';
-          if (h.role === 'owner') {
+          if (isHosted && h.role === 'owner') {
             actions += '<button class="hv-btn btn-danger btn-sm" onclick="deleteHive(\'' + esc(h.id) + '\')">Delete</button>';
           }
         }
@@ -9220,7 +9224,7 @@
         if (apiBase) menuItems.push('<a href="' + apiBase + '/api/docs" target="_blank" class="hive-menu-item">API Docs</a>');
         if (menuItems.length > 0 && (canConvert || isHosted || isLocal)) menuItems.push('<div style="border-top:1px solid #30363d;margin:var(--sp-2) var(--sp-0)"></div>');
         if (canConvert) menuItems.push('<div onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '" class="hive-menu-item">Convert to Hosted</div>');
-        if (isHosted && (roleAtLeast(h.role, 'read-write'))) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')" class="hive-menu-item">Permissions</div>');
+        if (canManageAccess(h)) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')" class="hive-menu-item">Permissions</div>');
         /* Timeline is owner-or-admin, matching the API's authorization. */
         if (isHosted && (h.role === 'owner' || _isAdmin)) menuItems.push('<div onclick="openTimelineModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" class="hive-menu-item">Activity Timeline</div>');
         /* Pause/Resume hive (#15092): the spoke's own top-bar "running ⏸"

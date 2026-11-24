@@ -1,0 +1,1 @@
+- The owner of a self-registered spoke and the hub admin can now grant, change and remove access to it on the hub. The access endpoints answered `hive not found` for a spoke with no hosted record, and the dashboard showed no Permissions control for it.
