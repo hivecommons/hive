@@ -177,9 +177,6 @@ func TestForgeRelayPRRefusals(t *testing.T) {
 		}, ".rejected", "repo rejected"},
 		"detached head": {func(_ *relayHarness, r *github.PRRequest) { r.Head = "HEAD" }, ".rejected", "head rejected"},
 		"empty body":    {func(_ *relayHarness, r *github.PRRequest) { r.Body = " " }, ".rejected", "title and a body"},
-		"github repo": {func(h *relayHarness, _ *github.PRRequest) {
-			h.cfg.Project.RepoPolicies = []config.RepoPolicy{{Repo: "widgets", Forge: config.ForgeGitHub}}
-		}, ".rejected", "is on GitHub"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -297,16 +294,20 @@ func TestForgeRelayIssueRefusals(t *testing.T) {
 		suffix string
 		errHas string
 	}{
-		"gate label":   {github.IssueRequest{Kind: "label", Repo: "widgets", Number: 5, RemoveLabels: []string{"hold"}, Agent: "worker"}, false, ".bad", "gate label"},
-		"ready label":  {github.IssueRequest{Kind: "label", Repo: "widgets", Number: 5, RemoveLabels: []string{github.ReadyForReviewLabelName()}, Agent: "worker"}, false, ".bad", "gate label"},
-		"no title":     {github.IssueRequest{Repo: "widgets", Agent: "worker"}, false, ".bad", "requires repo and title"},
-		"no body":      {github.IssueRequest{Kind: "comment", Repo: "widgets", Number: 5, Agent: "worker"}, false, ".bad", "requires repo, number, and body"},
-		"no labels":    {github.IssueRequest{Kind: "label", Repo: "widgets", Number: 5, Agent: "worker"}, false, ".bad", "at least one label"},
-		"unsupported":  {github.IssueRequest{Kind: "close", Repo: "widgets", Number: 5, Agent: "worker"}, false, ".rejected", "not supported"},
-		"wrong agent":  {github.IssueRequest{Repo: "widgets", Title: "t", Agent: "intruder"}, false, ".denied", "authorization denied"},
-		"nil authz":    {github.IssueRequest{Repo: "widgets", Title: "t", Agent: "worker"}, true, ".denied", "fail closed"},
-		"unmanaged":    {github.IssueRequest{Repo: "other", Title: "t", Agent: "worker"}, false, ".rejected", "not managed"},
-		"out of scope": {github.IssueRequest{Repo: "widgets", Title: "t", Agent: "worker"}, false, ".rejected", "repo rejected"},
+		"gate label":      {github.IssueRequest{Kind: "label", Repo: "widgets", Number: 5, RemoveLabels: []string{"hold"}, Agent: "worker"}, false, ".bad", "hive-controlled"},
+		"ready label":     {github.IssueRequest{Kind: "label", Repo: "widgets", Number: 5, RemoveLabels: []string{github.ReadyForReviewLabelName()}, Agent: "worker"}, false, ".bad", "hive-controlled"},
+		"lgtm":            {github.IssueRequest{Kind: "label", Repo: "widgets", Number: 5, Labels: []string{"lgtm"}, Agent: "worker"}, false, ".bad", "hive-controlled"},
+		"approved":        {github.IssueRequest{Kind: "label", Repo: "widgets", Number: 5, Labels: []string{"approved-direction"}, Agent: "worker"}, false, ".bad", "hive-controlled"},
+		"needs-human off": {github.IssueRequest{Kind: "label", Repo: "widgets", Number: 5, RemoveLabels: []string{"needs-human"}, Agent: "worker"}, false, ".bad", "hive-controlled"},
+		"stage on create": {github.IssueRequest{Repo: "widgets", Title: "t", Labels: []string{"stage/010-actionable"}, Agent: "worker"}, false, ".bad", "hive-controlled"},
+		"no title":        {github.IssueRequest{Repo: "widgets", Agent: "worker"}, false, ".bad", "requires repo and title"},
+		"no body":         {github.IssueRequest{Kind: "comment", Repo: "widgets", Number: 5, Agent: "worker"}, false, ".bad", "requires repo, number, and body"},
+		"no labels":       {github.IssueRequest{Kind: "label", Repo: "widgets", Number: 5, Agent: "worker"}, false, ".bad", "at least one label"},
+		"unsupported":     {github.IssueRequest{Kind: "close", Repo: "widgets", Number: 5, Agent: "worker"}, false, ".rejected", "not supported"},
+		"wrong agent":     {github.IssueRequest{Repo: "widgets", Title: "t", Agent: "intruder"}, false, ".denied", "authorization denied"},
+		"nil authz":       {github.IssueRequest{Repo: "widgets", Title: "t", Agent: "worker"}, true, ".denied", "fail closed"},
+		"unmanaged":       {github.IssueRequest{Repo: "other", Title: "t", Agent: "worker"}, false, ".rejected", "not managed"},
+		"out of scope":    {github.IssueRequest{Repo: "widgets", Title: "t", Agent: "worker"}, false, ".rejected", "repo rejected"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -370,5 +371,62 @@ func TestStartForgeRequestRelayStopsOnCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("relay did not stop on cancel")
+	}
+}
+
+func TestForgeRelayPermanentForgeRefusalIsFinal(t *testing.T) {
+	h := newRelayHarness(t)
+	h.writer.crErr = errors.New("forgejo API /repos/acme/widgets/pulls returned status 422: head not found")
+	path := writeRelayRequest(t, h.relay.prDir, "a.json", goodPR())
+	h.relay.scanOnce(context.Background())
+	assertExists(t, path+".rejected", true)
+
+	h.writer.writeErr = errors.New("forgejo API returned status 404: no issue")
+	ipath := writeRelayRequest(t, h.relay.issueDir, "1.json", github.IssueRequest{Kind: "comment", Repo: "widgets", Number: 5, Body: "hi", Agent: "worker"})
+	h.relay.scanOnce(context.Background())
+	assertExists(t, ipath+".rejected", true)
+}
+
+func TestIsPermanentForgeRefusal(t *testing.T) {
+	for msg, want := range map[string]bool{
+		"x returned status 422: bad":  true,
+		"x returned status 404":       true,
+		"x returned status 429: slow": false,
+		"x returned status 408":       false,
+		"x returned status 502":       false,
+		"dial tcp: refused":           false,
+	} {
+		if got := isPermanentForgeRefusal(errors.New(msg)); got != want {
+			t.Errorf("%q = %v, want %v", msg, got, want)
+		}
+	}
+}
+
+// TestForgeRelayIdlesUnlessForgeOnly is the negative test: on a hive with a
+// GitHub repo the relay touches no request, so the GitHub relays own them.
+func TestForgeRelayIdlesUnlessForgeOnly(t *testing.T) {
+	h := newRelayHarness(t)
+	h.cfg.Project.RepoPolicies = []config.RepoPolicy{{Repo: "gh-repo", Forge: config.ForgeGitHub}}
+	pr := writeRelayRequest(t, h.relay.prDir, "a.json", goodPR())
+	is := writeRelayRequest(t, h.relay.issueDir, "1.json", github.IssueRequest{Repo: "widgets", Title: "t", Agent: "worker"})
+	h.relay.scanOnce(context.Background())
+	assertExists(t, pr, true)
+	assertExists(t, is, true)
+	if len(h.writer.specs)+len(h.writer.issues) != 0 {
+		t.Errorf("relay wrote on a hive with a GitHub repo: %+v", h.writer)
+	}
+	h.relay.cfg = func() *config.Config { return nil }
+	h.relay.scanOnce(context.Background())
+	assertExists(t, pr, true)
+}
+
+func TestRepoRefusalRefusesGitHubRepo(t *testing.T) {
+	cfg := forgejoOnlyConfig("https://fj.example")
+	cfg.Project.RepoPolicies = []config.RepoPolicy{{Repo: "widgets", Forge: config.ForgeGitHub}}
+	if got := repoRefusal(cfg, "worker", "widgets"); !strings.Contains(got, "is on GitHub") {
+		t.Errorf("repoRefusal = %q, want the GitHub refusal", got)
+	}
+	if got := repoRefusal(forgejoOnlyConfig("https://fj.example"), "worker", "acme/widgets"); got != "" {
+		t.Errorf("owner-qualified managed repo refused: %q", got)
 	}
 }

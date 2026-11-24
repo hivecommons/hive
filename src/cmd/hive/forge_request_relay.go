@@ -37,9 +37,12 @@ import (
 //     so a human releases it. The GitHub relay's self-authorization,
 //     reporter-trust and duplicate-claim checks read GitHub data and are not
 //     ported; the label holds the PR in their place.
-//   - Issue kinds served: issue, comment and label. A label request may not
-//     add or remove a hold or gate label. Other kinds are rejected with a
-//     reason so the agent does not wait on them.
+//   - Issue kinds served: issue, comment and label. No request may add or
+//     remove a hive-controlled label (the hold labels and
+//     github.ReservedLabelForAgents). Other kinds are rejected with a reason
+//     so the agent does not wait on them.
+//   - A forge 4xx (other than 408 and 429) is final; other failures are
+//     retried a bounded number of times.
 //
 // Agent-written titles and bodies pass through prosefilter before they are
 // sent, as on the GitHub relays.
@@ -111,7 +114,7 @@ func startForgeRequestRelay(ctx context.Context, r *forgeRequestRelay) <-chan st
 		defer close(done)
 		t := time.NewTicker(forgeRelayPollInterval)
 		defer t.Stop()
-		r.logger.Info("forge request relay started", "pr_dir", r.prDir, "issue_dir", r.issueDir)
+		r.logger.Debug("forge request relay started; idle unless every repo is off GitHub", "pr_dir", r.prDir, "issue_dir", r.issueDir)
 		for {
 			select {
 			case <-ctx.Done():
@@ -128,7 +131,14 @@ func startForgeRequestRelay(ctx context.Context, r *forgeRequestRelay) <-chan st
 }
 
 // scanOnce handles every pending request in both directories once.
+//
+// It does nothing unless every repo is off GitHub, read on each scan, so a
+// reload that puts a repo on GitHub hands the queues back to the GitHub
+// relays instead of this relay refusing their requests.
 func (r *forgeRequestRelay) scanOnce(ctx context.Context) {
+	if cfg := r.cfg(); cfg == nil || !cfg.AllReposOffGitHub() {
+		return
+	}
 	for _, path := range pendingRequestFiles(r.prDir) {
 		r.handlePR(ctx, path)
 	}
@@ -279,6 +289,10 @@ func (r *forgeRequestRelay) handlePR(ctx context.Context, path string) {
 	})
 	if err != nil && !errors.Is(err, forge.ErrLabelsNotApplied) {
 		fail(err.Error())
+		if isPermanentForgeRefusal(err) {
+			r.settle(path, ".rejected", false)
+			return
+		}
 		r.settle(path, "", true)
 		r.logger.Warn("forge request relay: PR open failed, will retry", "repo", req.Repo, "head", req.Head, "error", err.Error())
 		return
@@ -294,16 +308,35 @@ func (r *forgeRequestRelay) handlePR(ctx context.Context, path string) {
 	r.logger.Info("forge request relay: PR opened", "agent", req.Agent, "repo", req.Repo, "number", ref.Number, "already_existed", ref.AlreadyExisted)
 }
 
-// labelsTouchGate reports whether any label is a hold or hive gate label,
-// which an agent may not set or clear through a label request.
-func labelsTouchGate(cfg *config.Config, labels []string) bool {
+// reservedLabels returns the labels in labels an agent may not set or clear
+// through the relay: the hive's hold and gate labels and every label the
+// GitHub label relay reserves (github.ReservedLabelForAgents).
+func reservedLabels(cfg *config.Config, labels []string) []string {
 	extra := holdLabelsForConfig(cfg)
+	autoMerge := normalizedAutoMergeLabel(cfg.Governor.Labels.AutoMerge)
+	var out []string
 	for _, l := range labels {
-		if github.HasHoldLabelWith([]string{l}, extra) {
-			return true
+		if github.HasHoldLabelWith([]string{l}, extra) || github.ReservedLabelForAgents(l, autoMerge) {
+			out = append(out, l)
 		}
 	}
-	return false
+	return out
+}
+
+// forgeStatusPrefix precedes the HTTP status in the adapters' error text.
+const forgeStatusPrefix = "returned status "
+
+// isPermanentForgeRefusal reports whether err is a forge 4xx that no retry
+// can fix (the forge rejected the request itself). 408 and 429 are
+// throttling and stay transient.
+func isPermanentForgeRefusal(err error) bool {
+	msg := err.Error()
+	i := strings.Index(msg, forgeStatusPrefix+"4")
+	if i < 0 {
+		return false
+	}
+	code := msg[i+len(forgeStatusPrefix) : min(len(msg), i+len(forgeStatusPrefix)+3)]
+	return code != "408" && code != "429"
 }
 
 func (r *forgeRequestRelay) handleIssue(ctx context.Context, path string) {
@@ -323,6 +356,8 @@ func (r *forgeRequestRelay) handleIssue(ctx context.Context, path string) {
 	case "issue":
 		if strings.TrimSpace(req.Repo) == "" || strings.TrimSpace(req.Title) == "" {
 			shape = "issue request requires repo and title"
+		} else if bad := reservedLabels(cfg, req.Labels); len(bad) > 0 {
+			shape = "issue request names hive-controlled label(s) " + strings.Join(bad, ", ") + "; an agent may not set them"
 		}
 	case "comment":
 		if strings.TrimSpace(req.Repo) == "" || req.Number <= 0 || strings.TrimSpace(req.Body) == "" {
@@ -331,8 +366,8 @@ func (r *forgeRequestRelay) handleIssue(ctx context.Context, path string) {
 	case "label":
 		if strings.TrimSpace(req.Repo) == "" || req.Number <= 0 || len(req.Labels)+len(req.RemoveLabels) == 0 {
 			shape = "label request requires repo, number, and at least one label"
-		} else if labelsTouchGate(cfg, append(append([]string{}, req.Labels...), req.RemoveLabels...)) {
-			shape = "label request may not add or remove a hold or review gate label"
+		} else if bad := reservedLabels(cfg, append(append([]string{}, req.Labels...), req.RemoveLabels...)); len(bad) > 0 {
+			shape = "label request names hive-controlled label(s) " + strings.Join(bad, ", ") + "; an agent may not add or remove them"
 		}
 	default:
 		fail(fmt.Sprintf("%q requests are not supported on %s yet", kind, cfg.ForgeKindForRepo(req.Repo)))
@@ -392,6 +427,10 @@ func (r *forgeRequestRelay) handleIssue(ctx context.Context, path string) {
 	}
 	if err != nil {
 		fail(err.Error())
+		if isPermanentForgeRefusal(err) {
+			r.settle(path, ".rejected", false)
+			return
+		}
 		r.settle(path, "", true)
 		r.logger.Warn("forge request relay: issue request failed, will retry", "kind", kind, "repo", req.Repo, "error", err.Error())
 		return

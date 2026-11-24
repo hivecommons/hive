@@ -42,3 +42,14 @@ func TestRequestFileExports(t *testing.T) {
 		t.Error("InvalidPRHeadReason does not match invalidHeadReason")
 	}
 }
+
+func TestReservedLabelForAgentsExport(t *testing.T) {
+	for _, l := range []string{"hold", "needs-human", "stage/010-actionable", "hive/x", "queue"} {
+		if !ReservedLabelForAgents(l, "queue") {
+			t.Errorf("%q not reserved", l)
+		}
+	}
+	if ReservedLabelForAgents("kind/bug", "queue") {
+		t.Error("kind/bug reserved")
+	}
+}

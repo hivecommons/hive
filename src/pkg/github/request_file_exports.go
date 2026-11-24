@@ -48,3 +48,12 @@ func InvalidPRHeadReason(head string) string {
 func WriteRequestResult(path string, data []byte) error {
 	return writeRequestFile(path, data)
 }
+
+// ReservedLabelForAgents reports whether label is hive-controlled (hold and
+// gate labels, approved-direction, needs-human, blocked, hive/* and stage/*,
+// and autoMergeLabel) and so may not be added or removed by an agent. It is
+// the check the GitHub label relay applies, without that relay's narrow
+// per-label allowances, so a caller using it alone fails closed.
+func ReservedLabelForAgents(label, autoMergeLabel string) bool {
+	return reservedLabelForAgents(label, autoMergeLabel)
+}

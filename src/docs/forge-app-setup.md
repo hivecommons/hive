@@ -118,9 +118,12 @@ What is deliberately **absent** matters as much as what is present:
   (accept the MR with `merge`, `squash` or `rebase`, a head-SHA guard and branch
   removal). No production caller uses it yet; routing the merge gate by forge
   kind is [#14113](https://github.com/hivecommons/hive/issues/14113).
-- **No issue or change-request creation.** The interface has no `CreateIssue` and
-  no `CreatePR`. Even fully wired, the adapters could comment and label but could
-  not file the work.
+- **Creation is partial.** Gitea and Forgejo implement `CreateIssue` and
+  `CreateChangeRequest` through optional seams (`forge.IssueSeam`,
+  `forge.ChangeRequestCreator`), and on a forge-only hive the forge request
+  relay uses them for agents' `hive-open-pr`, issue, comment and label requests
+  ([#19670](https://github.com/hivecommons/hive/issues/19670)). GitLab has
+  neither seam, and the `Forge` interface itself still has no create methods.
 
 That second point is the ceiling on this path: the abstraction was scoped to the
 read path plus light write operations, not to the create-and-merge lifecycle an
@@ -236,9 +239,10 @@ Listed so the size of the gap is legible, not as a plan of record:
    with the label gates and issue filter applied above the forge boundary. A
    hive with any repository on GitHub still starts at
    `github.Client.EnumerateActionable` for every repository.
-2. `CreateIssue` and `CreateChangeRequest` on the `Forge` interface, plus
-   `Merge` on every adapter (GitLab has it; Gitea/Forgejo does not) — the
-   create-and-merge lifecycle agents depend on.
+2. Create seams on GitLab, and the create relay for repositories on another
+   forge inside a hive that also has GitHub repositories. Gitea and Forgejo
+   have `CreateIssue` and `CreateChangeRequest` (`forge.IssueSeam`,
+   `forge.ChangeRequestCreator`), served to agents on a forge-only hive.
 3. A forge-neutral agent execution path, since agents reach their forge through
    the `gh` CLI wrapper rather than through `pkg/forge`.
 4. Credential plumbing for token-based forges alongside the GitHub App minting
