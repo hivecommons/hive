@@ -28,7 +28,9 @@ type ForgejoIntegrationConfig struct {
 	// and key list; it is the iss claim.
 	Issuer string `yaml:"issuer"`
 	// KeyFile is the absolute path of the RSA signing key (PEM, mode 0600 or
-	// 0400). It is read at every mint, so replacing the file rotates the key.
+	// 0400, or 0440 with group hive-launch as the /secrets mount presents
+	// it; see forgejwt.LaunchGID). It is read at every mint, so replacing the
+	// file rotates the key.
 	KeyFile string `yaml:"key_file"`
 	// Audiences maps a token tier (agentmode.KnownTokenTiers) to the aud
 	// Forgejo generated for that tier's integration.

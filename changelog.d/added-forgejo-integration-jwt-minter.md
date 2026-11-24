@@ -1,1 +1,1 @@
-- `forgejo.integration` makes git clone and push on Forgejo repos use a one-hour JWT per agent token tier, signed with an operator-held RSA key for that tier's Forgejo authorized integration, instead of the shared `forgejo.token_env` access token (#19576).
+- `forgejo.integration` makes git clone and push on Forgejo repos use a one-hour JWT per agent token tier, signed with an operator-held RSA key for that tier's Forgejo authorized integration, instead of the shared `forgejo.token_env` access token (#19760, from #19576).
