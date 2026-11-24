@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v6.59.0)
+
+### Added
+
+- The Overview card's issue churn row (Triage) now names the pull requests behind it, so a maintainer asked to say what is left no longer has to hunt for them. Its reason lists their numbers, merged first, then closed without merging, at most five per list before "and N more", for example "3 PRs merged (#1236, #1240, #1251) and it is still open; say what is left, or add hive: churn-triaged."; a pull request in another repository is written `owner/repo#N`. The issue export and the `issues_by_band` MCP tool add `card_churn_prs` (repo, number, state, link, plus the title and merge time when the merged ledger lists the merge), and the repository card folds the same pull requests under the issue pill as links. The list comes from the churn history the claim ledger already keeps and the server's merged ledger, so nothing new is asked of GitHub; closed-unmerged pull requests carry no title or date. Nothing about the band, the inbox or any decision changes.
+
 ## 2026-11-24 (v6.58.9)
 
 ### Fixed
