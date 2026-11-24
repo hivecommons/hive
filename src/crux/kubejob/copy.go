@@ -50,7 +50,7 @@ const (
 	// DefaultBridgeMount is where the crux binary is mounted in the Job.
 	DefaultBridgeMount = "/opt/hive-bridge"
 	// BridgeTokenEnv carries the bridge's bearer token in the Job pod.
-	BridgeTokenEnv = "HIVE_JOB_BRIDGE_TOKEN"
+	BridgeTokenEnv = "HIVE_JOB_BRIDGE_TOKEN" // #nosec G101 -- env var name, not a credential
 
 	bridgeVolumeName        = "hive-bridge"
 	bridgeInitContainerName = "hive-bridge"

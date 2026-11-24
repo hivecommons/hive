@@ -20,7 +20,7 @@ import (
 const JobBridgeCommand = "job-bridge"
 
 // JobBridgeTokenEnv is the default variable the bearer token is read from.
-const JobBridgeTokenEnv = "HIVE_JOB_BRIDGE_TOKEN"
+const JobBridgeTokenEnv = "HIVE_JOB_BRIDGE_TOKEN" // #nosec G101 -- env var name, not a credential
 
 func (e *Env) cmdJobBridge(ctx context.Context, args []string) int {
 	fs := e.subFlags(JobBridgeCommand)

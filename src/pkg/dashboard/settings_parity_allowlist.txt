@@ -17,6 +17,7 @@ agent_sandbox.job.volumes[].claim # TODO #11854
 agent_sandbox.job.volumes[].mount_path # TODO #11854
 agent_sandbox.job.volumes[].name # TODO #11854
 agent_sandbox.job.volumes[].read_only # TODO #11854
+agent_sandbox.job.workspace_transport # TODO #11854
 agent_sandbox.openshell.allow_hosts[] # TODO #17645 (OpenShell runtime; Settings control pending)
 agent_sandbox.openshell.binaries[] # TODO #17645 (OpenShell runtime; Settings control pending)
 agent_sandbox.openshell.gateway_url # TODO #17645 (OpenShell runtime; Settings control pending)
@@ -145,6 +146,7 @@ agents.<key>.sandbox.job.volumes[].name # TODO #11854
 agents.<key>.sandbox.job.volumes[].read_only # TODO #11854
 agents.<key>.sandbox.job.workspace_claim # TODO #11854
 agents.<key>.sandbox.job.workspace_claim_mount # TODO #11854
+agents.<key>.sandbox.job.workspace_transport # TODO #11854
 agents.<key>.sandbox.network_mode # TODO #11854
 agents.<key>.sandbox.openshell.allow_hosts[] # TODO #17645 (OpenShell runtime; Settings control pending)
 agents.<key>.sandbox.openshell.binaries[] # TODO #17645 (OpenShell runtime; Settings control pending)
