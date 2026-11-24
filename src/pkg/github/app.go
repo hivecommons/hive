@@ -51,6 +51,17 @@ const (
 	// the caller already treats as "App not usable → show install banner".
 	tokenMintTimeout = 8 * time.Second
 
+	// tokenRefreshRetryInterval is how long Token() waits after a FAILED
+	// proactive refresh before it tries to mint again, serving the still-valid
+	// cached token meanwhile. Without it every Token() call inside the
+	// refresh window re-attempted the mint under a.mu's write lock, so a
+	// GitHub API that times out stalled every GitHub caller in the process for
+	// up to tokenMintTimeout each and logged one WARN per call
+	// (hivecommons/hive#19706: 37 in 10m). The refresh window is
+	// tokenRefreshBuffer long, so this still leaves many attempts before the
+	// cached token truly expires.
+	tokenRefreshRetryInterval = time.Minute
+
 	// Per-agent scoped token caches. entrypoint.sh pre-creates each file as
 	// dev:hive-<agent> mode 0640 so the hive process (dev) can rewrite it in
 	// place and ONLY the owning agent's private group can read it — no chown
@@ -99,6 +110,10 @@ type AppAuth struct {
 	mu          sync.RWMutex
 	cachedToken string
 	tokenExpiry time.Time
+	// refreshRetryAt is the earliest time Token() re-attempts a proactive
+	// refresh after one failed while the cached token was still valid; zero
+	// once a mint succeeds.
+	refreshRetryAt time.Time
 	// botLogin is the App bot identity ("<app-slug>[bot]") this installation's
 	// tokens act as. Set via SetBotLogin at client wiring time; when non-empty,
 	// WriteAgentToken publishes it to the trusted bot-identity file (#4044).
@@ -171,10 +186,24 @@ func (a *AppAuth) generateJWT() (string, error) {
 	return token.SignedString(a.key)
 }
 
+// servableCachedToken returns the cached token when Token() should serve it
+// without minting: before the refresh window opens, or inside it while a
+// failed proactive refresh is still backing off and the token has not expired.
+// The caller holds a.mu.
+func (a *AppAuth) servableCachedToken(now time.Time) (string, bool) {
+	if a.cachedToken == "" {
+		return "", false
+	}
+	if now.Before(a.tokenExpiry.Add(-tokenRefreshBuffer)) ||
+		(now.Before(a.refreshRetryAt) && now.Before(a.tokenExpiry)) {
+		return a.cachedToken, true
+	}
+	return "", false
+}
+
 func (a *AppAuth) Token(ctx context.Context) (string, error) {
 	a.mu.RLock()
-	if a.cachedToken != "" && time.Now().Before(a.tokenExpiry.Add(-tokenRefreshBuffer)) {
-		token := a.cachedToken
+	if token, ok := a.servableCachedToken(time.Now()); ok {
 		a.mu.RUnlock()
 		return token, nil
 	}
@@ -183,8 +212,8 @@ func (a *AppAuth) Token(ctx context.Context) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.cachedToken != "" && time.Now().Before(a.tokenExpiry.Add(-tokenRefreshBuffer)) {
-		return a.cachedToken, nil
+	if token, ok := a.servableCachedToken(time.Now()); ok {
+		return token, nil
 	}
 
 	// We are inside the tokenRefreshBuffer window (or have no token yet): try to
@@ -198,12 +227,18 @@ func (a *AppAuth) Token(ctx context.Context) (string, error) {
 	// made the dashboard's github_auth health check flap red↔green on a hive
 	// whose App is genuinely working. We only hard-fail once no usable token
 	// remains — i.e. the cache is empty or the cached token has truly expired.
+	// After a failed refresh, refreshRetryAt holds further attempts off for
+	// tokenRefreshRetryInterval so a sustained outage costs one bounded mint
+	// and one WARN per interval, not one per caller.
 	newToken, expiry, err := a.mintInstallationToken(ctx)
 	if err != nil {
-		if a.cachedToken != "" && time.Now().Before(a.tokenExpiry) {
+		if now := time.Now(); a.cachedToken != "" && now.Before(a.tokenExpiry) {
+			a.refreshRetryAt = now.Add(tokenRefreshRetryInterval)
+			// slogfeed.appTokenRefreshFallbackMessage matches this text; keep in sync.
 			a.logger.Warn("github app token proactive refresh failed; serving still-valid cached token",
 				"expires_at", a.tokenExpiry.Format(time.RFC3339),
 				"installation_id", a.installationID,
+				"retry_at", a.refreshRetryAt.Format(time.RFC3339),
 				"error", err,
 			)
 			return a.cachedToken, nil
@@ -213,6 +248,7 @@ func (a *AppAuth) Token(ctx context.Context) (string, error) {
 
 	a.cachedToken = newToken
 	a.tokenExpiry = expiry
+	a.refreshRetryAt = time.Time{}
 	a.logger.Info("github app token refreshed",
 		"expires_at", a.tokenExpiry.Format(time.RFC3339),
 		"installation_id", a.installationID,

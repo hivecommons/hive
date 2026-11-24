@@ -158,14 +158,73 @@ func TestToken_TransientThenRecoveryDoesNotFlap(t *testing.T) {
 		t.Errorf("blip poll token = %q, want boot-token", tok)
 	}
 
-	// 2) Recovery: mint succeeds, cache advances to the fresh token.
+	// 2) Recovery: once the retry interval has elapsed the mint succeeds and
+	// the cache advances to the fresh token.
 	fail.Store(false)
+	auth.refreshRetryAt = time.Now().Add(-time.Second)
 	tok, err = auth.Token(context.Background())
 	if err != nil {
 		t.Fatalf("recovery poll errored: %v", err)
 	}
 	if tok != "fresh-token" {
 		t.Errorf("recovery poll token = %q, want fresh-token", tok)
+	}
+}
+
+// TestToken_FailedRefreshBacksOff locks in hivecommons/hive#19706: after a
+// proactive refresh fails, Token() must serve the still-valid cached token
+// WITHOUT re-minting until tokenRefreshRetryInterval passes. Re-minting on
+// every call held a.mu for up to tokenMintTimeout per caller while GitHub was
+// unreachable and logged one WARN per call. The backoff must never extend an
+// expired token's life.
+func TestToken_FailedRefreshBacksOff(t *testing.T) {
+	key, _ := generateTestKey(t)
+
+	var mints atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mints.Add(1)
+		http.Error(w, "upstream hiccup", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	auth := &AppAuth{
+		appID:          1,
+		installationID: 2,
+		key:            key,
+		logger:         quietLogger(),
+		apiURL:         server.URL,
+		cachePath:      t.TempDir() + "/token-cache",
+		cachedToken:    "still-valid-cached-token",
+		tokenExpiry:    time.Now().Add(tokenRefreshBuffer / 2),
+	}
+
+	for i := range 5 {
+		tok, err := auth.Token(context.Background())
+		if err != nil || tok != "still-valid-cached-token" {
+			t.Fatalf("call %d: Token() = %q, %v; want the cached token", i, tok, err)
+		}
+	}
+	if got := mints.Load(); got != 1 {
+		t.Fatalf("mint attempts during backoff = %d, want 1", got)
+	}
+
+	// Retry interval elapsed: the next call tries the mint again.
+	auth.refreshRetryAt = time.Now().Add(-time.Second)
+	if _, err := auth.Token(context.Background()); err != nil {
+		t.Fatalf("Token() after backoff: %v", err)
+	}
+	if got := mints.Load(); got != 2 {
+		t.Fatalf("mint attempts after backoff = %d, want 2", got)
+	}
+
+	// A pending backoff must not serve a token that has truly expired.
+	auth.tokenExpiry = time.Now().Add(-time.Second)
+	auth.refreshRetryAt = time.Now().Add(time.Minute)
+	if _, err := auth.Token(context.Background()); err == nil {
+		t.Fatal("Token() served an expired cached token during backoff")
+	}
+	if got := mints.Load(); got != 3 {
+		t.Fatalf("mint attempts with expired token = %d, want 3", got)
 	}
 }
 

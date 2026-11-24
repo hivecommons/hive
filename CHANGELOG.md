@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v5.361.0)
+
+### Added
+
+- **Forgejo repos get automerge and close-on-merge** ([#19671](https://github.com/hivecommons/hive/issues/19671)). The GitHub sweeps still skip every non-GitHub repo; a Forgejo repo now has its own sweeps, run every two minutes and with no GitHub client needed. Automerge merges an open, non-draft pull request through Forgejo's merge API, pinned to the head it judged (`head_commit_id`), only when auto-merge is on for the repo (off below ACMM L6, as on GitHub), it carries `governor.labels.automerge` (default `lgtm`) last added by someone other than its author who has write access, it carries no `hold`, sentinel, decision-needed or exempt label, Forgejo reports it mergeable, and the combined commit status at the head is `success` with at least one status. Close-on-merge relies on Forgejo closing the issues a pull request names with a closing keyword when it merges into the default branch, and closes, with a marked comment, the ones still open two minutes to seven days after a merge by the hive's own Forgejo user or a writer (for example a merge into another branch), after the unsolicited write-back gate allows it as an `issue_close`. It honours `hive: needs-confirmation` and `issues.close_on_merge`, and never closes again an issue a person reopened. GitLab and Gitea repos still get neither sweep.
+- A Forgejo repo's sandbox and Sessions workspaces are cloned from, and the push broker pushes to, the repo's own forge host with the forgejo block's token, which git now offers only to that host; the agents' proxy inspects only the configured Forgejo hosts, and GitLab and Gitea clone and push are refused as not implemented (#19677).
+- A hive with repositories on GitHub and on GitLab, Gitea or Forgejo now finds work in its non-GitHub repositories. The governor drops the GitHub client's share for each such repository, lists it through its forge adapter, and keeps GitHub CI and workflow-approval enrichment off its change requests. GitHub-only hives enumerate exactly as before. Refs [#19703](https://github.com/hivecommons/hive/issues/19703).
+
+### Fixed
+
+- GitHub App token: when a proactive installation-token refresh fails while the cached token is still valid, the hive now serves the cached token and waits a minute before trying to mint again. Before, every GitHub call in the 20 minutes before expiry retried the mint while holding the token lock, so an unreachable GitHub API made each caller wait up to 8 seconds and logged one warning per call. A refresh that times out is no longer self-reported as `unclassified_error_repeated`; other refresh failures (a revoked key, an uninstalled App) still are, and a token that truly expires still fails as before ([#19706](https://github.com/hivecommons/hive/issues/19706)).
+
 ## 2026-11-24 (v5.360.0)
 
 ### Added
