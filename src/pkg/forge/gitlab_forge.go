@@ -84,14 +84,16 @@ type glUser struct {
 
 // glIssue is the subset of a GitLab issue we map onto Issue.
 type glIssue struct {
-	IID       int       `json:"iid"`
-	Title     string    `json:"title"`
-	State     string    `json:"state"`
-	Labels    []string  `json:"labels"`
-	WebURL    string    `json:"web_url"`
-	CreatedAt time.Time `json:"created_at"`
-	Author    glUser    `json:"author"`
-	Assignees []glUser  `json:"assignees"`
+	IID         int       `json:"iid"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	State       string    `json:"state"`
+	Labels      []string  `json:"labels"`
+	WebURL      string    `json:"web_url"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Author      glUser    `json:"author"`
+	Assignees   []glUser  `json:"assignees"`
 }
 
 // glMergeRequest is the subset of a GitLab merge request we map onto
@@ -177,6 +179,8 @@ func (f *gitLabForge) ListOpenIssues(ctx context.Context, repo string) ([]Issue,
 				State:     it.State,
 				CreatedAt: it.CreatedAt,
 				URL:       it.WebURL,
+				Body:      it.Description,
+				UpdatedAt: it.UpdatedAt,
 			})
 		}
 		return nil
