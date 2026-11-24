@@ -1160,6 +1160,36 @@ func TestSessionsResume(t *testing.T) {
 	}
 }
 
+func TestSessionsResumeSaveFailureLeavesSessionEnded(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	st := e.s.sessionStoreOrNil()
+	before := sessionRecord{ID: "abcdef012345", Vendor: "claude", Creator: callerRW.user,
+		Status: sessionStatusEnded, UIDSlot: 1, ResumeCommand: "claude --resume abc"}
+	if err := st.put(before); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/sessions/" + before.ID + "/resume"
+	storePath := st.path
+	st.path = t.TempDir() // rename over a directory fails even with elevated privileges
+	res := e.do(t, callerRW, "POST", path, nil)
+	st.path = storePath
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("resume with an unwritable store = %d: %s", res.Code, res.Body.String())
+	}
+	if got, ok := st.get(before.ID); !ok || got != before {
+		t.Fatalf("record after failed save = %+v (exists: %v), want %+v", got, ok, before)
+	}
+	if e.s.sessionStartInFlight(before.ID) || len(e.rt.startedSpecs()) != 0 {
+		t.Fatal("resume launched without a saved start")
+	}
+	if res := e.do(t, callerRW, "POST", path, nil); res.Code != http.StatusAccepted {
+		t.Fatalf("resume retry = %d: %s", res.Code, res.Body.String())
+	}
+	if got := e.waitSettled(t, before.ID); got.Status != sessionStatusRunning {
+		t.Fatalf("record after retry = %+v, want running", got)
+	}
+}
+
 func TestSessionsStoreRoundTripAndPermissions(t *testing.T) {
 	dir := t.TempDir()
 	st, err := openSessionStore(dir)

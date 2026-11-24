@@ -95,6 +95,44 @@ func (s *Server) reportSessionDelete(user, id, trigger string, took time.Duratio
 	s.auditSession(user, auditSessionClosed, auditDetail("session", id, "removed", "true", "outcome", "success", "trigger", trigger, "duration", dur))
 }
 
+// claimSessionClose serialises shutdown with Resume, Delete and other close
+// requests for the same session while leaving the mutex free for runtime I/O.
+func (s *Server) claimSessionClose(st *sessionStore, id string) (sessionRecord, bool) {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	cur, found := st.get(id)
+	return cur, found && s.claimSessionCloseLocked(st, cur)
+}
+
+func (s *Server) claimSessionCloseLocked(st *sessionStore, rec sessionRecord) bool {
+	id := rec.ID
+	if rec.Status != sessionStatusRunning || st.closing[id] || s.sessionsPreparing[id] || st.deleteInFlight(id) {
+		return false
+	}
+	if st.closing == nil {
+		st.closing = make(map[string]bool)
+	}
+	st.closing[id] = true
+	return true
+}
+
+func (s *Server) releaseSessionClose(st *sessionStore, id string) {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	delete(st.closing, id)
+}
+
+// stopSession captures the resume handle before killing the terminal. The
+// caller holds the close claim until the terminal has stopped.
+func (s *Server) stopSession(rt SessionRuntime, st *sessionStore, rec sessionRecord, now string) error {
+	resume := sessionResumeCommand(rt, rec)
+	if err := rt.Kill(rec.ID); err != nil {
+		return err
+	}
+	s.markSessionEnded(st, rec.ID, now, resume)
+	return nil
+}
+
 // beginSessionDelete starts the delete of session id, or finishes it at once
 // when nothing of it is left on disk. from, when not empty, is the status the
 // record must still have (the reconciler acts on a snapshot). It never blocks
@@ -102,12 +140,19 @@ func (s *Server) reportSessionDelete(user, id, trigger string, took time.Duratio
 func (s *Server) beginSessionDelete(rt SessionRuntime, st *sessionStore, id, user, trigger, from string) (sessionDeleteOutcome, sessionRecord, error) {
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
+	return s.beginSessionDeleteLocked(rt, st, id, user, trigger, from)
+}
+
+func (s *Server) beginSessionDeleteLocked(rt SessionRuntime, st *sessionStore, id, user, trigger, from string) (sessionDeleteOutcome, sessionRecord, error) {
 	cur, ok := st.get(id)
 	if !ok {
 		return sessionDeleteDone, cur, nil
 	}
 	if st.deleteInFlight(id) {
 		return sessionDeleteInFlight, cur, nil
+	}
+	if st.closing[id] || s.sessionsPreparing[id] {
+		return sessionDeleteNotDeletable, cur, nil
 	}
 	switch cur.Status {
 	case sessionStatusEnded, sessionStatusFailed, sessionStatusDeleting:
@@ -206,6 +251,30 @@ func (s *Server) reconcileSessionRemoval(rt SessionRuntime, st *sessionStore, re
 	}
 }
 
+// sessionForDelete looks up the record and claims a running terminal in the
+// same lock acquisition so a queued close cannot act on a replacement run.
+func (s *Server) sessionForDelete(w http.ResponseWriter, r *http.Request, st *sessionStore, now string) (sessionRecord, sessionActor, bool) {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	rec, actor, ok := s.sessionForMutation(w, r, st)
+	if !ok {
+		return rec, actor, false
+	}
+	if rec.Status == sessionStatusPreparing {
+		s.failOrphanedPreparingSessionLocked(st, rec.ID, now)
+		rec, _ = st.get(rec.ID)
+		if rec.Status == sessionStatusPreparing {
+			jsonError(w, "session is still being prepared; close it once it is running or failed", http.StatusConflict)
+			return rec, actor, false
+		}
+	}
+	if rec.Status == sessionStatusRunning && !s.claimSessionCloseLocked(st, rec) {
+		jsonError(w, "the session is already closing; try again", http.StatusConflict)
+		return rec, actor, false
+	}
+	return rec, actor, true
+}
+
 // handleSessionDelete closes a running session (tmux is killed and the record
 // is kept, marked ended, so the session can be resumed where the vendor
 // supports it; with ?remove=true it is then deleted as well). On an ended or
@@ -217,30 +286,17 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rec, actor, ok := s.sessionForMutation(w, r, st)
+	now := time.Now().UTC().Format(time.RFC3339)
+	rec, actor, ok := s.sessionForDelete(w, r, st, now)
 	if !ok {
 		return
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	if rec.Status == sessionStatusPreparing {
-		// A record left `preparing` by a restart has no start behind it: it
-		// is failed here rather than on the next list, so it can be deleted.
-		s.failOrphanedPreparingSession(st, rec.ID, now)
-		if rec, ok = st.get(rec.ID); !ok {
-			jsonError(w, "session not found", http.StatusNotFound)
-			return
-		}
-		if rec.Status == sessionStatusPreparing {
-			// A start is in flight; the record changes under it as soon as
-			// it finishes, so the client is asked to come back then.
-			jsonError(w, "session is still being prepared; close it once it is running or failed", http.StatusConflict)
-			return
-		}
-	}
+	var outcome sessionDeleteOutcome
+	var cur sessionRecord
+	var err error
 	if rec.Status == sessionStatusRunning {
-		// Capture the resume handle before the tmux server goes away.
-		s.markSessionEnded(rt, st, rec, now)
-		if err := rt.Kill(rec.ID); err != nil {
+		if err := s.stopSession(rt, st, rec, now); err != nil {
+			s.releaseSessionClose(st, rec.ID)
 			reason := redactTokens(err.Error())
 			if s.logger != nil {
 				s.logger.Warn("sessions: kill failed", "id", rec.ID, "user", actor.user, "error", reason)
@@ -254,11 +310,18 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		s.auditSession(actor.user, auditSessionClosed, auditDetail("session", rec.ID))
 		if r.URL.Query().Get(sessionDeleteRemoveParam) != "true" {
+			s.releaseSessionClose(st, rec.ID)
 			jsonResponse(w, map[string]any{"ok": true})
 			return
 		}
+		// Hand the claim to Delete before Resume can see an ended session.
+		s.sessionsMu.Lock()
+		delete(st.closing, rec.ID)
+		outcome, cur, err = s.beginSessionDeleteLocked(rt, st, rec.ID, actor.user, sessionDeleteReasonRequest, sessionStatusEnded)
+		s.sessionsMu.Unlock()
+	} else {
+		outcome, cur, err = s.beginSessionDelete(rt, st, rec.ID, actor.user, sessionDeleteReasonRequest, "")
 	}
-	outcome, cur, err := s.beginSessionDelete(rt, st, rec.ID, actor.user, sessionDeleteReasonRequest, "")
 	switch outcome {
 	case sessionDeleteDone:
 		jsonResponse(w, map[string]any{"ok": true, "removed": true})

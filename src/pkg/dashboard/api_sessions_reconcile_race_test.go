@@ -1,8 +1,11 @@
 package dashboard
 
 import (
+	"net/http"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux"
 )
 
 // The interleaving behind the false "the hive restarted while this session was
@@ -87,5 +90,46 @@ func TestSessionsReconcileFailsOnlyAnOrphanedPreparingRecord(t *testing.T) {
 	}
 	if rec, _ := st.get(resumed); rec.Status != sessionStatusEnded || rec.Error != sessionRestartedWhilePreparing {
 		t.Errorf("orphaned resume = %q (%q), want ended with the restart reason", rec.Status, rec.Error)
+	}
+}
+
+type sessionStaleProbeRuntime struct {
+	SessionRuntime
+	afterProbe func()
+}
+
+func (rt *sessionStaleProbeRuntime) Probe(id string) crux.UserSessionProbe {
+	p := rt.SessionRuntime.Probe(id)
+	if rt.afterProbe != nil {
+		hook := rt.afterProbe
+		rt.afterProbe = nil
+		hook()
+	}
+	return p
+}
+
+func TestSessionsReconcileRechecksProbeAfterResume(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	id := e.create(t, callerRW, "stale probe")
+	st := e.s.sessionStoreOrNil()
+	e.rt.mu.Lock()
+	delete(e.rt.alive, id)
+	e.rt.resume[id] = crux.UserSessionResume{SessionID: "abc", Command: "claude --resume abc"}
+	e.rt.mu.Unlock()
+	rt := &sessionStaleProbeRuntime{SessionRuntime: e.rt, afterProbe: func() {
+		path := "/api/sessions/" + id
+		if got := e.statusOf(t, callerRW, http.MethodDelete, path, nil); got != http.StatusOK {
+			t.Fatalf("close = %d, want 200", got)
+		}
+		if got := e.statusOf(t, callerRW, http.MethodPost, path+"/resume", nil); got != http.StatusAccepted {
+			t.Fatalf("Resume = %d, want 202", got)
+		}
+		e.waitSettled(t, id)
+	}}
+	if probes := e.s.reconcileSessions(rt, st); !probes[id].Exists {
+		t.Fatal("a stale probe hid the replacement terminal")
+	}
+	if rec, ok := st.get(id); !ok || rec.Status != sessionStatusRunning {
+		t.Fatalf("record after stale probe = %+v, want running", rec)
 	}
 }
