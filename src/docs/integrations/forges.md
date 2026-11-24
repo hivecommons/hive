@@ -65,7 +65,7 @@ The neutral interface is `forge.Forge` in `src/pkg/forge/forge.go`. Merging is a
 | `GetRepo`, `ListOpenIssues`, `ListOpenChangeRequests` | Yes | Yes | Yes |
 | `CreateIssueComment`, `AddLabels`, `RemoveLabel` | Yes | Yes | Yes |
 | `SetHold` (the `hold` label gate) | Yes | Yes | Yes |
-| `Merge` (`forge.Merger`) | No | Yes: accepts the MR with `merge`, `squash` or `rebase` (rebase, then merge), an optional head-SHA guard and branch removal | No |
+| `Merge` (`forge.Merger`) | No | Yes: accepts the MR with `merge`, `squash` or `rebase` (rebase, then merge), an optional head-SHA guard and branch removal | Yes: with a hold gate and an optional head-SHA guard, run against a real Forgejo by the nightly smoke workflow |
 | `CreateIssue`, `FindIssueByMarker` | Yes | No | No |
 
 The GitLab merge maps forge errors onto shared ones: an MR with the `hold` label returns `ErrHoldActive`; HTTP 405 returns `ErrNotMergeable`; 406 returns `ErrAlreadyMerged`; 409 returns `ErrConflict`. No production caller merges through `forge.Merger` yet. Routing the merge gate, stage engine and attribution trailer by forge kind is [#14113](https://github.com/hivecommons/hive/issues/14113).
@@ -91,7 +91,7 @@ Each adapter has unit tests against a fake HTTP server (`src/pkg/forge/*_test.go
 ## Gaps
 
 - Enumeration, the stage engine and the merge gate are GitHub-only ([#14113](https://github.com/hivecommons/hive/issues/14113), [#14096](https://github.com/hivecommons/hive/issues/14096)).
-- Gitea and Forgejo have no merge yet. No adapter can open a change request.
+- No adapter can open a change request.
 - There is no GitLab or Gitea webhook receiver, dashboard login provider or egress-proxy rule table.
 
-The complete list is in [What full support would require](../forge-app-setup.md#what-full-support-would-require).
+The complete list is in [What full support would require](../forge-app-setup.md#what-full-support-would-require). For Forgejo specifically, what works on v5 and what is in progress is on [Forgejo](forgejo.md).
