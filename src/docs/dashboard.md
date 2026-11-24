@@ -507,7 +507,10 @@ strip is switched off.
 
 The equation is an exact partition: every open issue and pull request counts in
 the first term it matches, so the issue equation and the PR equation each sum to
-their open counts. The terms, in the order they are tried:
+their open counts. With the Overview card the term tiles count the card's
+groups instead, and the Your turn tile is named **Needs a person** (key
+`your-turn`); see [Overview](dashboard-sections/overview-and-metrics.md#overview).
+The terms, in the order they are tried:
 
 1. **Your turn** — every item the server decided is waiting on a person (the
    N plus M of the Projects inbox), including held, parked, outside and
@@ -543,8 +546,8 @@ hold-adjacent/other remainder rows. See [Outside buckets](#outside-buckets)
 for the bucket-by-bucket rules and [labels-and-control-signals.md](labels-and-control-signals.md)
 for the label semantics behind hold, exempt, and hard-suppress signals. Its
 `actionableNow.issues` and `actionableNow.prs` splits always sum to
-`actionableNow.total`. Clicking the **Your turn** tile filters Projects to the
-items it counts; no tile or filter on the Overview is labelled
+`actionableNow.total`. Clicking the **Your turn** tile (**Needs a person** with
+the Overview card) filters Projects to the items it counts; no tile or filter on the Overview is labelled
 blocked/needs-human any more.
 
 Operators can view each Issues or PRs panel as a donut, pie, horizontal bar,
@@ -616,7 +619,8 @@ and on the issue export `card_churn_prs`, the pull requests behind an issue
 churn row (empty on every other row; in the CSV, `owner/repo#N state link`
 entries separated by `;`).
 The `card_band` and `card_group` query filters (repeatable) keep only the rows
-in those card bands or groups, and the `.json` exports add `card_bands[]`,
+in those card bands or groups (`card_group=your-turn` is the **Needs a person**
+tile), and the `.json` exports add `card_bands[]`,
 `card_groups[]` and `card_remainder`, counted over the rows returned (an item
 listed twice counts once; `card_remainder` is 0 when the export filters rows).
 Cookie sessions work directly; token-authenticated
