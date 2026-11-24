@@ -1,1 +1,0 @@
-- A self-hosted spoke can turn off GitHub sign-in with `dashboard.github_sign_in: false`: its login page then shows a "Sign in through the hub" link (to `dashboard.hub_sign_in_url`, else `hub.url`) instead of the GitHub button, and `/api/gh-user-auth/start` and `/poll` refuse with an error that names the setting (#19618).
