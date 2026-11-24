@@ -75,6 +75,9 @@ func TestAuthorizeBulkHivePerHive(t *testing.T) {
 	bulkSeedHive(t, "hosted-alice", "alice")
 	bulkSeedHive(t, "hosted-bob", "bob")
 	bulkSeedUser(t, hubAdminUsername)
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "co-owner", Hives: map[string]string{"hosted-bob": "owner"}}); err != nil {
+		t.Fatal(err)
+	}
 
 	tests := []struct {
 		name    string
@@ -85,6 +88,7 @@ func TestAuthorizeBulkHivePerHive(t *testing.T) {
 	}{
 		{"owner may act on own hive", "hosted-alice", "alice", true, ""},
 		{"owner may not act on another user's hive", "hosted-bob", "alice", false, "not authorized for this hive"},
+		{"granted owner may not bulk restart the hive", "hosted-bob", "co-owner", false, "not authorized for this hive"},
 		{"hub admin may act on any hive", "hosted-bob", hubAdminUsername, true, ""},
 		{"unknown hive is refused", "hosted-ghost", "alice", false, "hive not found"},
 		{"unauthenticated caller is refused", "hosted-alice", "", false, "not authenticated"},
@@ -93,7 +97,7 @@ func TestAuthorizeBulkHivePerHive(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			h, why := authorizeBulkHive(tc.hiveID, tc.caller)
+			h, why := authorizeBulkHive(tc.hiveID, tc.caller, bulkActionRestart)
 			gotOK := h != nil
 			if gotOK != tc.wantOK {
 				t.Fatalf("authorizeBulkHive(%q,%q) ok=%v, want %v (reason %q)",
@@ -113,11 +117,23 @@ func TestAuthorizeBulkHivePerHive(t *testing.T) {
 func TestBulkHandlerRejectsNonOwnerPerHive(t *testing.T) {
 	srv := bulkTestHub(t)
 	bulkSeedHive(t, "hosted-mine", "mallory")
-	bulkSeedHive(t, "hosted-yours", "victim")
+	victim := &SaaSHive{
+		ID:                   "hosted-yours",
+		Owner:                "victim",
+		AutoUpgrade:          true,
+		AutoUpgradeMode:      AutoUpgradeModeDaily,
+		AutoUpgradeLastFired: "2026-11-24",
+	}
+	if err := saveSaaSHive(victim); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "mallory", Hives: map[string]string{victim.ID: "read-write"}}); err != nil {
+		t.Fatal(err)
+	}
 
 	w, out := bulkPost(t, srv, "mallory", BulkHiveRequest{
-		Action:  bulkActionDisableAutoUpgrade,
-		HiveIDs: []string{"hosted-mine", "hosted-yours"},
+		Action:  bulkActionWeeklyAutoUpgrade,
+		HiveIDs: []string{"hosted-mine", victim.ID},
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
@@ -139,10 +155,9 @@ func TestBulkHandlerRejectsNonOwnerPerHive(t *testing.T) {
 	if !strings.Contains(byID["hosted-yours"].Error, "not authorized") {
 		t.Errorf("want authorization error, got %q", byID["hosted-yours"].Error)
 	}
-	// The victim's stored preference must be untouched.
-	victim := loadSaaSHive("hosted-yours")
-	if victim == nil || victim.AutoUpgrade {
-		t.Error("victim hive was mutated by an unauthorized bulk request")
+	if got := loadSaaSHive(victim.ID); got == nil || got.AutoUpgrade != victim.AutoUpgrade ||
+		got.AutoUpgradeMode != victim.AutoUpgradeMode || got.AutoUpgradeLastFired != victim.AutoUpgradeLastFired {
+		t.Errorf("unauthorized bulk request changed the victim's upgrade settings: %+v", got)
 	}
 }
 
@@ -307,21 +322,25 @@ func TestBulkActionValidation(t *testing.T) {
 	}
 }
 
-// TestBulkAutoUpgradePersists confirms the enable/disable actions actually
-// write through to the SaaS store — the same persistence handleToggleAutoUpgrade
-// relies on, which is what the spoke reads on its next heartbeat.
+// TestBulkAutoUpgradePersists verifies that the bulk upgrade settings write
+// through to the SaaS store, which the spoke reads on its next heartbeat.
 func TestBulkAutoUpgradePersists(t *testing.T) {
 	srv := bulkTestHub(t)
 	bulkSeedHive(t, "hosted-p1", "alice")
-	bulkSeedHive(t, "hosted-p2", "alice")
+	bulkSeedHive(t, "hosted-p2", "bob")
+	if err := saveSaaSUser(&SaaSUser{GitHubUsername: "alice", Hives: map[string]string{"hosted-p2": "owner"}}); err != nil {
+		t.Fatal(err)
+	}
 	ids := []string{"hosted-p1", "hosted-p2"}
 
 	for _, tc := range []struct {
-		action string
-		want   bool
+		action   string
+		want     bool
+		wantMode string
 	}{
-		{bulkActionEnableAutoUpgrade, true},
-		{bulkActionDisableAutoUpgrade, false},
+		{bulkActionEnableAutoUpgrade, true, AutoUpgradeModeInstant},
+		{bulkActionWeeklyAutoUpgrade, true, AutoUpgradeModeWeekly},
+		{bulkActionDisableAutoUpgrade, false, AutoUpgradeModeInstant},
 	} {
 		t.Run(tc.action, func(t *testing.T) {
 			w, _ := bulkPost(t, srv, "alice", BulkHiveRequest{Action: tc.action, HiveIDs: ids})
@@ -336,8 +355,36 @@ func TestBulkAutoUpgradePersists(t *testing.T) {
 				if h.AutoUpgrade != tc.want {
 					t.Errorf("%s AutoUpgrade = %v, want %v", id, h.AutoUpgrade, tc.want)
 				}
+				if h.AutoUpgradeMode != tc.wantMode {
+					t.Errorf("%s AutoUpgradeMode = %q, want %q", id, h.AutoUpgradeMode, tc.wantMode)
+				}
 			}
 		})
+	}
+}
+
+func TestBulkWeeklyAutoUpgradeRepeatPreservesLastFired(t *testing.T) {
+	srv := bulkTestHub(t)
+	bulkSeedUser(t, "alice")
+	h := &SaaSHive{
+		ID:                   "hosted-weekly",
+		Owner:                "alice",
+		AutoUpgrade:          true,
+		AutoUpgradeMode:      AutoUpgradeModeWeekly,
+		AutoUpgradeLastFired: "2026-11-24",
+	}
+	if err := saveSaaSHive(h); err != nil {
+		t.Fatal(err)
+	}
+	w, out := bulkPost(t, srv, "alice", BulkHiveRequest{Action: bulkActionWeeklyAutoUpgrade, HiveIDs: []string{h.ID}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	if results := bulkResults(t, out); len(results) != 1 || !results[0].Ok {
+		t.Fatalf("weekly save failed: %+v", results)
+	}
+	if got := loadSaaSHive(h.ID); got == nil || got.AutoUpgradeLastFired != h.AutoUpgradeLastFired {
+		t.Errorf("repeat save lost the weekly fire date: %+v", got)
 	}
 }
 
