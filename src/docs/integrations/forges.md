@@ -92,7 +92,15 @@ When `project.forge` is `gitlab`, `gitea` or `forgejo` and no `project.repo_poli
 - A repository whose listing fails is marked stale. If every repository fails, the cycle keeps its previous snapshot.
 - The cycle runs with no GitHub client, even when one is configured. CI status, mergeability, review signals and dependency links are GitHub enrichments, so they stay unknown.
 
-A hive with any repository on GitHub keeps the GitHub enumeration unchanged. In such a mixed hive, a repository on another forge is still enumerated through GitHub and finds nothing. Agents also reach their forge through the `gh` CLI wrapper, not through `pkg/forge`. [Why: the agent execution path is GitHub-only](../forge-app-setup.md#why-the-agent-execution-path-is-github-only) explains this.
+A hive with every repository on GitHub keeps the GitHub enumeration unchanged.
+
+A mixed hive has repositories on GitHub and at least one on GitLab, Gitea or Forgejo ([#19703](https://github.com/hivecommons/hive/issues/19703)). It enumerates through the GitHub client first. The GitHub result's share for each non-GitHub repository is then dropped: its items, counts, patches and stale mark. Each such repository that is not paused is then listed through its forge adapter with the gates above, and the result is merged in.
+
+- If a forge listing fails, that repository is marked stale with a zero count, and the GitHub share of the pass is kept.
+- If the GitHub enumeration itself fails, the cycle keeps its previous snapshot, as on a GitHub hive.
+- CI status and workflow approval enrichment run only on PRs that live on GitHub. A change request on another forge keeps unknown CI and mergeability.
+
+Agent PR and issue requests for a non-GitHub repository in a mixed hive still go to the GitHub relays, and agents still reach their forge through the `gh` CLI wrapper, not through `pkg/forge`. [Why: the agent execution path is GitHub-only](../forge-app-setup.md#why-the-agent-execution-path-is-github-only) explains this.
 
 ## Dashboard behavior
 
@@ -105,7 +113,7 @@ Each adapter has unit tests against a fake HTTP server (`src/pkg/forge/*_test.go
 
 ## Gaps
 
-- Enumeration through the forge covers only forge-only hives. The stage engine, the advisory report and the merge gate are GitHub-only ([#14113](https://github.com/hivecommons/hive/issues/14113), [#14096](https://github.com/hivecommons/hive/issues/14096)).
+- Enumeration through the forge covers forge-only hives and the non-GitHub repositories of a mixed hive. Agent request routing for a mixed hive is not done yet ([#19703](https://github.com/hivecommons/hive/issues/19703)). The stage engine, the advisory report and the merge gate are GitHub-only ([#14113](https://github.com/hivecommons/hive/issues/14113), [#14096](https://github.com/hivecommons/hive/issues/14096)).
 - No adapter can open a change request.
 - There is no GitLab or Gitea webhook receiver, dashboard login provider or egress-proxy rule table.
 

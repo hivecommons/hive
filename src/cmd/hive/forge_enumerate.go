@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -27,8 +28,10 @@ import (
 // dependency links) are not available, so those fields stay at their
 // "unknown" zero values.
 //
-// GitHub hives, and hives that mix GitHub and other forges, never reach this
-// file: the eval cycle calls it only when config.AllReposOffGitHub is true.
+// A GitHub-only hive never reaches this file. A hive that mixes GitHub and
+// another forge (hivecommons/hive#19703) enumerates through the GitHub client
+// first; mergeForgeIntoGitHubResult then replaces each non-GitHub repo's share
+// of that result with the share its own forge reports.
 
 // forgeLister is the read half of forge.Forge that work discovery needs.
 type forgeLister interface {
@@ -240,13 +243,25 @@ func enumerateForgeRepo(ctx context.Context, lister forgeLister, repo string, ga
 // state instead of reporting an empty queue, the same rule the GitHub path
 // follows.
 func enumerateForgeActionable(ctx context.Context, cfg *config.Config, logger *slog.Logger) (*github.ActionableResult, error) {
+	repos := forgeEnumerationRepos(cfg)
+	result, failed, lastErr := enumerateForgeRepos(ctx, cfg, repos, logger)
+	if len(repos) > 0 && failed >= len(repos) {
+		return nil, fmt.Errorf("all %d repos failed to enumerate on their forge (last error: %w)", len(repos), lastErr)
+	}
+	return result, nil
+}
+
+// enumerateForgeRepos lists repos through their forge adapters. A repo whose
+// listing fails gets a zero count and is marked stale; the caller decides
+// what a pass in which every repo failed means. It returns the number of
+// failed repos and the last failure.
+func enumerateForgeRepos(ctx context.Context, cfg *config.Config, repos []string, logger *slog.Logger) (*github.ActionableResult, int, error) {
 	now := time.Now()
 	result := &github.ActionableResult{
 		GeneratedAt: now,
 		TotalByRepo: map[string]github.RepoCounts{},
 	}
 	gate := newForgeIssueGate(cfg)
-	repos := forgeEnumerationRepos(cfg)
 
 	var (
 		issues  []github.Issue
@@ -277,9 +292,6 @@ func enumerateForgeActionable(ctx context.Context, cfg *config.Config, logger *s
 		logger.Warn("forge enumeration failed for repo; skipping it this pass (marked stale)",
 			"repo", repo, "forge", cfg.ForgeKindForRepo(repo), "error", err)
 	}
-	if len(repos) > 0 && failed >= len(repos) {
-		return nil, fmt.Errorf("all %d repos failed to enumerate on their forge (last error: %w)", len(repos), lastErr)
-	}
 	if len(result.StaleRepos) > 0 {
 		// Nothing was served from a last-good copy: the stale repos have no
 		// data at all, current as of this pass.
@@ -291,29 +303,202 @@ func enumerateForgeActionable(ctx context.Context, cfg *config.Config, logger *s
 	github.SortPullRequestsForReview(heldPRs)
 	github.SortHoldItemsForReview(held)
 
-	holdIssues := 0
-	for _, h := range held {
-		if h.Type == "issue" {
-			holdIssues++
-		}
-	}
 	result.Issues = github.IssueResultFromItems(issues)
 	result.PRs = github.PRResult{Count: len(prs), Items: prs, Held: heldPRs}
-	result.Hold = github.HoldResult{
-		Issues: holdIssues,
-		PRs:    len(held) - holdIssues,
-		Total:  len(held),
-		Items:  held,
-	}
-	return result, nil
+	setHoldItems(result, held)
+	return result, failed, lastErr
 }
 
-// enumerateActionableForCycle is the eval cycle's enumeration step. A hive
-// with any repo on GitHub takes the GitHub client path exactly as before; only
-// a forge-only hive enumerates through pkg/forge.
+// enumerateActionableForCycle is the eval cycle's enumeration step. A
+// GitHub-only hive takes the GitHub client path exactly as before; a
+// forge-only hive enumerates through pkg/forge; a mixed hive enumerates
+// through the GitHub client and then serves its non-GitHub repos from their
+// own forge.
 func enumerateActionableForCycle(ctx context.Context, cfg *config.Config, ghClient *github.Client, logger *slog.Logger) (*github.ActionableResult, error) {
 	if cfg.AllReposOffGitHub() {
 		return enumerateForgeActionable(ctx, cfg, logger)
 	}
-	return ghClient.EnumerateActionable(ctx)
+	result, err := ghClient.EnumerateActionable(ctx)
+	if err != nil || !hiveMixesForges(cfg) {
+		return result, err
+	}
+	return mergeForgeIntoGitHubResult(ctx, cfg, result, logger), nil
+}
+
+// hiveMixesForges reports whether the hive has repos on GitHub and at least one
+// configured repo on another forge. It is false for a GitHub-only hive, so
+// every mixed-hive step below leaves such a hive untouched.
+func hiveMixesForges(cfg *config.Config) bool {
+	if cfg == nil || cfg.AllReposOffGitHub() {
+		return false
+	}
+	for _, repo := range cfg.Project.Repos {
+		if !cfg.RepoOnGitHub(repo) {
+			return true
+		}
+	}
+	return false
+}
+
+// mergeForgeIntoGitHubResult replaces every non-GitHub repo's share of a
+// mixed hive's GitHub enumeration with the share its own forge reports. The
+// GitHub client lists every configured repo, so a Forgejo, Gitea or GitLab
+// repo comes back empty, failed or, worse, as a same-named GitHub repo; that
+// share is dropped first. A forge repo whose listing fails is reported with a
+// zero count and marked stale, as on a forge-only hive; the GitHub share of
+// the pass is kept either way.
+func mergeForgeIntoGitHubResult(ctx context.Context, cfg *config.Config, result *github.ActionableResult, logger *slog.Logger) *github.ActionableResult {
+	if result == nil {
+		return nil
+	}
+	dropOffGitHubRepos(cfg, result)
+
+	var repos []string
+	for _, repo := range forgeEnumerationRepos(cfg) {
+		if !cfg.RepoOnGitHub(repo) {
+			repos = append(repos, repo)
+		}
+	}
+	if len(repos) == 0 {
+		return result
+	}
+	forgeResult, _, _ := enumerateForgeRepos(ctx, cfg, repos, logger)
+
+	issues := append(result.Issues.Items, forgeResult.Issues.Items...)
+	prs := append(result.PRs.Items, forgeResult.PRs.Items...)
+	heldPRs := append(result.PRs.Held, forgeResult.PRs.Held...)
+	held := append(result.Hold.Items, forgeResult.Hold.Items...)
+	github.RankActionableIssues(issues)
+	github.SortPullRequestsForReview(prs)
+	github.SortPullRequestsForReview(heldPRs)
+	github.SortHoldItemsForReview(held)
+
+	result.Issues = github.IssueResultFromItems(issues)
+	result.PRs.Count, result.PRs.Items, result.PRs.Held = len(prs), prs, heldPRs
+	setHoldItems(result, held)
+
+	if result.TotalByRepo == nil {
+		result.TotalByRepo = map[string]github.RepoCounts{}
+	}
+	for repo, counts := range forgeResult.TotalByRepo {
+		result.TotalByRepo[repo] = counts
+	}
+	if len(forgeResult.StaleRepos) > 0 {
+		result.StaleRepos = append(result.StaleRepos, forgeResult.StaleRepos...)
+		if result.StaleSince.IsZero() || forgeResult.StaleSince.Before(result.StaleSince) {
+			result.StaleSince = forgeResult.StaleSince
+		}
+	}
+	return result
+}
+
+// dropOffGitHubRepos removes every item, count and stale mark the GitHub
+// client reported for a repo that lives on another forge.
+func dropOffGitHubRepos(cfg *config.Config, result *github.ActionableResult) {
+	onGitHub := cfg.RepoOnGitHub
+	result.Issues = github.IssueResultFromItems(keepGitHubItems(result.Issues.Items, func(i github.Issue) string { return i.Repo }, onGitHub))
+	prRepo := func(pr github.PullRequest) string { return pr.Repo }
+	result.PRs.Items = keepGitHubItems(result.PRs.Items, prRepo, onGitHub)
+	result.PRs.Count = len(result.PRs.Items)
+	result.PRs.Held = keepGitHubItems(result.PRs.Held, prRepo, onGitHub)
+	result.PRs.Attributed = keepGitHubItems(result.PRs.Attributed, prRepo, onGitHub)
+	result.PRs.StaleDrafts = keepGitHubItems(result.PRs.StaleDrafts, prRepo, onGitHub)
+	setHoldItems(result, keepGitHubItems(result.Hold.Items, func(h github.HoldItem) string { return h.Repo }, onGitHub))
+
+	for repo := range result.TotalByRepo {
+		if !onGitHub(repo) {
+			delete(result.TotalByRepo, repo)
+		}
+	}
+	for repo := range result.WorkBreakdownByRepo {
+		if !onGitHub(repo) {
+			delete(result.WorkBreakdownByRepo, repo)
+		}
+	}
+	for repo := range result.WorkDetailsByRepo {
+		if !onGitHub(repo) {
+			delete(result.WorkDetailsByRepo, repo)
+		}
+	}
+	patchRepoOnGitHub := func(key string) bool {
+		repo, _, _ := strings.Cut(key, "#")
+		return onGitHub(repo)
+	}
+	for key := range result.ItemPatches {
+		if !patchRepoOnGitHub(key) {
+			delete(result.ItemPatches, key)
+		}
+	}
+	for key := range result.WebhookPatches {
+		if !patchRepoOnGitHub(key) {
+			delete(result.WebhookPatches, key)
+		}
+	}
+	if len(result.StaleRepos) > 0 {
+		result.StaleRepos = keepGitHubItems(result.StaleRepos, func(r string) string { return r }, onGitHub)
+		if len(result.StaleRepos) == 0 {
+			// Only the dropped repos were stale; the GitHub share is current.
+			result.StaleRepos = nil
+			result.StaleSince = time.Time{}
+		}
+	}
+}
+
+// keepGitHubItems returns the items whose repo is on GitHub, preserving order.
+// A nil or empty input is returned as is.
+func keepGitHubItems[T any](items []T, repoOf func(T) string, onGitHub func(string) bool) []T {
+	if len(items) == 0 {
+		return items
+	}
+	out := make([]T, 0, len(items))
+	for _, it := range items {
+		if onGitHub(repoOf(it)) {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// setHoldItems stores held items and recomputes the hold counts from them.
+func setHoldItems(result *github.ActionableResult, held []github.HoldItem) {
+	issues := 0
+	for _, h := range held {
+		if h.Type == "issue" {
+			issues++
+		}
+	}
+	result.Hold = github.HoldResult{
+		Issues: issues,
+		PRs:    len(held) - issues,
+		Total:  len(held),
+		Items:  held,
+	}
+}
+
+// enrichGitHubPRs runs a GitHub enrichment step (CI status, workflow
+// approvals) on the PRs that live on GitHub. On a GitHub-only hive it hands
+// enrich the slice itself, exactly as before. On a mixed hive it passes only
+// the GitHub PRs and writes the enriched copies back in place, so a PR on
+// another forge keeps its "unknown" CI and mergeability instead of a GitHub
+// lookup of a repo that is not there.
+func enrichGitHubPRs(cfg *config.Config, prs []github.PullRequest, enrich func([]github.PullRequest)) {
+	if !hiveMixesForges(cfg) {
+		enrich(prs)
+		return
+	}
+	idx := make([]int, 0, len(prs))
+	sub := make([]github.PullRequest, 0, len(prs))
+	for i, pr := range prs {
+		if cfg.RepoOnGitHub(pr.Repo) {
+			idx = append(idx, i)
+			sub = append(sub, pr)
+		}
+	}
+	if len(sub) == 0 {
+		return
+	}
+	enrich(sub)
+	for j, i := range idx {
+		prs[i] = sub[j]
+	}
 }
