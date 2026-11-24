@@ -26,6 +26,7 @@ type fakeAPI struct {
 	pulls     map[int]forge.PullFacts
 	pullErr   map[int]error
 	labeler   map[int]string
+	pushed    map[int]bool // a push followed the label
 	labelErr  error
 	perms     map[string]string
 	permErr   error
@@ -59,9 +60,9 @@ func (f *fakeAPI) PullFacts(_ context.Context, _ string, n int) (forge.PullFacts
 	}
 	return f.pulls[n], nil
 }
-func (f *fakeAPI) LabelLastAddedBy(_ context.Context, _ string, n int, _ string) (string, bool, error) {
+func (f *fakeAPI) LabelLastAdded(_ context.Context, _ string, n int, _ string) (forge.LabelAdd, bool, error) {
 	l, ok := f.labeler[n]
-	return l, ok, f.labelErr
+	return forge.LabelAdd{Login: l, PushedAfter: f.pushed[n]}, ok, f.labelErr
 }
 func (f *fakeAPI) Permission(_ context.Context, _, login string) (string, error) {
 	return f.perms[login], f.permErr
@@ -181,6 +182,7 @@ func TestAutoMergeGates(t *testing.T) {
 		{"timeline error", func(a *fakeAPI, _ *Sweeper) { a.labelErr = errBoom }, "timeline-read-failed"},
 		{"labeler unknown", func(a *fakeAPI, _ *Sweeper) { a.labeler = nil }, "label-adder-unknown"},
 		{"self approved", func(a *fakeAPI, _ *Sweeper) { a.labeler[7] = "HIVE-BOT" }, "self-approved"},
+		{"pushed after label", func(a *fakeAPI, _ *Sweeper) { a.pushed = map[int]bool{7: true} }, "pushed-after-label"},
 		{"permission error", func(a *fakeAPI, _ *Sweeper) { a.permErr = errBoom }, "permission-read-failed"},
 		{"labeler read only", func(a *fakeAPI, _ *Sweeper) { a.perms["maintainer"] = "read" }, "labeler-lacks-write"},
 		{"status error", func(a *fakeAPI, _ *Sweeper) { a.statusErr = errBoom }, "status-read-failed"},

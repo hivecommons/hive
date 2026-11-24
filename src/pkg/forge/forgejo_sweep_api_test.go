@@ -60,10 +60,15 @@ func TestForgejoSweepAPIReads(t *testing.T) {
 		"GET " + repoAPI + "/issues/7/timeline": `[
 			{"type":"label","body":"1","user":{"login":"alice"},"label":{"name":"lgtm"}},
 			{"type":"comment","body":"hi","user":{"login":"bob"}},
+			{"type":"pull_push","body":"{\"is_force_push\":false,\"commit_ids\":[\"abc\"]}","user":{"login":"hive-bot"}},
 			{"type":"label","body":"1","user":{"login":"carol"},"label":{"name":"other"}},
 			{"type":"label","body":"","user":{"login":"dave"},"label":{"name":"LGTM"}},
 			{"type":"label","body":"1","user":{"login":"erin"},"label":{"name":"lgtm"}},
 			{"type":"reopen","user":{"login":"erin"}}]`,
+		"GET " + repoAPI + "/issues/9/timeline": `[
+			{"type":"label","body":"1","user":{"login":"erin"},"label":{"name":"lgtm"}},
+			{"type":"comment","body":"thanks","user":{"login":"hive-bot"}},
+			{"type":"pull_push","body":"{\"is_force_push\":true,\"commit_ids\":[\"abc\",\"def\"]}","user":{"login":"hive-bot"}}]`,
 		"GET " + repoAPI + "/collaborators/erin/permission": `{"permission":"Write"}`,
 		"GET " + repoAPI + "/pulls": `[
 			{"number":3,"title":"t","body":"Fixes #1","merged":true,"merged_at":` + string(mergedJSON) + `,"user":{"login":"hive-bot"},"base":{"ref":"release"}},
@@ -92,12 +97,16 @@ func TestForgejoSweepAPIReads(t *testing.T) {
 	if _, _, err := api.CombinedStatus(ctx, "widgets", " "); err == nil {
 		t.Error("CombinedStatus with no sha: want an error")
 	}
-	login, ok, err := api.LabelLastAddedBy(ctx, "widgets", 7, "lgtm")
-	if err != nil || !ok || login != "erin" {
-		t.Errorf("LabelLastAddedBy = %q %v %v, want erin", login, ok, err)
+	add, ok, err := api.LabelLastAdded(ctx, "widgets", 7, "lgtm")
+	if err != nil || !ok || add != (LabelAdd{Login: "erin"}) {
+		t.Errorf("LabelLastAdded = %+v %v %v, want erin with no push after", add, ok, err)
 	}
-	if _, ok, err := api.LabelLastAddedBy(ctx, "widgets", 7, "missing"); ok || err != nil {
-		t.Errorf("LabelLastAddedBy(missing) ok=%v err=%v", ok, err)
+	add, ok, err = api.LabelLastAdded(ctx, "widgets", 9, "lgtm")
+	if err != nil || !ok || add != (LabelAdd{Login: "erin", PushedAfter: true}) {
+		t.Errorf("LabelLastAdded(pushed after) = %+v %v %v, want erin with a push after", add, ok, err)
+	}
+	if _, ok, err := api.LabelLastAdded(ctx, "widgets", 7, "missing"); ok || err != nil {
+		t.Errorf("LabelLastAdded(missing) ok=%v err=%v", ok, err)
 	}
 	reopened, err := api.IssueReopened(ctx, "widgets", 7)
 	if err != nil || !reopened {
@@ -160,11 +169,11 @@ func TestForgejoSweepAPIErrors(t *testing.T) {
 	if _, _, err := api.CombinedStatus(ctx, "widgets", "abc"); err == nil {
 		t.Error("CombinedStatus: want an error")
 	}
-	if _, _, err := api.LabelLastAddedBy(ctx, "widgets", 7, "lgtm"); err == nil {
-		t.Error("LabelLastAddedBy bad json: want an error")
+	if _, _, err := api.LabelLastAdded(ctx, "widgets", 7, "lgtm"); err == nil {
+		t.Error("LabelLastAdded bad json: want an error")
 	}
-	if _, _, err := api.LabelLastAddedBy(ctx, "widgets", 8, "lgtm"); err == nil {
-		t.Error("LabelLastAddedBy 500: want an error")
+	if _, _, err := api.LabelLastAdded(ctx, "widgets", 8, "lgtm"); err == nil {
+		t.Error("LabelLastAdded 500: want an error")
 	}
 	if _, err := api.IssueReopened(ctx, "widgets", 7); err == nil {
 		t.Error("IssueReopened bad json: want an error")

@@ -136,9 +136,10 @@ func (s *Sweeper) blockedBy(labels []string) string {
 // AutoMerge merges the Forgejo pull requests that pass every gate: the repo
 // has auto-merge on, the PR is open, not a draft and carries the automerge
 // label and no blocking label, the label was last added by someone other
-// than the author who has write access, Forgejo reports the PR mergeable, and
-// the combined commit status at the head is success with at least one
-// status. The merge is pinned to that head (head_commit_id).
+// than the author who has write access and no push to the PR followed it,
+// Forgejo reports the PR mergeable, and the combined commit status at the
+// head is success with at least one status. The merge is pinned to that head
+// (head_commit_id).
 func (s *Sweeper) AutoMerge(ctx context.Context) []MergeOutcome {
 	if s.API == nil || s.AutoMergeEnabled == nil || strings.TrimSpace(s.AutoMergeLabel) == "" {
 		return nil
@@ -211,15 +212,25 @@ func (s *Sweeper) tryMerge(ctx context.Context, api forge.SweepAPI, repo string,
 	if !pr.Mergeable {
 		return skip("not-mergeable")
 	}
-	labeler, ok, err := api.LabelLastAddedBy(ctx, repo, number, s.AutoMergeLabel)
+	// The timeline is read after PullFacts, so a push that lands between
+	// the two shows up as a pull_push here, and one that lands later moves
+	// the head off the pinned HeadSHA and Forgejo refuses the merge.
+	add, ok, err := api.LabelLastAdded(ctx, repo, number, s.AutoMergeLabel)
 	if err != nil {
 		return skip("timeline-read-failed")
 	}
 	if !ok {
 		return skip("label-adder-unknown")
 	}
+	labeler := add.Login
 	if strings.EqualFold(labeler, pr.Author) {
 		return skip("self-approved")
+	}
+	// The label approves the head its adder saw. A push after it, by the
+	// author or anyone else, leaves the new commits unreviewed: a writer
+	// must add the label again.
+	if add.PushedAfter {
+		return skip("pushed-after-label")
 	}
 	perm, err := api.Permission(ctx, repo, labeler)
 	if err != nil {
