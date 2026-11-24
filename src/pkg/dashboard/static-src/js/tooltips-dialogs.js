@@ -565,6 +565,30 @@
       sel.removeAllRanges();
       sel.addRange(range);
     }
+    // Copy button of the export viewer. The outcome goes in the popup's own
+    // status line, not a toast: #toast-container (z-index 10001) sits under
+    // .hive-dialog-overlay (20000) and its blur, so a toast here is unreadable.
+    // Each click clears the last outcome first; a success clears itself.
+    function hiveExportCopy(text, textEl, statusEl) {
+      if (statusEl._hiveExportClear) { clearTimeout(statusEl._hiveExportClear); statusEl._hiveExportClear = 0; }
+      statusEl.textContent = '';
+      const manualCopy = function(msg) {
+        textEl.focus();
+        hiveSelectAllText(textEl);
+        statusEl.textContent = msg;
+        return false;
+      };
+      if (!(navigator.clipboard && navigator.clipboard.writeText)) {
+        return Promise.resolve(manualCopy('The text is selected; press Ctrl+C (or Cmd+C) to copy it.'));
+      }
+      return navigator.clipboard.writeText(text).then(function() {
+        statusEl.textContent = 'Copied to clipboard.';
+        statusEl._hiveExportClear = setTimeout(function() { statusEl._hiveExportClear = 0; statusEl.textContent = ''; }, 4000);
+        return true;
+      }, function() {
+        return manualCopy('Your browser blocked the clipboard. The text is selected; press Ctrl+C (or Cmd+C) to copy it.');
+      });
+    }
     // In-app viewer for text the dashboard hands to the user: a single link
     // (OAuth authorization URLs, terminal URLs, external links) or a text
     // export (JSON, YAML, CSV). No textarea: a link is one full-width,
@@ -592,6 +616,7 @@
             : '<pre class="hive-export-text" tabindex="0" aria-readonly="true"></pre>'}
         </div>
         <div class="hive-dialog-buttons">
+          <p class="hive-export-status muted-xs" role="status" aria-live="polite"></p>
           <button type="button" class="hv-btn btn-ghost hive-dialog-btn hive-export-close">Close</button>
           <button type="button" class="hv-btn btn-secondary hive-export-copy">Copy to clipboard</button>
           <a class="hv-btn btn-primary hive-export-open" target="_blank" rel="noopener noreferrer" hidden>Open in new tab</a>
@@ -624,14 +649,10 @@
         copy.classList.add('btn-primary');
         copy.setAttribute('data-initial-focus', '');
       }
+      const copyStatus = overlay.querySelector('.hive-export-status');
       copy.addEventListener('click', function(e) {
         e.preventDefault();
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(function(){ showToast('Copied ' + title + ' to clipboard', 'success'); }, function(){ textEl.focus(); hiveSelectAllText(textEl); showToast('Clipboard blocked — selected text for manual copy', 'error'); });
-        } else {
-          textEl.focus(); hiveSelectAllText(textEl);
-          showToast('Selected text for manual copy', 'info');
-        }
+        hiveExportCopy(text, textEl, copyStatus);
       });
       document.body.appendChild(overlay);
       // Enter activates the focused action (Open leads with initial focus);
