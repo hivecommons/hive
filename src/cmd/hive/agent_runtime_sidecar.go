@@ -367,6 +367,13 @@ func (h *sidecarHost) SetSandboxGitHubReadRelay(crux.SandboxGitHubReadRelay, []s
 	h.inProcessOnly("SetSandboxGitHubReadRelay")
 }
 
+// SetSandboxInferenceRelay is in-process-only (#19619) for the same reason:
+// Enroll is a Go call into hive's proxy. A sidecar runtime's Job kicks reach
+// inference as they did before the listener existed.
+func (h *sidecarHost) SetSandboxInferenceRelay(crux.SandboxInferenceRelay) {
+	h.inProcessOnly("SetSandboxInferenceRelay")
+}
+
 // SetInferenceRoute and ClearInferenceRoute are cruxhost.InferenceRouter:
 // the callback's end of SetInferenceCallbacks. A route that arrives before
 // boot has installed the closures is dropped and logged; the runtime's

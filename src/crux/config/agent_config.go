@@ -58,11 +58,10 @@ type SandboxJobConfig struct {
 	// and uses 65534 elsewhere, since the hive image's default user is root.
 	RelayRunAsUser   *int64   `yaml:"relay_run_as_user,omitempty" json:"relay_run_as_user,omitempty"`
 	ImagePullSecrets []string `yaml:"image_pull_secrets,omitempty" json:"image_pull_secrets,omitempty"`
-	// GitHubReadProxy routes a Job's GitHub READS through a hive-hosted relay
-	// that attaches a read-only credential the Job never sees (#18865). It is
-	// read from the hive-wide agent_sandbox.job block only; a per-agent job
-	// block cannot enable, disable or repoint it.
+	// GitHubReadProxy (#18865) and InferenceProxy (#19619) are hive-wide Job
+	// listeners, read from agent_sandbox.job only; a per-agent block cannot set them.
 	GitHubReadProxy *SandboxGitHubReadProxy `yaml:"github_read_proxy,omitempty" json:"github_read_proxy,omitempty"`
+	InferenceProxy  *SandboxInferenceProxy  `yaml:"inference_proxy,omitempty" json:"inference_proxy,omitempty"`
 }
 
 // SandboxRuntime returns the per-agent runtime override, then the global
@@ -93,8 +92,8 @@ func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 		return g
 	}
 	out := *a.Sandbox.Job
-	// The read relay is hive-wide: a per-agent block cannot enable it.
-	out.GitHubReadProxy = g.GitHubReadProxy
+	// The Job listeners are hive-wide: a per-agent block cannot enable them.
+	out.GitHubReadProxy, out.InferenceProxy = g.GitHubReadProxy, g.InferenceProxy
 	if strings.TrimSpace(out.WorkspaceClaim) == "" {
 		out.WorkspaceClaim = g.WorkspaceClaim
 	}
