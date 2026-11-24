@@ -82,6 +82,15 @@ func forgeForRepo(cfg *config.Config, repo string, ghClient *github.Client, logg
 		return fallback()
 	}
 
+	// A forge token goes only to its own block's host. A repo_policies
+	// forge_url elsewhere is a config error (Validate rejects it at load); this
+	// covers a config built without Validate. No writer is returned, and no
+	// request is made.
+	if err := cfg.CheckForgeTokenHost(repo); err != nil {
+		logger.Error("forge token withheld; no writer built", "forge", kind, "repo", repo, "error", err)
+		return nil
+	}
+
 	// The token is read from the environment by name, never from config: the
 	// no-hardcoded-secrets rule is why config carries token_env rather than the
 	// secret itself. An empty value is passed through — the forge will reject it
@@ -164,6 +173,10 @@ func forgeMergerForRepo(cfg *config.Config, repo string) (forge.Merger, error) {
 		kind, tokenID = forge.KindForgejo, cfg.Forgejo.TokenEnvName()
 	default:
 		return nil, nil
+	}
+	// A forge token goes only to its own block's host; see CheckForgeTokenHost.
+	if err := cfg.CheckForgeTokenHost(repo); err != nil {
+		return nil, err
 	}
 	return newForgeMerger(kind, os.Getenv(tokenID), forge.Options{
 		BaseURL: cfg.ForgeURLForRepo(repo),
