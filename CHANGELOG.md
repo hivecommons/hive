@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v6.58.7)
+
+### Fixed
+
+- The `auto_merge.human_merge_pin_only` exception now admits an action pin bump whose version comment carries a short note, as long as the note does not change. Renovate keeps the text after a pin's version comment when it rewrites the pin, so a pin annotated like `uses: taiki-e/install-action@<sha> # v2.90.7 (just)`, or carrying a linter suppression such as `# v1 # zizmor: ignore[ref-version-mismatch]`, made every later bump of that line a person's merge with the reason `non-pin or unsafe replacement` ([projectbluefin/dakota-iso#400](https://github.com/projectbluefin/dakota-iso/pull/400)). On a `uses:` line and on an `action-sha-ref` companion line, the version comment may now be followed by whitespace and a note of at most 80 printable ASCII characters with no backtick and no `$`, when the note is byte-identical on the old and the new line and follows a `# vN[.N[.N]]` comment. A note that changes, appears or disappears, a note without a version comment, a longer note and a note holding one of the refused words still hold the pull request. The note is never part of the version: the upstream tag check, the commit checks and the major-version rule are unchanged. There is no new setting.
+
 ## 2026-11-24 (v6.58.6)
 
 ### Changed
