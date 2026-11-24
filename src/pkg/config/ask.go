@@ -13,8 +13,13 @@ import (
 )
 
 // Ask AI help (src/docs/design/dashboard-ask-ai-help.md, #19177): an optional
-// docs-help panel whose backend calls the Kapa.ai Chat API server side. Every
-// key here is OFF by default and inert when unconfigured. The API key is only
+// docs-help panel whose backend calls the Kapa.ai Chat API server side. It is
+// ON by default, in hub mode, for a hosted hive with a hub link and a hive id:
+// such a hive asks through the hub relay and holds no vendor key. Every other
+// hive (self-hosted, standalone, or the hub itself) keeps it OFF by default:
+// direct mode needs the hive's own key file, and the hub relay does not serve
+// registered self-hosted hives yet (#19177). An explicit ask.enabled: false,
+// HIVE_ASK_ENABLED=false or ask.mode: off always wins. The API key is only
 // ever read from a file under the allowed secret dirs; the project id and the
 // integration id come from configuration or env, never from the repo. None of
 // the three is ever logged or returned by an API.
@@ -103,10 +108,13 @@ var askIdentifierPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 
 // AskConfig is the top-level `ask:` block.
 type AskConfig struct {
-	// Enabled is the owner or operator switch. Nil or false is off.
+	// Enabled is the owner or operator switch. False is off. Nil is the
+	// default: on (in hub mode) for a hosted hive with a hub link and a hive
+	// id, off for every other hive.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// Mode is off, direct (this process calls the vendor with its own key)
-	// or hub (a hosted hive calls the hub relay). Empty means off.
+	// or hub (a hosted hive calls the hub relay). Empty means off, except on
+	// a hosted hive with Enabled nil, where it means hub.
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
 	// Kapa holds the vendor identifiers and the key file path.
 	Kapa AskKapaConfig `yaml:"kapa,omitempty" json:"kapa,omitempty"`
@@ -163,10 +171,13 @@ type AskLimits struct {
 // AskSettings is the resolved, effective Ask configuration. It never carries
 // the API key; LoadAskAPIKey reads it at the point of use.
 type AskSettings struct {
-	// Requested is the switch as set; Enabled is whether the feature is
-	// actually on (switched on AND fully configured).
+	// Requested is the switch as set (or as defaulted); Enabled is whether
+	// the feature is actually on (switched on AND fully configured).
 	Requested bool
 	Enabled   bool
+	// Defaulted is true when Requested came from the hosted-hive default
+	// rather than from ask.enabled or HIVE_ASK_ENABLED.
+	Defaulted bool
 	Mode      string
 	// ProjectID, IntegrationID and APIKeyFile are configuration values. They
 	// are never logged, never returned by an API, never put in an error.
@@ -182,18 +193,54 @@ type AskSettings struct {
 	Problem string
 }
 
-// AskSettings resolves the hive's ask block with the process env.
+// AskSettings resolves the hive's ask block with the process env. A hosted
+// hive with a hub link and a hive id gets Ask on in hub mode by default.
 func (c *Config) AskSettings() AskSettings {
 	if c == nil {
 		return ResolveAsk(AskConfig{}, os.Getenv, false)
 	}
-	return ResolveAsk(c.Ask, os.Getenv, false)
+	return ResolveAskWithHostedDefault(c.Ask, os.Getenv, c.AskHostedDefault())
+}
+
+// AskHostedDefault reports whether this hive is one the hub relay serves, so
+// Ask defaults on in hub mode when ask.enabled is unset: hub.hive_type is
+// hosted and both hub.url and hive_id are set. Self-hosted hives registered
+// with a hub are not served by the relay yet (TODO #19177), so they keep the
+// off default.
+func (c *Config) AskHostedDefault() bool {
+	if c == nil {
+		return false
+	}
+	return IsHostedHiveType(c.Hub.HiveType) && strings.TrimSpace(c.Hub.URL) != "" && strings.TrimSpace(c.HiveID) != ""
+}
+
+// IsHostedHiveType reports whether hub.hive_type names a hosted hive.
+func IsHostedHiveType(hiveType string) bool {
+	return strings.EqualFold(strings.TrimSpace(hiveType), HiveTypeHosted)
 }
 
 // ResolveAsk applies env overrides (env wins over hive.yaml, as for the other
 // feature switches) and defaults. onHub forces direct mode: the hub always
-// calls the vendor itself. getenv is os.Getenv in production.
+// calls the vendor itself. getenv is os.Getenv in production. It applies no
+// hosted-hive default; Config.AskSettings does.
 func ResolveAsk(c AskConfig, getenv func(string) string, onHub bool) AskSettings {
+	return resolveAsk(c, getenv, onHub, false)
+}
+
+// ResolveAskWithHostedDefault is ResolveAsk for a hive (never the hub) with
+// the hosted-hive default applied when hostedDefault is true. Settings uses it
+// with a nil getenv to show the hive.yaml view of the switch.
+func ResolveAskWithHostedDefault(c AskConfig, getenv func(string) string, hostedDefault bool) AskSettings {
+	return resolveAsk(c, getenv, false, hostedDefault)
+}
+
+// resolveAsk is ResolveAsk with the hosted-hive default: when hostedDefault
+// is true and neither ask.enabled nor HIVE_ASK_ENABLED says anything, Ask is
+// requested in hub mode when the mode is unset or hub; an unset mode means
+// hub on such a hive even when the switch is set. An explicit mode off (yaml
+// or env) keeps it off and quiet, and an explicit direct mode still needs
+// ask.enabled.
+func resolveAsk(c AskConfig, getenv func(string) string, onHub, hostedDefault bool) AskSettings {
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}
@@ -206,14 +253,27 @@ func ResolveAsk(c AskConfig, getenv func(string) string, onHub bool) AskSettings
 		RelayHives:       strings.ToLower(strings.TrimSpace(c.Relay.Hives)),
 		DisabledHives:    map[string]bool{},
 	}
+	explicit := false
 	if c.Enabled != nil {
-		s.Requested = *c.Enabled
+		s.Requested, explicit = *c.Enabled, true
 	}
 	if v, ok := askBoolEnv(getenv(EnvAskEnabled)); ok {
-		s.Requested = v
+		s.Requested, explicit = v, true
 	}
 	if v := strings.ToLower(strings.TrimSpace(getenv(EnvAskMode))); v != "" {
 		s.Mode = v
+	}
+	if hostedDefault && !onHub {
+		// On a hosted hive an unset mode means hub, so ask.enabled: true
+		// alone works too.
+		if s.Mode == "" {
+			s.Mode = AskModeHub
+		}
+		// Only hub mode takes the default switch: direct needs a key this
+		// hive was never given, and off is an operator's choice.
+		if !explicit && s.Mode == AskModeHub {
+			s.Requested, s.Defaulted = true, true
+		}
 	}
 	if v := strings.TrimSpace(getenv(EnvAskKapaProjectID)); v != "" {
 		s.ProjectID = v

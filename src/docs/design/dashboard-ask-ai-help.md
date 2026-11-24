@@ -52,9 +52,12 @@ Kapa documentation at the time of writing (see [References](#references)).
 5. **Consent is per person, and the switch is per hive (or per hub).** The owner
    or hub operator switch is required and never sufficient; each person
    confirms a plain disclosure before their first question and can withdraw.
-6. **Off by default and inert.** Unconfigured means no route, no panel, no
-   request, no CSP change, no consent prompt. Configured but unreachable means a
-   plain link to the docs.
+6. **Off by default and inert, except on a hosted hive.** Unconfigured means no
+   route, no panel, no request, no CSP change, no consent prompt. Configured but
+   unreachable means a plain link to the docs. Amended by
+   [#19739](https://github.com/hivecommons/hive/issues/19739): a hosted hive
+   with a hub link and a hive id defaults to on in hub mode, since it needs no
+   key of its own (see [Default on for hosted hives](#default-on-for-hosted-hives-19739)).
 7. **Hosted hives use the hub as the relay.** The Kapa key never leaves the hub;
    a hive authenticates to the relay with the per-hive bearer it already has.
    A self-hosted hive with no hub runs direct mode with its own key, or stays off.
@@ -273,7 +276,9 @@ Two gates, both required, the same spirit as the
 [hub consent design](customers-hub-consent.md):
 
 1. **The switch (who may offer it).** On the hub, the hub operator. On a hive,
-   the hive owner. Off by default everywhere. The owner or operator switch is
+   the hive owner. Off by default on the hub and on self-hosted hives; on by
+   default on a hosted hive (#19739), where the owner can switch it off. The
+   owner or operator switch is
    never sufficient: it makes the panel available, it does not consent for
    anyone.
 2. **Per-person consent (who may use it).** Before a person's first question,
@@ -298,14 +303,14 @@ enforces the parts it can: the per-hive allow switch and the quotas.
 
 ## Configuration
 
-Off by default. A new top-level `ask:` block, with env overrides (env wins over
+Off by default, except on a hosted hive (#19739). A new top-level `ask:` block, with env overrides (env wins over
 `hive.yaml`, as with the other feature switches), and a Settings, Features
 toggle with a help mark that names what is sent. Names are proposals.
 
 | Key | Env | Default | Meaning |
 |---|---|---|---|
-| `ask.enabled` | `HIVE_ASK_ENABLED` | `false` | The switch. Off: no route, no panel, no consent prompt, no request, no CSP change. |
-| `ask.mode` | `HIVE_ASK_MODE` | `off` | `off`, `direct` (this process calls the vendor with its own key), or `hub` (a hive calls the hub relay). The hub itself is always `direct`. |
+| `ask.enabled` | `HIVE_ASK_ENABLED` | `true` on a hosted hive with a hub link and a hive id, `false` otherwise | The switch. Off: no route, no panel, no consent prompt, no request, no CSP change. An explicit `false` always wins. |
+| `ask.mode` | `HIVE_ASK_MODE` | `hub` on a hosted hive with a hub link and a hive id, `off` otherwise | `off` (always off, even on a hosted hive), `direct` (this process calls the vendor with its own key), or `hub` (a hive calls the hub relay). The hub itself is always `direct`. |
 | `ask.kapa.project_id` | `HIVE_ASK_KAPA_PROJECT_ID` | unset | The vendor project. Configuration, never in the repo. |
 | `ask.kapa.integration_id` | `HIVE_ASK_KAPA_INTEGRATION_ID` | unset | The vendor integration identifier. Configuration, never in the repo, never logged. |
 | `ask.kapa.api_key_file` | `HIVE_ASK_KAPA_API_KEY_FILE` | unset | Path to the key, under the allowed secret directory, mounted from a Secret. No inline key and no env var holding the key. |
@@ -567,6 +572,35 @@ live before the docs are ready.
   quota to protect; accepted because it keeps the key on the hub.
 - **Vendor shape drift.** The chat response shape was not fully shown in the
   public pages; phase 1 pins it with a contract test.
+
+## Default on for hosted hives (#19739)
+
+The operator asked for Ask Hive on by default wherever it can work without a
+key on the hive. That is a hosted hive: `hub.hive_type: hosted` with `hub.url`
+and `hive_id` set. On such a hive, when neither `ask.enabled` nor
+`HIVE_ASK_ENABLED` is set and the mode is unset or `hub`, Ask resolves as
+requested and on, in hub mode (`Config.AskHostedDefault`, `resolveAsk` in
+`pkg/config/ask.go`).
+
+- **Operator choice wins.** `ask.enabled: false`, `HIVE_ASK_ENABLED=false`,
+  `ask.mode: off` or `HIVE_ASK_MODE=off` keeps it off, quietly. An explicit
+  `ask.mode: direct` without `ask.enabled` is not defaulted on, because direct
+  needs a key the hive was never given.
+- **Consent is unchanged.** The default is the owner switch only; each person
+  still confirms the notice before their first question.
+- **The hub keeps its gates.** The relay still refuses a hive listed in
+  `ask.relay.disabled_hives` (`HIVE_ASK_RELAY_DISABLED_HIVES`), every hive with
+  `ask.relay.hives: none`, and anything that is not a hosted hive. The hub's own
+  switch stays off by default.
+- **Settings shows the default.** Settings, Features shows the **Ask Hive**
+  toggle on, mode `hub`, with "On by default for this hosted hive" when nothing
+  is saved. Switching it off saves an explicit `ask.enabled: false`. The visible
+  label is **Ask Hive** everywhere; the yaml keys are unchanged.
+- **Non-hosted hives stay off by default.** A self-hosted or standalone hive
+  has no key, and the relay does not serve registered self-hosted hives in this
+  round (open question 2, still hosted-only). A hosted hive with no hub link or
+  no hive id gets no default either; switched on in hub mode it stays off with
+  "ask.mode hub needs a hub link (hub.url) and a hive id".
 
 ## Open questions
 

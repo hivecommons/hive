@@ -16,9 +16,10 @@ import (
 )
 
 // Ask AI help on a hive dashboard (phase 4, #19183; design
-// src/docs/design/dashboard-ask-ai-help.md). Off by default. With ask.enabled
-// off, or on but not fully configured, every route answers 404 and nothing is
-// read, stored or sent. Two modes:
+// src/docs/design/dashboard-ask-ai-help.md). On by default, in hub mode, for a
+// hosted hive with a hub link and a hive id; off by default everywhere else.
+// With ask.enabled off, or on but not fully configured, every route answers
+// 404 and nothing is read, stored or sent. Two modes:
 //
 //   - direct: this hive calls Kapa.ai with its own key (a self-hosted hive).
 //   - hub: a hosted hive asks through the hub relay with its per-hive
@@ -64,7 +65,7 @@ func askEffective(cfg *config.Config) (config.AskSettings, string) {
 		return st, st.Problem
 	}
 	if st.Mode == config.AskModeHub {
-		if cfg == nil || cfg.Hub.HiveType != config.HiveTypeHosted {
+		if cfg == nil || !config.IsHostedHiveType(cfg.Hub.HiveType) {
 			return st, askHostedOnlyProblem
 		}
 		if strings.TrimSpace(cfg.Hub.URL) == "" || strings.TrimSpace(cfg.HiveID) == "" {
@@ -308,9 +309,13 @@ func (b featuresAskBody) prepare() (func(*config.Config), error) {
 	}, nil
 }
 
-// featuresAskResponse is the GET side: the saved switch, the effective state
-// and, when off although asked for, why (no values). Settings keys shown in
-// the dialog: ask.enabled, ask.mode, ask.send_section_label; the Kapa values
+// featuresAskResponse is the GET side: the switch as saved or, with nothing
+// saved, as defaulted (on in hub mode for a hosted hive), the effective state
+// and, when off although asked for, why (no values). askEnabled and askMode
+// ignore env, so the dialog can say when HIVE_ASK_ENABLED overrides them;
+// askDefaulted is true when nothing is saved and the hosted default applies.
+// Saving the toggle off persists an explicit ask.enabled: false. Settings
+// keys shown in the dialog: ask.enabled, ask.mode, ask.send_section_label; the Kapa values
 // ask.kapa.project_id, ask.kapa.integration_id and ask.kapa.api_key_file, and
 // the limits ask.limits.person_per_minute, ask.limits.person_per_hour,
 // ask.limits.hive_per_hour, ask.limits.global_per_minute,
@@ -318,12 +323,18 @@ func (b featuresAskBody) prepare() (func(*config.Config), error) {
 func featuresAskResponse(cfg *config.Config) map[string]interface{} {
 	st, problem := askEffective(cfg)
 	saved := false
+	defaulted := false
 	mode := config.AskModeOff
 	label := config.DefaultAskSendSectionLabel
 	if cfg != nil {
-		saved = cfg.Ask.Enabled != nil && *cfg.Ask.Enabled
+		// The hive.yaml view only (no env), with the hosted default.
+		yamlView := config.ResolveAskWithHostedDefault(cfg.Ask, nil, cfg.AskHostedDefault())
+		saved, defaulted = yamlView.Requested, yamlView.Defaulted
 		if m := strings.TrimSpace(cfg.Ask.Mode); m != "" {
 			mode = m
+		} else if cfg.AskHostedDefault() {
+			// An unset mode means hub on a hosted hive.
+			mode = config.AskModeHub
 		}
 		if cfg.Ask.SendSectionLabel != nil {
 			label = *cfg.Ask.SendSectionLabel
@@ -331,6 +342,7 @@ func featuresAskResponse(cfg *config.Config) map[string]interface{} {
 	}
 	return map[string]interface{}{
 		"askEnabled":          saved,
+		"askDefaulted":        defaulted,
 		"askEffective":        st.Enabled && problem == "",
 		"askMode":             mode,
 		"askModeEffective":    st.Mode,
