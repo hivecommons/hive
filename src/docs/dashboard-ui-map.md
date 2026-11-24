@@ -77,6 +77,7 @@ terminal, sign in that agent's CLI (for example Copilot or Claude); see
 | Dashboard | **Overview** | Overview | How many issues and pull requests Hive is tracking right now, and how many of them it can work on. | [Overview](dashboard-sections.md#overview) |
 | Dashboard | **Hive activity monitor** | Hive activity monitor | A progress strip per open issue and pull request showing which step of the pipeline it is on and who must act next. | [Hive activity monitor](dashboard-sections.md#hive-activity-monitor) |
 | Dashboard | **Governor** | Governor | How busy Hive thinks your projects are right now, and how often it wakes its workers as a result. | [Governor](dashboard-sections.md#governor) |
+| Dashboard | **Runs** | Runs | Longer pieces of work Hive is carrying out in stages, and which ones are waiting for you. | [Runs](dashboard-sections.md#runs) |
 | Dashboard | **Throughput** | Throughput | How many pull requests were opened, merged and closed over a chosen time window, and who did the work. | [Throughput](dashboard-sections.md#throughput) |
 | Collaborate | **Inbox** | Inbox | Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge. | [Inbox](dashboard-sections.md#inbox) |
 | Collaborate | **Calendar** | Calendar | Meetings hive will join, about a minute before each starts: add one, approve or decline requests, or skip and cancel. | [Calendar](dashboard-sections.md#calendar) |
@@ -91,6 +92,7 @@ terminal, sign in that agent's CLI (for example Copilot or Claude); see
 | Intelligence | **Advisory** | Advisory | Reports, advice and suggestions Hive has written about your projects and about how it is running. | [Advisory](dashboard-sections.md#advisory) |
 | Intelligence | **ACMM Eval** | ACMM Eval | How ready your repositories are for Hive to work on them alone, scored against a published checklist. | [ACMM Eval](dashboard-sections.md#acmm-eval) |
 | Intelligence | **Knowledge** | Knowledge | The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one. | [Knowledge](dashboard-sections.md#knowledge) |
+| Intelligence | **Search** (only when switched on) | Search | Find past pull requests, issues, review records and findings across your projects by keyword, with a link to each one. | [Search](dashboard-sections.md#search) |
 | Intelligence | **Experiment Lab (nous)** (only when switched on) | Experiment Lab | An experimental planner that tries out code changes in your repositories and records what it learned. | [Experiment Lab](dashboard-sections.md#experiment-lab) |
 | Pull requests | **Review** | Review | Review Pipeline shows pull requests by stage first; Review Queue lists the same open pull requests in Hive's suggested review order. | [Review](dashboard-sections.md#review) |
 | Pull requests | **PR timeline** | PR timeline | A timeline of recent pull requests, from when they were opened to when they were merged or got stuck. | [PR timeline](dashboard-sections.md#pr-timeline) |
@@ -122,16 +124,19 @@ Open **⚙ Settings** in the top bar. The tabs, in the order the dialog shows th
 | **Workflows** | [Settings: Workflows](settings.md#workflows) |
 | **Budget** | [Settings: Budget](settings.md#budget) |
 | **Notifications** | [Settings: Notifications](settings.md#notifications) |
+| **Channels** | [Settings: Channels](settings.md#channels) |
 | **Health** | [Settings: Health](settings.md#health) |
 | **Sensing** | [Settings: Sensing](settings.md#sensing) |
 | **Logging** | [Settings: Logging](settings.md#logging) |
 | **Features** | [Settings: Features](settings.md#features) |
+| **Extensions** | [Dashboard settings explained](settings.md) |
 | **Knowledge** | [Settings: Knowledge](settings.md#knowledge) |
 | **Inbox** | [Settings: Inbox](settings.md#inbox) |
 | **Project Observability** | [Settings: Project Observability](settings.md#project-observability) |
 | **Meetings** | [Settings: Meetings](settings.md#meetings) |
 | **Meeting attendee** | [Settings: Meeting attendee](settings.md#meeting-attendee) |
 | **Advisory** | [Settings: Advisory](settings.md#advisory) |
+| **Smart classifier** | [Dashboard settings explained](settings.md) |
 | **Work Source** | [Settings: Work Source](settings.md#work-source) |
 | **Hub** | [Settings: Hub](settings.md#hub) |
 | **Forge App** | [Settings: Forge App](settings.md#forge-app) |

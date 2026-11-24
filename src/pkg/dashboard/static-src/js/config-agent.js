@@ -54,7 +54,7 @@
     function renderAgentGeneral(g) {
       const agentName = _configState.agent || '';
       const isCreate = _configState.isCreate === true;
-      const onDemand = (_configState.dirty.general?.onDemand ?? g.onDemand) === true;
+      const onDemand = (_configState.dirty?.general?.onDemand ?? g.onDemand) === true;
       // Model options must come from live discovery for THIS agent's backend, not
       // the frozen KNOWN_MODELS placeholder (#3319). Resolve the agent's actual
       // backend from the live agent list; fall back to its pinned backend or an
