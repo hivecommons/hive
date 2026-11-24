@@ -1,0 +1,1 @@
+- Log Slack and Discord webhook rejections with the provider and HTTP status without exposing webhook URLs.

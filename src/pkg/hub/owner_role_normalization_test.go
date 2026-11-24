@@ -63,11 +63,13 @@ func TestMyHivesNormalizesDemotedRoleForTrueOwner(t *testing.T) {
 		t.Fatal("owned-hive missing from my-hives")
 	}
 
-	// The demoted stored role must be healed so the auth proxy and every
-	// other stored-role reader sees owner on the next request too.
+	// owned-hive has no SaaS record, so its registry owner is only what the
+	// spoke's heartbeat reported. My Hives must not persist that as a stored
+	// owner grant, which would hand it hub access rights (#19653); the auth
+	// proxy still elevates it per request through userOwnsHive.
 	u := loadSaaSUser("spoke-owner")
-	if u == nil || u.Hives["owned-hive"] != "owner" {
-		t.Errorf("stored role = %q, want owner (healed)", u.Hives["owned-hive"])
+	if u == nil || u.Hives["owned-hive"] != "read" {
+		t.Errorf("stored role = %q, want read (not healed on a self-registered spoke)", u.Hives["owned-hive"])
 	}
 }
 
