@@ -155,6 +155,25 @@ The `nginx.ingress.kubernetes.io/*` annotations only work with ingress-nginx. Ot
 including F5's NGINX Ingress Controller, ignore them, so set the same body size and timeouts with
 that controller's own options.
 
+**Behavior-based IP blockers.** One dashboard page load requests more than 50 distinct `/api` paths
+within a few seconds, and the dashboard then polls many of them. Rules that count distinct paths or
+requests per client, such as the CrowdSec `crowdsecurity/http-crawl-non_statics` scenario (capacity
+40), can read this as a crawler and ban a signed-in user while the page loads. Some reads also answer
+404 or 503 by design when a feature is off, so rules that count error responses see them too. If you
+run a behavior-based blocker (CrowdSec, fail2ban, a WAF with rate rules) in front of the dashboard,
+exempt the dashboard host or its `/api/` reads from those rules. For CrowdSec reading the Traefik
+access log, a parser whitelist does this; replace the example host with your own:
+
+```yaml
+name: local/hive-dashboard-whitelist
+description: Skip events for the Hive dashboard
+filter: "evt.Meta.service == 'http' && evt.Meta.log_type == 'http_access-log'"
+whitelist:
+  reason: Hive dashboard page loads
+  expression:
+    - evt.Meta.target_fqdn == 'hive.example.com'
+```
+
 #### Quick apply (all manifests)
 
 ```bash
