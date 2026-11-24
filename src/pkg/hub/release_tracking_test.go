@@ -178,3 +178,56 @@ func TestStartBackgroundPollers_ReleaseTrackingDisabled(t *testing.T) {
 		t.Fatalf("release-tracking requests with %s set: %v", hubReleaseTrackingDisableEnv, tracked)
 	}
 }
+
+// TestDiscoveredImageBranchesTagListFailureBacksOff: the token request works
+// but tags/list fails. That must count as a failed lookup (previous answer, 60 s
+// backoff), not as an empty registry cached for imageBranchCacheTTL.
+func TestDiscoveredImageBranchesTagListFailureBacksOff(t *testing.T) {
+	advance := resetImageBranchCache(t)
+	var tagHits int32
+	fakeGitHubGHCR(t, func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/token") {
+			_, _ = w.Write([]byte(`{"token":"anon"}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/tags/list") {
+			atomic.AddInt32(&tagHits, 1)
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	discoveredImageBranches()
+	advance(5 * time.Second)
+	discoveredImageBranches()
+	if n := atomic.LoadInt32(&tagHits); n != 1 {
+		t.Fatalf("tags/list requests inside the backoff = %d, want 1", n)
+	}
+	imageBranchMu.RLock()
+	cached := imageBranchCache
+	imageBranchMu.RUnlock()
+	if cached != nil {
+		t.Fatalf("failed tag list was cached as %v, want nothing cached", cached)
+	}
+	advance(imageBranchFailureBackoff)
+	discoveredImageBranches()
+	if n := atomic.LoadInt32(&tagHits); n != 2 {
+		t.Fatalf("tags/list requests after the backoff = %d, want 2", n)
+	}
+}
+
+// TestStablePromotionStatusReleaseTrackingDisabled: the stable-promotion status
+// makes no GitHub or GHCR request when release tracking is off.
+func TestStablePromotionStatusReleaseTrackingDisabled(t *testing.T) {
+	t.Setenv(hubReleaseTrackingDisableEnv, "true")
+	var hits int32
+	fakeGitHubGHCR(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	s := newTestHubServer("secret")
+	_ = s.stablePromotionStatus(channelTargetPlaceholders())
+	if n := atomic.LoadInt32(&hits); n != 0 {
+		t.Fatalf("requests with release tracking disabled = %d, want 0", n)
+	}
+}

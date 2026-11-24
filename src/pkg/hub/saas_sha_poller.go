@@ -323,7 +323,9 @@ func nextGitHubLink(link string) string {
 
 // listLatestImageBranches queries the GHCR tag list for
 // ghcr.io/hivecommons/hive and returns the branch name of every "<x>-latest"
-// tag (the "<x>" part).
+// tag (the "<x>" part). It returns nil when the token request or any tags/list
+// page fails; a reachable registry with no "-latest" tags returns an empty,
+// non-nil slice.
 func listLatestImageBranches(client *http.Client) []string {
 	tokenResp, err := client.Get(ghcrBase + "/token?scope=repository:hivecommons/hive:pull")
 	if err != nil {
@@ -349,7 +351,7 @@ func listLatestImageBranches(client *http.Client) []string {
 		req.Header.Set("Authorization", "Bearer "+tok.Token)
 		resp, err := client.Do(req)
 		if err != nil {
-			break
+			return nil
 		}
 		var body struct {
 			Tags []string `json:"tags"`
@@ -358,7 +360,10 @@ func listLatestImageBranches(client *http.Client) []string {
 		link := resp.Header.Get("Link")
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusOK || decodeErr != nil {
-			break
+			// A failed tags/list page is a failed lookup, not an empty
+			// registry: nil makes the caller keep its previous answer and back
+			// off instead of caching a partial or empty list for 5 minutes.
+			return nil
 		}
 		for _, t := range body.Tags {
 			if strings.HasSuffix(t, "-latest") {
