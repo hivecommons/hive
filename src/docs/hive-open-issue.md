@@ -10,6 +10,8 @@ server-side, retried with backoff, and deduplicated against open issues by
 title — exact match first, canonical subject as the fallback (see
 [Idempotency](#idempotency)).
 
+The watcher only runs when the hive has a usable GitHub App. On a PAT-only hive, requests stay queued on disk, unprocessed. See [GitHub App setup](github-app-setup.md).
+
 ## Why it exists
 
 The direct path rode the agent's own shell tool, and that path lost work
