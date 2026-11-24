@@ -11,6 +11,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v5.365.4)
+
+### Fixed
+
+- A hive paused through its fleet breaker no longer looks healthy in My Hives, and it can be resumed from where its paused state shows ([#19778](https://github.com/hivecommons/hive/issues/19778)). The My Hives row now carries a **⏸ paused** pill next to the mode badge, with a hover naming how many agents the breaker holds and who paused them. For the owner or a hub admin the pill reads **⏸ paused · ▶ resume** and resumes the hive on click. On the hive's own dashboard the owner's chip reads **paused · resume**, and it is clickable as soon as sign-in resolves instead of after the next status poll. A viewer who cannot release the breaker there gets a **Resume in My Hives ↗** link to the hub.
+
+## 2026-11-24 (v5.365.3)
+
+### Fixed
+
+- dashboard: the "model is not the <backend> spelling" warning no longer returns on every boot or upgrade once the hive has written the corrected id to the agent overlay (the rewrite is logged instead); the banner is raised only when that write fails, and it now has a Dismiss button that `POST /api/system-alerts/dismiss` accepts.
+- The Review Queue keeps your selected page when a background refresh finishes late, preserves keyboard focus during loading, and lets you retry failed or timed-out page changes.
+
 ## 2026-11-24 (v5.365.2)
 
 ### Fixed
