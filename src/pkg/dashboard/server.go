@@ -3248,10 +3248,19 @@ func (s *Server) handleBannerDismissed(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]bool{"ok": true})
 }
 
+// systemAlertDismissible reports whether an owner may acknowledge the alert:
+// plan-stall banners, and the model-id rewrite notice, which reports a fix the
+// hive has already applied and so has nothing left for the operator to do
+// (#19747).
+func systemAlertDismissible(id string) bool {
+	return strings.HasPrefix(id, planning.ReplanAlertPrefix) || strings.HasPrefix(id, modelIDNormalizedAlertPrefix)
+}
+
 // handleSystemAlertDismiss lets an owner acknowledge a plan-stall/needs-human
-// banner after they have reviewed it. The replan lane remains level-triggered:
-// if the plan is still truly stalled on a later reconciliation pass, it can
-// reassert the alert; if the source issue disappeared, the pass clears it.
+// or model-id rewrite banner after they have reviewed it. The replan lane
+// remains level-triggered: if the plan is still truly stalled on a later
+// reconciliation pass, it can reassert the alert; if the source issue
+// disappeared, the pass clears it.
 func (s *Server) handleSystemAlertDismiss(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -3263,8 +3272,8 @@ func (s *Server) handleSystemAlertDismiss(w http.ResponseWriter, r *http.Request
 		jsonError(w, "missing alert id", http.StatusBadRequest)
 		return
 	}
-	if !strings.HasPrefix(body.ID, planning.ReplanAlertPrefix) {
-		jsonError(w, "only plan-stall alerts are dismissible", http.StatusBadRequest)
+	if !systemAlertDismissible(body.ID) {
+		jsonError(w, "only plan-stall and model-id rewrite alerts are dismissible", http.StatusBadRequest)
 		return
 	}
 	s.ClearSystemAlert(body.ID)
