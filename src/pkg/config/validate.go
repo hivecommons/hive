@@ -433,6 +433,9 @@ func (c *Config) validateJobAffinities() error {
 		if err := c.AgentSandbox.Job.GitHubReadProxy.Validate(); err != nil {
 			return err
 		}
+		if err := c.AgentSandbox.Job.InferenceProxy.Validate(); err != nil {
+			return err
+		}
 	}
 	if c.AgentSandbox.Job != nil {
 		if err := cruxconfig.ValidateSandboxJobAffinity(c.AgentSandbox.Job.Affinity); err != nil {

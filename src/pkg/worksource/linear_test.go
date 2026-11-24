@@ -148,7 +148,7 @@ func TestLinearListIssuesBasic(t *testing.T) {
 	}
 	got := issues[0]
 	if got.SourceType != "linear" || got.Repo != "acme/app" || got.ExternalID != "ENG-1" ||
-		got.Title != "First" || got.Priority != "high" || got.State != "Todo" ||
+		got.Title != "First" || got.Priority != "urgent" || got.State != "Todo" ||
 		got.URL != "https://linear.app/acme/issue/ENG-1" {
 		t.Errorf("unexpected issue: %+v", got)
 	}
@@ -269,9 +269,11 @@ func TestLinearListIssuesPagination(t *testing.T) {
 func TestLinearPriorityMapping(t *testing.T) {
 	srv := serveGraphQL(t, func(vars gqlVars) map[string]interface{} {
 		return gqlResponse(false, "",
-			issueNode("ENG-1", "Urgent", 0, "Todo"),
-			issueNode("ENG-2", "Medium", 2, "Todo"),
-			issueNode("ENG-3", "NoPriority", 4, "Todo"),
+			issueNode("ENG-1", "No priority", 0, "Todo"),
+			issueNode("ENG-2", "Urgent", 1, "Todo"),
+			issueNode("ENG-3", "High", 2, "Todo"),
+			issueNode("ENG-4", "Medium", 3, "Todo"),
+			issueNode("ENG-5", "Low", 4, "Todo"),
 		)
 	})
 	defer srv.Close()
@@ -286,7 +288,7 @@ func TestLinearPriorityMapping(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListIssues: %v", err)
 	}
-	want := []string{"urgent", "medium", "none"}
+	want := []string{"none", "urgent", "high", "medium", "low"}
 	if len(issues) != len(want) {
 		t.Fatalf("expected %d issues, got %d", len(want), len(issues))
 	}

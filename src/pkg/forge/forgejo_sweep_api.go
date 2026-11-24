@@ -27,10 +27,10 @@ type SweepAPI interface {
 	// ("success", "pending", "failure", "error" or "") and how many statuses
 	// it combines.
 	CombinedStatus(ctx context.Context, repo, sha string) (state string, total int, err error)
-	// LabelLastAddedBy returns the login that last added label to the issue or
-	// pull request, from its timeline. ok is false when the latest event for
-	// that label removed it, or no event names it.
-	LabelLastAddedBy(ctx context.Context, repo string, number int, label string) (login string, ok bool, err error)
+	// LabelLastAdded returns the timeline event that last added label to the
+	// issue or pull request. ok is false when the latest event for that label
+	// removed it, or no event names it.
+	LabelLastAdded(ctx context.Context, repo string, number int, label string) (add LabelAdd, ok bool, err error)
 	// Permission returns login's access to repo: "none", "read", "write",
 	// "admin" or "owner".
 	Permission(ctx context.Context, repo, login string) (string, error)
@@ -62,6 +62,16 @@ type PullFacts struct {
 	Labels    []string
 	HeadSHA   string
 	Base      string
+}
+
+// LabelAdd is the timeline event that last added a label.
+type LabelAdd struct {
+	// Login added the label.
+	Login string
+	// PushedAfter is true when the timeline records a push to the pull
+	// request (a pull_push event, force pushes included) after the label
+	// was added: the approval the label carries predates the current head.
+	PushedAfter bool
 }
 
 // IssueFacts is one issue as the close-on-merge sweep sees it.
@@ -154,8 +164,15 @@ type fjTimelineEvent struct {
 // timelineLabelAdded is the body Forgejo writes on a label-added event.
 const timelineLabelAdded = "1"
 
-func (f *forgejoForge) LabelLastAddedBy(ctx context.Context, repo string, number int, label string) (string, bool, error) {
-	var login string
+// timelinePullPush is the timeline event type Forgejo records when commits
+// are pushed (or force-pushed) to a pull request's head branch.
+const timelinePullPush = "pull_push"
+
+// LabelLastAdded reads the timeline in order (Forgejo returns it oldest
+// first), so the last label event wins and a pull_push after it marks the
+// addition as predating the head.
+func (f *forgejoForge) LabelLastAdded(ctx context.Context, repo string, number int, label string) (LabelAdd, bool, error) {
+	var last LabelAdd
 	var added, seen bool
 	err := f.paginate(ctx, fmt.Sprintf("%s/issues/%d/timeline", f.repoPath(repo), number), nil, func(body []byte) (int, error) {
 		var page []fjTimelineEvent
@@ -163,22 +180,26 @@ func (f *forgejoForge) LabelLastAddedBy(ctx context.Context, repo string, number
 			return 0, fmt.Errorf("decoding timeline: %w", err)
 		}
 		for _, ev := range page {
+			if ev.Type == timelinePullPush {
+				last.PushedAfter = true
+				continue
+			}
 			if ev.Type != "label" || ev.Label == nil || !strings.EqualFold(ev.Label.Name, label) {
 				continue
 			}
 			seen = true
 			added = ev.Body == timelineLabelAdded
-			login = ev.User.Login
+			last = LabelAdd{Login: ev.User.Login}
 		}
 		return len(page), nil
 	})
 	if err != nil {
-		return "", false, fmt.Errorf("%s: timeline %s#%d: %w", f.label, repo, number, err)
+		return LabelAdd{}, false, fmt.Errorf("%s: timeline %s#%d: %w", f.label, repo, number, err)
 	}
-	if !seen || !added || login == "" {
-		return "", false, nil
+	if !seen || !added || last.Login == "" {
+		return LabelAdd{}, false, nil
 	}
-	return login, true, nil
+	return last, true, nil
 }
 
 func (f *forgejoForge) IssueReopened(ctx context.Context, repo string, number int) (bool, error) {

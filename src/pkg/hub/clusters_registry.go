@@ -1,12 +1,14 @@
 package hub
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/hub/clusterconfig"
 )
 
 // clustersQuarantineSuffix preserves an unparseable registry for inspection
@@ -182,31 +184,12 @@ func defaultClusterRegistry() map[string]ClusterConfig {
 	}
 }
 
-// validateClusterEntries filters a parsed array into the registry map, applying
-// exactly the same three admission rules the original loader applied, in the
-// same order, with the same log lines.
-//
-// The rules are UNCHANGED on purpose. This fix is about what happens when the
-// file cannot be parsed at all, not about which well-formed entries are
-// admitted — tightening admission here would change fleet routing, which is the
-// outcome the brief rules out.
-func validateClusterEntries(configs []ClusterConfig, logger *slog.Logger) map[string]ClusterConfig {
+// normalizeClusterEntries applies hub-specific host alias normalization to the
+// admitted entries without changing cluster admission.
+func normalizeClusterEntries(configs map[string]clusterconfig.ClusterConfig, logger *slog.Logger) map[string]ClusterConfig {
 	clusters := make(map[string]ClusterConfig, len(configs))
-	for _, c := range configs {
-		if c.ID == "" {
-			logger.Warn("skipping cluster config with empty ID")
-			continue
-		}
-		if !c.InCluster && c.KubeconfigPath == "" && !c.PullOnly {
-			logger.Warn("skipping remote cluster with no kubeconfig_path",
-				"cluster", c.ID,
-				"remedy", "set kubeconfig_path, or pull_only: true if the hub cannot reach this cluster and its spokes push heartbeats outbound")
-			continue
-		}
-		if c.Domain == "" {
-			logger.Warn("skipping cluster with no domain", "cluster", c.ID)
-			continue
-		}
+	for id, config := range configs {
+		c := ClusterConfig(config)
 		// host_aliases is validated but NOT an admission rule: a typo there
 		// must not drop the cluster (and strand its hives); the aliases are
 		// dropped instead and the operator told why.
@@ -217,7 +200,7 @@ func validateClusterEntries(configs []ClusterConfig, logger *slog.Logger) map[st
 			aliases = nil
 		}
 		c.HostAliases = aliases
-		clusters[c.ID] = c
+		clusters[id] = c
 	}
 	return clusters
 }
@@ -236,32 +219,23 @@ func loadClustersChecked(logger *slog.Logger) (map[string]ClusterConfig, cluster
 		return nil, clustersUntrusted
 	}
 
-	var configs []ClusterConfig
-	if err := json.Unmarshal(data, &configs); err != nil {
-		// A truncated or hand-mangled file lands here. Do NOT return an empty
-		// map: see clustersUntrusted.
-		logger.Error("cluster registry does not parse — refusing to run on an unknown fleet topology",
-			"path", clustersConfigPath,
-			"error", err,
-			"bytes", len(data),
-			"remedy", "restore a valid /data/saas/clusters.json on the hub PVC and restart the hub")
-		quarantineClustersFile(clustersConfigPath, logger)
+	configs, err := clusterconfig.Decode(data, logger)
+	if err != nil {
+		if errors.Is(err, clusterconfig.ErrNoUsableClusters) {
+			logger.Error("cluster registry parsed but yielded no usable cluster — refusing to run on an unknown fleet topology",
+				"path", clustersConfigPath,
+				"remedy", "every entry needs a non-empty id, a domain, and either in_cluster, kubeconfig_path, or pull_only")
+		} else {
+			logger.Error("cluster registry does not parse — refusing to run on an unknown fleet topology",
+				"path", clustersConfigPath,
+				"error", err,
+				"bytes", len(data),
+				"remedy", "restore a valid /data/saas/clusters.json on the hub PVC and restart the hub")
+			quarantineClustersFile(clustersConfigPath, logger)
+		}
 		return nil, clustersUntrusted
 	}
 
-	clusters := validateClusterEntries(configs, logger)
-	if len(clusters) == 0 {
-		// The file exists and parsed, but nothing in it is usable. Same
-		// reasoning as a parse failure: the operator placed a registry here and
-		// the hub cannot act on it. An empty registry would nil out
-		// clusterForHive for every hive.
-		logger.Error("cluster registry parsed but yielded no usable cluster — refusing to run on an unknown fleet topology",
-			"path", clustersConfigPath,
-			"entries_in_file", len(configs),
-			"remedy", "every entry needs a non-empty id, a domain, and either in_cluster, kubeconfig_path, or pull_only")
-		return nil, clustersUntrusted
-	}
-
-	logger.Info("loaded cluster configs", "count", len(clusters))
-	return clusters, clustersLoaded
+	logger.Info("loaded cluster configs", "count", len(configs))
+	return normalizeClusterEntries(configs, logger), clustersLoaded
 }

@@ -110,6 +110,9 @@ type SandboxKickSpec struct {
 	// from config (hivecommons/hive#19549). Non-nil prepends the
 	// [hive:sandbox-environment] section to the prompt.
 	Environment *sandboxEnvironment
+	// InferenceRouted marks a Job kick on a model gateway backend whose CLI
+	// reaches hive's translator through the inference listener (#19619).
+	InferenceRouted bool
 
 	// targetHead and targetURL are set by workspace prep for a TargetPR
 	// kick: the head commit checked out (the push's lease) and the PR URL.
@@ -204,6 +207,9 @@ type SandboxExecutor struct {
 	GitHubReadRelay SandboxGitHubReadRelay
 	// GitHubReadRelayNoProxy is extra NO_PROXY entries for relayed Jobs.
 	GitHubReadRelayNoProxy []string
+	// InferenceRelay, when set, points a Job kick with InferenceRouted at
+	// hive's inference translator through a per-kick key (#19619).
+	InferenceRelay SandboxInferenceRelay
 }
 
 func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (SandboxKickResult, error) {
@@ -274,6 +280,8 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	}()
 	relayEnv, releaseRelay := e.enrollGitHubReadRelay(spec, workspace)
 	defer releaseRelay()
+	inferenceEnv, releaseInference := e.enrollInferenceRelay(spec, workspace)
+	defer releaseInference()
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
 	sres, runErr := e.launcher().Run(runCtx, sandbox.LaunchSpec{
@@ -283,7 +291,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		WorkspaceMount: sandbox.DefaultWorkspaceMount,
 		WorkDir:        sandbox.DefaultWorkspaceMount,
 		Command:        command,
-		Env:            mergeSandboxEnv(spool.sandboxEnv(), relayEnv),
+		Env:            mergeSandboxEnv(mergeSandboxEnv(spool.sandboxEnv(), inferenceEnv), relayEnv),
 		EnvAllowlist:   spec.EnvAllowlist,
 		NetworkMode:    spec.NetworkMode,
 		PidsLimit:      spec.PidsLimit,

@@ -46,8 +46,8 @@ func (failingSpokeCollector) Collect(*slog.Logger) ([]hubbackup.SpokeConfig, err
 	return nil, errors.New("simulated spoke collection failure")
 }
 
-// buildLocalArchive seals a real archive from a fixture data dir containing
-// one SaaS state file, returning the archive path and the file's content.
+// buildLocalArchive seals a real archive from a fixture data dir, returning
+// the archive path and the SaaS state file's content.
 // withSpokeErrors optionally records a failed spoke collection in the manifest.
 func buildLocalArchive(t *testing.T, withSpokeErrors bool) (archive string, content []byte) {
 	t.Helper()
@@ -62,10 +62,20 @@ func buildLocalArchive(t *testing.T, withSpokeErrors bool) (archive string, cont
 	if err := os.WriteFile(filepath.Join(dataDir, "saas", "users.json"), content, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dataDir, "saas", "hub-secret.key"), []byte("fixture-master"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "hub-registry.json"), []byte(`{"hives":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv(hubbackup.EnvDataDir, dataDir)
 
 	var collector hubbackup.SpokeCollector
 	if withSpokeErrors {
+		clusters := []byte(`[{"id":"hive-oke","in_cluster":true,"domain":"example.com"}]`)
+		if err := os.WriteFile(filepath.Join(dataDir, "saas", "clusters.json"), clusters, 0o644); err != nil {
+			t.Fatal(err)
+		}
 		collector = failingSpokeCollector{}
 	}
 	sealed, man, err := hubbackup.Build(key, collector, nil, quietLogger())
@@ -128,8 +138,8 @@ func TestCmdVerifyLocalArchiveReportsOK(t *testing.T) {
 		cmdVerify([]string{"-file", archive}, quietLogger())
 	})
 
-	if !strings.Contains(out, "archive OK: 1 files") {
-		t.Errorf("cmdVerify output = %q; want it to report 'archive OK: 1 files'", out)
+	if !strings.Contains(out, "archive OK: 3 files") {
+		t.Errorf("cmdVerify output = %q; want it to report 'archive OK: 3 files'", out)
 	}
 	if strings.Contains(out, "WARNING") {
 		t.Errorf("cmdVerify warned on a clean archive:\n%s", out)
@@ -143,11 +153,14 @@ func TestCmdVerifyLocalArchiveWarnsOnSpokeGaps(t *testing.T) {
 		cmdVerify([]string{"-file", archive}, quietLogger())
 	})
 
-	if !strings.Contains(out, "archive OK") {
-		t.Errorf("cmdVerify output = %q; want archive OK", out)
+	if !strings.Contains(out, "partial archive integrity OK") {
+		t.Errorf("cmdVerify output = %q; want partial archive integrity OK", out)
 	}
 	if !strings.Contains(out, "WARNING") || !strings.Contains(out, "_collector") {
 		t.Errorf("cmdVerify did not surface the spoke gap:\n%s", out)
+	}
+	if strings.Contains(out, "hub paths") {
+		t.Errorf("cmdVerify reported an unexpected hub gap:\n%s", out)
 	}
 }
 
@@ -161,7 +174,7 @@ func TestCmdExtractRestoresArchivedFile(t *testing.T) {
 		cmdExtract([]string{"-file", archive, "-dest", dest}, quietLogger())
 	})
 
-	if !strings.Contains(out, "extracted 1 files to "+dest) {
+	if !strings.Contains(out, "extracted 3 files to "+dest) {
 		t.Errorf("cmdExtract output = %q", out)
 	}
 	restored, err := os.ReadFile(filepath.Join(dest, "hub", "saas", "users.json"))
@@ -310,6 +323,93 @@ func TestMainExtractWithoutKeyExitsNonzero(t *testing.T) {
 	}
 }
 
+func TestValidateFleetRegistryUsesRestoreSchema(t *testing.T) {
+	if err := validateFleetRegistry([]byte(`{"hives":[{"id":"fixture","lastWriteCapableKickAt":"2026-01-01T00:00:00Z"}]}`)); err != nil {
+		t.Fatalf("valid registry: %v", err)
+	}
+	if err := validateFleetRegistry([]byte(`{"hives":[{"id":"fixture","lastWriteCapableKickAt":"invalid"}]}`)); err == nil {
+		t.Fatal("restore would reject the invalid registry timestamp")
+	}
+}
+
+func TestCmdRunAndVerifyReportArchiveStatus(t *testing.T) {
+	kubectl := filepath.Join(t.TempDir(), "kubectl")
+	script := `#!/bin/sh
+case "$1 $2" in
+  "get secret") printf '%s\n' '{"apiVersion":"v1","kind":"Secret","data":{}}' ;;
+  "get pods") exit 0 ;;
+  *) exit 2 ;;
+esac
+`
+	if err := os.WriteFile(kubectl, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(kubectl))
+	hexKey, _ := testKey(t)
+	t.Setenv(hubbackup.EnvBackupKey, hexKey)
+
+	for _, tt := range []struct {
+		name         string
+		registry     string
+		skipSpokes   bool
+		runStatus    string
+		verifyStatus string
+		gap          string
+	}{
+		{
+			name:         "hub only",
+			registry:     `{"hives":[]}`,
+			skipSpokes:   true,
+			runStatus:    "hub-only backup saved",
+			verifyStatus: "hub-only archive integrity OK",
+		},
+		{
+			name:         "incomplete hub",
+			registry:     `{"hives":[{"id":"fixture","lastWriteCapableKickAt":"invalid"}]}`,
+			skipSpokes:   true,
+			runStatus:    "incomplete hub backup written",
+			verifyStatus: "partial archive integrity OK",
+			gap:          "hub/hub-registry.json",
+		},
+		{
+			name:         "unreachable spoke",
+			registry:     `{"hives":[{"id":"fixture","clusterId":"hive-oke"}]}`,
+			runStatus:    "partial spoke backup saved",
+			verifyStatus: "partial archive integrity OK",
+			gap:          "no running pod in hive-hosted-fixture",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dataDir := t.TempDir()
+			t.Setenv(hubbackup.EnvDataDir, dataDir)
+			mustWriteFile(t, filepath.Join(dataDir, "saas", "hub-secret.key"), "fixture-master")
+			mustWriteFile(t, filepath.Join(dataDir, "hub-registry.json"), tt.registry)
+
+			archive := filepath.Join(t.TempDir(), "backup.enc")
+			args := []string{"-local", archive}
+			if tt.skipSpokes {
+				args = append(args, "-skip-spokes=true")
+			}
+			runOutput := captureOutput(t, &os.Stdout, func() {
+				cmdRun(args, quietLogger())
+			})
+			if !strings.Contains(runOutput, tt.runStatus+": "+archive) {
+				t.Errorf("run did not report %q:\n%s", tt.runStatus, runOutput)
+			}
+
+			verifyOutput := captureOutput(t, &os.Stdout, func() {
+				cmdVerify([]string{"-file", archive}, quietLogger())
+			})
+			if !strings.Contains(verifyOutput, tt.verifyStatus) {
+				t.Errorf("verify did not report %q:\n%s", tt.verifyStatus, verifyOutput)
+			}
+			if tt.gap != "" && (!strings.Contains(runOutput, tt.gap) || !strings.Contains(verifyOutput, tt.gap)) {
+				t.Errorf("run and verify should both report %q:\nrun:\n%s\nverify:\n%s", tt.gap, runOutput, verifyOutput)
+			}
+		})
+	}
+}
+
 func TestMainRunWithoutKeyExitsNonzero(t *testing.T) {
 	code, out := runMainHelper(t, nil, "run", "-local", filepath.Join(t.TempDir(), "out.enc"))
 	if code != exitCodeError {
@@ -328,7 +428,7 @@ func TestMainVerifyDispatchHappyPathExitsZero(t *testing.T) {
 	if code != 0 {
 		t.Errorf("exit code = %d; want 0\n%s", code, out)
 	}
-	if !strings.Contains(out, "archive OK: 1 files") {
+	if !strings.Contains(out, "archive OK: 3 files") {
 		t.Errorf("dispatch to verify did not report archive OK:\n%s", out)
 	}
 }

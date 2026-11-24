@@ -37,6 +37,7 @@ type (
 	RotationConfig             = cruxconfig.RotationConfig
 	SandboxJobConfig           = cruxconfig.SandboxJobConfig
 	SandboxGitHubReadProxy     = cruxconfig.SandboxGitHubReadProxy
+	SandboxInferenceProxy      = cruxconfig.SandboxInferenceProxy
 	SandboxPublishConfig       = cruxconfig.SandboxPublishConfig
 	SandboxJobResources        = cruxconfig.SandboxJobResources
 	SandboxJobToleration       = cruxconfig.SandboxJobToleration
