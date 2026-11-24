@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v5.365.0)
+
+### Added
+
+- `forgejo.integration` makes git clone and push on Forgejo repos use a one-hour JWT per agent token tier, signed with an operator-held RSA key for that tier's Forgejo authorized integration, instead of the shared `forgejo.token_env` access token (#19760, from #19576).
+
 ## 2026-11-24 (v5.364.0)
 
 ### Added
