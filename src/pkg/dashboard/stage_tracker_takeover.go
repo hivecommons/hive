@@ -21,6 +21,11 @@ import (
 type StageTrackerTakeover struct {
 	Author       string `json:"author,omitempty"`
 	AuthorOnline bool   `json:"author_online"`
+	// Person is true when the PR's author is a person, not a Contributor
+	// Relay (hivecommons/hive#19645): Adopt now is an explicit operator
+	// action offered in the ⋯ menu only (never the row's lead), Reroute is
+	// off and the engine never adopts on its own.
+	Person bool `json:"person,omitempty"`
 	// AdoptNow is true when "Adopt now" is offered; AdoptNowReason says why
 	// not when it is not (adoption disabled, hold label).
 	AdoptNow       bool   `json:"adopt_now"`
@@ -76,6 +81,10 @@ const takeoverAdoptNowDisabledOff = "adoption is disabled (governor.labels.stage
 // sweep has not landed yet: the action is spent, not offered again.
 const takeoverAdoptNowQueued = "adoption already queued"
 
+// takeoverRerouteDisabledPerson is the Reroute disabled reason on a PR a
+// person wrote: there is no Contributor Relay whose work could move.
+const takeoverRerouteDisabledPerson = "the author is a person, not a Contributor Relay, so there is no relay to reroute from"
+
 // stageTrackerRerouteCandidates returns the lookup for the online clankers a
 // reroute may target, excluding the PR's author. Tests inject
 // rerouteCandidates.
@@ -93,15 +102,18 @@ func (s *Server) stageTrackerRerouteCandidates() func(author string) []RerouteCa
 	return func(author string) []RerouteCandidate { return hub.RerouteCandidates(time.Now(), author) }
 }
 
-// stageTrackerTakeover builds the `takeover` field for a clanker PR row at
-// 072 / 071; nil for other rows and for an adopted head.
+// stageTrackerTakeover builds the `takeover` field for a PR row at 072 /
+// 071; nil for other rows and for an adopted head. A person's PR gets
+// Adopt now only (stageTrackerPersonTakeover).
 func stageTrackerTakeover(it StageTrackerItem, rec stagelabels.Record, hasRec bool, presence func(string) (automerge.ContributorPresence, bool), candidates func(string) []RerouteCandidate, clock stageTrackerAdoptionClock, now time.Time) *StageTrackerTakeover {
-	adoptionEnabled := clock.Enabled
-	if it.Kind != "pr" || it.AuthorKind == authorKindHuman || (it.Stage != trackerNumberReturned && it.Stage != trackerNumberNeedsAuthor) {
+	if it.Kind != "pr" || (it.Stage != trackerNumberReturned && it.Stage != trackerNumberNeedsAuthor) {
 		return nil
 	}
 	if hasRec && rec.AdoptedHead != "" && (it.Head == "" || rec.Adopted(it.Head) || rec.AdoptedInPlace()) {
 		return nil
+	}
+	if it.AuthorKind == authorKindHuman {
+		return stageTrackerPersonTakeover(it, rec, hasRec, clock)
 	}
 	out := &StageTrackerTakeover{Author: it.Author}
 	if presence != nil && it.Author != "" {
@@ -109,20 +121,7 @@ func stageTrackerTakeover(it StageTrackerItem, rec stagelabels.Record, hasRec bo
 			out.AuthorOnline = p.Online
 		}
 	}
-	held := slices.Contains(it.Modifiers, modHold)
-	_, forcedPending := rec.AdoptionForced()
-	forcedPending = forcedPending && hasRec
-	switch {
-	case held:
-		// The engine stops at a hold without consuming a queued Adopt now.
-		out.AdoptNowReason = takeoverAdoptNowDisabledHold
-	case forcedPending:
-		out.AdoptNowReason = takeoverAdoptNowQueued
-	case !adoptionEnabled:
-		out.AdoptNowReason = takeoverAdoptNowDisabledOff
-	default:
-		out.AdoptNow = true
-	}
+	held := stageTrackerTakeoverAdoptNow(out, it, rec, hasRec, clock)
 	var cands []RerouteCandidate
 	if candidates != nil {
 		cands = candidates(it.Author)
@@ -184,6 +183,48 @@ func stageTrackerTakeover(it StageTrackerItem, rec stagelabels.Record, hasRec bo
 	return out
 }
 
+// stageTrackerTakeoverAdoptNow sets AdoptNow / AdoptNowReason on out from
+// the hold, a queued Adopt now and the adoption switch; it reports whether
+// the row is held.
+func stageTrackerTakeoverAdoptNow(out *StageTrackerTakeover, it StageTrackerItem, rec stagelabels.Record, hasRec bool, clock stageTrackerAdoptionClock) bool {
+	held := slices.Contains(it.Modifiers, modHold)
+	_, forcedPending := rec.AdoptionForced()
+	forcedPending = forcedPending && hasRec
+	switch {
+	case held:
+		// The engine stops at a hold without consuming a queued Adopt now.
+		out.AdoptNowReason = takeoverAdoptNowDisabledHold
+	case forcedPending:
+		out.AdoptNowReason = takeoverAdoptNowQueued
+	case !clock.Enabled:
+		out.AdoptNowReason = takeoverAdoptNowDisabledOff
+	default:
+		out.AdoptNow = true
+	}
+	return held
+}
+
+// stageTrackerPersonTakeover is the takeover of a PR a person wrote that
+// waits on its author (hivecommons/hive#19645): Adopt now is offered as an
+// explicit, audited operator action (handleRepoItemAdoptNow; the engine's
+// operator-forced path), Reroute is off since there is no relay, and no
+// auto-adoption clock or grace is reported because the engine never adopts
+// a person's PR on its own.
+func stageTrackerPersonTakeover(it StageTrackerItem, rec stagelabels.Record, hasRec bool, clock stageTrackerAdoptionClock) *StageTrackerTakeover {
+	out := &StageTrackerTakeover{Author: it.Author, Person: true, RerouteReason: takeoverRerouteDisabledPerson}
+	stageTrackerTakeoverAdoptNow(out, it, rec, hasRec, clock)
+	if hasRec {
+		if by, ok := rec.AdoptionForced(); ok {
+			out.ForcedBy = by
+			if !rec.AdoptForcedAt.IsZero() {
+				t := rec.AdoptForcedAt
+				out.ForcedAt = &t
+			}
+		}
+	}
+	return out
+}
+
 // takeoverDecisionOptions are the popover options the takeover adds to a
 // waiting-on-contributor decision: Adopt now (lead) and Reroute.
 func takeoverDecisionOptions(t *StageTrackerTakeover, held bool) []StageTrackerDecisionOption {
@@ -202,6 +243,10 @@ func takeoverDecisionOptions(t *StageTrackerTakeover, held bool) []StageTrackerD
 	if t.ForcedBy == "" {
 		// Spent once pressed: the row says "Adopting… (queued)" instead.
 		out = append(out, decisionOption(decisionActionAdoptNow, "Adopt now — hive takes it over", t.AdoptNow && !held, adoptWhy))
+	}
+	if t.Person {
+		// No relay to reroute from on a person's PR.
+		return out
 	}
 	return append(out, decisionOption(decisionActionReroute, "Reroute to another clanker", t.Reroute && !held, rerouteWhy))
 }
