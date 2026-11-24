@@ -1,0 +1,1 @@
+- Preserve other repositories’ write-back modes when saving repository cards, report failed saves, and show saved modes even before the write-back gate observes a repository.

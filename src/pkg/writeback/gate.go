@@ -659,6 +659,12 @@ func (g *Gate) Recent() []Suppressed {
 
 // Snapshot is the /api/status block.
 func (g *Gate) Snapshot() Status {
+	return g.SnapshotForRepos(nil)
+}
+
+// SnapshotForRepos includes the effective mode for cards whose repos have no
+// qualified ledger entry yet. It leaves the persisted ledger unchanged.
+func (g *Gate) SnapshotForRepos(repos []string) Status {
 	if g == nil {
 		return Status{}
 	}
@@ -676,7 +682,7 @@ func (g *Gate) Snapshot() Status {
 		Suppressed24h: len(g.recent),
 		Repos:         map[string]RepoStatus{},
 		Kinds:         cfg.EffectiveKinds(),
-		Dedupe:        g.dedupeCountersLocked(now),
+		Dedupe:        g.dedupeCountersLocked(now, cfg.Dedupe),
 	}
 	per := map[string]int{}
 	for _, s := range g.recent {
@@ -699,6 +705,25 @@ func (g *Gate) Snapshot() Status {
 			st.Banners = append(st.Banners, Banner{Repo: k, WritableAt: rec.WritableAt, Untouched: rs.PreExisting,
 				Message: fmt.Sprintf("hive can now write to %s; %d existing PRs were left untouched — enable backfill to process them", k, rs.PreExisting)})
 		}
+	}
+	for _, repo := range repos {
+		key := repoKey(repo)
+		if key == "" {
+			continue
+		}
+		if _, exists := st.Repos[key]; exists {
+			continue
+		}
+		var rs RepoStatus
+		if owner, bare, ok := strings.Cut(key, "/"); ok && owner == cfg.repoOwner {
+			rs = st.Repos[bare]
+		}
+		rs.Mode = cfg.RepoModeFor(key)
+		rs.Suppressed24 += per[key]
+		if g.deps.LevelFor != nil {
+			rs.Level = g.deps.LevelFor(key)
+		}
+		st.Repos[key] = rs
 	}
 	return st
 }

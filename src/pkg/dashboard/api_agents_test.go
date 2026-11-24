@@ -7,10 +7,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -280,27 +283,66 @@ func TestHandleAgentCreate_NoAgentsDir(t *testing.T) {
 }
 
 func TestHandleAgentCreate_Success(t *testing.T) {
-	s, deps := apiServer(t)
-	dir := t.TempDir()
-	deps.Config.Data.AgentsDir = dir
+	const agentName = "new-worker"
+	for _, tt := range []struct {
+		name     string
+		options  map[string]bool
+		enabled  bool
+		onDemand bool
+	}{
+		{name: "defaults", enabled: true},
+		{name: "power off", options: map[string]bool{"enabled": false}},
+		{name: "on demand", options: map[string]bool{"enabled": true, "on_demand": true}, enabled: true, onDemand: true},
+		{name: "on demand turned off", options: map[string]bool{"on_demand": false}, enabled: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s, deps := apiServer(t)
+			dir := t.TempDir()
+			deps.Config.Data.AgentsDir = dir
+			runtime := cruxtest.NewRecorder()
+			if tt.enabled {
+				runtime.Reconciled = []string{agentName}
+				runtime.Add(agentName, agentName, crux.StateStopped)
+			}
+			deps.AgentMgr = runtime
 
-	rec := doPost(s, "/api/agents", map[string]interface{}{
-		"name":  "new-worker",
-		"agent": map[string]interface{}{"backend": "copilot", "model": "gpt-4o"},
-	})
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
+			agent := map[string]any{"backend": "copilot", "model": "gpt-4o"}
+			for key, value := range tt.options {
+				agent[key] = value
+			}
+			rec := doPost(s, "/api/agents", map[string]any{"name": agentName, "agent": agent})
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
 
-	// Verify agent was added to config
-	if _, ok := deps.Config.Agents["new-worker"]; !ok {
-		t.Error("new-worker should be in config after creation")
-	}
+			created, ok := deps.Config.Agents[agentName]
+			if !ok || created.Enabled != tt.enabled || created.OnDemand != tt.onDemand {
+				t.Errorf("created agent: present=%t enabled=%t on_demand=%t, want present=true enabled=%t on_demand=%t", ok, created.Enabled, created.OnDemand, tt.enabled, tt.onDemand)
+			}
+			overlays, err := config.LoadAgentOverrides(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			saved, ok := overlays[agentName]
+			if !ok || saved.Enabled != tt.enabled || saved.OnDemand != tt.onDemand {
+				t.Errorf("saved agent: present=%t enabled=%t on_demand=%t, want present=true enabled=%t on_demand=%t", ok, saved.Enabled, saved.OnDemand, tt.enabled, tt.onDemand)
+			}
+			_, onDemandSelected := tt.options["on_demand"]
+			if got := saved.OnDemandIsOperatorOwned(); got != onDemandSelected {
+				t.Errorf("saved on_demand operator ownership = %t, want %t", got, onDemandSelected)
+			}
 
-	// Verify agent file was written
-	agentFile := filepath.Join(dir, "new-worker.yaml")
-	if _, err := os.Stat(agentFile); os.IsNotExist(err) {
-		t.Errorf("expected agent file at %s", agentFile)
+			call, ok := runtime.Last("ReconcileAgents")
+			if !ok {
+				t.Fatal("expected ReconcileAgents call")
+			}
+			if registered := slices.Contains(call.Args[0].([]string), agentName); registered != tt.enabled {
+				t.Errorf("agent passed to ReconcileAgents = %t, want %t", registered, tt.enabled)
+			}
+			if _, started := runtime.Last("Start"); started != (tt.enabled && !tt.onDemand) {
+				t.Errorf("agent started = %t, want %t", started, tt.enabled && !tt.onDemand)
+			}
+		})
 	}
 }
 

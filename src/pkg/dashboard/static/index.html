@@ -35133,18 +35133,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const opts = [''].concat(REPO_WRITEBACK_MODES).map(m => `<option value="${esc(m)}" ${m === mode ? 'selected' : ''}>${esc(m || 'default')}</option>`).join('');
       return chip + `<select class="repo-writeback-select" data-change-action="setRepoWritebackMode" data-arg0="${esc(repo)}" data-arg-types="s,v,t" data-stop="1" aria-label="${esc('Write-back mode for ' + repo)}" title="${esc(tip)}">${opts}</select>`;
     }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(() => {
+      if (window._lastStatus) renderRepos(window._lastStatus.repos || []);
+    });
     async function setRepoWritebackMode(repo, mode, sel) {
       if (sel && sel.dataset.busy === '1') return;
       const st = repoWritebackState(repo, window._lastStatus || {});
-      const perRepo = {};
-      if (st && st.status && st.status.repos) {
-        for (const k of Object.keys(st.status.repos)) { const m = st.status.repos[k] && st.status.repos[k].mode; if (m) perRepo[k] = m; }
-      }
-      for (const k of Object.keys(perRepo)) { if (k.toLowerCase() === String(repo).toLowerCase()) delete perRepo[k]; }
-      if (mode) perRepo[repo] = mode;
       if (sel) sel.dataset.busy = '1';
       try {
-        const resp = await fetch('/api/config/governor/features', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writebackPerRepo: perRepo }) });
+        const resp = await fetch('/api/config/governor/features', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writebackRepo: { repo, mode } }) });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         showToast('Write-back for ' + repo + ': ' + (mode || 'default'), 'success');
@@ -70415,6 +70412,7 @@ function burnAreaChart() {
     function renderAgentGeneral(g) {
       const agentName = _configState.agent || '';
       const isCreate = _configState.isCreate === true;
+      const onDemand = (_configState.dirty.general?.onDemand ?? g.onDemand) === true;
       // Model options must come from live discovery for THIS agent's backend, not
       // the frozen KNOWN_MODELS placeholder (#3319). Resolve the agent's actual
       // backend from the live agent list; fall back to its pinned backend or an
@@ -70546,7 +70544,7 @@ function burnAreaChart() {
           <span class="config-toggle-label">Clear on Kick ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Clear on Kick', `Send /clear before each governor kick to reset conversation context. Prevents stale context buildup across runs. On by default for all agents.`)}</span>
         </div>
         <div class="config-toggle">
-          <div class="config-toggle-switch ${g.onDemand === true ? 'on' : ''}" id="cfg-on-demand" data-action="toggleConfigSwitch" data-section="general" data-key="onDemand"></div>
+          <div class="config-toggle-switch ${onDemand ? 'on' : ''}" id="cfg-on-demand" data-action="toggleConfigSwitch" data-section="general" data-key="onDemand"></div>
           <span class="config-toggle-label">On Demand ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'On Demand', `When on, this agent is never started at boot and never kicked by the governor or by event (CEL) triggers — it only runs when something summons it explicitly. Turn it OFF to make the agent run on its cadence like a normal agent. Note: an agent also needs a cadence entry in the ACTIVE governor mode before it will actually be kicked. On-demand agents are also excluded from review fan-out, so a reviewer left on-demand cannot be dispatched.`)}${g.onDemand === true ? ' ' + statusBadgeHTML('on_demand', 'on demand', '', '') : ''}</span>
         </div>
         <div class="config-toggle">
@@ -74653,13 +74651,21 @@ function burnAreaChart() {
     // store (the model must exist and compile) and the tracker picks the new
     // columns up on its next poll.
     const WORKFLOW_DEFAULT_KEY = 'hive-default@1';
-    const _workflowState = { loaded: false, loading: false, enabled: false, workflows: [], bindings: [], dispatch: [], agents: [] };
+    const _workflowState = { loaded: false, loading: null, enabled: false, workflows: [], bindings: [], dispatch: [], agents: [] };
 
     function workflowKey(name, version) { return (name || '') + '@' + (version || ''); }
 
-    async function loadWorkflowLibrary(onDone) {
-      if (_workflowState.loading) return;
-      _workflowState.loading = true;
+    function loadWorkflowLibrary(onDone, options) {
+      const pending = _workflowState.loading;
+      if (pending) {
+        // An earlier request may have read the library before the write completed.
+        return options?.afterWrite ? pending.then(() => loadWorkflowLibrary(onDone)) : pending;
+      }
+      _workflowState.loading = fetchWorkflowLibrary().finally(() => { _workflowState.loading = null; });
+      return _workflowState.loading.then(onDone);
+    }
+
+    async function fetchWorkflowLibrary() {
       try {
         const res = await fetch('/api/workflows', { headers: _inceptionAuthHeaders() });
         if (res.status === 503) { _workflowState.loaded = true; _workflowState.workflows = []; return; }
@@ -74673,9 +74679,6 @@ function burnAreaChart() {
       } catch (err) {
         _workflowState.loaded = true;
         showToast('Could not load the workflow library: ' + err.message, 'error');
-      } finally {
-        _workflowState.loading = false;
-        if (typeof onDone === 'function') onDone();
       }
     }
 
@@ -76482,12 +76485,12 @@ function burnAreaChart() {
 
     function wfEdDefaultState() {
       return {
-        model: null, saved: null, source: null, readOnly: false, rev: 0,
+        model: null, saved: null, source: null, pendingSave: null, readOnly: false, rev: 0,
         history: [], future: [], selection: { type: '', ids: [] },
         view: { panX: 0, panY: 0, zoom: 1, laneWidths: {}, showLabels: false, fansOpen: {} },
         compile: { busy: false, rev: -1, profile: null, diags: [], compiled: null, error: '' },
         drawer: { tab: 'problems', open: true },
-        yaml: { text: '', rev: -1, error: '', busy: false, focused: false },
+        yaml: { text: '', base: null, rev: -1, error: '', busy: null, focused: false },
         diff: { versions: [], against: '', remote: null, error: '', busy: false, loadedFor: '' },
         sim: { kind: 'pr', facts: wfSimDefaultFacts(), result: null, error: '', busy: false, hit: '' },
         palette: { hiveDefault: null, loading: false, section: 'states' },
@@ -76633,6 +76636,7 @@ function burnAreaChart() {
       const name = (st.model.metadata || {}).name || 'untitled';
       const ver = st.source ? '@' + st.source.version : (st.model.spec.meta && st.model.spec.meta.version ? '@' + st.model.spec.meta.version + ' (unsaved)' : ' (unsaved)');
       const dirty = wfEdDirty();
+      const saving = !!st.pendingSave;
       const inferred = wfEdStates(st.model).filter(s => (s.lifecycle || {}).confidence === 'inferred').length;
       const btn = (action, label, title, extra) => `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="${action}" title="${esc(title || '')}" ${extra || ''}>${label}</button>`;
       return '<div class="wf-ed-toolbar" role="toolbar" aria-label="Editor toolbar">' +
@@ -76658,8 +76662,8 @@ function burnAreaChart() {
         '<span class="wf-ed-grow"></span>' +
         (st.readOnly ? btn('wfEdEditCopy', 'Edit a copy', 'Duplicate under a new name and edit that') : '') +
         (can ? btn('wfEdRevert', 'Revert', 'Discard unsaved changes', dirty ? '' : 'disabled') : '') +
-        (can ? btn('wfEdSaveAs', 'Save as\u2026', 'Save under a new name as version 1') : '') +
-        (can ? `<button type="button" class="hv-btn btn-primary btn-sm" data-action="wfEdSave" title="Save as the next version" ${dirty || !st.source ? '' : 'disabled'}>Save</button>` : '') +
+        (can ? btn('wfEdSaveAs', 'Save as\u2026', 'Save under a new name as version 1', saving ? 'disabled' : '') : '') +
+        (can ? `<button type="button" class="hv-btn btn-primary btn-sm" data-action="wfEdSave" title="Save as the next version" ${saving || (!dirty && st.source) ? 'disabled' : ''}>${saving ? 'Saving\u2026' : 'Save'}</button>` : '') +
         btn('wfEdClose', 'Close', 'Back to the library') +
         '</div>';
     }
@@ -76960,7 +76964,9 @@ function burnAreaChart() {
         root.addEventListener('keydown', wfEdRootKey);
         root.addEventListener('keyup', ev => { if (ev.key === ' ') _wfEd.spaceHeld = false; });
         root.addEventListener('focusin', ev => { if (ev.target && ev.target.id === 'wf-ed-yaml') _wfEd.yaml.focused = true; });
-        root.addEventListener('focusout', ev => { if (ev.target && ev.target.id === 'wf-ed-yaml') _wfEd.yaml.focused = false; });
+        root.addEventListener('focusout', ev => {
+          if (ev.target && ev.target.id === 'wf-ed-yaml') { _wfEd.yaml.focused = false; wfEdYamlSync(); }
+        });
         root.addEventListener('click', ev => { if (_wfEd.exportMenu && !(ev.target.closest && ev.target.closest('.wf-ed-menu'))) { _wfEd.exportMenu = false; wfEdRefresh(['toolbar']); } });
       }
       if (!window._wfEdResizeWired) {
@@ -77472,26 +77478,69 @@ function burnAreaChart() {
 
     // --- Persistence ----------------------------------------------------------
 
+    // Carry forward save metadata for fields whose values still match the original draft.
+    function wfEdReconcileSavedMetadata(model, base, latest) {
+      let next = model;
+      const name = model.metadata?.name || '';
+      const latestName = latest.metadata?.name || '';
+      if (name === (base.metadata?.name || '') && name !== latestName) {
+        next = { ...next, metadata: { ...next.metadata, name: latestName } };
+      }
+      let meta = model.spec.meta;
+      for (const key of ['version', 'provenance']) {
+        const value = model.spec.meta?.[key] || '';
+        const latestValue = latest.spec.meta?.[key];
+        if (value === (base.spec.meta?.[key] || '') && value !== (latestValue || '')) {
+          meta = { ...meta, [key]: latestValue };
+        }
+      }
+      if (meta !== model.spec.meta) next = { ...next, spec: { ...next.spec, meta } };
+      return next;
+    }
+
     async function wfEdSave(asName) {
-      if (!wfEdCanEdit()) return;
-      const m = wfEdClone(_wfEd.model);
+      if (!wfEdCanEdit() || _wfEd.pendingSave) return;
+      const submitted = _wfEd.model;
+      const m = wfEdClone(submitted);
       if (asName) m.metadata = Object.assign({}, m.metadata, { name: asName });
       const name = (m.metadata || {}).name;
       if (!/^[a-z0-9][a-z0-9._-]*$/.test(name || '')) { showToast('Name must be lower-case letters, digits, dots, dashes or underscores.', 'error'); return; }
       m.spec.meta = Object.assign({}, m.spec.meta, { version: '' });
       if (!m.spec.meta.provenance || m.spec.meta.provenance === 'built-in') m.spec.meta.provenance = 'local';
+      _wfEd.pendingSave = m;
       try {
+        wfEdRefresh(['toolbar']);
         const res = await fetch('/api/workflows', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify(m) });
         if (!res.ok) throw new Error(await saveErrorMessage(res));
         const data = await res.json(), e = data.entry || {};
+        if (_wfEd.pendingSave === m && _wfEd.model) {
+          m.spec.meta.version = e.version;
+          const saved = wfEdNormalize(m);
+          _wfEd.saved = saved;
+          _wfEd.source = { name: e.name, version: e.version };
+          const reconcile = draft => wfEdReconcileSavedMetadata(draft, submitted, saved);
+          _wfEd.model = reconcile(_wfEd.model);
+          _wfEd.history = _wfEd.history.map(reconcile);
+          _wfEd.future = _wfEd.future.map(reconcile);
+          _wfEd.pendingSave = null;
+          _wfEd.diff.loadedFor = ''; _wfEd.rev++; wfEdScheduleCompile(0);
+          // Inspector inputs commit on change, so keep any text the user is still typing.
+          const field = document.activeElement;
+          const editing = field?.closest('#wf-ed-inspector') && typeof field.defaultValue === 'string' && field.value !== field.defaultValue;
+          wfEdRefresh(editing ? ['toolbar', 'canvas', 'drawer'] : undefined);
+          wfEdLoadVersions();
+        }
         showToast('Saved ' + e.name + '@' + e.version + (e.compiled ? '' : ' (does not compile)'), e.compiled ? 'success' : 'info');
-        _workflowState.loaded = false; await loadWorkflowLibrary();
-        m.spec.meta.version = e.version;
-        _wfEd.model = wfEdNormalize(m); _wfEd.saved = wfEdClone(_wfEd.model); _wfEd.source = { name: e.name, version: e.version }; _wfEd.readOnly = false;
-        _wfEd.diff.loadedFor = ''; _wfEd.rev++; wfEdScheduleCompile(0);
-        wfEdRefresh(); wfEdLoadVersions();
+        loadWorkflowLibrary(() => {
+          if (_wfLib.view === 'library' || (_wfLib.view === 'editor' && !_wfEd.model)) wfLibRerender();
+        }, { afterWrite: true });
       } catch (err) {
         showToast('Save failed: ' + err.message, 'error');
+      } finally {
+        if (_wfEd.pendingSave === m) {
+          _wfEd.pendingSave = null;
+          if (_wfEd.model) wfEdRefresh(['toolbar']);
+        }
       }
     }
     async function wfEdSaveAs() {
@@ -77558,36 +77607,55 @@ function burnAreaChart() {
       clearTimeout(_wfEd.timers.yaml);
       _wfEd.timers.yaml = setTimeout(wfEdYamlRefresh, WF_ED_YAML_DEBOUNCE_MS);
     }
+    function wfEdFinishYamlRequest(y, request) {
+      if (y.busy !== request) return;
+      y.busy = null;
+      if (y === _wfEd.yaml && _wfEd.model && _wfEd.drawer.tab === 'yaml') wfEdRefresh(['drawer']);
+    }
     async function wfEdYamlRefresh() {
-      const y = _wfEd.yaml, rev = _wfEd.rev;
-      if (!_wfEd.model) return;
-      y.busy = true;
+      const y = _wfEd.yaml, rev = _wfEd.rev, model = _wfEd.model, source = _wfEd.source;
+      if (!model || y.focused || y.busy) return;
+      const request = {};
+      y.busy = request;
       try {
-        const res = await fetch('/api/workflows/yaml', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ model: _wfEd.model }) });
+        const res = await fetch('/api/workflows/yaml', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ model }) });
         if (!res.ok) throw new Error(await saveErrorMessage(res));
         const data = await res.json();
-        if (rev !== _wfEd.rev) return;
+        if (y !== _wfEd.yaml || y.busy !== request || rev !== _wfEd.rev || y.focused) return;
+        y.base = { model, source };
         y.text = data.yaml || ''; y.rev = rev; y.error = '';
-      } catch (err) { y.error = 'YAML render failed: ' + err.message; }
-      y.busy = false; y.focused = false;
-      if (_wfEd.drawer.tab === 'yaml') wfEdRefresh(['drawer']);
+      } catch (err) {
+        if (y.busy === request) y.error = 'YAML render failed: ' + err.message;
+      } finally {
+        wfEdFinishYamlRequest(y, request);
+      }
     }
     async function wfEdYamlApply() {
       const y = _wfEd.yaml, el = document.getElementById('wf-ed-yaml');
       if (!el || !wfEdCanEdit()) return;
       const text = el.value;
-      if (text === y.text) return;
-      y.busy = true; y.error = ''; y.focused = false;
+      if (text === y.text || text === y.busy?.text) return;
+      const request = { text }, base = y.base;
+      y.busy = request; y.error = '';
       try {
         const res = await fetch('/api/workflows/yaml', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ yaml: text }) });
         if (!res.ok) throw new Error(await saveErrorMessage(res));
         const data = await res.json();
-        if (data.error) { y.error = data.error; y.text = text; y.busy = false; wfEdRefresh(['drawer']); return; }
-        y.text = text; y.busy = false;
+        if (y !== _wfEd.yaml || y.busy !== request || !_wfEd.model) return;
+        y.text = text;
+        if (data.error) { y.error = data.error; y.rev = _wfEd.rev; return; }
+        const model = base && base.source !== _wfEd.source
+          ? wfEdReconcileSavedMetadata(data.model, base.model, _wfEd.model) : data.model;
         wfEdPruneSelection();
-        wfEdCommit(data.model);
-        y.rev = _wfEd.rev;
-      } catch (err) { y.error = 'YAML apply failed: ' + err.message; y.busy = false; wfEdRefresh(['drawer']); }
+        wfEdCommit(model);
+        const rebased = model !== data.model;
+        y.base = { model: data.model, source: rebased ? base.source : _wfEd.source };
+        y.rev = rebased ? -1 : _wfEd.rev;
+      } catch (err) {
+        if (y.busy === request) y.error = 'YAML apply failed: ' + err.message;
+      } finally {
+        wfEdFinishYamlRequest(y, request);
+      }
     }
 
     // --- Simulate drawer ------------------------------------------------------
@@ -81932,7 +82000,6 @@ function burnAreaChart() {
       f = f || {}; platformDefaults = platformDefaults || {};
       const defMin = platformDefaults.writebackMinLevel || 5;
       const optIn = (f.writebackOptInLabels || []).join(', ') || 'hive-review';
-      const modes = f.writebackRepoModes || ['off', 'issues-only', 'labels-only', 'full'];
       const perRepo = f.writebackPerRepo || {};
       const perRepoText = Object.keys(perRepo).sort().map(r => r + '=' + perRepo[r]).join('\n');
       const matrix = f.writebackKindMatrix || [];
@@ -81958,7 +82025,7 @@ function burnAreaChart() {
           </div>
           <div class="config-toggle" data-setting-key="writeback.unsolicited.require_labels"><div class="config-toggle-switch ${f.writebackRequireLabels !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="writebackRequireLabels"></div><span class="config-toggle-label">Only PRs carrying the review opt-in label ${settingHelpMark('settings', 'features', 'Write-back requires opt-in label', `When on (default), unsolicited write-backs on a foreign PR also need the review opt-in label (${esc(optIn)}, from review.require_labels). Turning it off lets each kind's level floor alone decide.`)}</span></div>
           <div class="config-toggle" data-setting-key="writeback.unsolicited.backfill"><div class="config-toggle-switch ${f.writebackBackfill ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="writebackBackfill"></div><span class="config-toggle-label">Backfill pre-existing items ${settingHelpMark('settings', 'features', 'Write-back backfill', `Off (default): when hive first sees a repo, or first gains write access to one, PRs and issues created before that moment are never written to unsolicited. On: process them like new items.`)}</span></div>
-          <div class="config-field"><label>Per-repo mode ${yamlHint('writeback.per_repo')} ${settingHelpMark('settings', 'features', 'Write-back per-repo mode', `One <code>owner/name=mode</code> per line. Modes: ${esc(modes.join(', '))}. <code>off</code> writes nothing unsolicited there; <code>issues-only</code> allows only hive-filed issues (e.g. a repo listed so the deps agent can file regressions); <code>labels-only</code> allows labels but no comments; <code>full</code> skips the level and label gates for that repo. Empty lines clear.`)}</label><textarea rows="3" spellcheck="false" data-setting-key="writeback.per_repo.<key>.mode" placeholder="torch-spyre/torch-spyre=issues-only" data-change-action="markDirtyWritebackPerRepo" data-arg-types="v">${esc(perRepoText)}</textarea></div>
+          <div class="config-field"><label>Per-repo mode ${yamlHint('writeback.per_repo')} ${settingHelpMark('settings', 'features', 'Write-back per-repo mode', `One <code>owner/name=mode</code> per line. <code>default</code> uses the per-kind policy for that repo, even if it inherits a bare-name override. <code>off</code> writes nothing unsolicited there; <code>issues-only</code> allows only hive-filed issues (e.g. a repo listed so the deps agent can file regressions); <code>labels-only</code> allows labels but no comments; <code>full</code> skips the level and label gates for that repo. Empty lines clear.`)}</label><textarea rows="3" spellcheck="false" data-setting-key="writeback.per_repo.<key>.mode" placeholder="torch-spyre/torch-spyre=issues-only" data-change-action="markDirtyWritebackPerRepo" data-arg-types="v">${esc(perRepoText)}</textarea></div>
           <details class="config-field"><summary>Per-kind matrix ${yamlHint('writeback.kinds.<kind>.{min_level,require_label}')} ${settingHelpMark('settings', 'features', 'Write-back per-kind matrix', `What hive will say on GitHub at each ACMM level. Each kind has a minimum level and whether the opt-in label is required; leave a cell empty to keep the default shown as placeholder.`)}</summary>
             <table class="qa-table" id="wb-kind-table"><thead><tr><th>Kind</th><th>Scope</th><th>Min level</th><th>Opt-in label</th></tr></thead><tbody>${rows}</tbody></table>
           </details>
@@ -84632,7 +84699,8 @@ function burnAreaChart() {
         const agent = {
           backend: generalData.cliPinValue || 'copilot',
           model: generalData.model || '',
-          enabled: true,
+          enabled: generalData.enabled !== false,
+          on_demand: generalData.onDemand,
           display_name: generalData.displayName || '',
           description: generalData.description || '',
           emoji: generalData.emoji || '',

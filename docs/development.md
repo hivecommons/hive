@@ -290,14 +290,17 @@ The quickest operator path remains Docker Compose; see the full quick start in
 [`src/docs/quickstart-docker-compose.md`](../src/docs/quickstart-docker-compose.md):
 
 ```bash
-cp src/hive.yaml.example src/hive.yaml
+# Compose requires the Go API on 3002; generate this config before editing it.
+sed 's/^  port: 3001$/  port: 3002/' src/hive.yaml.example > src/hive.yaml
+# Edit src/hive.yaml to set project.org and project.repos.
+# Set project.primary_repo to one of those repos or remove the field.
 # src/.env, NOT ./.env — `-f src/docker-compose.yaml` makes `src/` the project
 # directory, so that is the `.env` Compose reads. A root `.env` is ignored.
 install -m 600 /dev/null src/.env   # holds live tokens — create it 0600, never world-readable
 echo "HIVE_GITHUB_TOKEN=ghp_..." >> src/.env
 # REQUIRED: the dashboard's auth proxy refuses to start without it.
 printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> src/.env
-docker compose -f src/docker-compose.yaml up -d
+docker compose -f src/docker-compose.yaml up -d --wait
 ```
 
 For source-level debugging, build with `go build ./cmd/hive` from `src/` and run the generated binary with a local `src/hive.yaml`. Keep real tokens in your shell or local ignored `.env` files, never in commits.

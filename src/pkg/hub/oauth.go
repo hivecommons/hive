@@ -1299,6 +1299,7 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 	if u := loadSaaSUser(username); u != nil {
 		country = normalizeCountryCode(u.Country)
 	}
+	provider, _, _ := parseCanonical(username)
 	// Fold impersonation status into the auth payload the dashboard already
 	// fetches, so the "Viewing as … read-only" banner renders without a second
 	// round-trip. When an admin is impersonating, report the effective identity
@@ -1308,6 +1309,7 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 	payload := map[string]any{
 		"authenticated": true,
 		"login":         displayLogin,
+		"provider":      provider,
 		"avatar_url":    avatar,
 		"hub_admin":     isAdmin,
 		"root_admin":    isRootHubAdmin(username),
@@ -1320,7 +1322,9 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 	}
 	if grant, ok := s.activeImpersonationGrant(r); ok {
 		targetLogin, targetAvatar := s.displayIdentity(grant.Target)
+		targetProvider, _, _ := parseCanonical(grant.Target)
 		payload["login"] = targetLogin
+		payload["provider"] = targetProvider
 		payload["avatar_url"] = targetAvatar
 		payload["hub_admin"] = false
 		payload["root_admin"] = false

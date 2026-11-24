@@ -36,15 +36,48 @@ func (s *Server) writebackGateRef() *writeback.Gate {
 	return s.writebackGate
 }
 
-// WritebackStatus is the /api/status `writeback` block (nil gate → zero
-// value with Enabled=false so a hive booted without the gate is visible).
+// WritebackStatus returns the live write-back view for the current repository cards.
 func (s *Server) WritebackStatus() *writeback.Status {
+	if s == nil {
+		return nil
+	}
+	s.statusMu.RLock()
+	status := s.status
+	s.statusMu.RUnlock()
+	if status == nil {
+		return s.writebackStatus(nil)
+	}
+	return s.writebackStatus(status.Repos)
+}
+
+func (s *Server) writebackStatus(repos []FrontendRepo) *writeback.Status {
 	g := s.writebackGateRef()
 	if g == nil {
 		return nil
 	}
-	st := g.Snapshot()
+	names := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		name := repo.Full
+		if name == "" {
+			name = repo.Name
+		}
+		names = append(names, name)
+	}
+	st := g.SnapshotForRepos(names)
 	return &st
+}
+
+type statusWithWriteback struct {
+	*StatusPayload
+	Writeback *writeback.Status `json:"writeback,omitempty"`
+}
+
+// statusForDashboard includes live write-back data in status polls and SSE frames.
+func (s *Server) statusForDashboard(status *StatusPayload, now time.Time) statusWithWriteback {
+	return statusWithWriteback{
+		StatusPayload: s.statusWithOverviewBands(status, now),
+		Writeback:     s.writebackStatus(status.Repos),
+	}
 }
 
 // handleWritebackSuppressed serves GET /api/writeback/suppressed?repo=&kind=&limit=:

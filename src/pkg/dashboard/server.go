@@ -3059,7 +3059,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	// consumption survives the reset that erases the live number.
 	s.ObserveBudgetWindow(status)
 
-	data, err := json.Marshal(s.statusWithOverviewBands(status, time.Now().UTC()))
+	data, err := json.Marshal(s.statusForDashboard(status, time.Now().UTC()))
 	if err != nil {
 		s.logger.Warn("failed to marshal status for SSE", "error", err)
 		return true
@@ -3978,13 +3978,12 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	payload := statusWithWebhooks{StatusPayload: s.statusWithOverviewBands(status, now), Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot(), MatrixEnabled: s.currentMatrixConfig().Active(), ReviewQuestionsAutodecided1h: s.reviewQuestionsAutodecided1h(now)}
+	payload := statusWithWebhooks{statusWithWriteback: s.statusForDashboard(status, now), Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot(), MatrixEnabled: s.currentMatrixConfig().Active(), ReviewQuestionsAutodecided1h: s.reviewQuestionsAutodecided1h(now)}
 	if s.deps != nil && s.deps.EvalLoop != nil {
 		loop := s.deps.EvalLoop()
 		payload.EvalLoopStatus = &loop
 	}
 	payload.UpgradeProgress = s.upgradeProgress(status, now)
-	payload.Writeback = s.WritebackStatus()
 	payload.Hotspots = s.HotspotStatusBlock()
 	payload.Benchmarks = s.BenchmarksStatusBlock()
 	payload.Config = s.configHealthStatus()
@@ -4016,7 +4015,7 @@ func (s *Server) configHealthStatus() *ConfigHealthStatus {
 // governor loop's pacing (evalMode, lastWakeReason) to the cached status
 // payload at serve time, so neither is a whole eval cycle stale.
 type statusWithWebhooks struct {
-	*StatusPayload
+	statusWithWriteback
 	Webhooks github.WebhookHealth `json:"webhooks"`
 	// CIFailureSignals is the webhook CI-failure signal store: retained
 	// signals, the last one, webhook-triggered kicks and unmatched heads.
@@ -4037,10 +4036,6 @@ type statusWithWebhooks struct {
 	// countdown, derived at serve time (#14856). Absent on a hive the hub
 	// does not manage and that has no upgrade in flight.
 	UpgradeProgress *spoke.UpgradeProgress `json:"upgradeProgress,omitempty"`
-	// Writeback is the unsolicited write-back gate's live state: suppressed
-	// writes in the last 24h, per-repo first_seen / writable / mode, and the
-	// banners for repos the hive can now write to but left untouched.
-	Writeback *writeback.Status `json:"writeback,omitempty"`
 	// Hotspots is the merge-hotspot advisor's one-line summary: files hit by
 	// concurrent PRs in the window, how many warrant a split, how many have
 	// a modularize issue filed. Absent when the advisor is not wired.
@@ -4212,7 +4207,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 
 	s.statusMu.RLock()
 	if s.status != nil {
-		data, _ := json.Marshal(s.statusWithOverviewBands(s.status, time.Now().UTC()))
+		data, _ := json.Marshal(s.statusForDashboard(s.status, time.Now().UTC()))
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
 			s.statusMu.RUnlock()
 			return

@@ -8,13 +8,21 @@
     // store (the model must exist and compile) and the tracker picks the new
     // columns up on its next poll.
     const WORKFLOW_DEFAULT_KEY = 'hive-default@1';
-    const _workflowState = { loaded: false, loading: false, enabled: false, workflows: [], bindings: [], dispatch: [], agents: [] };
+    const _workflowState = { loaded: false, loading: null, enabled: false, workflows: [], bindings: [], dispatch: [], agents: [] };
 
     function workflowKey(name, version) { return (name || '') + '@' + (version || ''); }
 
-    async function loadWorkflowLibrary(onDone) {
-      if (_workflowState.loading) return;
-      _workflowState.loading = true;
+    function loadWorkflowLibrary(onDone, options) {
+      const pending = _workflowState.loading;
+      if (pending) {
+        // An earlier request may have read the library before the write completed.
+        return options?.afterWrite ? pending.then(() => loadWorkflowLibrary(onDone)) : pending;
+      }
+      _workflowState.loading = fetchWorkflowLibrary().finally(() => { _workflowState.loading = null; });
+      return _workflowState.loading.then(onDone);
+    }
+
+    async function fetchWorkflowLibrary() {
       try {
         const res = await fetch('/api/workflows', { headers: _inceptionAuthHeaders() });
         if (res.status === 503) { _workflowState.loaded = true; _workflowState.workflows = []; return; }
@@ -28,9 +36,6 @@
       } catch (err) {
         _workflowState.loaded = true;
         showToast('Could not load the workflow library: ' + err.message, 'error');
-      } finally {
-        _workflowState.loading = false;
-        if (typeof onDone === 'function') onDone();
       }
     }
 

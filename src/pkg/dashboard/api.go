@@ -795,10 +795,14 @@ func (s *Server) saveConfig() error {
 	if s.deps == nil || s.deps.Config == nil || s.deps.Config.SourcePath == "" {
 		return nil
 	}
+	return s.saveConfigWith(s.deps.Config.Save)
+}
+
+func (s *Server) saveConfigWith(save func() error) error {
 	if s.deps.SkipReloadFunc != nil {
 		s.deps.SkipReloadFunc()
 	}
-	if err := s.deps.Config.Save(); err != nil {
+	if err := save(); err != nil {
 		return err
 	}
 	if s.deps.Governor != nil {

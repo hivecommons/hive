@@ -654,7 +654,7 @@ func (s *HubServer) handleHiveTimeline(w http.ResponseWriter, r *http.Request) {
 func (s *HubServer) handleAccessLog(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("id")
 	username := s.getAuthUser(r)
-	h := loadSaaSHive(hiveID)
+	h := s.accessHive(hiveID)
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
