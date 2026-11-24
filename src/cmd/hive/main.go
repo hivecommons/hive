@@ -2450,8 +2450,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// idles on each scan unless every repo is off GitHub, so a reload either
 	// way hands the queues to the right relays. It stops with b.ctx, which
 	// is all shutdown needs, so its done channel is not joined.
-	_ = startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
-		b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger))
+	if deps.startForgeRequestRelay != nil {
+		_ = deps.startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
+			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger))
+	}
 	b.integrationEligibility = func(ctx context.Context, repo, base string, number int, head string) (*gh.PullRequest, string, error) {
 		client := b.currentGitHubClient()
 		if client == nil {
