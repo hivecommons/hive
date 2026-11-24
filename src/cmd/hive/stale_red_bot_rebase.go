@@ -48,6 +48,18 @@ import (
 // (the regeneration drops it), and decides whether the write-back gate would
 // allow the request before any API call.
 //
+// A bot PR the dependency-bot sweep's own red-CI hand-off parked with
+// needs-human (red on the same head past depBotRedCIGrace) is still asked
+// about, for the first trigger only: once every failing check is green on
+// the base tip, the bot's rebase is the fresh run that hand-off asks a
+// person for. The sweep's ledger record proves the label is the hand-off's
+// (staleRedOwnRedCIHandoff): reason red-ci, recorded for the current head,
+// and the label marked as added by the sweep. A needs-human a person added,
+// one from any other hand-off, or one recorded for an older head still
+// blocks, as do hold and do-not-merge. The label comes off when CI goes
+// green, as before; when the bot's new head fails again it stays, and the
+// record names the old head, so nothing is asked again.
+//
 // Requests count against the pass's caps (staleRedRefreshMaxPerRepo,
 // staleRedRefreshMaxPerPass). Dependabot is never asked, as in the
 // dependency-bot sweep: it refuses commands from apps, and its branch is
@@ -127,13 +139,53 @@ func staleRedBotRebaseCandidate(pr github.PullRequest) bool {
 		!hasLabel(pr.Labels, stagelabels.AdoptedByHive.Label())
 }
 
+// staleRedOwnRedCIHandoff reports whether pr's needs-human is the one the
+// dependency-bot sweep's red-CI hand-off added for pr's current head, as
+// the sweep's own ledger record for key says: reason depBotHandoffRedCI,
+// recorded for this exact head, and LabelApplied (the sweep's own label
+// write succeeded). The sweep only hands off a PR that has no needs-human
+// yet (dependencyBotHandoffCandidate), so such a record is not a label a
+// person added before it. Anything else, including no record, a failed
+// label write or a record for an older head, is false.
+func staleRedOwnRedCIHandoff(store *depBotConflictStore, key string, pr github.PullRequest) bool {
+	if store == nil || strings.TrimSpace(pr.HeadSHA) == "" || !escalation.HasNeedsHumanLabel(pr.Labels) {
+		return false
+	}
+	rec, ok := store.get(key)
+	return ok && rec.Reason == depBotHandoffRedCI && rec.LabelApplied && strings.EqualFold(rec.HeadSHA, pr.HeadSHA)
+}
+
+// staleRedWithoutNeedsHuman is pr with needs-human dropped from a copy of
+// its labels.
+func staleRedWithoutNeedsHuman(pr github.PullRequest) github.PullRequest {
+	labels := make([]string, 0, len(pr.Labels))
+	for _, l := range pr.Labels {
+		if !strings.EqualFold(l, escalation.NeedsHumanLabel) {
+			labels = append(labels, l)
+		}
+	}
+	pr.Labels = labels
+	return pr
+}
+
+// parkedByOwnRedCIHandoff reports whether pr would be a candidate but for
+// the needs-human the dependency-bot sweep's own red-CI hand-off added on
+// this head (staleRedOwnRedCIHandoff). Such a PR is asked about only when
+// the base clears every failing check (consider).
+func (p *staleRedBotPass) parkedByOwnRedCIHandoff(repo string, pr github.PullRequest) bool {
+	return p.rebaser != nil &&
+		staleRedOwnRedCIHandoff(p.check.store, escalation.Key(repo, pr.Number), pr) &&
+		staleRedBotRebaseCandidate(staleRedWithoutNeedsHuman(pr))
+}
+
 // possible reports, without an API call, whether the pass could ask pr's
-// bot to rebase: a candidate, and bot_rebase_request admits it
+// bot to rebase: a candidate (or one parked only by the sweep's own red-CI
+// hand-off on this head), and bot_rebase_request admits it
 // (depBotRebaseCheck.requestPossible: the gate's decision, nothing
 // recorded). The loop asks it before reading the base tip, so a hive where
 // the gate would refuse spends nothing on bot PRs.
 func (p *staleRedBotPass) possible(repo string, pr github.PullRequest) bool {
-	if p.rebaser == nil || !staleRedBotRebaseCandidate(pr) {
+	if p.rebaser == nil || (!staleRedBotRebaseCandidate(pr) && !p.parkedByOwnRedCIHandoff(repo, pr)) {
 		return false
 	}
 	if p.check.requestPossible(repo, pr) {
@@ -163,6 +215,12 @@ func (p *staleRedBotPass) consider(ctx context.Context, repo string, pr github.P
 	key := escalation.Key(repo, pr.Number)
 	st, found := p.check.store.rebaseState(key)
 	askedHead := found && !st.RequestedAt.IsZero() && strings.EqualFold(st.HeadSHA, pr.HeadSHA)
+
+	if verdict != github.StaleRedBaseClears && !staleRedBotRebaseCandidate(pr) && p.parkedByOwnRedCIHandoff(repo, pr) {
+		// Parked by the sweep's own red-CI hand-off: asked about only once
+		// the base tip clears every failing check. Read again next pass.
+		return staleRedBotOutcome{}
+	}
 
 	out := staleRedBotOutcome{}
 	switch verdict {

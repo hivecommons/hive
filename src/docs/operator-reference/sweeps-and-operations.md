@@ -521,7 +521,18 @@ in repositories with auto-merge off:
     `stale-red-base-refresh` with `action=bot_rebase_request`. Dependabot is
     never asked (it refuses commands from apps): its branch is skipped as
     before. Bot PRs labelled `needs-human`, `hold` or `do-not-merge`, or at
-    074, are skipped.
+    074, are skipped, with one exception: a `needs-human` that the
+    dependency-bot sweep's own red-CI hand-off added (red on the same head
+    for 4 hours) is no barrier once every failing check is green on the base
+    tip, because the bot's rebase is the fresh run that hand-off asks a
+    person for. The sweep's ledger (`dependency-bot-conflicts.json`) must
+    show that hand-off (reason `red-ci`) for the current head with the label
+    added by the sweep; otherwise the label still blocks. A `needs-human` a
+    person added, one from any other hand-off, or one recorded for an older
+    head blocks as before, and the PR-only trigger never applies to such a
+    PR. It is asked once per (head, base tip), like any other; the label
+    comes off when CI is green, and when the bot's new head is red again the
+    record names the old head, so it is not asked again.
   The request is recorded in `dependency-bot-conflicts-rebase.json`; if the
   head has neither moved nor gone green one window later, the dependency-bot
   sweep hands the PR to a person (one comment plus `needs-human`, reason

@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -580,5 +581,210 @@ func TestStaleRedBotRebase_GreenHeadNotHandedOff(t *testing.T) {
 	}
 	if _, ok := c.staleRedStep("acme/widgets#775", srbBotPR(775, "head2")); ok {
 		t.Fatal("staleRedStep claimed a head it never asked about")
+	}
+}
+
+// srbRedCIHandoff records, in the sweep's ledger, a hand-off for reason on
+// head with the needs-human label added by the sweep (labelApplied), and
+// returns the bot PR labelled needs-human as the next enumeration shows it.
+func srbRedCIHandoff(store *depBotConflictStore, number int, head, reason string, labelApplied bool, at time.Time) github.PullRequest {
+	key := "acme/widgets#" + strconv.Itoa(number)
+	store.markCommented(key, head, reason, at)
+	store.setLabelApplied(key, labelApplied)
+	pr := srbBotPR(number, head)
+	pr.Labels = []string{"needs-human"}
+	return pr
+}
+
+// The dependency-bot sweep's own red-CI hand-off parked the bot PR with
+// needs-human after 4 hours red on head1 (projectbluefin/fsdk-containers#570
+// in miniature). Once the base tip clears the failing check, the stale-red
+// pass asks the bot to rebase once, with the label still on, and not again
+// at the same base tip, also after a restart forgets the pass's memo.
+func TestStaleRedBotRebase_OwnRedCIHandoffAskedOnceBaseClears(t *testing.T) {
+	resetStaleRedRefresh(t)
+	store := useSRBStore(t)
+	newTestEscalationStore(t) // the sweep reads the transient re-run ledger
+	cfg := escalationTestConfig()
+	seen := time.Date(2026, 11, 22, 7, 0, 0, 0, time.UTC)
+
+	// The real sweep hands the red head off: one comment, needs-human.
+	writer := &depBotFakeWriter{}
+	sweep := func(at time.Time) {
+		a := &github.ActionableResult{}
+		a.PRs.Items = []github.PullRequest{srbBotPR(570, "head1")}
+		sweepDependencyBotConflicts(context.Background(), store, "acme", 0, writer, &depBotFakeReader{}, a, func() time.Time { return at }, discardLogger())
+	}
+	sweep(seen)
+	sweep(seen.Add(depBotRedCIGrace))
+	if len(writer.comments) != 1 || len(writer.adds) != 1 {
+		t.Fatalf("comments %v, labels %v; want the red-CI hand-off", writer.comments, writer.adds)
+	}
+	labelled := srbBotPR(570, "head1")
+	labelled.Labels = []string{"needs-human"}
+	if !staleRedOwnRedCIHandoff(store, "acme/widgets#570", labelled) {
+		rec, _ := store.get("acme/widgets#570")
+		t.Fatalf("ledger record %+v does not prove the sweep's own red-CI label on head1", rec)
+	}
+
+	f := newSRBRefresher(greenPytestBase("base1"))
+	now := seen.Add(depBotRedCIGrace + time.Hour)
+	got := refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(labelled), nil, discardLogger(), now)
+	if f.asks != 1 || len(f.edits) != 1 || len(f.calls) != 0 || !got["acme/widgets#570"] {
+		t.Fatalf("asks %d, edits %v, updates %d, keys %v; want one request and no update", f.asks, f.edits, len(f.calls), got)
+	}
+	if st, ok := store.rebaseState("acme/widgets#570"); !ok || st.HeadSHA != "head1" || st.BaseSHA != "base1" || st.Trigger != staleRedBotTriggerBaseClears {
+		t.Fatalf("recorded request = %+v (found %v), want head1/base1 stale-red", st, ok)
+	}
+
+	// Same head, same base tip: nothing, from the pass's memo ...
+	refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(labelled), nil, discardLogger(), now.Add(staleRedRefreshInterval))
+	// ... and from the ledger once the memo is gone (a restart).
+	resetStaleRedRefresh(t)
+	refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(labelled), nil, discardLogger(), now.Add(2*staleRedRefreshInterval))
+	if f.asks != 1 || len(f.edits) != 1 {
+		t.Fatalf("asks %d, edits %v at the same head and base tip; want still one", f.asks, f.edits)
+	}
+
+	// The bot rebased; head2 is red on the same check and the label stays
+	// (it comes off only on green). The record names head1: not asked.
+	f.untick(570)
+	f.bases = greenPytestBase("base2")
+	moved := srbBotPR(570, "head2")
+	moved.Labels = []string{"needs-human"}
+	refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(moved), nil, discardLogger(), now.Add(3*staleRedRefreshInterval))
+	if f.asks != 1 {
+		t.Fatalf("asks = %d after the bot's new head, want 1", f.asks)
+	}
+}
+
+// Every other needs-human still blocks the request, with no API call: a
+// person's (no record, or a red-CI record whose label the sweep never
+// added), another hand-off's, a red-CI record for an older head, and the
+// sweep's own red-CI label next to a hold.
+func TestStaleRedBotRebase_OtherNeedsHumanStillBlocks(t *testing.T) {
+	at := time.Date(2026, 11, 22, 7, 0, 0, 0, time.UTC)
+	cases := map[string]func(store *depBotConflictStore) github.PullRequest{
+		"added by a person": func(*depBotConflictStore) github.PullRequest {
+			pr := srbBotPR(570, "head1")
+			pr.Labels = []string{"needs-human"}
+			return pr
+		},
+		"red-ci record, label not the sweep's": func(store *depBotConflictStore) github.PullRequest {
+			return srbRedCIHandoff(store, 570, "head1", depBotHandoffRedCI, false, at)
+		},
+		"conflict hand-off": func(store *depBotConflictStore) github.PullRequest {
+			return srbRedCIHandoff(store, 570, "head1", depBotHandoffConflict, true, at)
+		},
+		"check-held hand-off": func(store *depBotConflictStore) github.PullRequest {
+			return srbRedCIHandoff(store, 570, "head1", depBotHandoffHeld, true, at)
+		},
+		"stranded hand-off": func(store *depBotConflictStore) github.PullRequest {
+			return srbRedCIHandoff(store, 570, "head1", depBotHandoffStranded, true, at)
+		},
+		"stale-red hand-off": func(store *depBotConflictStore) github.PullRequest {
+			return srbRedCIHandoff(store, 570, "head1", depBotHandoffStaleRed, true, at)
+		},
+		"red-ci record for an older head": func(store *depBotConflictStore) github.PullRequest {
+			pr := srbRedCIHandoff(store, 570, "head0", depBotHandoffRedCI, true, at)
+			pr.HeadSHA = "head1"
+			return pr
+		},
+		"own red-ci label plus a hold": func(store *depBotConflictStore) github.PullRequest {
+			pr := srbRedCIHandoff(store, 570, "head1", depBotHandoffRedCI, true, at)
+			pr.Labels = append(pr.Labels, "hold")
+			return pr
+		},
+	}
+	for name, mk := range cases {
+		t.Run(name, func(t *testing.T) {
+			resetStaleRedRefresh(t)
+			store := useSRBStore(t)
+			pr := mk(store)
+			f := newSRBRefresher(greenPytestBase("base1"))
+			got := refreshStaleRedBehindPRs(context.Background(), escalationTestConfig(), f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour))
+			if f.asks != 0 || len(f.calls) != 0 || len(got) != 0 {
+				t.Fatalf("asks %d, updates %d, keys %v; want nothing", f.asks, len(f.calls), got)
+			}
+			if len(f.baseReads) != 0 || f.compares != 0 {
+				t.Fatalf("base reads %v, compares %d; want no API call", f.baseReads, f.compares)
+			}
+		})
+	}
+}
+
+// The sweep's own red-CI label is no barrier only when the base tip clears
+// every failing check: not when the check is red on the base too, and not
+// for a PR-only check (which an unlabelled PR would be asked about).
+func TestStaleRedBotRebase_OwnRedCIHandoffWaitsForBaseToClear(t *testing.T) {
+	cfg := escalationTestConfig()
+	window := cfg.DependencyBotRebaseAfter()
+	at := time.Date(2026, 11, 22, 7, 0, 0, 0, time.UTC)
+
+	t.Run("red on the base tip", func(t *testing.T) {
+		resetStaleRedRefresh(t)
+		store := useSRBStore(t)
+		pr := srbRedCIHandoff(store, 570, "head1", depBotHandoffRedCI, true, at)
+		f := newSRBRefresher(map[string]github.StaleRedBaseState{"acme/widgets@main": {
+			SHA: "base1", Completed: map[string]bool{"pytest": true}, Red: map[string]bool{"pytest": true},
+		}})
+		refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour))
+		if f.asks != 0 || f.compares != 0 {
+			t.Fatalf("asks %d, compares %d; want nothing while the base is red too", f.asks, f.compares)
+		}
+	})
+	t.Run("check still running on the base tip", func(t *testing.T) {
+		resetStaleRedRefresh(t)
+		store := useSRBStore(t)
+		pr := srbRedCIHandoff(store, 570, "head1", depBotHandoffRedCI, true, at)
+		f := newSRBRefresher(map[string]github.StaleRedBaseState{"acme/widgets@main": {
+			SHA: "base1", Completed: map[string]bool{}, Red: map[string]bool{}, Reported: map[string]bool{"pytest": true},
+		}})
+		refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour))
+		if f.asks != 0 || f.compares != 0 {
+			t.Fatalf("asks %d, compares %d; want nothing before the base tip clears", f.asks, f.compares)
+		}
+	})
+	t.Run("pr-only check", func(t *testing.T) {
+		ranAt := at.Add(-time.Hour)
+		now := ranAt.Add(window + time.Hour)
+
+		resetStaleRedRefresh(t)
+		store := useSRBStore(t)
+		srbRedCIHandoff(store, 1471, "head1", depBotHandoffRedCI, true, at)
+		pr := srbPROnlyPR(1471, "head1", ranAt)
+		pr.Labels = []string{"needs-human"}
+		f := newSRBRefresher(prOnlyBase("base1"))
+		f.tipAt = ranAt.Add(time.Hour)
+		refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), now)
+		if f.asks != 0 || f.tipReads != 0 {
+			t.Fatalf("asks %d, tip reads %d; want nothing for a PR-only check under the hand-off", f.asks, f.tipReads)
+		}
+
+		// The same PR without the label is asked about (#19526 unchanged).
+		resetStaleRedRefresh(t)
+		useSRBStore(t)
+		f = newSRBRefresher(prOnlyBase("base1"))
+		f.tipAt = ranAt.Add(time.Hour)
+		refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(srbPROnlyPR(1471, "head1", ranAt)), nil, discardLogger(), now)
+		if f.asks != 1 {
+			t.Fatalf("asks = %d without the label, want 1", f.asks)
+		}
+	})
+}
+
+// Dependabot is never asked, also when the sweep's own red-CI hand-off
+// parked it: no base read, no request.
+func TestStaleRedBotRebase_DependabotOwnRedCIHandoffUnchanged(t *testing.T) {
+	resetStaleRedRefresh(t)
+	store := useSRBStore(t)
+	at := time.Date(2026, 11, 22, 7, 0, 0, 0, time.UTC)
+	pr := srbRedCIHandoff(store, 1, "dep1", depBotHandoffRedCI, true, at)
+	pr.Author = "dependabot[bot]"
+	pr.HeadRef = "dependabot/npm_and_yarn/lodash-4.17.21"
+	f := newSRBRefresher(greenPytestBase("base1"))
+	refreshStaleRedBehindPRs(context.Background(), escalationTestConfig(), f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour))
+	if f.asks != 0 || len(f.calls) != 0 || len(f.baseReads) != 0 {
+		t.Fatalf("Dependabot PR: asks %d, updates %d, base reads %v; want none", f.asks, len(f.calls), f.baseReads)
 	}
 }
