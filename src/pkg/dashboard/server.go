@@ -418,6 +418,13 @@ type Server struct {
 	ownerIdentityFlowMu sync.Mutex
 	ownerIdentityFlow   *ownerIdentityFlow
 
+	// githubTokenMu serializes PAT rotations (hivecommons/hive#19633,
+	// api_github_token.go) and guards githubTokenVerified, the last token
+	// this process verified: its fingerprint, login and when. Never the
+	// token itself.
+	githubTokenMu       sync.Mutex
+	githubTokenVerified *githubTokenVerification
+
 	// userSessions maps a random opaque session id (stored in the client's
 	// hive_session cookie on direct-route spokes) to the authenticated user.
 	// This replaces the previous single shared s.authToken cookie so two

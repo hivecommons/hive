@@ -582,6 +582,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/github-owner-identity/start", s.handleOwnerIdentityStart)
 	s.mux.HandleFunc("POST /api/github-owner-identity/poll", s.handleOwnerIdentityPoll)
 	s.mux.HandleFunc("DELETE /api/github-owner-identity", s.handleOwnerIdentityDelete)
+	// Write-only PAT rotation for PAT-mode hives (#19633,
+	// api_github_token.go): status and replace, never read back.
+	s.mux.HandleFunc("GET /api/github-token", s.handleGitHubTokenGet)
+	s.mux.HandleFunc("PUT /api/github-token", s.handleGitHubTokenPut)
 	// Owner-approved prompt/definition source repos (#18490,
 	// api_config_prompt_sources.go).
 	s.mux.HandleFunc("GET /api/config/prompt-sources", s.handlePromptSourcesGet)
