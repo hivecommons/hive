@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v6.60.3)
+
+### Changed
+
+- The Overview card's **Your turn** tile is now named **Needs a person**, and so are the first heading of the Issues by band and PRs by band lists and its total row (both were "To do"). The card is the same for every owner, so "your" was wrong for most of what it counts. The total tiles' sublines, the tile's filter chip, the KPI strip's spoken summary and the Other and Dependency bot to rebase rules use the same words. Only the words changed: the group key stays `your-turn`, so `card_group=your-turn` and `card_band=your-turn` return the same rows, and the inbox in Projects, the your-turn markers and a hive whose server sends no Overview card keep the name Your turn.
+
 ## 2026-11-24 (v6.60.2)
 
 ### Changed

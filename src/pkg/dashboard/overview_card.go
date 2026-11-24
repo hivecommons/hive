@@ -89,7 +89,7 @@ var (
 	cardPRBandOrder = []string{
 		cardBandInspect, cardBandDecide, cardBandApprove, cardBandHandMerge, cardBandReview,
 		cardBandTriage, cardBandAdmit, cardBandTurnOther, cardBandToClose, cardBandUnexplained,
-		cardBandHumanHold, cardBandAuthorUpdate, cardBandBotRebase,
+		cardBandWaitingOnItem, cardBandHumanHold, cardBandAuthorUpdate, cardBandBotRebase,
 		cardBandWorking, cardBandWillMerge, cardBandHeld, cardBandDraft,
 	}
 	// cardGroupOrder is the tile order.
@@ -121,7 +121,7 @@ var cardBandDefs = map[string]cardBandDef{
 		rule: "Add the admission label to let agents work on it, or close it."},
 	cardBandTurnOther: {label: "Other", group: cardGroupYourTurn, hideZero: true,
 		rule:   "Needs a person for a reason not listed above; the download shows each item's reason.",
-		prRule: "Needs a person for a reason not listed above, such as a red base branch, nobody to fix it, or a dependency-bot PR still red after the hand-off time; the download shows each item's reason."},
+		prRule: "Needs a person for a reason not listed above, such as a red base branch, nobody to fix it, a dependency-bot PR still red after the hand-off time, or a bot's red or conflicting PR labelled needs-human; the download shows each item's reason."},
 	cardBandToClose: {label: "Yours to close", group: cardGroupYourTurn,
 		rule: "The hive thinks it may be done or no longer needed but won't close it itself. Close it, or keep it open."},
 	cardBandUnexplained: {label: "Unexplained", group: cardGroupYourTurn, keep: true,
@@ -129,7 +129,7 @@ var cardBandDefs = map[string]cardBandDef{
 	cardBandCoveredByPR: {label: "Covered by an open PR", group: cardGroupWaiting,
 		rule: "A PR is doing the work. Follow the PR."},
 	cardBandWaitingOnItem: {label: "Waiting on another item", group: cardGroupWaiting,
-		rule: "Another issue or PR must finish first, or someone a maintainer asked must reply. Check that the blocker is still real and moving."},
+		rule: "Another issue or PR must finish first, or someone who was asked must answer. Check that the blocker is still real and moving."},
 	cardBandHumanHold: {label: "Human placed on hold", group: cardGroupWaiting,
 		rule: "A person put a hold on it or paused it from the dashboard."},
 	cardBandReporterConfirm: {label: "Reporter to confirm the fix", group: cardGroupWaiting,
@@ -1048,11 +1048,37 @@ func cardPRAuthorKind(pr github.PullRequest) string {
 	return cardAuthorPerson
 }
 
+// cardBotNeedsHumanReason is the card reason of a bot's red or conflicting
+// PR that the stored decision holds for needs-human.
+const cardBotNeedsHumanReason = "A bot's PR labelled needs-human with red CI or a conflict; there is nothing to review yet. Ask the bot to rebase it (tick its rebase box), close it, or fix it by hand."
+
+// cardBotNeedsHumanBand is rule 1 for a non-hive bot's PR the stored
+// decision holds for needs-human (person_pr_needs_human): with red CI or a
+// conflict, the person's job is to close it, fix it or ask the bot, not to
+// review it, so it is Other. The card does not claim the hive will or won't
+// ask the bot to rebase: the stale-red pass still asks once after its own
+// red-CI hand-off. A green one stays on Review.
+// Either way it stays in the Your turn group with its ownership reason
+// code, so the tile and the inbox agree.
+func cardBotNeedsHumanBand(row cardPRRow) (OverviewCardBand, bool) {
+	o := row.ownership
+	if o == nil || !o.YourTurn || o.ReasonCode != OwnershipReasonPersonPRNeedsHuman || cardPRAuthorKind(row.pr) != cardAuthorBot {
+		return OverviewCardBand{}, false
+	}
+	if !cardDependencyBotRedCI(row.pr) && !cardConflictMergeState(row.pr) {
+		return OverviewCardBand{}, false
+	}
+	return cardBand(cardBandTurnOther, "ownership:"+o.ReasonCode, cardBotNeedsHumanReason), true
+}
+
 // decidePRCard places one PR row (overview card §3.2). The first matching
 // rule wins.
 func decidePRCard(row cardPRRow, in cardInputs) OverviewCardBand {
 	pr := row.pr
 	o := row.ownership
+	if band, ok := cardBotNeedsHumanBand(row); ok {
+		return band
+	}
 	if band, ok := cardOwnershipBand(o, ownershipKindPR); ok {
 		return band
 	}
@@ -1115,6 +1141,10 @@ func cardPRWaitingBand(row cardPRRow, o *Ownership) OverviewCardBand {
 		return cardBand(cardBandHumanHold, "wait:hold", "A person put a hold on it or paused it from the dashboard.")
 	case cardWaitAdjudicator:
 		return cardBand(cardBandWorking, "wait:adjudicator", nonEmpty(o.Reason, "Waiting for the adjudicator."))
+	}
+	if reviewDeciderWaiting(o) {
+		// The hive's review asked a named person; the reason says who.
+		return cardBand(cardBandWaitingOnItem, "wait:review_decider", o.Reason)
 	}
 	kind := cardPRAuthorKind(row.pr)
 	code := "wait:answered:" + kind

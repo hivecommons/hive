@@ -278,10 +278,18 @@ const (
 	waitingCauseReporter    = "reporter"
 	waitingCauseCovered     = "covered"
 	waitingCauseAdjudicator = "adjudicator"
+	// waitingCauseDecider: the hive's review asked a named person to decide
+	// (reviewDeciderWaiting).
+	waitingCauseDecider = "decider"
+	// waitingCauseAnswered: a person answered the hive's review on the head
+	// (answeredWaitReason) and a fix is due.
+	waitingCauseAnswered = "answered"
 	// waitingCauseMaintainerReply: an untrusted reporter's issue whose
 	// newest comment by a person is a maintainer's (decideIssueOwnership
 	// rule 6b); a reporter_triage row waits for no other reason.
 	waitingCauseMaintainerReply = "maintainer_reply"
+	// waitingCauseOther: a waiting PR row no rule above names.
+	waitingCauseOther = "other"
 )
 
 var overviewWaitingCauseLabels = map[string]string{
@@ -289,10 +297,13 @@ var overviewWaitingCauseLabels = map[string]string{
 	waitingCauseReporter:        "awaiting reporter confirmation",
 	waitingCauseCovered:         "covered by an open PR",
 	waitingCauseAdjudicator:     "within the adjudicator wait",
+	waitingCauseDecider:         "review asked a named person",
+	waitingCauseAnswered:        "a person answered the review",
 	waitingCauseMaintainerReply: "waiting on a reply a maintainer asked for",
+	waitingCauseOther:           "waiting for another reason",
 }
 
-var overviewWaitingCauseOrder = []string{waitingCauseHold, waitingCauseAdjudicator, waitingCauseReporter, waitingCauseCovered, waitingCauseMaintainerReply}
+var overviewWaitingCauseOrder = []string{waitingCauseHold, waitingCauseAdjudicator, waitingCauseDecider, waitingCauseAnswered, waitingCauseReporter, waitingCauseCovered, waitingCauseMaintainerReply, waitingCauseOther}
 
 // overviewIssueWaitingCause names why a not-your-turn issue waits on someone
 // else: a hold, an open PR that covers it, a maintainer's reply on an
@@ -365,9 +376,22 @@ func overviewPartitionOf(status *StatusPayload, autoMergeLabel string) overviewP
 				}
 				part.prs.tracked++
 				o := ownershipFor(repo.Ownership, ownershipKindPR, entry.pr.Number)
-				cause := waitingCauseAdjudicator
-				if held {
+				// The cause follows the waiting returns of decidePROwnership:
+				// a held row, a hive needs-human PR inside the adjudicator
+				// wait, a question waiting on its named decider, a review a
+				// person answered; anything else is "other".
+				var cause string
+				switch {
+				case held:
 					cause = waitingCauseHold
+				case reviewDeciderWaiting(o):
+					cause = waitingCauseDecider
+				case reviewAnsweredWaiting(o):
+					cause = waitingCauseAnswered
+				case labelSet(entry.pr.Labels)[ownershipLabelNeedsHuman] && prAgentRole(entry.pr) != "":
+					cause = waitingCauseAdjudicator
+				default:
+					cause = waitingCauseOther
 				}
 				isHeld := held || len(holdLabels(entry.pr.Labels, status.HiveID)) > 0
 				part.prs.add(overviewPRTerm(o, isHeld, entry.pr, entry.verdict, autoMergeLabel), o, cause)

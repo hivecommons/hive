@@ -883,6 +883,13 @@ func decisionQuestionPlaceholderMention(q string) bool {
 	return decisionQuestionPlaceholderMentionRE.MatchString(q)
 }
 
+// DecisionQuestionPlaceholderMention is decisionQuestionPlaceholderMention
+// for other packages: the dashboard reads a placeholder-only question as
+// naming nobody, by the same rule.
+func DecisionQuestionPlaceholderMention(q string) bool {
+	return decisionQuestionPlaceholderMention(q)
+}
+
 // ShortSHA is the 7-char head rendering used in comments.
 func ShortSHA(sha string) string {
 	sha = strings.TrimSpace(sha)
