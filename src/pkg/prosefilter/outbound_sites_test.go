@@ -164,7 +164,7 @@ var outboundSites = map[string]outboundSite{
 	"knowledge.(*Client).postJSON":                       machine(reasonInternalAPI),
 	"knowledge.(*Promoter).ingestToLayer":                machine(reasonInternalAPI),
 	"kubejob.(*Launcher).do":                             machine(reasonPlatform),
-	"kubejob.(*Launcher).bridgeDo":                     machine(reasonPlatform),
+	"kubejob.(*Launcher).bridgeDo":                       machine(reasonPlatform),
 	"linearagent.postTokenForm":                          machine(reasonAuth),
 	"mailin.(*HubClient).do":                             machine(reasonSpokeToHub),
 	"main.(*delegateDeciderRunner).RunDeciderTurn":       machine(reasonModelPrompt),
