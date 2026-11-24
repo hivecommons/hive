@@ -228,8 +228,9 @@ type IssueRef struct {
 
 // IssueCreator is the OPTIONAL forge-neutral issue-create seam the audit
 // campaign's authorized publisher (#8353) files through. It is kept off the
-// core Forge interface because only the GitHub adapter implements it today;
-// a caller that needs it type-asserts and refuses cleanly when absent.
+// core Forge interface because the GitHub, Gitea and Forgejo adapters
+// implement it and GitLab does not; a caller that needs it type-asserts and
+// refuses cleanly when absent.
 type IssueCreator interface {
 	// CreateIssue files a new issue in repo and returns its reference. The
 	// publisher's mutation journal and marker lookup are its idempotency
