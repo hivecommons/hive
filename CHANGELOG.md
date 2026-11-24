@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v6.58.6)
+
+### Changed
+
+- The Overview card's **Your turn** band is now split by what you have to do. Your turn is a bold subtotal row like Waiting on someone else, with **Inspect a sentinel flag**, **Decide**, **Approve**, **Merge by hand**, **Review**, **Triage**, **Admit**, **Other**, **Yours to close** and **Unexplained** indented under it, each with its own colour, plain-words rule on hover and ⬇ export. The rows come from the reason the hive already recorded (the your-turn decision's verb, or the card rule that held the item for a person), so the Your turn tile, the inbox and every decision are unchanged; only the breakdown is new. The one `your-turn` card band is replaced by the new keys (`inspect`, `decide`, `approve`, `merge-by-hand`, `review`, `triage`, `admit`, `your-turn-other`) under the unchanged `your-turn` group. The old `card_band=your-turn` filter still works on the exports and the `issues_by_band` / `prs_by_band` MCP tools and returns the rows it always did: the Your turn action rows, every Your turn row except Yours to close and Unexplained. `card_group=your-turn` returns the whole group.
+
 ## 2026-11-24 (v6.58.5)
 
 ### Fixed
