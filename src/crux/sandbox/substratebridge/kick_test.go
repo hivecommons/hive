@@ -82,7 +82,7 @@ func TestKickServerPushRunPull(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatal("pull still 409: the run has not finished")
 		}
-		time.Sleep(10 * time.Millisecond)
+		<-time.After(10 * time.Millisecond)
 	}
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("pull = %d, want 200", resp.StatusCode)
