@@ -32,7 +32,7 @@ const paused = { id: 'hosted-abc', name: 'nate dubs tools', agents: [breakerPaus
 
 // Owner or admin: a button that resumes this hive.
 const owner = hivePausedPill(paused, true);
-assert.match(owner, /^<button type="button" class="hive-paused-pill"/);
+assert.match(owner, /^<button type="button" class="hive-paused-pill badge-status"/);
 assert.match(owner, /onclick="setHiveBreaker\('hosted-abc','nate dubs tools',false\)"/, 'resume must release the breaker, not engage it');
 assert.match(owner, /resume<\/button>$/);
 assert.match(owner, /holding 2 agents/);
@@ -40,7 +40,7 @@ assert.match(owner, /fleet-breaker/, 'hover carries the pause provenance');
 
 // Anyone else: a label, no action, and a hover naming who can resume.
 const viewer = hivePausedPill(paused, false);
-assert.match(viewer, /^<span class="hive-paused-pill"/);
+assert.match(viewer, /^<span class="hive-paused-pill badge-status"/);
 assert.doesNotMatch(viewer, /onclick/);
 assert.match(viewer, /owner or a hub admin/);
 

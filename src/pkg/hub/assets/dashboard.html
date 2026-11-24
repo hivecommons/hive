@@ -799,6 +799,10 @@
       .upgrade-progress-mono { font-family: monospace; font-size: var(--fs-base); color: var(--muted); }
       .upgrade-progress-mono.is-target { color: var(--green); }
       .upgrade-progress-warn { color: var(--red); }
+      /* Paused-hive pill in the My Hives row (#19778): a warn badge-status
+         from components.css; a button when the viewer may resume. */
+      .hive-paused-pill { margin-left: var(--sp-3); vertical-align: middle; font-family: inherit; cursor: help; }
+      button.hive-paused-pill { appearance: none; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -8883,14 +8887,12 @@
         (canResume
           ? 'Click to resume: only the agents the pause stopped restart, on the spoke\'s next heartbeat.'
           : 'The hive owner or a hub admin can resume it from this row\'s ⋮ menu.');
-      var style = 'display:inline-block;margin-left:var(--sp-3);padding:1px 7px;border-radius:9px;' +
-        'background:rgba(210,153,34,0.12);border:1px solid rgba(210,153,34,0.45);color:#d29922;' +
-        'font:inherit;font-size:var(--fs-xs);font-weight:600;white-space:nowrap;vertical-align:middle';
+      var attrs = 'class="hive-paused-pill badge-status" data-status="warn" title="' + escAttr(title) + '"';
       if (canResume) {
-        return '<button type="button" class="hive-paused-pill" onclick="setHiveBreaker(' + jsArg(h.id) + ',' + jsArg(h.name || h.id) + ',false)" ' +
-          'title="' + escAttr(title) + '" aria-label="Hive paused — resume" style="' + style + ';cursor:pointer">⏸︎ paused · ▶︎ resume</button>';
+        return '<button type="button" ' + attrs + ' onclick="setHiveBreaker(' + jsArg(h.id) + ',' + jsArg(h.name || h.id) + ',false)" ' +
+          'aria-label="Hive paused — resume">⏸︎ paused · ▶︎ resume</button>';
       }
-      return '<span class="hive-paused-pill" title="' + escAttr(title) + '" style="' + style + ';cursor:help">⏸︎ paused</span>';
+      return '<span ' + attrs + '>⏸︎ paused</span>';
     }
     /* ── Spoke pointer ──
        Why: the hub is a LIST of hives, but a new owner lands here and looks
