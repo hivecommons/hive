@@ -17,6 +17,7 @@ import (
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // The "your turn" decision (hivecommons/hive#11507, part A #11565): for every
@@ -85,6 +86,10 @@ const (
 	// refuses whose cited lines are gone from the default branch
 	// (RepoWorkIssue.CitedLinesGone).
 	OwnershipReasonCitedLinesGone = "cited_lines_gone"
+	// OwnershipReasonOpenForDiscussion: an untrusted reporter's issue the
+	// stage engine marks a design proposal (stage/018-open-for-discussion).
+	// What it needs first is a maintainer's call, not admission.
+	OwnershipReasonOpenForDiscussion = "open_for_discussion"
 )
 
 // ownershipReasonVerbs is the fixed reason-code set with the one verb each
@@ -118,6 +123,7 @@ var ownershipReasonVerbs = map[string]string{
 	OwnershipReasonAgentFindingNotAdmitted:     OwnershipVerbAdmit,
 	OwnershipReasonPersonIssueNotAdmitted:      OwnershipVerbAdmit,
 	OwnershipReasonCitedLinesGone:              OwnershipVerbClose,
+	OwnershipReasonOpenForDiscussion:           OwnershipVerbDecide,
 }
 
 // OwnershipActionReleaseHold is the dashboard's existing release-hold action.
@@ -520,6 +526,12 @@ type issueOwnershipInput struct {
 	// authorIsHuman is the enumeration's reporter classification
 	// (RepoWorkIssue.AuthorIsHuman) for a non-actionable row.
 	authorIsHuman bool
+	// author is the issue's author login (RepoWorkIssue.Author) for a
+	// non-actionable row.
+	author string
+	// latestPersonComment is RepoWorkIssue.LatestPersonComment: the newest
+	// comment by a person, read for reporter_triage rows only.
+	latestPersonComment *github.IssuePersonComment
 	// openLinkedPR is set when the issue has an open (unmerged) linked PR or
 	// open PR claim context.
 	openLinkedPR bool
@@ -632,8 +644,21 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 		}
 		return parkedOwnership(parking)
 	}
-	// (6) untrusted reporter awaiting an admission label.
+	// (6) untrusted reporter awaiting an admission label. Display only:
+	// the bucket keeps the issue off every agent queue whatever this says.
+	// (6a) a design proposal (stage/018) waits on a maintainer's call
+	// first; a decision (approved-direction) leaves the admission.
+	// (6b) a maintainer's comment that is still the newest from a person
+	// waits on whoever it asked (projectbluefin/server#655 and #679 sat
+	// in Admit after a maintainer had asked others for a fix or a design
+	// decision). The Overview card derives its waiting cause from the same helpers.
 	if in.bucket == repoWorkBucketReporterTriage {
+		if reporterTriageOpenForDiscussion(labels) {
+			return yourTurn(OwnershipReasonOpenForDiscussion, "Design proposal open for discussion: decide or close")
+		}
+		if reason := maintainerReplyWaitReason(labels, in.author, in.latestPersonComment, env.staleDaysOrDefault(), env.now); reason != "" {
+			return waitingElsewhereFor(reason)
+		}
 		return yourTurn(OwnershipReasonUntrustedReporter, "Reporter is not trusted — add an admission label to let agents work on it")
 	}
 	// (7) awaiting the reporter's confirmation: the label or bucket, or a
@@ -699,6 +724,71 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 		return safetyNetOwnership(env.untouchedDays(in.createdAt, in.updatedAt))
 	}
 	return notYourTurn()
+}
+
+// ownershipLabelOpenForDiscussion is stage/018-open-for-discussion, the
+// stage engine's unclaimed proposal / design issue.
+var ownershipLabelOpenForDiscussion = strings.ToLower(stagelabels.OpenForDiscussion.Label())
+
+// ownershipMaintainerAssociations are the GitHub author associations whose
+// comment on an untrusted reporter's issue is a maintainer's reply.
+var ownershipMaintainerAssociations = map[string]bool{"OWNER": true, "MEMBER": true, "COLLABORATOR": true}
+
+// ownershipCommentDateFormat renders a comment's day, e.g. Nov 16 (UTC);
+// ownershipCommentDateYearFormat adds the year when it is not the current
+// one, e.g. Nov 16, 2025.
+const (
+	ownershipCommentDateFormat     = "Jan 2"
+	ownershipCommentDateYearFormat = "Jan 2, 2006"
+)
+
+// reporterTriageOpenForDiscussion is rule (6a) for a reporter_triage row: a
+// design proposal (stage/018-open-for-discussion) nobody has decided yet
+// (no approved-direction).
+func reporterTriageOpenForDiscussion(labels map[string]bool) bool {
+	return labels[ownershipLabelOpenForDiscussion] && !labels[ownershipLabelApprovedDirection]
+}
+
+// maintainerReplyWaitReason is rule (6b): the waiting reason of an untrusted
+// reporter's issue whose newest comment by a person is a maintainer's
+// (OWNER, MEMBER or COLLABORATOR) who did not file it, and "" otherwise. It
+// is "" for a design proposal rule (6a) decides, once a decision is recorded
+// (approved-direction: admission is what is left), and once the comment is
+// older than the stale period (staleDays at now): an unanswered ask goes
+// back to Admit rather than parking the issue for good. With exactly one
+// login left among the comment's mentions once the issue's author and the
+// commenter are dropped, it waits on that login; otherwise on a reply. A
+// newer comment by anyone else, the reporter included, makes it "" again:
+// the newest person comment is then not the maintainer's. Logins are
+// written without "@" so the card never mentions anyone.
+func maintainerReplyWaitReason(labels map[string]bool, author string, c *github.IssuePersonComment, staleDays int, now time.Time) string {
+	if reporterTriageOpenForDiscussion(labels) || labels[ownershipLabelApprovedDirection] {
+		return ""
+	}
+	if c == nil || c.Login == "" || !ownershipMaintainerAssociations[strings.ToUpper(c.AuthorAssociation)] {
+		return ""
+	}
+	if author != "" && strings.EqualFold(c.Login, author) {
+		return ""
+	}
+	if issueStale(c.CreatedAt, c.CreatedAt, staleDays, now) {
+		return ""
+	}
+	var asked []string
+	for _, login := range c.Mentions {
+		if login == "" || strings.EqualFold(login, author) || strings.EqualFold(login, c.Login) {
+			continue
+		}
+		asked = append(asked, login)
+	}
+	day := c.CreatedAt.UTC().Format(ownershipCommentDateFormat)
+	if c.CreatedAt.UTC().Year() != now.UTC().Year() {
+		day = c.CreatedAt.UTC().Format(ownershipCommentDateYearFormat)
+	}
+	if len(asked) == 1 {
+		return "Waits on " + asked[0] + ": maintainer " + c.Login + " asked on " + day
+	}
+	return "Maintainer " + c.Login + " replied on " + day + "; waiting on a reply"
 }
 
 // ownershipLikelyDone is the effective hive/likely-done: the label without
@@ -1007,10 +1097,14 @@ func decideRepoOwnership(repos []FrontendRepo, cfg config.DashboardIssueBandsCon
 				updatedAt:       item.UpdatedAt,
 				reporterGate:    item.ReporterConfirmationGate,
 				authorIsHuman:   item.AuthorIsHuman,
+				author:          item.Author,
 				bucket:          item.Bucket,
 				bucketReason:    item.Reason,
 				citedLinesGone:  item.CitedLinesGone,
 				decisionBlocker: decisionBlockerFor(nonEmpty(item.Repo, repoName)+"#"+strconv.Itoa(item.Number), item.OpenBlockers, decisionParks, repoName),
+			}
+			if in.bucket == repoWorkBucketReporterTriage {
+				in.latestPersonComment = item.LatestPersonComment
 			}
 			in.hiveClosingPR = hiveClosingPRFor(*repo, repoName, item.Number)
 			if in.bucket == repoWorkBucketFiltered && in.bucketReason == github.IssueFilterReason {

@@ -321,6 +321,9 @@ type Client struct {
 	// change rather than once per enumeration. Guarded by issueClaimMu.
 	issueClaimCache map[string]issueClaimCacheEntry
 	issueClaimMu    sync.Mutex
+	// personComments remembers the newest person comment read for a
+	// reporter_triage issue at a given updated_at (issue_person_comment.go).
+	personComments issuePersonComments
 	// sharedCIRerunSeen memoizes PRs the shared-CI rerun sweep found nothing
 	// to do for, keyed "owner/repo#n". Guarded by sharedCIRerunMu.
 	sharedCIRerunSeen map[string]sharedCIRerunSeen
@@ -2086,6 +2089,9 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 	owner, repoName := c.splitRepo(repo)
 	// Stale-finding checks this pass may refresh (issue_cited_lines.go).
 	citedBudget := citedMaxChecksPerRepo
+	// Reporter-triage comment reads this pass may make
+	// (issue_person_comment.go).
+	personCommentBudget := newPersonCommentPass()
 	// Taken before the list call: a hold recorded after the listing snapshot
 	// must outlive this pass's prune of the local hold-source record.
 	passStart := time.Now().UTC()
@@ -2250,9 +2256,16 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		// judged here.
 		if ra, ok := issueFilter.(ReporterAdmitter); ok && ra.ReporterTrustEnabled() && c.isHumanAuthor(issue.GetUser()) {
 			if !ra.AdmitsReporter(labels, safeGetLogin(issue.GetUser()), issue.GetAuthorAssociation()) {
-				c.markReporterTrustAwaiting(ctx, repo, issue, labels, ra, reporterTrustWaitBudget)
+				listed, listedOK := c.markReporterTrustAwaiting(ctx, repo, issue, labels, ra, reporterTrustWaitBudget)
 				breakdown.ReporterTriage++
-				details = append(details, c.workIssue(repo, issue, labels, workBucketReporterTriage, reporterTriageAwaitingReason))
+				row := c.workIssue(repo, issue, labels, workBucketReporterTriage, reporterTriageAwaitingReason)
+				// Display only: the dashboard's your-turn decision reads it
+				// to tell a maintainer's pending reply from an issue that
+				// still waits on admission. The bucket above already decided
+				// the issue stays off every agent queue. The wait notice
+				// scan's comment list, when it read one, costs no new call.
+				row.LatestPersonComment = c.latestPersonComment(ctx, owner, repoName, issue, listed, listedOK, personCommentBudget)
+				details = append(details, row)
 				continue
 			}
 			labels = c.clearReporterTrustAwaiting(ctx, repo, issue, labels, ra)
@@ -5514,6 +5527,12 @@ type RepoWorkIssue struct {
 	// checklist marker, "Decision required: no"), read here because the
 	// body itself is not carried (hivecommons/hive#15381).
 	Advisory *IssueAdvisory `json:"advisory,omitempty"`
+	// LatestPersonComment is the newest comment a person (not a bot, not
+	// this hive) left on the issue, set on reporter_triage rows only
+	// (issue_person_comment.go); nil when there is none or it was not read.
+	// Display only: the dashboard's your-turn decision reads it, and
+	// nothing that admits, filters, queues or labels an issue does.
+	LatestPersonComment *IssuePersonComment `json:"latest_person_comment,omitempty"`
 }
 
 func repoWorkIssueFromIssue(issue Issue, bucket, reason string) RepoWorkIssue {

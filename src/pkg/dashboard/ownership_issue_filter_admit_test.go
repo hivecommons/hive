@@ -7,6 +7,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // The issue filter (project.issue_filter.require_labels) keeps an issue off
@@ -180,5 +181,142 @@ func TestRepoOwnershipFilterRefusedIssueClosedByOpenPRWaitsOnPR(t *testing.T) {
 		if d == nil || !d.YourTurn || d.Verb != OwnershipVerbAdmit || d.ReasonCode != OwnershipReasonAgentFindingNotAdmitted {
 			t.Errorf("#%d = %+v, want ADMIT %s", n, d, OwnershipReasonAgentFindingNotAdmitted)
 		}
+	}
+}
+
+// An untrusted reporter's issue (the reporter_triage bucket) is Admit until a
+// maintainer acts, but a maintainer who already replied and is still the
+// newest word from a person is waiting on someone else, and a design
+// proposal (stage/018) waits on a maintainer's call. projectbluefin/server#655
+// (a MEMBER asked jeefy to pick a fix) and #679 (a MEMBER asked the server
+// maintainers for a design decision, thanking the reporter) sat in Admit;
+// testsuite#1302 and #1303 carry 018. Display only: the bucket, and so the
+// agent queues, are untouched.
+func reporterTriageIssue(labels ...string) issueOwnershipInput {
+	in := nonActionable11565(repoWorkBucketReporterTriage, "Awaiting maintainer triage label", labels...)
+	in.authorIsHuman = true
+	in.author = "zacharybutler"
+	return in
+}
+
+// personComment is a comment two days before ownershipNow11565 (Oct 10).
+func personComment(login, association string, mentions ...string) *github.IssuePersonComment {
+	return personCommentAt(ownershipNow11565.Add(-2*24*time.Hour), login, association, mentions...)
+}
+
+func personCommentAt(at time.Time, login, association string, mentions ...string) *github.IssuePersonComment {
+	return &github.IssuePersonComment{Login: login, AuthorAssociation: association, CreatedAt: at, Mentions: mentions}
+}
+
+func TestReporterTriageOwnershipReadsTheNewestPersonComment(t *testing.T) {
+	env := ownershipEnv11565(6)
+	admit := want11565{OwnershipVerbAdmit, OwnershipReasonUntrustedReporter}
+	decide := want11565{OwnershipVerbDecide, OwnershipReasonOpenForDiscussion}
+	discussion := stagelabels.OpenForDiscussion.Label()
+	lastYear := time.Date(2025, 12, 30, 9, 0, 0, 0, time.UTC)
+	newYear := ownershipEnv11565(6)
+	newYear.now = time.Date(2026, 1, 2, 9, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name    string
+		env     ownershipEnv
+		labels  []string
+		comment *github.IssuePersonComment
+		want    want11565
+		wait    string
+	}{
+		{"server#655: a maintainer asked someone else", env, nil, personComment("castrojo", "MEMBER", "jeefy"), notYours11565,
+			"Waits on jeefy: maintainer castrojo asked on Oct 10"},
+		// The pick skips bots, slash commands and hive markers
+		// (pkg/github newestPersonComment), so the hive's wait notice after
+		// the maintainer's comment leaves this input as is.
+		{"server#679: a maintainer thanked the reporter and asked for a decision", env, nil, personComment("castrojo", "MEMBER", "zacharybutler"), notYours11565,
+			"Maintainer castrojo replied on Oct 10; waiting on a reply"},
+		{"the maintainer's own mention is not who it waits on", env, nil, personComment("castrojo", "OWNER", "castrojo", "jeefy", "zacharybutler"), notYours11565,
+			"Waits on jeefy: maintainer castrojo asked on Oct 10"},
+		{"two people asked: waiting on a reply", env, nil, personComment("castrojo", "COLLABORATOR", "jeefy", "hanthor"), notYours11565,
+			"Maintainer castrojo replied on Oct 10; waiting on a reply"},
+		{"a comment from last year names the year", newYear, nil, personCommentAt(lastYear, "castrojo", "MEMBER", "jeefy"), notYours11565,
+			"Waits on jeefy: maintainer castrojo asked on Dec 30, 2025"},
+		{"the reporter replied after the maintainer", env, nil, personComment("zacharybutler", "NONE", "castrojo"), admit, ""},
+		{"someone else replied after the maintainer", env, nil, personComment("passerby", "CONTRIBUTOR", "jeefy"), admit, ""},
+		{"the issue's author is a collaborator", env, nil, personComment("ZacharyButler", "COLLABORATOR", "jeefy"), admit, ""},
+		{"no person comment", env, nil, nil, admit, ""},
+		{"a maintainer's ask older than the stale period goes back to Admit", env, nil,
+			personCommentAt(ownershipNow11565.Add(-time.Duration(defaultStaleDays+1)*24*time.Hour), "castrojo", "MEMBER", "jeefy"), admit, ""},
+		{"a decided issue is left to admission", env, []string{"approved-direction"}, personComment("castrojo", "MEMBER", "jeefy"), admit, ""},
+		{"testsuite#1302: a design proposal", env, []string{discussion, "kind/design"}, nil, decide, ""},
+		{"a design proposal a maintainer replied on is still the maintainer's call", env, []string{discussion}, personComment("castrojo", "MEMBER", "jeefy"), decide, ""},
+		{"a decided design proposal goes back to admission", env, []string{discussion, "approved-direction"}, nil, admit, ""},
+		{"a decided design proposal with a maintainer's ask is admission too", env, []string{discussion, "approved-direction"}, personComment("castrojo", "MEMBER", "jeefy"), admit, ""},
+	} {
+		in := reporterTriageIssue(tc.labels...)
+		in.latestPersonComment = tc.comment
+		got := decideIssueOwnershipGated(in, tc.env)
+		if tc.wait != "" {
+			if got.YourTurn || !got.WaitingElsewhere || got.Reason != tc.wait {
+				t.Errorf("%s: got %+v, want waiting elsewhere with %q", tc.name, got, tc.wait)
+			}
+			if strings.ContainsAny(got.Reason, "\u2014\u2013@") {
+				t.Errorf("%s: reason %q has a dash or an at sign", tc.name, got.Reason)
+			}
+			continue
+		}
+		if got.YourTurn != (tc.want != notYours11565) || got.Verb != tc.want.verb || got.ReasonCode != tc.want.code || got.WaitingElsewhere {
+			t.Errorf("%s: got %+v, want %s/%s", tc.name, got, tc.want.verb, tc.want.code)
+		}
+	}
+}
+
+// The comment is passed only for reporter_triage rows, and the Overview card
+// files the wait under Waiting on another item with the decision's reason.
+// The card's cause calls the decision's helpers, so a stale ask is Admit on
+// both.
+func TestReporterTriageMaintainerReplyReachesTheCard(t *testing.T) {
+	comment := personComment("castrojo", "MEMBER", "jeefy")
+	row := func(n int, bucket, reason string) github.RepoWorkIssue {
+		return github.RepoWorkIssue{Repo: "o/r", Number: n, Author: "zacharybutler", AuthorIsHuman: true, Bucket: bucket, Reason: reason,
+			CreatedAt: ownershipNow11565.Add(-time.Hour), UpdatedAt: ownershipNow11565.Add(-time.Hour), LatestPersonComment: comment}
+	}
+	repos := []FrontendRepo{{Name: "r", Full: "o/r", NonActionableIssues: []any{
+		row(655, repoWorkBucketReporterTriage, "Awaiting maintainer triage label"),
+		row(656, repoWorkBucketFiltered, github.IssueFilterReason),
+	}}}
+	decideRepoOwnership(repos, config.DashboardIssueBandsConfig{}, ownershipEnv11565(6))
+
+	waiting := ownershipFor(repos[0].Ownership, ownershipKindIssue, 655)
+	if waiting == nil || waiting.YourTurn || !waiting.WaitingElsewhere || waiting.Reason != "Waits on jeefy: maintainer castrojo asked on Oct 10" {
+		t.Fatalf("#655 = %+v, want waiting on jeefy", waiting)
+	}
+	filtered := ownershipFor(repos[0].Ownership, ownershipKindIssue, 656)
+	if filtered == nil || !filtered.YourTurn || filtered.ReasonCode != OwnershipReasonPersonIssueNotAdmitted {
+		t.Fatalf("#656 = %+v, want the issue filter's ADMIT: the comment is read for reporter_triage rows only", filtered)
+	}
+	in := cardTestInputs(nil)
+	in.now = ownershipNow11565
+	cardRow := cardIssueRow{repoFull: "o/r", work: row(655, repoWorkBucketReporterTriage, "Awaiting maintainer triage label"), nonActionable: true, ownership: waiting}
+	band := decideIssueCard(cardRow, in)
+	if band.Key != cardBandWaitingOnItem || band.Group != cardGroupWaiting || band.ReasonCode != "wait:"+cardWaitMaintainerReply || band.Reason != waiting.Reason {
+		t.Fatalf("card band = %+v, want waiting-on-item wait:%s with the decision's reason", band, cardWaitMaintainerReply)
+	}
+	for _, tc := range []struct {
+		name   string
+		labels []string
+		now    time.Time
+	}{
+		{"stale ask", nil, ownershipNow11565.Add(time.Duration(defaultStaleDays+3) * 24 * time.Hour)},
+		{"decided", []string{"approved-direction"}, ownershipNow11565},
+		{"design proposal", []string{stagelabels.OpenForDiscussion.Label()}, ownershipNow11565},
+	} {
+		r := cardRow
+		r.work.Labels = tc.labels
+		at := in
+		at.now = tc.now
+		if got := cardIssueWaitingCause(r, cardIssueParking(r, nil), at); got != "" {
+			t.Errorf("%s: card cause %q, want none, as the decision", tc.name, got)
+		}
+	}
+	part := overviewPartitionOf(&StatusPayload{Repos: repos}, "")
+	if part.issues.waitingByCause[waitingCauseMaintainerReply] != 1 {
+		t.Fatalf("waitingByCause = %+v, want one maintainer_reply", part.issues.waitingByCause)
 	}
 }
