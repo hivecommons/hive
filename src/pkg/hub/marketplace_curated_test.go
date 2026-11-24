@@ -18,14 +18,15 @@ import (
 // The embedded cncf-techdocs-assessment versions. Curated files are never
 // edited in place, so each version is its own file and the catalogue keeps
 // every one (hivecommons/hive#18139 step 4 added 2026.11.2,
-// hivecommons/hive#19611 added 2026.11.3).
+// hivecommons/hive#19611 added 2026.11.3, hivecommons/hive#19609 added
+// 2026.11.4).
 const (
-	mktTechDocsName       = "cncf-techdocs-assessment"
-	mktTechDocsVersion1   = "curated-2026.11.1"
-	mktTechDocsVersion3   = "curated-2026.11.3"
-	mktTechDocsKey        = mktTechDocsName + "@" + mktTechDocsVersion1
-	mktTechDocsKeyLatest  = mktTechDocsName + "@" + mktTechDocsVersion3
-	mktTechDocsVersionCnt = 3
+	mktTechDocsName          = "cncf-techdocs-assessment"
+	mktTechDocsVersion1      = "curated-2026.11.1"
+	mktTechDocsVersionLatest = "curated-2026.11.4"
+	mktTechDocsKey           = mktTechDocsName + "@" + mktTechDocsVersion1
+	mktTechDocsKeyLatest     = mktTechDocsName + "@" + mktTechDocsVersionLatest
+	mktTechDocsVersionCnt    = 4
 )
 
 // TestMarketplaceCuratedSeedPublishesAndIsIdempotent: the embedded curated
@@ -68,7 +69,7 @@ func TestMarketplaceCuratedSeedPublishesAndIsIdempotent(t *testing.T) {
 	if b.Model.Spec.Intake.DerivesReferenceRepos() {
 		t.Fatalf("%s must not declare intake fields: %+v", mktTechDocsKey, b.Model.Spec.Intake)
 	}
-	raw, err = st.Get(mktTechDocsName, mktTechDocsVersion3)
+	raw, err = st.Get(mktTechDocsName, mktTechDocsVersionLatest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +91,7 @@ func TestMarketplaceCuratedSeedPublishesAndIsIdempotent(t *testing.T) {
 	}
 	// The listing exposes every version, oldest first, so the last entry is
 	// the one a fresh import picks up.
-	if vs[0].Version != mktTechDocsVersion1 || vs[len(vs)-1].Version != mktTechDocsVersion3 {
+	if vs[0].Version != mktTechDocsVersion1 || vs[len(vs)-1].Version != mktTechDocsVersionLatest {
 		t.Fatalf("versions order: %+v", vs)
 	}
 	idx, _, _, err := st.Index()
