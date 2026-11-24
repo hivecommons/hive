@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -153,8 +155,30 @@ func resetChannelTargetCache() {
 	channelTargetMu.Lock()
 	channelTargetCache = nil
 	channelTargetCachedAt = time.Time{}
+	channelTargetFailedAt = time.Time{}
 	channelTargetRefreshInFlight = false
 	channelTargetMu.Unlock()
+}
+
+// stubChannelTargetClock replaces the channel cache clock with one the test
+// moves by hand, so the TTL and the failure backoff can be crossed without
+// sleeping.
+func stubChannelTargetClock(t *testing.T) func(time.Duration) {
+	t.Helper()
+	var mu sync.Mutex
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	orig := channelTargetNow
+	channelTargetNow = func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return now
+	}
+	t.Cleanup(func() { channelTargetNow = orig })
+	return func(d time.Duration) {
+		mu.Lock()
+		now = now.Add(d)
+		mu.Unlock()
+	}
 }
 
 func targetFor(targets []ChannelTarget, channel string) ChannelTarget {
@@ -506,6 +530,7 @@ func TestGetChannelTargetsEmptyResolveDoesNotPoisonCache(t *testing.T) {
 	resetChannelTargetCache()
 	orig := ghcrTagDigest
 	t.Cleanup(func() { waitChannelTargetRefreshes(t); ghcrTagDigest = orig; resetChannelTargetCache() })
+	advance := stubChannelTargetClock(t)
 
 	// Cold cache, registry dark.
 	ghcrTagDigest = func(string, string, *slog.Logger) string { return "" }
@@ -514,8 +539,10 @@ func TestGetChannelTargetsEmptyResolveDoesNotPoisonCache(t *testing.T) {
 		t.Fatalf("expected an empty first resolve, got %+v", got)
 	}
 
-	// Registry recovers. No TTL manipulation: an empty result must not have
-	// been cached as if it were a good answer.
+	// Registry recovers. Only the short failure backoff passes, far less than
+	// channelDigestTTL: an empty result must not have been cached as if it
+	// were a good answer.
+	advance(channelResolveFailureBackoff + time.Second)
 	ghcrTagDigest = func(_, tag string, _ *slog.Logger) string {
 		if tag == "v4-latest" || tag == ReleaseChannelStable {
 			return "sha256:aaaa"
@@ -562,5 +589,126 @@ func TestGetChannelTargetsNonBlockingDoesNotWaitOnColdResolve(t *testing.T) {
 		}
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("non-blocking channel target lookup waited on the registry refresh")
+	}
+}
+
+// TestGetChannelTargetsBacksOffAfterFailedResolve (#19725): with GHCR
+// unreachable, a failed resolve must not be retried by every caller. Within
+// channelResolveFailureBackoff callers get placeholder rows (or the previous
+// answer) with no registry call; once it passes, the next caller resolves
+// again.
+func TestGetChannelTargetsBacksOffAfterFailedResolve(t *testing.T) {
+	resetChannelTargetCache()
+	orig := ghcrTagDigest
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); ghcrTagDigest = orig; resetChannelTargetCache() })
+	advance := stubChannelTargetClock(t)
+
+	var calls int32
+	ghcrTagDigest = func(string, string, *slog.Logger) string {
+		atomic.AddInt32(&calls, 1)
+		return ""
+	}
+	shas := map[string]string{"v5": "abc1234"}
+
+	getChannelTargets(shas, testChannelLogger())
+	first := atomic.LoadInt32(&calls)
+	if first == 0 {
+		t.Fatal("the first resolve made no registry call")
+	}
+
+	for i := 0; i < 5; i++ {
+		advance(5 * time.Second)
+		got := getChannelTargets(shas, testChannelLogger())
+		if len(got) != len(releaseChannels) || targetFor(got, ReleaseChannelStable).Channel != ReleaseChannelStable {
+			t.Fatalf("backoff must serve placeholder rows, got %+v", got)
+		}
+		_ = getChannelTargetsNonBlocking(shas, testChannelLogger())
+	}
+	if n := atomic.LoadInt32(&calls); n != first {
+		t.Fatalf("registry calls during the backoff = %d, want %d (no retry before %s)", n-first, 0, channelResolveFailureBackoff)
+	}
+
+	advance(channelResolveFailureBackoff)
+	getChannelTargets(shas, testChannelLogger())
+	if n := atomic.LoadInt32(&calls); n == first {
+		t.Fatal("no retry after the backoff window passed")
+	}
+}
+
+// TestGetChannelTargetsBackoffServesPreviousAnswer: during the backoff after
+// a failed refresh of an expired cache, callers keep getting the last good
+// answer rather than placeholders.
+func TestGetChannelTargetsBackoffServesPreviousAnswer(t *testing.T) {
+	stubChannelDigests(t, map[string]string{
+		"v4-latest":             "sha256:aaaa",
+		ReleaseChannelStable:    "sha256:aaaa",
+		ReleaseChannelCandidate: "sha256:aaaa",
+		ReleaseChannelEdge:      "sha256:aaaa",
+	})
+	advance := stubChannelTargetClock(t)
+	shas := map[string]string{"v4": "3d31590"}
+	if got := getChannelTargets(shas, testChannelLogger()); targetFor(got, ReleaseChannelStable).Branch != "v4" {
+		t.Fatalf("warm-up failed: %+v", got)
+	}
+
+	var calls int32
+	ghcrTagDigest = func(string, string, *slog.Logger) string {
+		atomic.AddInt32(&calls, 1)
+		return ""
+	}
+	advance(channelDigestTTL + time.Second)
+	getChannelTargets(shas, testChannelLogger())
+	failed := atomic.LoadInt32(&calls)
+
+	advance(10 * time.Second)
+	got := getChannelTargets(shas, testChannelLogger())
+	if targetFor(got, ReleaseChannelStable).Branch != "v4" {
+		t.Errorf("backoff dropped the previous answer: %+v", got)
+	}
+	if n := atomic.LoadInt32(&calls); n != failed {
+		t.Errorf("registry calls during the backoff = %d, want 0", n-failed)
+	}
+}
+
+// TestChannelTargetsReleaseTrackingDisabled (#19726): with
+// HIVE_HUB_RELEASE_TRACKING_DISABLED set the resolver never asks GHCR and the
+// dashboard gets the placeholder ("unknown") rows.
+func TestChannelTargetsReleaseTrackingDisabled(t *testing.T) {
+	resetChannelTargetCache()
+	orig := ghcrTagDigest
+	t.Cleanup(func() { waitChannelTargetRefreshes(t); ghcrTagDigest = orig; resetChannelTargetCache() })
+	channelTargetMu.Lock()
+	origDisabled := channelTargetRefreshDisabled
+	channelTargetRefreshDisabled = false
+	channelTargetMu.Unlock()
+	t.Cleanup(func() {
+		channelTargetMu.Lock()
+		channelTargetRefreshDisabled = origDisabled
+		channelTargetMu.Unlock()
+	})
+	t.Setenv(hubReleaseTrackingDisableEnv, "true")
+
+	var calls int32
+	ghcrTagDigest = func(string, string, *slog.Logger) string {
+		atomic.AddInt32(&calls, 1)
+		return "sha256:aaaa"
+	}
+	shas := map[string]string{"v5": "abc1234"}
+	for _, got := range [][]ChannelTarget{
+		getChannelTargets(shas, testChannelLogger()),
+		getChannelTargetsNonBlocking(shas, testChannelLogger()),
+	} {
+		if len(got) != len(releaseChannels) {
+			t.Fatalf("got %d rows, want %d placeholders", len(got), len(releaseChannels))
+		}
+		for _, row := range got {
+			if row.Digest != "" || row.Branch != "" || row.SHA != "" {
+				t.Errorf("row %+v is not a placeholder", row)
+			}
+		}
+	}
+	waitChannelTargetRefreshes(t)
+	if n := atomic.LoadInt32(&calls); n != 0 {
+		t.Fatalf("registry calls with release tracking disabled = %d, want 0", n)
 	}
 }

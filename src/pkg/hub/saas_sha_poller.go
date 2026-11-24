@@ -183,9 +183,22 @@ var (
 	imageBranchMu       sync.RWMutex
 	imageBranchCache    []string
 	imageBranchCachedAt time.Time
+	// imageBranchFailedAt is when the last GHCR tag-list lookup failed, or
+	// zero after a success. Read against imageBranchNow so tests can move the
+	// clock instead of sleeping.
+	imageBranchFailedAt time.Time
+	imageBranchNow      = time.Now
 )
 
 const imageBranchCacheTTL = 5 * time.Minute
+
+// imageBranchFailureBackoff is how long discoveredImageBranches waits after a
+// failed GHCR tag-list lookup before it tries again (#19725). Without it a
+// failed lookup left the cache nil, so every trackedBranchList call (the SHA
+// poll, the dashboard, branch-switch validation) fetched again with no delay.
+// Short next to imageBranchCacheTTL so a recovered registry shows up within a
+// minute.
+const imageBranchFailureBackoff = 60 * time.Second
 
 // discoveredImageBranches returns branch names inferred from published
 // ghcr.io/hivecommons/hive:<branch>-latest tags (cached). A tag with a '-'
@@ -196,8 +209,19 @@ const imageBranchCacheTTL = 5 * time.Minute
 // switch target because switch-branch/branchToTag normalize both to the same
 // image tag.
 func discoveredImageBranches() []string {
+	if releaseTrackingDisabled() {
+		return nil
+	}
+	now := imageBranchNow()
 	imageBranchMu.RLock()
-	if time.Since(imageBranchCachedAt) < imageBranchCacheTTL && imageBranchCache != nil {
+	if now.Sub(imageBranchCachedAt) < imageBranchCacheTTL && imageBranchCache != nil {
+		cp := append([]string(nil), imageBranchCache...)
+		imageBranchMu.RUnlock()
+		return cp
+	}
+	if !imageBranchFailedAt.IsZero() && now.Sub(imageBranchFailedAt) < imageBranchFailureBackoff {
+		// A recent lookup failed: serve the previous answer (nil on a cold
+		// cache) instead of asking GHCR again on every caller.
 		cp := append([]string(nil), imageBranchCache...)
 		imageBranchMu.RUnlock()
 		return cp
@@ -207,6 +231,18 @@ func discoveredImageBranches() []string {
 	const listTimeout = 8 * time.Second
 	client := &http.Client{Timeout: listTimeout}
 	imageBranches := listLatestImageBranches(client)
+	if imageBranches == nil {
+		// listLatestImageBranches returns nil only when the token request
+		// failed; a reachable registry with no "-latest" tags returns an
+		// empty, non-nil slice. Keep the previous answer and back off.
+		imageBranchMu.Lock()
+		imageBranchFailedAt = now
+		prev := append([]string(nil), imageBranchCache...)
+		imageBranchMu.Unlock()
+		slog.Default().Warn("image-branch discovery: GHCR tag list lookup failed, serving the previous answer and retrying later",
+			"retry_after", imageBranchFailureBackoff, "had_previous", len(prev) > 0)
+		return prev
+	}
 
 	// A merged branch is deleted but its <branch>-latest image lingers on
 	// GHCR, so the image list alone would offer dead branches in the
@@ -230,9 +266,10 @@ func discoveredImageBranches() []string {
 
 	imageBranchMu.Lock()
 	imageBranchCache = branches
-	imageBranchCachedAt = time.Now()
+	imageBranchCachedAt = now
+	imageBranchFailedAt = time.Time{}
 	imageBranchMu.Unlock()
-	return branches
+	return append([]string(nil), branches...)
 }
 
 // listRepoBranches returns the names of branches on hivecommons/hive via the
@@ -681,12 +718,22 @@ func persistLatestSHAs(logger *slog.Logger) {
 // test, which otherwise races the package-level saas path state that per-test
 // temp-dir setup rewrites — same class as startProvisionWatcher).
 func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
-	// Serve last-known-good SHAs immediately; live fetches below refresh them.
-	loadPersistedSHAs(s.logger, s.trackedBranchList())
-	prevInfos := snapshotBranchSHAs()
-	fetchAllBranchSHAs(s.logger, s.trackedBranchList())
-	if cur := snapshotBranchSHAs(); !maps.Equal(cur, prevInfos) {
-		persistLatestSHAs(s.logger)
+	trackReleases := !releaseTrackingDisabled()
+	if trackReleases {
+		// Serve last-known-good SHAs immediately; live fetches below refresh them.
+		loadPersistedSHAs(s.logger, s.trackedBranchList())
+		prevInfos := snapshotBranchSHAs()
+		fetchAllBranchSHAs(s.logger, s.trackedBranchList())
+		if cur := snapshotBranchSHAs(); !maps.Equal(cur, prevInfos) {
+			persistLatestSHAs(s.logger)
+		}
+	} else {
+		// HIVE_HUB_RELEASE_TRACKING_DISABLED (#19726): no branch-tip reads from
+		// GitHub and no persisted SHAs either, so the dashboard shows its
+		// "unknown" state instead of a frozen answer. The reconciliation lanes
+		// below do not depend on release tracking and keep running.
+		s.logger.Info("release tracking disabled: skipping the GitHub SHA poll, image-branch discovery and the release-channel resolver",
+			"env", hubReleaseTrackingDisableEnv)
 	}
 	// On first poll, check if any auto-upgrade hives are behind
 	s.triggerAutoUpgrades()
@@ -762,7 +809,9 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 	// call is internally guarded to snapshot only when a release line's SHA
 	// advances, so ticking it alongside the frequent SHA poll is cheap — no
 	// separate scheduler. See image_pulls.go.
-	s.maybeSnapshotImagePulls(ctx, time.Now())
+	if trackReleases {
+		s.maybeSnapshotImagePulls(ctx, time.Now())
+	}
 	ticker := time.NewTicker(latestSHAPollInterval)
 	defer ticker.Stop()
 	for {
@@ -782,15 +831,18 @@ func (s *HubServer) StartLatestSHAPoller(ctx context.Context) {
 // now is injected so tests control the clock the same way
 // maybeSnapshotImagePulls already does.
 func (s *HubServer) pollLatestSHAsTick(ctx context.Context, now time.Time) {
+	trackReleases := !releaseTrackingDisabled()
 	oldSHAs := getLatestSHAs()
-	oldInfos := snapshotBranchSHAs()
-	// Re-resolve each tick so branches from newly registered hives are
-	// picked up without a hub restart.
-	fetchAllBranchSHAs(s.logger, s.trackedBranchList())
-	newSHAs := getLatestSHAs()
-	if !maps.Equal(snapshotBranchSHAs(), oldInfos) {
-		persistLatestSHAs(s.logger)
+	if trackReleases {
+		oldInfos := snapshotBranchSHAs()
+		// Re-resolve each tick so branches from newly registered hives are
+		// picked up without a hub restart.
+		fetchAllBranchSHAs(s.logger, s.trackedBranchList())
+		if !maps.Equal(snapshotBranchSHAs(), oldInfos) {
+			persistLatestSHAs(s.logger)
+		}
 	}
+	newSHAs := getLatestSHAs()
 	// Always check for pending auto-upgrades (retries failed/missed hives).
 	s.triggerAutoUpgrades()
 	s.sweepOrphanedUpgradesIfDue()
@@ -804,7 +856,9 @@ func (s *HubServer) pollLatestSHAsTick(ctx context.Context, now time.Time) {
 	s.retireExpiredGenerationsIfDue()
 	s.sweepExpiredAccessIfDue()
 	s.replenishPoolsIfDue()
-	s.maybeSnapshotImagePulls(ctx, now)
+	if trackReleases {
+		s.maybeSnapshotImagePulls(ctx, now)
+	}
 	changed := false
 	for branch, sha := range newSHAs {
 		if sha != "" && sha != oldSHAs[branch] {

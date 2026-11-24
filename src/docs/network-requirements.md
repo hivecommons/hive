@@ -47,6 +47,23 @@ Reverse proxies, Routes, and Ingresses must preserve HTTP upgrade headers and lo
 | `generativelanguage.googleapis.com:443` | Spokes with Inbox transcription via Gemini | Only when `inbox.transcription.enabled` is true and the provider is (or `auto` resolves to) `gemini`. The hive process sends the recording to the Gemini API under the hive's own Gemini key (inline, or through the Files API for large recordings, deleted after the run). See [inbox-transcription.md](inbox-transcription.md). |
 | `huggingface.co:443`, `*.hf.co:443` | Spokes with Inbox transcription via the built-in whisper | Only on the first whisper run, to download the pinned ggml model (about 148 MB for `base.en`) into `/data/models/whisper`. Nothing afterwards: decoding and transcription run on the hive with no network. Air-gapped hives pre-seed the model and set `HIVE_WHISPER_MODEL_DOWNLOAD=false`. See [inbox-transcription.md](inbox-transcription.md). |
 
+## Hub outbound hosts
+
+A hub (`HIVE_MODE=hub`) calls these hosts itself. An operator who denies the hub's egress by default can use this list to decide what to allow and what to switch off.
+
+| Destination | Hub feature | Can it be turned off? |
+| --- | --- | --- |
+| `api.github.com` | Release tracking: the branch-tip SHA poll (every 2 minutes per tracked branch), the repository branch list, commit messages, commit dates and compare counts for the channel rows and "behind" badges, and the stable-promotion workflow runs. | Yes: `HIVE_HUB_RELEASE_TRACKING_DISABLED=true` stops the SHA poll, image-branch discovery and the release-channel resolver. |
+| `ghcr.io` | Release tracking: release-channel resolution (`stable`, `candidate`, `edge`), image-branch discovery from the `<branch>-latest` tags, and image checks before an upgrade rollout. | Yes, the release-tracking reads stop with `HIVE_HUB_RELEASE_TRACKING_DISABLED=true`. After a failed channel resolve or image-branch lookup the hub waits about 60 seconds before it asks again ([#19725](https://github.com/hivecommons/hive/issues/19725)). |
+| `github.com` | The image-pulls snapshot (the `hivecommons/hive` package page), taken when a release line's SHA advances. GitHub OAuth login when GitHub sign-in is configured. | The snapshot stops with `HIVE_HUB_RELEASE_TRACKING_DISABLED=true`, because it only runs when release tracking finds a new SHA. Login is needed only for GitHub sign-in. |
+| `raw.githubusercontent.com` | Release notes shown on the dashboard. | Fetched on demand when the release notes are opened. |
+| `api.github.com` (workflow marketplace) | The nightly marketplace refresh and its first-boot seed. | Yes: `HIVE_HUB_MARKETPLACE_DISABLED=true`. |
+| `api.github.com` (`hivecommons/benchmarks`) | The hourly commit of spoke benchmark records. | Only runs when spokes send benchmark records. |
+| Login provider issuers | OpenID Connect and GitHub sign-in. | Needed for the providers you configure. |
+| Kubernetes API, OCI Object Storage, NPS relay | Provisioning, DR backups and the NPS relay pull. | Each only when configured. |
+
+With `HIVE_HUB_RELEASE_TRACKING_DISABLED=true` the dashboard shows "unknown" for the latest-image and channel rows, and neither the hub nor its spokes get an auto-upgrade target from the hub. Leave it unset if you rely on hub-driven upgrades.
+
 ## Egress through a corporate forward proxy
 
 Some environments cannot reach a destination directly — the common case is an
