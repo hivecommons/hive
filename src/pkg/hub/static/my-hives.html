@@ -412,10 +412,10 @@ function avatarProfileLink(username, label, avatarHTML) {
     'title="' + escAttr(title) + '" aria-label="' + escAttr(label || uname) + '" ' +
     'style="display:inline-block;line-height:0;text-decoration:none">' + avatarHTML + "</a>";
 }
-function avatarImg(username, px, extraStyle) {
-  var img = '<img src="' + escAttr(ghProfileURL(username)) + '.png?size=' + (px * AVATAR_HIDPI_SCALE) + '" alt="" ' +
+function avatarImg(username, px, extraStyle, src, label) {
+  var img = '<img src="' + escAttr(src || ghProfileURL(username) + '.png?size=' + (px * AVATAR_HIDPI_SCALE)) + '" alt="" ' +
     'style="width:' + px + 'px;height:' + px + 'px;border-radius:50%;vertical-align:middle;' + (extraStyle || "") + '" ' +
-    'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(username, px)) + '">';
+    'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(label || username, px)) + '">';
   if (isUserLive(username)) {
     var RING_GAP = 2, RING_W = 3, box = px + 2 * (RING_GAP + RING_W);
     return '<span style="display:inline-block;box-sizing:border-box;width:' + box + 'px;height:' + box + 'px;' +
@@ -457,15 +457,12 @@ function inlineAccessAvatar(a) {
   var uname = String(a.username || "");
   var role = String(a.role || "");
   var px = INLINE_ACCESS_AVATAR_PX;
-  var style = "border:1px solid " + accessRoleColor(role) + ";background:var(--surface-2);flex:0 0 auto";
+  var faceStyle = "border:1px solid " + accessRoleColor(role) + ";background:var(--surface-2);flex:0 0 auto";
   if (a.provider === "github") {
-    return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), style);
+    return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), faceStyle);
   }
-  var initials = avatarInitialsSVG(a.display_label || uname, px);
-  return '<span title="' + escAttr(accessAvatarTitle(a)) + '" style="display:inline-block;line-height:0">' +
-    '<img src="' + escAttr(a.avatar_url || initials) + '" alt="" ' +
-    'style="width:' + px + 'px;height:' + px + 'px;border-radius:50%;vertical-align:middle;' + style + '" ' +
-    'onerror="this.onerror=null;this.src=' + jsArg(initials) + '"></span>';
+  var face = avatarImg(uname, px, faceStyle, a.avatar_url || avatarInitialsSVG(a.display_label || uname, px), a.display_label);
+  return '<span title="' + escAttr(accessAvatarTitle(a)) + '">' + face + "</span>";
 }
 function hiveAccessAvatars(h) {
   var members = (h && h.access) || [];
