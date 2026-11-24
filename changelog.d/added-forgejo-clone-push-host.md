@@ -1,1 +1,0 @@
-- A Forgejo repo's sandbox and Sessions workspaces are cloned from, and the push broker pushes to, the repo's own forge host with the forgejo block's token, which git now offers only to that host; the agents' proxy inspects only the configured Forgejo hosts, and GitLab and Gitea clone and push are refused as not implemented (#19677).
