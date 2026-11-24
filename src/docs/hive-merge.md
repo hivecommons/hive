@@ -501,7 +501,16 @@ names the failing gate in the result the agent sees (for example
 merger, trusted)` or `contributor-lane:soaking, 27m0s remaining`), and is audited
 as `merge_request_refused`. An agent cannot use the relay to land a contributor
 PR the lane would not merge; the lane still merges it on its own tick once the
-gates clear. Hive-authored PRs keep the relay's existing checks.
+gates clear. Hive-authored PRs keep the relay's existing checks. A PR that
+passes every other merge gate but that the relay refuses for a reason no Hive
+lane will clear leaves `merge-eligible.json`, and its dashboard merge verdict
+is a hand merge (`hand_merge_required`, the Overview card's Merge by hand),
+whether or not the repo's auto-merge is on; the merge itself is still a
+person's. Those reasons are a trust or admission reason, which is also listed
+under `needs_maintainer_merge`, and the lane switched off
+(`contributor-lane:disabled`) or scoped to other repos
+(`contributor-lane:repo-not-allowed`), which is not. A soak, a head too new or
+a missing reviewer verdict clears by itself and is not a hand merge.
 
 **Actionable merge failures alert the operator.** Failures that require an
 operator configuration change raise one dashboard system alert per repo+reason,
