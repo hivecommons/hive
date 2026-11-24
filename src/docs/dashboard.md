@@ -784,7 +784,13 @@ position in the inbox across all repositories (grouped by verb in that order,
 then least recently active first). A `release` action also carries the exact
 `release_tag` and immutable `release_target` from Hive's trusted owner-step
 marker. Consumers read these fields and never re-derive them from labels or bands.
-The decision makes no GitHub API calls; the only local
+The decision makes no GitHub API calls (the newest person comment it reads
+on an untrusted reporter's issue comes from the issue enumeration: from the
+comment list the reporter-trust wait notice scan already read that pass, or
+else one read of the last comments page, repeated only when the issue's
+`updated_at` or comment count moves and capped at 10 reads per repository
+per pass; an unreadable thread keeps the last comment read, or `ADMIT`
+when there is none); the only local
 write is the first time a refresh saw a hive PR with `needs-human`, kept in
 `/data/ownership-state.json` so the adjudicator's four-hour wait survives a
 restart.
@@ -808,7 +814,8 @@ review: a `needs-human` issue, an agent PR held by the level gate, a
 human-authored `needs-human` PR, an agent PR re-escalated after the
 adjudicator's pass, or an item the safety net surfaced), `TRIAGE` (an
 agent-filed proposal awaiting acknowledgment), `ADMIT` (an untrusted
-reporter's issue awaiting an admission label), `INSPECT` (a sentinel-flagged
+reporter's issue awaiting an admission label, unless a maintainer already
+replied or it is a design proposal; see the table below), `INSPECT` (a sentinel-flagged
 PR) and `CLOSE` (an issue Hive verified as done but could not close, an issue
 whose reporter confirmation has gone unanswered for the stale period, a PR
 the adjudicator recommended closing, or a contributor PR the supersession
@@ -826,6 +833,7 @@ so the reason text can change without breaking them.
 | `parked_needs_direction` | `STEER` |
 | `parked_needs_decision` | `DECIDE` |
 | `parked_needs_spec` | `SPEC` |
+| `open_for_discussion` | `DECIDE` |
 | `untrusted_reporter` | `ADMIT` |
 | `decided_not_admitted`, `agent_finding_not_admitted`, `person_issue_not_admitted` | `ADMIT` |
 | `reporter_confirmation_stale` | `CLOSE` |
@@ -863,6 +871,8 @@ means the situation cannot occur at that level.
 | Unclaimed issue filed by a person | Not yours — backlog | Not yours — backlog, or a lane will act | Not yours — a lane will act | same |
 | Issue filed by an agent, not yet acknowledged, while the self-authorization hold is active (by default below L6) | — (no agent files issues) | Yours — `TRIAGE` | Yours — `TRIAGE` | Not yours by default (agents self-authorize); Yours — `TRIAGE` when the hold is configured on |
 | Issue from an untrusted reporter awaiting an admission label | Yours — `ADMIT` | same | same | same |
+| Same, carrying `stage/018-open-for-discussion` (a design proposal) and not `approved-direction` | Yours — `DECIDE` (`open_for_discussion`: "Design proposal open for discussion: decide or close"; admitting it is still a separate step) | same | same | same |
+| Same, neither a design proposal nor carrying `approved-direction`, where the newest comment by a person is by an `OWNER`, `MEMBER` or `COLLABORATOR` who did not file the issue, and is younger than the stale period. Bots, Hive's own accounts, slash commands (a first line starting with `/`) and comments carrying a `<!-- hive:` marker do not count as a person's comment | Not yours — waiting on someone else. When the comment mentions exactly one login besides the reporter, the commenter and bots (mentions in code and quoted lines are ignored), the reason names it ("Waits on jeefy: maintainer castrojo asked on Nov 16"; the year is added when it is not this year); otherwise "Maintainer castrojo replied on Nov 16; waiting on a reply". A newer comment by anyone else, the reporter included, or the stale period passing makes it `ADMIT` again | same | same | same |
 | Issue the issue filter (`project.issue_filter.require_labels`) refuses that carries `approved-direction` (a `/hive decision` or `/hive approve` applies it, not the filter's label) | Yours — `ADMIT` (`decided_not_admitted`; the reason names the labels that admit it) | same | same | same |
 | Agent-filed issue the issue filter refuses, where the TRIAGE row above does not apply (agents self-authorize, by default at L6) | — (no agent files issues) | — (TRIAGE applies) | — (TRIAGE applies) | Yours — `ADMIT` (`agent_finding_not_admitted`: admit it, or close it if it no longer applies) |
 | Person-filed issue the issue filter refuses, undecided (only the missing `require_labels` keeps it out: holds, exempt, tracking, `blocked`, parks, reporter confirmation, reporter triage and standing dashboards are decided before the filter and keep their own rows; a bot's issue stays Not yours) | Yours — `ADMIT` (`person_issue_not_admitted`: admit it so the hive works it, or close it) | same | same | same |
@@ -906,7 +916,11 @@ covered by an open PR → Not yours; (5) on an issue, a parking bucket, checked
 in the order `needs_human`, `needs_direction`, `needs_decision`, `needs_spec`
 → `REVIEW`, `STEER`, `DECIDE`, `SPEC`, except that a `needs_decision` park an
 open hive-authored PR closes is Not yours; (6) untrusted reporter awaiting
-admission → `ADMIT`; (7) awaiting reporter confirmation → Not yours until it
+admission → `ADMIT`, except a design proposal (`stage/018-open-for-discussion`
+without `approved-direction`) → `DECIDE` (`open_for_discussion`), and an issue
+without `approved-direction` whose newest comment by a person is a
+maintainer's (not the reporter's), younger than the stale period → Not yours,
+waiting on whoever that comment asked; (7) awaiting reporter confirmation → Not yours until it
 has had no activity for the stale period, then `CLOSE`
 (`reporter_confirmation_stale`); (8) verified done but not closed → `CLOSE`;
 (8b) an agent finding whose cited lines are gone from the default branch →

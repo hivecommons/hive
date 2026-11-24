@@ -4060,6 +4060,19 @@
     .overview-chart-legend-group { font-weight: 700; background: color-mix(in srgb, var(--muted) 10%, transparent); }
     .overview-chart-legend-part { padding-left: calc(var(--sp-1) + var(--sp-7)); }
     .overview-chart-legend-zero { opacity: 0.55; }
+    /* The legend's two sections, To do (the Your turn group) and Status
+       (every other group): a small muted heading over a thin rule, and a
+       bold subtotal row under a thin rule. The Status subtotal opens
+       nothing, so it has no pointer or hover, and no dot. */
+    .overview-chart-legend-section { display: flex; align-items: baseline; gap: var(--sp-3); color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; padding: var(--sp-1); border-bottom: 1px solid var(--border); }
+    .overview-chart-legend-section:not(:first-child) { margin-top: var(--sp-4); }
+    .overview-chart-legend-section-note { font-size: var(--fs-xs); font-weight: 500; letter-spacing: 0; text-transform: none; }
+    .overview-chart-legend-subtotal { font-weight: 800; border-top: 1px solid var(--border); border-radius: var(--sp-0); padding-top: var(--sp-3); }
+    .overview-chart-legend-subtotal .overview-chart-legend-count { color: var(--text); }
+    .overview-chart-legend-static { cursor: default; }
+    .overview-chart-legend-static:hover { background: transparent; }
+    .overview-chart-swatch-none { visibility: hidden; }
+    .overview-chart-legend-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     .overview-partition-tooltip .overview-partition-title { display: block; margin-bottom: var(--sp-1); font-weight: 700; }
     .overview-partition-tooltip .overview-partition-title + .overview-partition-summary { font-weight: 400; white-space: normal; }
     .overview-partition-tooltip .overview-partition-label .overview-chart-swatch { display: inline-block; vertical-align: middle; margin-right: var(--sp-2); }
@@ -38725,58 +38738,90 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return String(label || '') + ': ' + lead;
     }
 
-    // The card legend in plot order. A headed group (Your turn, Waiting on
-    // someone else, Blocked, Hive has it) is one bold subtotal row with its
-    // bands indented under it; the other bands are plain rows. The groups
+    // The card legend in plot order, in two sections. To do is the Your turn
+    // group (card_group your-turn): a "To do" heading, its bands as plain
+    // rows, then a bold To do subtotal in the group's colour, which takes the
+    // place of the Your turn group row. Status is every other group, drawn as
+    // before (a headed group such as Waiting on someone else, Blocked or Hive
+    // has it is one bold subtotal row with its bands indented under it; the
+    // other bands are plain rows), then a bold Status subtotal. The groups
     // come from overview_card.groups; a band whose group is not headed stays
-    // plain.
+    // plain. The split reads only card_group, so it is the same for any hive.
     function overviewCardLegendRows(slices) {
+      const todoGroup = 'your-turn';
       const groups = new Map(overviewCardGroups().map(g => [g.key, g]));
       const headed = key => {
         const g = groups.get(key);
         return g ? !!g.headed : ['your-turn', 'waiting-elsewhere', 'blocked', 'actionable-now'].includes(key);
       };
-      const rows = [];
+      const sum = list => list.reduce((n, p) => n + Number(p.count || 0), 0);
+      const todo = (slices || []).filter(s => s.group === todoGroup);
+      const status = (slices || []).filter(s => s.group !== todoGroup);
+      const rows = [{ type: 'section', label: 'To do' }];
+      todo.forEach(s => rows.push({ type: 'plain', slice: s }));
+      rows.push({ type: 'subtotal', key: todoGroup, groups: [todoGroup], label: 'To do', rule: (groups.get(todoGroup) || {}).rule || '', count: sum(todo), className: 'overview-card-group-' + todoGroup });
+      rows.push({ type: 'section', label: 'Status', note: 'nothing for you to do' });
       const done = new Set();
-      (slices || []).forEach(s => {
+      status.forEach(s => {
         if (!headed(s.group)) { rows.push({ type: 'plain', slice: s }); return; }
         if (done.has(s.group)) return;
         done.add(s.group);
-        const parts = slices.filter(p => p.group === s.group);
+        const parts = status.filter(p => p.group === s.group);
         const g = groups.get(s.group) || {};
-        rows.push({ type: 'head', key: s.group, label: g.label || s.group, rule: g.rule || '', count: parts.reduce((n, p) => n + Number(p.count || 0), 0), className: 'overview-card-group-' + s.group });
+        rows.push({ type: 'head', key: s.group, label: g.label || s.group, rule: g.rule || '', count: sum(parts), className: 'overview-card-group-' + s.group });
         parts.forEach(p => rows.push({ type: 'part', slice: p }));
       });
+      rows.push({ type: 'subtotal', key: '', groups: [...new Set(status.map(s => s.group).filter(Boolean))], label: 'Status', rule: 'Nothing for you to do. Someone else or the hive has the next move, or the item is not work.', count: sum(status), className: '' });
       return rows;
     }
 
     // Every band and group row keeps its download button and its plain-words
     // rule as the tooltip. Zero bands stay listed but dimmed, except the keep
     // bands (Queued for agents, Unexplained), which stay at full strength, and
-    // Held, which is hidden at zero; a group row never dims. Clicks go through
-    // data-action (the dashboard CSP forbids inline handlers).
+    // Held, which is hidden at zero; a group or subtotal row never dims.
+    // Section headings are role=heading level 4 under the chart title (level
+    // 3). The To do subtotal opens and exports the Your turn group, as its
+    // group row did; the Status subtotal exports card_group=<every other
+    // group> (the export reads a comma list) and opens nothing, since no tile
+    // counts exactly those rows. Clicks go through data-action (the dashboard
+    // CSP forbids inline handlers).
     function overviewCardLegendHTML(slices, kind, state) {
       const total = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
       if (!total) return '<div class="overview-empty">Nothing open here; the hive is caught up</div>';
       const format = ((state && state.exportFormat) || 'csv').toUpperCase();
       return overviewCardLegendRows(slices).map(row => {
+        if (row.type === 'section') {
+          // The comma is for screen readers: "Status, nothing for you to do".
+          const note = row.note ? `<span class="overview-chart-legend-sr">,</span> <span class="overview-chart-legend-section-note">${esc(row.note)}</span>` : '';
+          return `<div class="overview-chart-legend-section" role="heading" aria-level="4">${esc(row.label)}${note}</div>`;
+        }
         const head = row.type === 'head';
-        const s = head ? row : row.slice;
+        const subtotal = row.type === 'subtotal';
+        const s = head || subtotal ? row : row.slice;
         const count = Number(s.count || 0);
-        if (!head && !count && s.hideZero) return '';
+        if (!head && !subtotal && !count && s.hideZero) return '';
         const percent = (count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
         const classes = ['overview-chart-legend-row'];
         if (head) classes.push('overview-chart-legend-group');
+        if (subtotal) classes.push('overview-chart-legend-subtotal');
+        if (subtotal && !s.key) classes.push('overview-chart-legend-static');
         if (row.type === 'part') classes.push('overview-chart-legend-part');
-        if (!head && !count && !s.keep) classes.push('overview-chart-legend-zero');
-        const by = head ? 'card_group' : 'card_band';
-        const what = head ? s.label + ' (all)' : s.label;
-        const download = kind ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, s.key, by))}" title="Export ${esc(what)} as ${format}" aria-label="Export ${esc(what)} as ${format}">⬇</button>` : '';
-        return `<div class="${classes.join(' ')}" data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1" title="${esc(overviewCardRuleTip(s.label, s.rule))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${esc(overviewSliceLabel(count, percentLabel, state))}</span>${download}</div>`;
+        if (!head && !subtotal && !count && !s.keep) classes.push('overview-chart-legend-zero');
+        const by = head || subtotal ? 'card_group' : 'card_band';
+        const exportKey = subtotal ? s.groups.join(',') : s.key;
+        const what = head || subtotal ? s.label + ' (all)' : s.label;
+        const download = kind && exportKey ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, exportKey, by))}" title="Export ${esc(what)} as ${format}" aria-label="Export ${esc(what)} as ${format}">⬇</button>` : '';
+        const action = s.key ? ` data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1"` : '';
+        const swatch = s.className ? `<span class="overview-chart-swatch ${esc(s.className)}"></span>` : '<span class="overview-chart-swatch overview-chart-swatch-none" aria-hidden="true"></span>';
+        const spoken = subtotal ? '<span class="overview-chart-legend-sr"> total</span>' : '';
+        return `<div class="${classes.join(' ')}"${action} title="${esc(overviewCardRuleTip(s.label, s.rule))}">${swatch}<span class="overview-chart-legend-label">${esc(s.label)}</span>${spoken}<span class="overview-chart-legend-count">${esc(overviewSliceLabel(count, percentLabel, state))}</span>${download}</div>`;
       }).join('');
     }
 
+    // Without the card (an older server) the legend below is today's chart
+    // slice list, unchanged: it has no card groups, so it is not split into
+    // To do and Status.
     function overviewLegendHTML(slices, kind, state) {
       if ((slices || []).some(s => s && s.card)) return overviewCardLegendHTML(slices, kind, state);
       const total = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
@@ -38941,7 +38986,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const format = (state.exportFormat || 'csv').toUpperCase();
       const csvTitle = total ? ('Export ' + (kind === 'pr' ? 'PRs' : 'issues') + ' as ' + format) : 'No matching items to export';
       const download = `<button type="button" class="hv-btn btn-icon btn-sm overview-export-csv overview-chart-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(csvKind))}" title="${esc(csvTitle)}" aria-label="${esc(csvTitle)}">⬇︎</button>`;
-      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind, state)}</div></div></div>`;
+      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title" role="heading" aria-level="3">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind, state)}</div></div></div>`;
     }
 
     function overviewMedianAgeLabel(slices, state) {
@@ -40037,7 +40082,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const actions = [];
       const after = [];
       const parkedIssue = ctx.kind === 'issue' && String(own.reason_code || '').indexOf('parked_needs_') === 0;
-      if (own.verb === 'DECIDE' || own.verb === 'STEER' || (own.verb === 'REVIEW' && parkedIssue)) {
+      // An untrusted reporter's design proposal carries no parking label, and
+      // the un-park sweep skips an issue without one, so /hive approve and
+      // /hive decision would do nothing there.
+      const openForDiscussion = own.reason_code === 'open_for_discussion';
+      if ((own.verb === 'DECIDE' && !openForDiscussion) || own.verb === 'STEER' || (own.verb === 'REVIEW' && parkedIssue)) {
         if (ctx.labelDriven) after.push({ type: 'note', text: 'This repository is label-driven: accept or un-park it with the repository\'s triage labels; Hive refuses /hive approve and /hive decision here.' });
         else after.push({ type: 'copy', text: '/hive approve' }, { type: 'copy', text: '/hive decision <text>' });
       }
@@ -40056,6 +40105,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (own.verb === 'ADMIT' && own.reason_code === 'untrusted_reporter') {
         const labels = (ctx.admissionLabels || []).filter(Boolean);
         after.push({ type: 'note', text: labels.length ? 'Add the label ' + labels.join(' or ') + ' to admit it.' : 'Add an admission label to admit it.' });
+      }
+      // An untrusted reporter's design proposal still needs those labels
+      // once a maintainer has decided it.
+      if (openForDiscussion) {
+        const labels = (ctx.admissionLabels || []).filter(Boolean);
+        after.push({ type: 'note', text: labels.length ? 'Once decided, add the label ' + labels.join(' or ') + ' to admit it, or close it.' : 'Once decided, add an admission label to admit it, or close it.' });
       }
       if (own.verb === 'REVIEW' && ctx.kind === 'pr' && own.action === 'release_hold' && ctx.held && ctx.canToggleHold) {
         actions.push({ type: 'action', id: 'release_hold', label: 'Release hold' });

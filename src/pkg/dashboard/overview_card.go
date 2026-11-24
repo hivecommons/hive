@@ -129,7 +129,7 @@ var cardBandDefs = map[string]cardBandDef{
 	cardBandCoveredByPR: {label: "Covered by an open PR", group: cardGroupWaiting,
 		rule: "A PR is doing the work. Follow the PR."},
 	cardBandWaitingOnItem: {label: "Waiting on another item", group: cardGroupWaiting,
-		rule: "Another issue or PR must finish first. Check that the blocker is still real and moving."},
+		rule: "Another issue or PR must finish first, or someone a maintainer asked must reply. Check that the blocker is still real and moving."},
 	cardBandHumanHold: {label: "Human placed on hold", group: cardGroupWaiting,
 		rule: "A person put a hold on it or paused it from the dashboard."},
 	cardBandReporterConfirm: {label: "Reporter to confirm the fix", group: cardGroupWaiting,
@@ -611,7 +611,7 @@ func cardActionableIssueBand(row cardIssueRow, in cardInputs) OverviewCardBand {
 var cardNotARow = OverviewCardBand{}
 
 func cardIssueWaitingBand(row cardIssueRow, o *Ownership, in cardInputs) OverviewCardBand {
-	cause := cardIssueWaitingCause(row, cardIssueParking(row, in.cfg))
+	cause := cardIssueWaitingCause(row, cardIssueParking(row, in.cfg), in)
 	code := "wait:" + cause
 	switch cause {
 	case cardWaitHold:
@@ -624,6 +624,8 @@ func cardIssueWaitingBand(row cardIssueRow, o *Ownership, in cardInputs) Overvie
 		return cardBand(cardBandWaitingOnItem, code, "GitHub lists open blockers: "+strings.Join(row.openBlockers(), ", ")+".")
 	case cardWaitReporter:
 		return cardBand(cardBandReporterConfirm, code, "The fix landed; the person who filed it has not confirmed yet.")
+	case cardWaitMaintainerReply:
+		return cardBand(cardBandWaitingOnItem, code, nonEmpty(o.Reason, "A maintainer replied last; it waits on a reply."))
 	}
 	// The stored decision says someone else has the next move, but the row
 	// changed since it was made (a webhook patch between publishes): display
