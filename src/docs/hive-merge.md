@@ -1759,10 +1759,17 @@ reference or wording such as "#N stays open". Such a PR labels the issue
 `hive/partially-addressed` and leaves it open. An issue that carries
 `hive/verified-open` or `hive/partially-addressed` is closed only by a PR
 whose own text closes it, never by a branch name, claim or comment link
-alone. A dependency bot's branch (a `renovate/` head ref, or a Renovate,
-Dependabot or Mergeraptor author) is never a branch-name claim at all: its
-trailing number is the version it bumps (`renovate/…-fedora-43`), so merging
-it closes only an issue its own text closes. Every sweep compares references as `owner/repo`, whatever name the
+alone.
+
+A dependency bot's branch (a `renovate/` head ref, or a Renovate, Dependabot
+or mergeraptor author) is never a branch-name claim: its trailing number is
+the version it bumps (`renovate/…-fedora-43`), so the branch name alone never
+makes merging the bump close an issue. The other evidence still counts: a
+closing keyword in the bot PR's own text, an issue comment that links the PR
+(the close-on-merge backfill), and, on the default branch, any closing link
+GitHub already has for the PR, which GitHub acts on itself.
+
+Every sweep compares references as `owner/repo`, whatever name the
 repository is configured under: the backfill sweep passed the short name and
 closed projectbluefin/utah-packages#490 on a `Refs #490` PR.
 `GET /api/close-on-merge/wrong-closes?days=N` (owner only; at most 500 closed

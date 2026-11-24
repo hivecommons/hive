@@ -21,7 +21,7 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
   `Refs owner/common#1688`) means the branch is about that issue, and the
   PR claims nothing in its own repository by branch name.
   A dependency bot's branch (a `renovate/` head ref, or a Renovate,
-  Dependabot or Mergeraptor author) never claims an issue by branch name:
+  Dependabot or mergeraptor author) never claims an issue by branch name:
   Renovate and Dependabot name branches after the version they bump, so
   `renovate/registry.fedoraproject.org-fedora-43` is Fedora 43, not issue
   43, and the sweep no longer calls such a bump superseded by the PR that
