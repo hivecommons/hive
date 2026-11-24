@@ -34,6 +34,9 @@ type supersessionPRFixture struct {
 	HeadSHA string
 	BaseRef string
 	BaseSHA string
+	// HeadRef, when set, is the head branch in the listing (default
+	// "topic/supersession", which names no issue).
+	HeadRef string
 	// BehindBy is what compare base...head answers; 0 means the head
 	// contains the base tip.
 	BehindBy int
@@ -179,6 +182,10 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 			if baseSHA == "" {
 				baseSHA = "basesha000000000"
 			}
+			headRef := pr.HeadRef
+			if headRef == "" {
+				headRef = "topic/supersession"
+			}
 			entry := map[string]any{
 				"number":   pr.Number,
 				"title":    pr.Title,
@@ -186,7 +193,7 @@ func supersessionSweepServer(t *testing.T, org, repo string, prs []supersessionP
 				"state":    "open",
 				"user":     map[string]any{"login": pr.Author, "type": "Bot"},
 				"html_url": fmt.Sprintf("https://github.com/%s/%s/pull/%d", org, repo, pr.Number),
-				"head":     map[string]any{"sha": headSHA, "ref": "topic/supersession"},
+				"head":     map[string]any{"sha": headSHA, "ref": headRef},
 				"base":     map[string]any{"sha": baseSHA, "ref": baseRef},
 			}
 			if !pr.CreatedAt.IsZero() {

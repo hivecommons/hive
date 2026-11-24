@@ -578,7 +578,9 @@ func closeOnMergePRClaimsIssue(pr *gh.PullRequest, prRepo, issueRepo string, iss
 	if _, ok := FindClosingKeywordReference(text, prRepo, issueRepo, issue); ok {
 		return true
 	}
-	if n, ok := issueFromBranchName(headRef(pr)); ok && n == issue && strings.EqualFold(prRepo, issueRepo) {
+	// A dependency bot's branch number is a version, not an issue
+	// (issueFromPRBranch), so merging a bump never closes that issue.
+	if n, ok := issueFromPRBranch(pr); ok && n == issue && strings.EqualFold(prRepo, issueRepo) {
 		return true
 	}
 	return false
