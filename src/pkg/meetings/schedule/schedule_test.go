@@ -435,6 +435,44 @@ func TestIngestSequenceAndCancel(t *testing.T) {
 	}
 }
 
+func TestIngestRejectsUpdateOlderThanCancellation(t *testing.T) {
+	dir := t.TempDir()
+	c := &clock{t: t0}
+	j := &fakeJoiner{}
+	s := newTestScheduler(t, dir, c, j)
+	invite := Event{
+		UID: "out-of-order@x", Method: MethodRequest, Sequence: 1, Source: SourceEmail,
+		Organizer: &Person{Email: "alice@example.com"},
+		Start:     t0.Add(time.Hour), JoinURL: "https://meet.google.com/xyz",
+	}
+	ev, err := s.Ingest(invite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Approve(ev.ID, "octo"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A later cancellation also advances the sequence of an already cancelled event.
+	for _, sequence := range []int{3, 5} {
+		if _, err := s.Ingest(Event{UID: invite.UID, Method: MethodCancel, Sequence: sequence}); err != nil {
+			t.Fatalf("ingest cancellation at sequence %d: %v", sequence, err)
+		}
+		s = newTestScheduler(t, dir, c, j)
+		delayed := invite
+		delayed.Sequence = sequence - 1
+		delayed.Start = invite.Start.Add(time.Hour)
+		if got, err := s.Ingest(delayed); !errors.Is(err, ErrStaleSequence) || got.Status != StatusCancelled || got.Sequence != sequence {
+			t.Fatalf("delayed update at sequence %d after cancellation at %d = %+v, %v", delayed.Sequence, sequence, got, err)
+		}
+	}
+
+	invite.Sequence = 6
+	if got, err := s.Ingest(invite); err != nil || got.Status != StatusScheduled {
+		t.Fatalf("newer update = %+v, %v", got, err)
+	}
+}
+
 func TestIngestRecurrenceOverrides(t *testing.T) {
 	c := &clock{t: t0}
 	j := &fakeJoiner{}
@@ -450,7 +488,7 @@ func TestIngestRecurrenceOverrides(t *testing.T) {
 	}
 	// An override of day 2 moves it; the series no longer lists day 2.
 	rid := start.AddDate(0, 0, 2)
-	ov, err := s.Ingest(Event{UID: "s@x", RecurrenceID: &rid, Start: rid.Add(30 * time.Minute), JoinURL: "https://meet.google.com/s", Source: SourceEmail})
+	ov, err := s.Ingest(Event{UID: "s@x", RecurrenceID: &rid, Sequence: 1, Start: rid.Add(30 * time.Minute), JoinURL: "https://meet.google.com/s", Source: SourceEmail})
 	if err != nil || ov.ID == series.ID {
 		t.Fatalf("override = %+v %v", ov, err)
 	}
@@ -469,12 +507,12 @@ func TestIngestRecurrenceOverrides(t *testing.T) {
 	if !containsTime(got.ExDates, day3) {
 		t.Fatalf("cancelled occurrence not excluded: %v", got.ExDates)
 	}
-	// Cancelling the series cancels the override too.
-	if _, err := s.Ingest(Event{UID: "s@x", Method: MethodCancel}); err != nil {
+	// Cancelling the series cancels the override too, which keeps its own sequence.
+	if _, err := s.Ingest(Event{UID: "s@x", Method: MethodCancel, Sequence: 3}); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := s.Get(ov.ID); got.Status != StatusCancelled {
-		t.Fatalf("override after series cancel = %s", got.Status)
+	if got, err := s.Get(ov.ID); err != nil || got.Status != StatusCancelled || got.Sequence != ov.Sequence {
+		t.Fatalf("override after series cancel = %+v, %v", got, err)
 	}
 }
 

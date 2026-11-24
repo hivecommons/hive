@@ -229,9 +229,10 @@ func (s *Store) Upsert(ev Event, merge func(old *Event, ev Event) Event) (Event,
 
 // Cancel applies an iCalendar CANCEL: the event with this UID and
 // RECURRENCE-ID is marked cancelled unless the stored SEQUENCE is higher.
+// A newer cancellation also advances that event's SEQUENCE.
 // Cancelling a series cancels its overridden occurrences too; cancelling
 // one occurrence that has no override of its own excludes it from the
-// series. It returns the cancelled events.
+// series. It returns the changed events.
 func (s *Store) Cancel(uid string, recurrenceID *time.Time, sequence int, reason string) ([]Event, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -241,11 +242,13 @@ func (s *Store) Cancel(uid string, recurrenceID *time.Time, sequence int, reason
 		before[k] = e
 	}
 	var changed []Event
-	cancel := func(k string, e Event) {
-		if e.Status == StatusCancelled {
+	cancel := func(k string, e Event, nextSequence int) {
+		if e.Status != StatusCancelled {
+			e.Status, e.StatusReason = StatusCancelled, reason
+		} else if nextSequence == e.Sequence {
 			return
 		}
-		e.Status, e.StatusReason, e.UpdatedAt = StatusCancelled, reason, now
+		e.Sequence, e.UpdatedAt = nextSequence, now
 		s.events[k] = e
 		changed = append(changed, e)
 	}
@@ -255,11 +258,12 @@ func (s *Store) Cancel(uid string, recurrenceID *time.Time, sequence int, reason
 	case ok && sequence < e.Sequence:
 		return nil, ErrStaleSequence
 	case ok:
-		cancel(k, e)
+		cancel(k, e, sequence)
 		if recurrenceID == nil {
 			for ok2, o := range s.events {
 				if o.UID == uid && o.RecurrenceID != nil {
-					cancel(ok2, o)
+					// Overrides have their own SEQUENCE.
+					cancel(ok2, o, o.Sequence)
 				}
 			}
 		}
