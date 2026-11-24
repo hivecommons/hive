@@ -3,10 +3,13 @@ package hubbackup
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -41,9 +44,14 @@ func setOCIEnv(t *testing.T) {
 func ociMock(t *testing.T, objects map[string][]byte) (*httptest.Server, *[]string) {
 	t.Helper()
 	var methods []string
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		methods = append(methods, r.Method+" "+r.URL.Path)
+	srv := httptest.NewServer(ociBucketHandler(t, objects, &methods))
+	t.Cleanup(srv.Close)
+	return srv, &methods
+}
+
+func ociBucketHandler(t *testing.T, objects map[string][]byte, methods *[]string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		*methods = append(*methods, r.Method+" "+r.URL.Path)
 
 		// Namespace resolution: GET /n/
 		if r.URL.Path == ociNamespacePath {
@@ -70,13 +78,20 @@ func ociMock(t *testing.T, objects map[string][]byte) (*httptest.Server, *[]stri
 		name := r.URL.Path[idx+3:]
 		switch r.Method {
 		case http.MethodPut:
-			buf := make([]byte, r.ContentLength)
-			if r.ContentLength > 0 {
-				if _, err := r.Body.Read(buf); err != nil && err.Error() != "EOF" {
-					t.Errorf("read body: %v", err)
-				}
+			data, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("read body: %v", err)
+				w.WriteHeader(http.StatusBadRequest)
+				return
 			}
-			objects[name] = buf
+			digest := sha256.Sum256(data)
+			if r.Header.Get("opc-checksum-algorithm") != "SHA256" ||
+				r.Header.Get("opc-content-sha256") != base64.StdEncoding.EncodeToString(digest[:]) {
+				t.Error("OCI PUT lacks a matching storage integrity check")
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			objects[name] = data
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
 			data, ok := objects[name]
@@ -89,10 +104,7 @@ func ociMock(t *testing.T, objects map[string][]byte) (*httptest.Server, *[]stri
 			delete(objects, name)
 			w.WriteHeader(http.StatusNoContent)
 		}
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv, &methods
+	}
 }
 
 // newTestStore builds an ObjectStore wired to the mock, bypassing
@@ -202,13 +214,37 @@ func TestObjectStoreListIsNewestFirstAndFiltered(t *testing.T) {
 	}
 }
 
+func TestObjectStoreListPagesIgnoreStagingAndDuplicates(t *testing.T) {
+	legacy := ArchiveName(mustTime(t, "2026-01-01T00:00:00Z"))
+	fleet := retainedArchiveName(fleetArchivePrefix, mustTime(t, "2026-01-02T00:00:00Z"), []byte("fleet"))
+	partial := retainedArchiveName(partialArchivePrefix, mustTime(t, "2026-01-03T00:00:00Z"), []byte("partial"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch start := r.URL.Query().Get("start"); start {
+		case "":
+			fmt.Fprintf(w, `{"objects":[{"name":%q},{"name":%q}],"nextStartWith":%q}`, legacy, fleet, fleet)
+		case fleet:
+			fmt.Fprintf(w, `{"objects":[{"name":%q},{"name":%q},{"name":%q}]}`, fleet, partial, stagingArchivePrefix+partial)
+		default:
+			t.Errorf("unexpected list cursor: %q", start)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	store := newTestStore(t, srv.URL)
+	names, err := store.List()
+	if err != nil || len(names) != 3 || names[0] != partial || names[1] != fleet || names[2] != legacy {
+		t.Fatalf("want newest-first published names from both pages, got %v, %v", names, err)
+	}
+}
+
 // Prune keeps the N newest and deletes the rest. Deleting the wrong end would
 // destroy the most recent backup.
 func TestObjectStorePruneDeletesOldestOnly(t *testing.T) {
 	objects := map[string][]byte{
-		"hive-hub-backup-20260701T000000Z.tar.gz.enc": {1},
-		"hive-hub-backup-20260715T000000Z.tar.gz.enc": {2},
-		"hive-hub-backup-20260731T000000Z.tar.gz.enc": {3},
+		"hive-hub-fleet-backup-20260701T000000Z.tar.gz.enc": {1},
+		"hive-hub-fleet-backup-20260715T000000Z.tar.gz.enc": {2},
+		"hive-hub-fleet-backup-20260731T000000Z.tar.gz.enc": {3},
 	}
 	srv, _ := ociMock(t, objects)
 	store := newTestStore(t, srv.URL)
@@ -219,10 +255,10 @@ func TestObjectStorePruneDeletesOldestOnly(t *testing.T) {
 	if len(objects) != 2 {
 		t.Fatalf("want 2 archives retained, got %d: %v", len(objects), objects)
 	}
-	if _, ok := objects["hive-hub-backup-20260731T000000Z.tar.gz.enc"]; !ok {
+	if _, ok := objects["hive-hub-fleet-backup-20260731T000000Z.tar.gz.enc"]; !ok {
 		t.Fatal("Prune deleted the NEWEST archive — retention is inverted")
 	}
-	if _, ok := objects["hive-hub-backup-20260701T000000Z.tar.gz.enc"]; ok {
+	if _, ok := objects["hive-hub-fleet-backup-20260701T000000Z.tar.gz.enc"]; ok {
 		t.Fatal("Prune kept the oldest archive")
 	}
 }

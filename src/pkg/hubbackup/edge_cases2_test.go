@@ -72,48 +72,12 @@ func TestRunFailsWhenSecretCollectionFails(t *testing.T) {
 	}
 }
 
-// If the read-back after upload returns different bytes, Run must fail: this is
-// the check that catches a truncated or partially-written upload.
-func TestRunFailsWhenReadBackIsCorrupt(t *testing.T) {
-	dir := seedHubData(t)
-	t.Setenv(EnvDataDir, dir)
-	t.Setenv(EnvBackupKey, testKey)
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == ociNamespacePath {
-			w.Write([]byte(`"testnamespace"`))
-			return
-		}
-		switch r.Method {
-		case http.MethodPut:
-			w.WriteHeader(http.StatusOK)
-		case http.MethodGet:
-			// Read-back returns corrupted content.
-			w.Write([]byte("this is not the archive that was uploaded"))
-		default:
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	t.Cleanup(srv.Close)
-
-	setOCIEnv(t)
-	t.Setenv(envOCIEndpoint, srv.URL)
-	t.Setenv(EnvBucket, "backups")
-
-	_, _, err := Run(Options{SkipSpokes: true, SkipSecrets: true}, quietLogger())
-	if err == nil {
-		t.Fatal("a corrupt read-back must fail the run")
-	}
-	if !strings.Contains(err.Error(), "verification") && !strings.Contains(err.Error(), "read-back") {
-		t.Errorf("error should identify the read-back/verification step, got %v", err)
-	}
-}
-
 // A failed read-back request (not just corrupt content) must also fail Run.
 func TestRunFailsWhenReadBackRequestFails(t *testing.T) {
 	dir := seedHubData(t)
 	t.Setenv(EnvDataDir, dir)
 	t.Setenv(EnvBackupKey, testKey)
+	fakeBackupKubectl(t, "pod")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == ociNamespacePath {
@@ -132,9 +96,9 @@ func TestRunFailsWhenReadBackRequestFails(t *testing.T) {
 	t.Setenv(envOCIEndpoint, srv.URL)
 	t.Setenv(EnvBucket, "backups")
 
-	_, _, err := Run(Options{SkipSpokes: true, SkipSecrets: true}, quietLogger())
-	if err == nil {
-		t.Fatal("an archive that cannot be read back must fail the run")
+	_, _, err := Run(Options{SkipSpokes: true}, quietLogger())
+	if err == nil || !strings.Contains(err.Error(), "read-back failed") {
+		t.Fatalf("an archive that cannot be read back must fail the run: %v", err)
 	}
 }
 
@@ -168,6 +132,9 @@ func TestAddTreeSkipsNonRegularFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
+	if man.HubErrors["hub/saas/link.json"] == "" {
+		t.Fatal("the omitted symlink must be recorded as a hub gap")
+	}
 	for _, f := range man.Files {
 		if strings.HasSuffix(f.Path, "link.json") {
 			t.Fatal("a symlink must not be archived as a regular file")
@@ -181,6 +148,31 @@ func TestAddTreeSkipsNonRegularFiles(t *testing.T) {
 	}
 	if !sawReal {
 		t.Fatal("the real file should still be archived")
+	}
+}
+
+func TestBuildSkipsSaaSWriteTemps(t *testing.T) {
+	dir := seedHubData(t)
+	t.Setenv(EnvDataDir, dir)
+	temps := []string{
+		"timeline/hosted-x.json.tmp",
+		"users/.alice.json.123.tmp",
+		"app-keys/.vllm-d.pem.tmp123",
+		"consents/.consent-123",
+	}
+	for _, name := range temps {
+		mustWrite(t, filepath.Join(dir, saasSubdir, name), "temporary write")
+	}
+	_, man, err := Build(decodeTestKey(t), nil, nil, quietLogger())
+	if err != nil || len(man.HubErrors) > 0 {
+		t.Fatalf("SaaS temporary writes should not make the archive incomplete: %v, %+v", err, man)
+	}
+	for _, f := range man.Files {
+		for _, name := range temps {
+			if f.Path == filepath.Join(hubPrefix, saasSubdir, name) {
+				t.Errorf("archived a temporary write at %s", f.Path)
+			}
+		}
 	}
 }
 

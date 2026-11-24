@@ -175,10 +175,7 @@ ability to run.
 
 ## Backup
 
-Runs as a CronJob in `hive-hub` — **opt-in, not deployed by default**: `src/deploy/k8s/backup-cronjob.yaml` is deliberately excluded from the kustomization and must be applied explicitly, after creating Secret `hive-hub-backup-key` (key `backup-key`) with the escrowed `HIVE_BACKUP_KEY` and reviewing ConfigMap `hive-hub-backup-config`. The CronJob image tracks the `stable` release channel. Each run builds the archive, encrypts it,
-uploads it to OCI Object Storage, **downloads it again and verifies checksums**,
-then prunes beyond the retention count. A run that cannot self-verify fails
-rather than reporting a good backup.
+Runs as a CronJob in `hive-hub` — **opt-in, not deployed by default**: `src/deploy/k8s/backup-cronjob.yaml` is deliberately excluded from the kustomization and must be applied explicitly, after creating Secret `hive-hub-backup-key` (key `backup-key`) with the escrowed `HIVE_BACKUP_KEY` and reviewing ConfigMap `hive-hub-backup-config`. The CronJob image tracks the `stable` release channel. Each run builds and encrypts the archive, uploads it to a staging name in OCI Object Storage, and downloads it to verify the bytes before publishing. Hub recovery gaps stop publication.
 
 ```bash
 hive-backup run                    # to object storage
@@ -195,19 +192,18 @@ Environment:
 |---|---|
 | `HIVE_BACKUP_KEY` | **required** AES-256 key (64-char hex or base64). No default; unset aborts. |
 | `HIVE_BACKUP_BUCKET` | OCI Object Storage bucket |
-| `HIVE_BACKUP_RETENTION` | archives to keep (default 30) |
+| `HIVE_BACKUP_RETENTION` | archives to keep per history (default 30) |
 | `HIVE_BACKUP_DATA_DIR` | hub data dir (default `/data`) |
 | `HIVE_BACKUP_OCI_ENDPOINT` | Object Storage endpoint override (default: regional endpoint) |
 | `HIVE_HUB_NAMESPACE` | hub namespace for Secret collection (default `hive-hub`) |
 | `HIVE_KUBECONFIG_DIR` | per-cluster kubeconfigs for remote spokes (default `/etc/hive/kubeconfigs`) |
 | `OCI_*` | credentials, from the existing `oci-api-key` Secret |
 
-### Spoke gaps are recorded, not hidden
+### Backup histories
 
-A spoke scaled to zero, or with no Running pod, cannot be read. Those hives are
-listed in the archive's `MANIFEST.json` under `spoke_errors`, and printed by
-`run` and `verify`. **Check this output** — a "successful" backup can still be
-missing spokes, and the manifest is where you find out before you need it.
+Full fleet archives use the `hive-hub-fleet-backup-` prefix. Backups with spoke collection failures use `hive-hub-partial-backup-`. Intentional hub-only backups use `hive-hub-only-backup-`. Each history has its own retention limit. Earlier archive names stay available until the configured number of newer full fleet archives exists.
+
+An offline or push-reported spoke can leave a gap in `spoke_errors`. A hub-only archive records `spokes_skipped`. Locally saved archives can also report missing hub recovery files in `hub_errors`.
 
 ---
 
@@ -221,13 +217,14 @@ Assumes: total loss of the hub cluster. You have the escrowed
 ```bash
 export HIVE_BACKUP_KEY=<from your password manager>
 export HIVE_BACKUP_BUCKET=<bucket>
-hive-backup list
-hive-backup verify                      # confirm it is intact BEFORE relying on it
+hive-backup list                        # choose the newest archive with the coverage you need
+# Download the selected object from the bucket before verifying it.
+hive-backup verify -file <archive>
 hive-backup extract -file <archive> -dest ./restore
 ```
 
 `./restore` now contains `hub/`, `secrets/`, `spokes/`, `MANIFEST.json`.
-Read `MANIFEST.json` → `spoke_errors` to learn which spokes were not captured.
+Check `MANIFEST.json` for `hub_errors`, `spokes_skipped`, and `spoke_errors` before restoring.
 
 ### Step 1 — Provision a cluster
 

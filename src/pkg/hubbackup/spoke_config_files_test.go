@@ -1,6 +1,8 @@
 package hubbackup
 
 import (
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -122,5 +124,59 @@ func TestSpokeUnrecoverableWithNeitherConfig(t *testing.T) {
 	}
 	if !strings.Contains(reason, "hive.yaml.dashboard") || !strings.Contains(reason, "hive.yaml.runtime") {
 		t.Errorf("error should name both missing files, got %q", reason)
+	}
+}
+
+func TestSpokeReadScriptStopsOnReadError(t *testing.T) {
+	dir := t.TempDir()
+	files := []string{spokeRuntimeConfigFile, "gh-app-key-a.pem", "gh-app-key-b.pem"}
+	for _, file := range files {
+		mustWrite(t, filepath.Join(dir, file), "")
+	}
+	script := strings.ReplaceAll(buildSpokeReadScript(), "/data/", `"$fixture_dir"/`)
+	for _, failedFile := range files[:2] {
+		t.Run(failedFile, func(t *testing.T) {
+			// A successful key read follows each failure and must not hide it.
+			cmd := exec.Command("sh", "-c", `fixture_dir=$1; failed_file=$2; base64() { [ "${1##*/}" != "$failed_file" ]; }; `+script, "sh", dir, failedFile)
+			if output, err := cmd.CombinedOutput(); err == nil {
+				t.Fatalf("read error was masked: %s", output)
+			}
+		})
+	}
+}
+
+func TestSpokeWithOnlyEmptyConfigsIsUnrecoverable(t *testing.T) {
+	files := map[string][]byte{
+		"hive.yaml.dashboard":        {},
+		spokeRuntimeConfigFile:       []byte(" \n"),
+		spokeRuntimeConfigFileLegacy: {},
+	}
+	if reason := spokeConfigUnrecoverable(files); reason == "" {
+		t.Fatal("blank config files must not count as recovery inputs")
+	}
+}
+
+func TestCollectSpokeOmitsBlankRuntimeWithUsableFallback(t *testing.T) {
+	for _, fallback := range []string{"hive.yaml.dashboard", spokeRuntimeConfigFileLegacy} {
+		t.Run(fallback, func(t *testing.T) {
+			const config = "project: fixture"
+			fakeKubectl(t, map[string]string{
+				"get pods": "fixture-pod",
+				"exec": spokeStream(map[string]string{
+					spokeRuntimeConfigFile: " \n\t",
+					fallback:               config,
+				}),
+			})
+			spoke := (KubectlSpokeCollector{}).collectOne(ClusterTarget{InCluster: true}, "test", quietLogger())
+			if spoke.Err != "" {
+				t.Fatalf("expected the fallback to be usable: %s", spoke.Err)
+			}
+			if _, ok := spoke.Files[spokeRuntimeConfigFile]; ok {
+				t.Fatal("blank runtime config would mask the usable fallback on restore")
+			}
+			if string(spoke.Files[fallback]) != config {
+				t.Fatalf("fallback was not captured: %v", spoke.Files)
+			}
+		})
 	}
 }

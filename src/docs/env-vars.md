@@ -620,7 +620,7 @@ section requires for lookups.
 | `HIVE_BACKUP_KEY` | Yes for hub DR backups; optional for spoke backups | none | 64-character hex AES-256 key. For spoke backups it is now a **fallback**: owners set the key from Governor Config → Security → Backup (`governor.backup.key_file`), which takes precedence and needs no deployment access. With no key from any source, backup creation fails rather than writing plaintext. |
 | `HIVE_BACKUP_BUCKET` | Required for OCI upload mode | none | OCI Object Storage bucket for hub backup archives. |
 | `HIVE_BACKUP_DATA_DIR` | No | `/data` | Hub data directory used by `hive-backup`. |
-| `HIVE_BACKUP_RETENTION` | No | `30` | Number of backup archives to retain. |
+| `HIVE_BACKUP_RETENTION` | No | `30` | Archive count per history for full-fleet, partial-spoke, and hub-only backups. |
 | `HIVE_BACKUP_OCI_ENDPOINT` | No | OCI SDK default endpoint | OCI Object Storage endpoint override. |
 | `HIVE_HUB_NAMESPACE` | No | current/default namespace | Hub namespace override for backup collection. |
 | `HIVE_KUBECONFIG_DIR` | No | `/etc/hive/kubeconfigs` | Directory containing per-cluster kubeconfigs for remote spoke backup collection. |

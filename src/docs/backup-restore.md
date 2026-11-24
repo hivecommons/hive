@@ -26,7 +26,7 @@ persistent volume claim. **UID mapping** translates container user IDs to host
 IDs. **SELinux** is a host access-control system whose file labels affect
 container access; a correct Unix owner alone may not be enough.
 
-> **See also:** [Hub disaster recovery](https://github.com/hivecommons/hive/blob/v4/docs/HUB_DISASTER_RECOVERY.md) — the full hub-level runbook (key escrow, spoke fleet recovery, Slack blast, rebuild from zero) that the `hive-backup` archives described here feed into. For moving a live hive to a **different** host or cluster (as opposed to backing it up in place), see [Moving a Hive between hosts, same runtime](move-host.md), [Self-hosted Kubernetes cluster move](move-kubernetes.md) and [Hub-registered hive cutover](move-hub-registered-cutover.md); [Cross-runtime moves](move-cross-runtime.md) covers Podman ↔ Docker cross-host and Compose/Quadlet ↔ Kubernetes, using the same-host Docker → Podman migration below as its reference case.
+> **See also:** [Hub disaster recovery](https://github.com/hivecommons/hive/blob/v5/docs/HUB_DISASTER_RECOVERY.md) — the full hub-level runbook (key escrow, spoke fleet recovery, Slack blast, rebuild from zero) that the `hive-backup` archives described here feed into. For moving a live hive to a **different** host or cluster (as opposed to backing it up in place), see [Moving a Hive between hosts, same runtime](move-host.md), [Self-hosted Kubernetes cluster move](move-kubernetes.md) and [Hub-registered hive cutover](move-hub-registered-cutover.md); [Cross-runtime moves](move-cross-runtime.md) covers Podman ↔ Docker cross-host and Compose/Quadlet ↔ Kubernetes, using the same-host Docker → Podman migration below as its reference case.
 
 ## Config export is not a backup
 
@@ -50,11 +50,15 @@ encrypted backup to recover data after a failure.
 - hub SaaS state under `/data/saas/**` (users, hives, keys);
 - `/data/hub-registry.json`, the fleet registry;
 - required hub Kubernetes Secrets — a missing `hive-hub-secrets`, `oci-api-key`, or `hive-hub-kubeconfigs` **fails the backup**, while a missing `hive-hub-tls` only warns (cert-manager can reissue it);
-- each spoke's authoritative config files (`hive.yaml.dashboard`, `hive.yaml.runtime` or legacy `hive.yaml.bak`, `hive-id`) and GitHub App key files, read from the spoke via `kubectl exec`. Spokes that could not be read are recorded honestly in `MANIFEST.json` under `spoke_errors` rather than silently dropped.
+- each spoke's authoritative config files (`hive.yaml.dashboard`, `hive.yaml.runtime` or legacy `hive.yaml.bak`, `hive-id`) and GitHub App key files, read from the spoke via `kubectl exec`. Blank config files are omitted so a usable fallback can take effect on restore. Spokes that could not be read are recorded honestly in `MANIFEST.json` under `spoke_errors` rather than silently dropped.
 
 It deliberately excludes regenerable bulk state such as hub `nous/`, `home/`, `beads/`, and `logs/` so a nightly fleet backup stays small and restorable.
 
-The archive is a tar.gz sealed with AES-256-GCM. Every run re-downloads and verifies the archive that actually landed in object storage before pruning old archives — a run that cannot self-verify fails rather than reporting a good backup.
+The archive is a tar.gz sealed with AES-256-GCM. The backup job uploads to a staging name, reads back the bytes, then publishes the verified bytes under the final name before pruning. Missing or unusable hub recovery files block remote upload. Both registries are validated, including when spoke collection is disabled. An absent `clusters.json` is allowed for the built-in `hive-oke` cluster. The job collects spokes using the registry and cluster map captured in the archive.
+
+Use `hive-backup run -local FILE` to save an encrypted archive with hub file gaps recorded under `hub_errors`. When a registry prevents spoke enumeration, add `-skip-spokes=true` to that command. The hub's original bootstrap master must be present in `hub-secret.key` or the `HIVE_HUB_SECRET` entry in the captured `hive-hub-secrets` Secret. Any `hub-generations.json` must also include a usable current generation.
+
+Object storage keeps separate histories for full fleet backups (`hive-hub-fleet-backup-`), backups with spoke collection failures (`hive-hub-partial-backup-`), and intentional hub-only backups (`hive-hub-only-backup-`). Each history retains up to `HIVE_BACKUP_RETENTION` archives. Archives from earlier versions remain available until that many newer full fleet backups exist. `hive-backup list` shows all histories and older archives. `hive-backup verify` checks the newest archive and reports recorded collection gaps.
 
 ### The `HIVE_BACKUP_KEY` escrow gate
 
@@ -80,7 +84,7 @@ Environment:
 | `HIVE_BACKUP_KEY` | Required AES-256 key, 64 hex characters. No default. |
 | `HIVE_BACKUP_BUCKET` | OCI Object Storage bucket. |
 | `HIVE_BACKUP_DATA_DIR` | Hub data directory; default `/data`. |
-| `HIVE_BACKUP_RETENTION` | Archive count to retain; default `30`. |
+| `HIVE_BACKUP_RETENTION` | Archive count per history. Defaults to `30`. |
 | `HIVE_HUB_NAMESPACE` | Hub namespace for Secret collection; default `hive-hub`. |
 | `HIVE_KUBECONFIG_DIR` | Mounted kubeconfig directory for remote spoke clusters; default `/etc/hive/kubeconfigs`. |
 | `HIVE_BACKUP_OCI_ENDPOINT` | OCI Object Storage endpoint override; defaults to the regional endpoint. |
@@ -92,7 +96,7 @@ single-spoke archive, use [spoke restore](#restoring-a-spoke-backup-archive).
 
 `hive-backup verify -file <archive>` checks integrity: the GCM auth tag rejects a wrong key or any bit-flip. `hive-backup extract -file <archive> -dest ./restore` decrypts into a directory and verifies hashes. Neither mutates a live cluster.
 
-A restore operator should inspect the extracted `MANIFEST.json`, re-apply the captured Secret JSON to the new hub namespace, copy `hub/` files back to the hub PVC, and recreate or patch spokes from `spokes/<hive-id>/`. Any `spoke_errors` in the manifest are honest gaps: those spokes were not captured and need separate recovery.
+A restore operator should inspect the extracted `MANIFEST.json`, re-apply the captured Secret JSON to the new hub namespace, copy `hub/` files back to the hub PVC, and recreate or patch spokes from `spokes/<hive-id>/`. Entries in `hub_errors` and `spoke_errors` identify hub files and spokes that need separate recovery.
 
 ## Kubernetes CronJob
 
@@ -103,7 +107,7 @@ A restore operator should inspect the extracted `MANIFEST.json`, re-apply the ca
 - a daily `CronJob` scheduled at `17 3 * * *`, `concurrencyPolicy: Forbid`, one-hour active deadline, running `ghcr.io/hivecommons/hive:stable` with `imagePullPolicy: Always` (the backup image tracks the stable [release channel](release-channels.md), [#3810](https://github.com/hivecommons/hive/pull/3810));
 - ConfigMap `hive-hub-backup-config` with object-storage bucket (default `hive-hub-backups`, inherited silently if you don't edit it) and retention.
 
-Before applying it, create Secret `hive-hub-backup-key` with key `backup-key`, ensure `oci-api-key` and `hive-hub-kubeconfigs` exist, and confirm the PVC claim name (`hive-hub-data-rwx`) matches your deployment. Archives upload to OCI Object Storage, so allow egress to `objectstorage.<region>.oraclecloud.com` from the hub.
+Before applying it, create Secret `hive-hub-backup-key` with key `backup-key`, ensure `oci-api-key` and `hive-hub-kubeconfigs` exist, and confirm the PVC claim name (`hive-hub-data-rwx`) matches your deployment. Allow hub egress to `objectstorage.<region>.oraclecloud.com`.
 
 ## Owner-triggered spoke backup
 
@@ -339,7 +343,7 @@ Regenerable bulk state such as `nous/`, `home/`, and `logs/` can be excluded fro
 
 ### `hive-backup run` does not apply
 
-`hive-backup run` is the Kubernetes hub disaster-recovery path. It cannot run on a Docker Compose deployment. `pkg/hubbackup/run.go` calls `LoadTargets(dataDir)`, which hard-fails when `clusters.json` is absent. `KubectlSecretCollector` collects hub Kubernetes Secrets through in-cluster kubectl. A Compose deployment has no `clusters.json` and no in-cluster kubectl. Use the spoke backup and the host-level pattern below.
+`hive-backup run` is the Kubernetes hub disaster-recovery path. It cannot run on a Docker Compose deployment. The command needs the fleet registry and the hub Kubernetes Secrets. A standalone Compose spoke has neither. Use the spoke backup and the host-level pattern below.
 
 ### Spoke backup works
 

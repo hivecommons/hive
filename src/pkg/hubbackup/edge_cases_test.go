@@ -133,8 +133,8 @@ func TestParseSpokeStreamIgnoresUnmarkedOutput(t *testing.T) {
 func TestParseSpokeStreamRecoversEveryFile(t *testing.T) {
 	stream := spokeStream(map[string]string{
 		"hive.yaml.runtime": "config-a",
-		"agents.json":   "config-b",
-		"app-key.pem":   "config-c",
+		"agents.json":       "config-b",
+		"app-key.pem":       "config-c",
 	})
 	files, err := parseSpokeStream([]byte(stream))
 	if err != nil {
@@ -239,9 +239,9 @@ func TestPruneContinuesPastDeleteFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/o") {
 			w.Write([]byte(`{"objects":[
-				{"name":"hive-hub-backup-20260101T000000Z.tar.gz.enc"},
-				{"name":"hive-hub-backup-20260102T000000Z.tar.gz.enc"},
-				{"name":"hive-hub-backup-20260731T000000Z.tar.gz.enc"}]}`))
+				{"name":"hive-hub-fleet-backup-20260101T000000Z.tar.gz.enc"},
+				{"name":"hive-hub-fleet-backup-20260102T000000Z.tar.gz.enc"},
+				{"name":"hive-hub-fleet-backup-20260731T000000Z.tar.gz.enc"}]}`))
 			return
 		}
 		if r.Method == http.MethodDelete {
