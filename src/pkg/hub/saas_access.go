@@ -205,8 +205,9 @@ func accessForHive(hiveID string, users []SaaSUser, includeAdminOnly bool) []Hiv
 	return access
 }
 
-// userIsHiveOwner reports whether username may administer hive h: the registry
-// creator, any user holding the granted owner role on that hive, or the hub admin.
+// userIsHiveOwner reports whether username may administer hive h: h's Owner
+// (empty for a self-registered spoke, see accessHive), any user holding the
+// granted owner role on that hive, or the hub admin.
 func userIsHiveOwner(username string, h *SaaSHive) bool {
 	if username == "" || h == nil {
 		return false
@@ -249,9 +250,15 @@ func (s *HubServer) userOwnsHive(username, hiveID string) bool {
 }
 
 // accessHive returns the record the access handlers authorize against: the
-// SaaS meta record of a hosted hive, else the ID and Owner of the registry
-// entry of a self-registered spoke. The handlers never save it, so a grant on
-// a self-registered spoke writes no meta.json. Nil when neither place has it.
+// SaaS meta record of a hosted hive, else a record carrying only the ID of the
+// registry entry of a self-registered spoke. The handlers never save it, so a
+// grant on a self-registered spoke writes no meta.json. Nil when neither place
+// has it.
+//
+// The self-registered record has an EMPTY Owner on purpose (#19653): the
+// registry Owner comes from the spoke's own first heartbeat, which the hub
+// cannot verify, so it must not confer grant, revoke or approve rights. Only
+// the hub admin and users holding a stored owner grant manage such a hive.
 func (s *HubServer) accessHive(hiveID string) *SaaSHive {
 	if h := loadSaaSHive(hiveID); h != nil {
 		return h
@@ -269,9 +276,37 @@ func (s *HubServer) registryAccessHives() []SaaSHive {
 	defer s.mu.RUnlock()
 	hives := make([]SaaSHive, 0, len(s.registry.Hives))
 	for _, e := range s.registry.Hives {
-		hives = append(hives, SaaSHive{ID: e.ID, Owner: e.Owner})
+		// No Owner: see accessHive.
+		hives = append(hives, SaaSHive{ID: e.ID})
 	}
 	return hives
+}
+
+// hubAccessRole is the role the Manage Access endpoints honor for username on
+// hiveID: owner for the hub admin, for a hive whose owner grant My Hives is
+// repairing, and for the owner on a hosted hive's SaaS record (sh); otherwise
+// the stored grant. A self-registered spoke's heartbeat owner gets no role
+// from that alone (#19653).
+func hubAccessRole(username string, stored map[string]string, hiveID string, isAdmin bool, sh *SaaSHive, repaired map[string]bool) string {
+	if isAdmin || repaired[hiveID] {
+		return roleOwner
+	}
+	if sh != nil && canonicalEqual(sh.Owner, username) {
+		return roleOwner
+	}
+	return stored[hiveID]
+}
+
+// appendOwnerRepair queues a stored owner grant for hiveID, the My Hives
+// repair for a canonical owner whose stored role is missing or demoted. It
+// only queues hives with a SaaS record: on a self-registered spoke the
+// registry owner comes from the spoke's heartbeat, and persisting it as a
+// grant would hand that owner the access rights accessHive withholds (#19653).
+func appendOwnerRepair(repairs []string, hiveID string, saasByID map[string]*SaaSHive) []string {
+	if saasByID[hiveID] == nil {
+		return repairs
+	}
+	return append(repairs, hiveID)
 }
 
 func (s *HubServer) handleAccessList(w http.ResponseWriter, r *http.Request) {
