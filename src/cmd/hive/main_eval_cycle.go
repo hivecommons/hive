@@ -642,7 +642,10 @@ func runEvalCycle(
 		// PR's `Fixes #N`) has no open row to borrow a title from; fill it
 		// once per issue, from a long-lived memo, so the activity monitor
 		// never shows a bare "#N".
-		ghClient.EnrichLinkedIssueTitles(ctx, actionable.WorkDetailsByRepo, actionable.PRs.Items, actionable.PRs.Held, actionable.PRs.StaleDrafts)
+		// Only GitHub PRs: a mixed hive's forge PR names no GitHub issue
+		// (hivecommons/hive#19709).
+		ghPRs := githubPRView(cfg, actionable)
+		ghClient.EnrichLinkedIssueTitles(ctx, actionable.WorkDetailsByRepo, ghPRs.PRs.Items, ghPRs.PRs.Held, ghPRs.PRs.StaleDrafts)
 	}
 
 	// Publish the human-facing "what should I merge next?" digest. This reads
@@ -739,7 +742,7 @@ func runEvalCycle(
 	// same way ci-failing.json is, so the scheduler can route each PR back
 	// to its author for a fix + in-thread replies before any new work.
 	if !budgetDecision.SkipOptional {
-		writeReviewThreads(ctx, ghClient, actionable, cfg.Project.Org, escalatedPRs, logger)
+		writeReviewThreads(ctx, ghClient, githubPRView(cfg, actionable), cfg.Project.Org, escalatedPRs, logger)
 	}
 
 	// PR follow-up session resume (hivecommons/hive#9583, default off): feed
@@ -747,7 +750,9 @@ func runEvalCycle(
 	// PR this hive opened back into the CLI session that authored it, while
 	// that session is still live. Anything it cannot resume stays on the
 	// fix-before-new path above, unchanged.
-	routePRFollowUps(ctx, cfg, ghClient, actionable, escalatedPRs, agentMgr, logger)
+	// Its comment reads and branch updates go through the GitHub client, so a
+	// mixed hive hands it only the GitHub PRs (hivecommons/hive#19709).
+	routePRFollowUps(ctx, cfg, ghClient, githubPRView(cfg, actionable), escalatedPRs, agentMgr, logger)
 
 	// Human review feedback on PRs the hive's agents opened (hivecommons/hive#19027):
 	// kick the authoring agent to verify and answer it, whatever the PR's draft

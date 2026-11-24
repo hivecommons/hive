@@ -475,6 +475,39 @@ func setHoldItems(result *github.ActionableResult, held []github.HoldItem) {
 	}
 }
 
+// githubPRView returns the actionable result a GitHub-client step may act on.
+// On a GitHub-only hive it is the result itself. On a mixed hive it is a
+// shallow copy whose PR lists and held items keep only the repos on GitHub, so
+// a step that reads or writes through the GitHub client never applies a forge
+// PR's number to a same-named GitHub repo (hivecommons/hive#19709). The copy
+// shares the issue lists and maps with the result; steps that mutate those
+// must keep taking the result.
+func githubPRView(cfg *config.Config, result *github.ActionableResult) *github.ActionableResult {
+	if result == nil || !hiveMixesForges(cfg) {
+		return result
+	}
+	view := *result
+	onGitHub := cfg.RepoOnGitHub
+	prRepo := func(pr github.PullRequest) string { return pr.Repo }
+	view.PRs.Items = keepGitHubItems(result.PRs.Items, prRepo, onGitHub)
+	view.PRs.Count = len(view.PRs.Items)
+	view.PRs.Held = keepGitHubItems(result.PRs.Held, prRepo, onGitHub)
+	view.PRs.Attributed = keepGitHubItems(result.PRs.Attributed, prRepo, onGitHub)
+	view.PRs.StaleDrafts = keepGitHubItems(result.PRs.StaleDrafts, prRepo, onGitHub)
+	setHoldItems(&view, keepGitHubItems(result.Hold.Items, func(h github.HoldItem) string { return h.Repo }, onGitHub))
+	return &view
+}
+
+// githubClientForRepo returns ghClient for a repo on GitHub and nil for a repo
+// a mixed hive serves from another forge, so a per-PR GitHub read is skipped
+// rather than answered by a same-named GitHub repo.
+func githubClientForRepo(cfg *config.Config, ghClient *github.Client, repo string) *github.Client {
+	if hiveMixesForges(cfg) && !cfg.RepoOnGitHub(repo) {
+		return nil
+	}
+	return ghClient
+}
+
 // enrichGitHubPRs runs a GitHub enrichment step (CI status, workflow
 // approvals) on the PRs that live on GitHub. On a GitHub-only hive it hands
 // enrich the slice itself, exactly as before. On a mixed hive it passes only

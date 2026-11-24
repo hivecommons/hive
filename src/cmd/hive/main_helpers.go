@@ -127,11 +127,19 @@ func enforceHoldGuard(
 		selfAuthHoldEnabledForRepo = selfAuthHoldEnabledOverride[0]
 	}
 
+	// GitHub reads for one PR. On a mixed hive a PR on another forge gets
+	// none: a same-named GitHub repo's commits or timeline must never pin
+	// or accept its head (hivecommons/hive#19709). Without them the guard
+	// fails closed into the drift path, and its comment and label still go
+	// through the forge-aware writer.
+	ghReads := func(repo string) *github.Client { return githubClientForRepo(cfg, ghClient, repo) }
+
 	fetchCommits := func(repo string, number int) []holdguard.Commit {
-		if ghClient == nil {
+		client := ghReads(repo)
+		if client == nil {
 			return nil
 		}
-		got, err := ghClient.ListPRCommits(ctx, repo, number)
+		got, err := client.ListPRCommits(ctx, repo, number)
 		if err != nil {
 			// The head SHA alone still pins the tree; a missing commit list
 			// only degrades the drift comment's evidence, never the gate.
@@ -174,7 +182,9 @@ func enforceHoldGuard(
 	// the MERGE, not the branch. Runs after the snapshot step above so a PR
 	// held for the first time this tick is pinned before this ever touches
 	// its branch.
-	maintainHeldPRMergeability(ctx, ghClient, writer, store, org, actionable.PRs.Held, fetchCommits, logger)
+	// Its branch updates are GitHub writes: only the GitHub share of the held
+	// list reaches it.
+	maintainHeldPRMergeability(ctx, ghClient, writer, store, org, githubPRView(cfg, actionable).PRs.Held, fetchCommits, logger)
 
 	// (2) Check every open PR that WAS hold-gated (has a snapshot) and no
 	// longer is (it enumerated as actionable): the hold lifted this window.
@@ -192,8 +202,9 @@ func enforceHoldGuard(
 				"repo", repo, "pr", pr.Number, "head_sha", pr.HeadSHA)
 			continue
 		}
-		if !selfAuthHoldEnabledForRepo(pr.Repo) && ghClient != nil {
-			selfAuthHold, err := ghClient.LiftedHoldWasSelfAuthorization(ctx, pr.Repo, pr.Number)
+		prReads := ghReads(pr.Repo)
+		if !selfAuthHoldEnabledForRepo(pr.Repo) && prReads != nil {
+			selfAuthHold, err := prReads.LiftedHoldWasSelfAuthorization(ctx, pr.Repo, pr.Number)
 			if err != nil {
 				logger.Warn("hold guard: could not check #5117 self-authorization hold provenance before config-disabled skip",
 					"repo", repo, "pr", pr.Number, "error", err)
@@ -216,7 +227,7 @@ func enforceHoldGuard(
 				"recorded_head", rec.HeadSHA, "current_head", pr.HeadSHA, "approver", login)
 			continue
 		}
-		if ghClient != nil {
+		if prReads != nil {
 			// A trusted human who removed the gate label AFTER the current
 			// head arrived reviewed the head that is on the branch now; an
 			// earlier rebase during the hold is not drift to them (#13603).
@@ -226,7 +237,7 @@ func enforceHoldGuard(
 			// never commit dates or SHA-keyed check suites / statuses.
 			// Lookup failures and missing evidence fail closed into the
 			// drift path below.
-			lift, found, err := ghClient.LatestHoldGateLift(ctx, pr.Repo, pr.Number, pr.HeadSHA)
+			lift, found, err := prReads.LatestHoldGateLift(ctx, pr.Repo, pr.Number, pr.HeadSHA)
 			if err != nil {
 				logger.Warn("hold guard: could not read gate-lift provenance; treating moved head as drift",
 					"repo", repo, "pr", pr.Number, "error", err)
