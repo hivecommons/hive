@@ -1,0 +1,1 @@
+- dashboard: the "model is not the <backend> spelling" warning no longer returns on every boot or upgrade once the hive has written the corrected id to the agent overlay (the rewrite is logged instead); the banner is raised only when that write fails, and it now has a Dismiss button that `POST /api/system-alerts/dismiss` accepts.

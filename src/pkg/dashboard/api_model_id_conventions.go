@@ -108,24 +108,36 @@ func (s *Server) healCarriedModel(name, backend string) string {
 	return warning
 }
 
-// surfaceModelIDNormalizations raises one warning per agent whose Claude model
-// id the loader rewrote at boot (config.NormalizeModelIDConventions), and
-// writes the fixed id to the agent's overlay file so the rewrite is durable:
-// for managed agents the overlay replaces the hive.yaml entry on every load,
-// so leaving the old spelling there would repeat the rewrite on each boot.
+// surfaceModelIDNormalizations handles each agent whose Claude model id the
+// loader rewrote at boot (config.NormalizeModelIDConventions). It writes the
+// fixed id to the agent's overlay file so the rewrite is durable: for managed
+// agents the overlay replaces the hive.yaml entry on every load, so leaving
+// the old spelling there would repeat the rewrite on each boot.
+//
+// A rewrite that was persisted needs nothing from the operator: the agent
+// already runs on the corrected id, and the old spelling is often one the
+// hive's own seed config wrote (hub-provisioned copilot agents carry the
+// dashed id). Raising a banner for it on every boot or upgrade only produced
+// undismissable noise (#19747), so it is logged instead. The banner is kept
+// for a rewrite that could not be persisted, because that one repeats on
+// every boot until the stored model is fixed.
 func (s *Server) surfaceModelIDNormalizations() {
 	if s.deps == nil || s.deps.Config == nil {
 		return
 	}
 	agentsDir := s.deps.Config.Data.AgentsDir
 	for _, n := range s.deps.Config.ModelIDNormalizations {
-		s.AddSystemAlert(modelIDNormalizedAlertPrefix+n.Agent, "warning", modelIDConventionWarning(n.Agent, n.Backend, n.From, n.To))
+		warning := modelIDConventionWarning(n.Agent, n.Backend, n.From, n.To)
 		ac, ok := s.deps.Config.Agents[n.Agent]
 		if agentsDir == "" || !ok {
+			s.AddSystemAlert(modelIDNormalizedAlertPrefix+n.Agent, "warning", warning)
 			continue
 		}
 		if err := config.SaveAgentFile(agentsDir, n.Agent, ac); err != nil {
 			s.logger.Error("failed to persist normalized model to agent overlay", "agent", n.Agent, "error", err)
+			s.AddSystemAlert(modelIDNormalizedAlertPrefix+n.Agent, "warning", warning)
+			continue
 		}
+		s.logger.Info("persisted normalized model id to agent overlay", "agent", n.Agent, "from", n.From, "to", n.To)
 	}
 }
