@@ -771,8 +771,38 @@ jobs:
       # Sigstore outage can never skip the mirror. cosign stores the signature
       # as a separate sha256-<digest>.sig object, leaving the image manifest
       # untouched (#3760). Verify: src/docs/releases.md.
+      # Direct pinned install instead of sigstore/cosign-installer: the
+      # installer's first command shells out to `envsubst` (gettext-base),
+      # which the self-hosted ARC runner image does not ship, so every merge
+      # job failed with exit 127 (#19590). Same convention as the pinned
+      # `just` installs: fixed version + per-arch SHA256 from the release's
+      # cosign_checksums.txt. Installs into RUNNER_TEMP (no sudo needed).
       - name: Install cosign
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        run: |
+          set -euo pipefail
+          COSIGN_VERSION=v3.1.4
+          case "$(uname -m)" in
+            x86_64)
+              COSIGN_ARCH=amd64
+              COSIGN_SHA256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+              ;;
+            aarch64|arm64)
+              COSIGN_ARCH=arm64
+              COSIGN_SHA256=ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2
+              ;;
+            *)
+              echo "::error::unsupported runner arch for cosign: $(uname -m)"
+              exit 1
+              ;;
+          esac
+          bin_dir="${RUNNER_TEMP}/cosign-bin"
+          mkdir -p "$bin_dir"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o "${bin_dir}/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${COSIGN_ARCH}"
+          echo "${COSIGN_SHA256}  ${bin_dir}/cosign" | sha256sum -c -
+          chmod 0755 "${bin_dir}/cosign"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          "${bin_dir}/cosign" version
 
       # The mirror step may have replaced the GHCR login with the cross-org
       # PAT (one credential per host); cosign needs native-org write access.
@@ -1053,8 +1083,38 @@ jobs:
       # Sigstore outage can never skip the mirror. cosign stores the signature
       # as a separate sha256-<digest>.sig object, leaving the image manifest
       # untouched (#3760). Verify: src/docs/releases.md.
+      # Direct pinned install instead of sigstore/cosign-installer: the
+      # installer's first command shells out to `envsubst` (gettext-base),
+      # which the self-hosted ARC runner image does not ship, so every merge
+      # job failed with exit 127 (#19590). Same convention as the pinned
+      # `just` installs: fixed version + per-arch SHA256 from the release's
+      # cosign_checksums.txt. Installs into RUNNER_TEMP (no sudo needed).
       - name: Install cosign
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        run: |
+          set -euo pipefail
+          COSIGN_VERSION=v3.1.4
+          case "$(uname -m)" in
+            x86_64)
+              COSIGN_ARCH=amd64
+              COSIGN_SHA256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+              ;;
+            aarch64|arm64)
+              COSIGN_ARCH=arm64
+              COSIGN_SHA256=ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2
+              ;;
+            *)
+              echo "::error::unsupported runner arch for cosign: $(uname -m)"
+              exit 1
+              ;;
+          esac
+          bin_dir="${RUNNER_TEMP}/cosign-bin"
+          mkdir -p "$bin_dir"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o "${bin_dir}/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${COSIGN_ARCH}"
+          echo "${COSIGN_SHA256}  ${bin_dir}/cosign" | sha256sum -c -
+          chmod 0755 "${bin_dir}/cosign"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          "${bin_dir}/cosign" version
 
       # The mirror step may have replaced the GHCR login with the cross-org
       # PAT (one credential per host); cosign needs native-org write access.
@@ -1349,8 +1409,38 @@ jobs:
       # Sigstore outage can never skip the mirror. cosign stores the signature
       # as a separate sha256-<digest>.sig object, leaving the image manifest
       # untouched (#3760). Verify: src/docs/releases.md.
+      # Direct pinned install instead of sigstore/cosign-installer: the
+      # installer's first command shells out to `envsubst` (gettext-base),
+      # which the self-hosted ARC runner image does not ship, so every merge
+      # job failed with exit 127 (#19590). Same convention as the pinned
+      # `just` installs: fixed version + per-arch SHA256 from the release's
+      # cosign_checksums.txt. Installs into RUNNER_TEMP (no sudo needed).
       - name: Install cosign
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        run: |
+          set -euo pipefail
+          COSIGN_VERSION=v3.1.4
+          case "$(uname -m)" in
+            x86_64)
+              COSIGN_ARCH=amd64
+              COSIGN_SHA256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+              ;;
+            aarch64|arm64)
+              COSIGN_ARCH=arm64
+              COSIGN_SHA256=ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2
+              ;;
+            *)
+              echo "::error::unsupported runner arch for cosign: $(uname -m)"
+              exit 1
+              ;;
+          esac
+          bin_dir="${RUNNER_TEMP}/cosign-bin"
+          mkdir -p "$bin_dir"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o "${bin_dir}/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${COSIGN_ARCH}"
+          echo "${COSIGN_SHA256}  ${bin_dir}/cosign" | sha256sum -c -
+          chmod 0755 "${bin_dir}/cosign"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          "${bin_dir}/cosign" version
 
       # The mirror step may have replaced the GHCR login with the cross-org
       # PAT (one credential per host); cosign needs native-org write access.
@@ -1647,8 +1737,38 @@ jobs:
       # Sigstore outage can never skip the mirror. cosign stores the signature
       # as a separate sha256-<digest>.sig object, leaving the image manifest
       # untouched (#3760). Verify: src/docs/releases.md.
+      # Direct pinned install instead of sigstore/cosign-installer: the
+      # installer's first command shells out to `envsubst` (gettext-base),
+      # which the self-hosted ARC runner image does not ship, so every merge
+      # job failed with exit 127 (#19590). Same convention as the pinned
+      # `just` installs: fixed version + per-arch SHA256 from the release's
+      # cosign_checksums.txt. Installs into RUNNER_TEMP (no sudo needed).
       - name: Install cosign
-        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        run: |
+          set -euo pipefail
+          COSIGN_VERSION=v3.1.4
+          case "$(uname -m)" in
+            x86_64)
+              COSIGN_ARCH=amd64
+              COSIGN_SHA256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+              ;;
+            aarch64|arm64)
+              COSIGN_ARCH=arm64
+              COSIGN_SHA256=ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2
+              ;;
+            *)
+              echo "::error::unsupported runner arch for cosign: $(uname -m)"
+              exit 1
+              ;;
+          esac
+          bin_dir="${RUNNER_TEMP}/cosign-bin"
+          mkdir -p "$bin_dir"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o "${bin_dir}/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${COSIGN_ARCH}"
+          echo "${COSIGN_SHA256}  ${bin_dir}/cosign" | sha256sum -c -
+          chmod 0755 "${bin_dir}/cosign"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          "${bin_dir}/cosign" version
 
       # The mirror step may have replaced the GHCR login with the cross-org
       # PAT (one credential per host); cosign needs native-org write access.
