@@ -1,0 +1,1 @@
+- Dashboard: the human gate's "..." menu now opens as a tap-sized sheet on phones (and is anchored and clamped to the viewport on wider layouts), so "Let hive decide" is reachable on a phone instead of opening off-screen (#19655)

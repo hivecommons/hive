@@ -268,7 +268,52 @@
         if (menu && menu.tagName === 'TEMPLATE') { const stamped = menu.content.firstElementChild.cloneNode(true); menu.replaceWith(stamped); menu = stamped; }
         const open = menu && menu.hidden;
         closeAll();
-        if (menu && open) { menu.hidden = false; b.setAttribute('aria-expanded', 'true'); const first = menu.querySelector('[role="menuitem"]'); if (first) first.focus(); }
+        if (!menu || !open) return;
+        const gateEl = b.closest('.ham-human-gate');
+        const key = gateEl ? gateEl.dataset.hamGate : '';
+        // Phone tier: the same full-screen sheet the row's menu uses, so the
+        // items are tap-sized and a disabled verb states its reason as text
+        // (a hover title never shows on touch). The sheet lives on <body>,
+        // outside the pill's overflow clip and the page scroll offset.
+        if (typeof stageTrackerIsPhoneSheet === 'function' && stageTrackerIsPhoneSheet() && typeof stageTrackerOpenSheet === 'function') {
+          menu.hidden = false;
+          menu.classList.add('ham-menu-sheet');
+          menu.querySelectorAll('[aria-disabled="true"][title]').forEach(it => {
+            const why = document.createElement('span');
+            why.className = 'ham-gate-sheet-why';
+            why.textContent = it.getAttribute('title');
+            it.insertAdjacentElement('afterend', why);
+          });
+          b.setAttribute('aria-expanded', 'true');
+          let host = null;
+          const restore = () => { b.setAttribute('aria-expanded', 'false'); if (typeof b.focus === 'function' && document.contains(b)) b.focus(); };
+          menu.addEventListener('click', ev => {
+            const it = ev.target.closest ? ev.target.closest('[data-ham-act]') : null;
+            if (!it || it.getAttribute('aria-disabled') === 'true') return;
+            ev.preventDefault(); ev.stopPropagation();
+            const item = key && typeof stageTrackerItemByKey === 'function' ? stageTrackerItemByKey(_stageTracker, key) : null;
+            if (host && host.hiveDialogClose) host.hiveDialogClose(); else if (host && host.parentNode) host.parentNode.removeChild(host);
+            if (!item) return;
+            const run = stageTrackerDecisionRun(item, it.dataset.hamAct);
+            if (run && typeof run.then === 'function') run.then(r => { if (r && !r.cancelled && Array.isArray(r.results) && r.results.length && r.results.every(x => x && x.ok)) stageTrackerHumanGateSettling(b); }, () => {});
+          });
+          host = stageTrackerOpenSheet('More ways to settle this gate', menu, 'ham-menu-dialog ham-gate-sheet', restore, () => {
+            const it = document.activeElement && document.activeElement.closest ? document.activeElement.closest('[role="menuitem"]') : null;
+            if (it && menu.contains(it)) it.click();
+          });
+          return;
+        }
+        // Wider layouts: anchor the popover under its button, clamped to the
+        // viewport (.ham-menu is position: fixed with no offsets of its own).
+        menu.hidden = false;
+        b.setAttribute('aria-expanded', 'true');
+        if (typeof stageTrackerMenuPosition === 'function' && typeof b.getBoundingClientRect === 'function') {
+          const r = b.getBoundingClientRect();
+          const pos = stageTrackerMenuPosition(r.left, r.bottom, menu.offsetWidth, menu.offsetHeight, window.innerWidth, window.innerHeight);
+          menu.style.setProperty('left', pos.left + 'px');
+          menu.style.setProperty('top', pos.top + 'px');
+        }
+        const first = menu.querySelector('[role="menuitem"]'); if (first) first.focus();
       });
       el.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
     }

@@ -297,3 +297,28 @@ delete window.matchMedia;
 assert.strictEqual(stageTrackerHumanGateVisible(), STAGE_TRACKER_GATE_VISIBLE);
 `)
 }
+
+// TestStageTrackerHumanGateMenuPlacement pins hivecommons/hive#19655: the
+// gate's "..." menu was only un-hidden, so as a position: fixed popover with
+// no offsets it opened below the viewport on a phone and "Let hive decide"
+// could not be tapped. On the phone tier it now opens the shared sheet; on
+// wider layouts it is anchored to its button and clamped to the viewport.
+func TestStageTrackerHumanGateMenuPlacement(t *testing.T) {
+	html := indexHTML(t)
+	fn := jsFunc(t, html, "stageTrackerWireHumanGate")
+	for _, want := range []string{
+		`stageTrackerIsPhoneSheet()`,
+		`stageTrackerOpenSheet(`,
+		`ham-gate-sheet-why`,
+		`stageTrackerMenuPosition(r.left, r.bottom`,
+		`menu.style.setProperty('left'`,
+		`menu.style.setProperty('top'`,
+	} {
+		if !strings.Contains(fn, want) {
+			t.Errorf("stageTrackerWireHumanGate missing %q: the gate menu must open as a sheet on phones and be anchored on wider layouts", want)
+		}
+	}
+	if !strings.Contains(html, ".ham-gate-sheet-why {") {
+		t.Error("index.html missing the .ham-gate-sheet-why style for disabled-verb reasons on the sheet")
+	}
+}

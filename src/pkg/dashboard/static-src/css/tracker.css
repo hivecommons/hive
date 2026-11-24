@@ -1024,6 +1024,7 @@
     .ham-human-gate.ham-gate-settling > .ham-gate-status { color: var(--cue-work); }
     .ham-human-gate > .ham-gate-wait { display: inline-flex; align-items: center; min-width: 0; padding: 0 var(--sp-2); color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ham-gate-menu[hidden] { display: none; }
+    .ham-gate-sheet-why { display: block; padding: 0 var(--sp-4) var(--sp-2); font-size: var(--fs-sm); color: var(--text-muted); }
     /* The passive "decision pending on #N" chip is a link to the primary row. */
     .ham-decision-pending[data-ham-scroll-to] { text-decoration: underline dotted; text-underline-offset: var(--sp-1); }
     /* The technical background folds behind one collapsed Details. */
