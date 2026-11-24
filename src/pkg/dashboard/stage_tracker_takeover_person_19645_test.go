@@ -27,7 +27,9 @@ func TestStageTrackerPersonTakeoverOffersAdoptNowNotReroute(t *testing.T) {
 		candidatesAsked = true
 		return []RerouteCandidate{{Login: "bee2", Capable: true}}
 	}
-	presence := func(string) (automerge.ContributorPresence, bool) { return automerge.ContributorPresence{Online: true}, true }
+	presence := func(string) (automerge.ContributorPresence, bool) {
+		return automerge.ContributorPresence{Online: true}, true
+	}
 	tk := stageTrackerTakeover(personWaitingItem(), stagelabels.Record{}, false, presence, candidates, clock, now)
 	if tk == nil || !tk.Person || !tk.AdoptNow || tk.AdoptNowReason != "" || tk.Author != "octo" {
 		t.Fatalf("takeover = %+v", tk)
