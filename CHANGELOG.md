@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v5.361.1)
+
+### Security
+
+- **Forgejo automerge no longer merges commits pushed after the approval label** ([#19701](https://github.com/hivecommons/hive/issues/19701)). The Forgejo automerge sweep checked who last added the automerge label (default `lgtm`) but not whether the pull request moved afterwards, so a pull request author without write access could push new commits after a writer's approval and have them merged once CI went green. The sweep now reads the pull request's timeline and skips it with reason `pushed-after-label` when a push (including a force push) follows the last label addition; a writer must add the label again to approve the new head.
+
 ## 2026-11-24 (v5.361.0)
 
 ### Added
