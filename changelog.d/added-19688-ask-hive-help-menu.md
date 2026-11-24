@@ -1,1 +1,0 @@
-- Dashboard: with Ask on, the top bar Help menu and the sidebar Help group now have an **Ask Hive** item right after Getting started that opens the Ask panel (now titled Ask Hive); it is hidden while Ask is off and works with touch and the keyboard. The shared panel gains `HiveAsk.open()` and `HiveAsk.close()` (#19688).
