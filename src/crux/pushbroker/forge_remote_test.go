@@ -116,8 +116,12 @@ func TestWithTier(t *testing.T) {
 		t.Fatalf("tiered minter token = %q", tok)
 	}
 	static := StaticTokenMinter{Token: func() string { return "s" }}
-	if WithTier(static, "advisor") != TokenMinter(static) {
+	got, ok := WithTier(static, "advisor").(StaticTokenMinter)
+	if !ok {
 		t.Fatal("a minter that cannot narrow must be returned unchanged")
+	}
+	if tok, err := got.MintPushToken(context.Background(), "o/r"); err != nil || tok != "s" {
+		t.Fatalf("unchanged minter token = %q, %v", tok, err)
 	}
 }
 
