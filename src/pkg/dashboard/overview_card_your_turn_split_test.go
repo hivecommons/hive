@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -308,19 +309,70 @@ func TestCardYourTurnSplitParkFollowsTheDecisionsLabelOrder(t *testing.T) {
 	}
 }
 
-// The retired single band key is refused with a pointer to the group.
-func TestCardYourTurnSplitRetiredBandKey(t *testing.T) {
+// card_band=your-turn, the single Your turn band of before the split, still
+// works: it returns the rows that band held (every Your turn band but Yours
+// to close and Unexplained), joins other card_band values as a union, and
+// card_group=your-turn returns the whole group.
+func TestCardYourTurnSplitBandAlias(t *testing.T) {
 	s := cardPartitionServer()
+	status := cardPartitionStatus()
 	s.statusMu.Lock()
-	s.status = cardPartitionStatus()
+	s.status = status
 	s.statusMu.Unlock()
-	for _, kind := range []string{overviewKindIssues, overviewKindPRs} {
-		w := cardExport(t, s, kind, "json", "?card_band=your-turn")
-		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "use card_group=your-turn") {
-			t.Errorf("%s card_band=your-turn = %d %q", kind, w.Code, w.Body.String())
+	// The handler classifies at the wall clock; so does the comparison.
+	card := cardClassifyAt(s, status, time.Now().UTC()).card
+	rows := func(kind, query string) []map[string]any {
+		t.Helper()
+		w := cardExport(t, s, kind, "json", query)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s %s = %d %q", kind, query, w.Code, w.Body.String())
 		}
-		if w := cardExport(t, s, kind, "json", "?card_group=your-turn"); w.Code != http.StatusOK {
-			t.Errorf("%s card_group=your-turn = %d", kind, w.Code)
+		var body overviewJSONResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		out := make([]map[string]any, 0, len(body.Rows))
+		for _, row := range body.Rows {
+			m, _ := row.(map[string]any)
+			out = append(out, m)
+		}
+		return out
+	}
+	for _, kind := range []string{overviewKindIssues, overviewKindPRs} {
+		specs := card.Issues
+		if kind == overviewKindPRs {
+			specs = card.PRs
+		}
+		action, toClose, group := 0, 0, 0
+		for _, spec := range specs {
+			if cardTurnAction(spec.Key) {
+				action += spec.Count
+			}
+			if spec.Key == cardBandToClose {
+				toClose = spec.Count
+			}
+			if spec.Group == cardGroupYourTurn {
+				group += spec.Count
+			}
+		}
+		if action == 0 {
+			t.Fatalf("%s: the fixture has no Your turn action row", kind)
+		}
+		alias := rows(kind, "?card_band=your-turn")
+		if len(alias) != action {
+			t.Errorf("%s card_band=your-turn: %d rows, want the %d action rows", kind, len(alias), action)
+		}
+		for _, m := range alias {
+			band, _ := m["card_band"].(string)
+			if !cardTurnAction(band) || m["card_group"] != cardGroupYourTurn {
+				t.Errorf("%s card_band=your-turn returned a %q row", kind, band)
+			}
+		}
+		if got := len(rows(kind, "?card_band=your-turn&card_band=to-close")); got != action+toClose {
+			t.Errorf("%s card_band=your-turn plus to-close: %d rows, want %d", kind, got, action+toClose)
+		}
+		if got := len(rows(kind, "?card_group=your-turn")); got != group || group <= action {
+			t.Errorf("%s card_group=your-turn: %d rows, group %d, action rows %d", kind, got, group, action)
 		}
 	}
 }

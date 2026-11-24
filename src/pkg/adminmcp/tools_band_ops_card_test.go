@@ -63,9 +63,9 @@ func TestBandReadResultFiltersByCardBandAndGroupBeforePaging(t *testing.T) {
 }
 
 // The Your turn group's bands say what the person has to do; card_group
-// your-turn still returns every one of them, and the retired single
-// your-turn band key is refused with the new keys listed and a pointer to
-// card_group=your-turn.
+// your-turn still returns every one of them, and card_band your-turn, the
+// single band of before the split, returns the rows it held: every
+// your-turn row but to-close and unexplained. The schema lists it.
 func TestBandReadResultYourTurnGroupSpansItsBands(t *testing.T) {
 	out, err := BandReadResult(ToolIssuesByBand, sampleOverviewCardResponse(), map[string]any{"card_group": "your-turn"})
 	if err != nil {
@@ -80,13 +80,38 @@ func TestBandReadResultYourTurnGroupSpansItsBands(t *testing.T) {
 		t.Fatalf("card_group=your-turn rows carry bands %v, want decide and review", bands)
 	}
 	for _, tool := range []string{ToolIssuesByBand, ToolPrsByBand} {
-		out, err := BandReadResult(tool, sampleOverviewIssuesResponse(), map[string]any{"card_band": "your-turn"})
+		body := sampleOverviewIssuesResponse()
+		group := []string{"decide", "to-close", "unexplained", "queued"}
+		for i, raw := range body["rows"].([]any) {
+			m := raw.(map[string]any)
+			m["card_band"], m["card_group"] = group[i], "your-turn"
+			if group[i] == "queued" {
+				m["card_group"] = "actionable-now"
+			}
+		}
+		out, err := BandReadResult(tool, body, map[string]any{"card_band": "your-turn"})
 		if err != nil {
 			t.Fatal(err)
 		}
-		refusal, ok := out.(RefusalData)
-		if !ok || refusal.Kind != RefusalKindInvalidArgument || !strings.Contains(refusal.Reason, "decide") || !strings.Contains(refusal.Reason, "your-turn-other") || !strings.Contains(refusal.Reason, "use card_group=your-turn") {
+		got, ok := out.(map[string]any)
+		if !ok {
 			t.Fatalf("%s card_band=your-turn: result = %#v", tool, out)
+		}
+		rows, _ := got["rows"].([]any)
+		if len(rows) != 1 || rows[0].(map[string]any)["card_band"] != "decide" {
+			t.Fatalf("%s card_band=your-turn rows = %#v, want the decide row only", tool, rows)
+		}
+	}
+	for _, tool := range Tools() {
+		name, _ := tool["name"].(string)
+		if name != ToolIssuesByBand && name != ToolPrsByBand {
+			continue
+		}
+		props, _ := tool["inputSchema"].(map[string]any)["properties"].(map[string]any)
+		band, _ := props["card_band"].(map[string]any)
+		enum, _ := band["enum"].([]string)
+		if !containsBand(enum, "your-turn") {
+			t.Errorf("%s card_band enum %v does not list your-turn", name, enum)
 		}
 	}
 }

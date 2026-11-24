@@ -244,7 +244,9 @@ func parseOverviewSlices(r *http.Request, filters *overviewFilters, validSlices 
 
 // parseOverviewCardFilters reads the card_band and card_group filters:
 // the Overview card bands (this kind's donut) and groups an export link asks
-// for.
+// for. card_band=your-turn, the single Your turn band of before the split,
+// stands for this donut's what-to-do bands (cardTurnAction), so it keeps the
+// rows it always returned; card_group=your-turn returns the whole group.
 func parseOverviewCardFilters(r *http.Request, filters *overviewFilters, kind string) error {
 	bandKeys := cardIssueBandOrder
 	if kind == overviewKindPRs {
@@ -262,6 +264,16 @@ func parseOverviewCardFilters(r *http.Request, filters *overviewFilters, kind st
 		out := map[string]bool{}
 		bad := make([]string, 0)
 		for _, v := range values {
+			if param == "card_band" && v == cardBandYourTurnAlias {
+				// The single Your turn band of before the split: the rows it
+				// held, this donut's what-to-do bands.
+				for _, key := range valid {
+					if cardTurnAction(key) {
+						out[key] = true
+					}
+				}
+				continue
+			}
 			if !known[v] {
 				bad = append(bad, v)
 				continue
@@ -275,20 +287,11 @@ func parseOverviewCardFilters(r *http.Request, filters *overviewFilters, kind st
 	}
 	var err error
 	if filters.cardBands, err = parse("card_band", "card band", bandKeys); err != nil {
-		for _, v := range splitQueryValues(r.URL.Query()["card_band"]) {
-			if v == cardGroupYourTurn {
-				return fmt.Errorf("%w; %s", err, cardRetiredYourTurnBand)
-			}
-		}
 		return err
 	}
 	filters.cardGroups, err = parse("card_group", "card group", cardGroupOrder)
 	return err
 }
-
-// cardRetiredYourTurnBand is added to a card_band error that names the
-// retired single Your turn band.
-const cardRetiredYourTurnBand = "your-turn is no longer a card band; use card_group=your-turn for every Your turn row"
 
 func (f overviewFilters) matchCard(band OverviewCardBand) bool {
 	return (len(f.cardBands) == 0 || f.cardBands[band.Key]) && (len(f.cardGroups) == 0 || f.cardGroups[band.Group])

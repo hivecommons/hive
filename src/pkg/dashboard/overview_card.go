@@ -481,6 +481,17 @@ func cardTurnBand(verb, reasonCode, kind string) string {
 	return cardBandTurnOther
 }
 
+// cardBandYourTurnAlias is the single Your turn band of before the split.
+// A card_band filter still accepts it and reads it as cardTurnAction: the
+// set of rows that band held (it never held Yours to close or Unexplained).
+const cardBandYourTurnAlias = "your-turn"
+
+// cardTurnAction reports a Your turn band that says what to do: every Your
+// turn band but Yours to close and Unexplained.
+func cardTurnAction(key string) bool {
+	return key != cardBandToClose && key != cardBandUnexplained && cardBandDefs[key].group == cardGroupYourTurn
+}
+
 // cardNotInInbox reports a band the not-in-inbox count reads: every Your
 // turn band but Unexplained, which is counted apart.
 func cardNotInInbox(key string) bool {
