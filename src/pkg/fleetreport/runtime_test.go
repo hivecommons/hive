@@ -278,8 +278,9 @@ func TestEvaluateGitHubAppNotInstalledSkippedOnUnclaimedHive(t *testing.T) {
 		{name: "legacy placeholder org counts as unclaimed", org: "placeholder-org", evidence: []Evidence{appEv}, wantClasses: nil},
 		{name: "placeholder org still reports other classes", org: "available-lke648397-260827-boq9", evidence: []Evidence{appEv, panicEv}, wantClasses: []string{ClassPanicRecovered}},
 		{name: "unclaimed hive still reports other classes", org: "", evidence: []Evidence{appEv, panicEv}, wantClasses: []string{ClassPanicRecovered}},
-		{name: "org configured still reports app-not-installed", org: "acme", evidence: []Evidence{appEv}, wantClasses: []string{ClassGitHubAppNotInstalled}},
-		{name: "real org merely containing the prefix is still reported", org: "unavailable-corp", evidence: []Evidence{appEv}, wantClasses: []string{ClassGitHubAppNotInstalled}},
+		{name: "org configured self-hosted spoke skips app-not-installed (#19614)", org: "acme", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "real org merely containing the prefix skips app-not-installed", org: "unavailable-corp", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "real org still reports other classes", org: "acme", evidence: []Evidence{appEv, panicEv}, wantClasses: []string{ClassPanicRecovered}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
