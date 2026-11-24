@@ -123,7 +123,8 @@ snapshot and never re-list; see the table in
 For a managed repository, `pull_request` actions `opened`, `reopened`,
 `edited`, `synchronize`, `ready_for_review`, `converted_to_draft` and `closed`
 parse the PR title, body and head branch with the same claim grammar as the
-reconcile scan (`Fixes #N`, branch names and references). Label and
+reconcile scan (`Fixes #N`, branch names and references; a dependency bot's
+branch name is never a claim). Label and
 review-request actions skip this path. `HandleWebhookEvent` invokes the
 registered `PRClaimsHook` before the receiver queues the confirming item
 fetch; the claim write does not wait for that fetch or for a cadence tick.

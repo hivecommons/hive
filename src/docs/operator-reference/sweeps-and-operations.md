@@ -20,6 +20,13 @@ keeps one `<!-- hive:pr-supersession-sweep -->` notice per PR, edited in place.
   that number in any repository (`fix/common-1688` with
   `Refs owner/common#1688`) means the branch is about that issue, and the
   PR claims nothing in its own repository by branch name.
+  A dependency bot's branch (a `renovate/` head ref, or a Renovate,
+  Dependabot or Mergeraptor author) never claims an issue by branch name:
+  Renovate and Dependabot name branches after the version they bump, so
+  `renovate/registry.fedoraproject.org-fedora-43` is Fedora 43, not issue
+  43, and the sweep no longer calls such a bump superseded by the PR that
+  closed that issue (projectbluefin/utah#1494). A closing keyword in the bot's own
+  PR text still counts.
 - **A claim on an issue that does not exist is skipped.** When GitHub
   answers 404 or 410 for a claimed issue, the sweep logs `supersession
   sweep: skipped PR whose claimed issue does not exist` and moves on to the

@@ -736,10 +736,28 @@ func observedPRState(pr *gh.PullRequest) string {
 	return PRStateOpen
 }
 
+// issueFromPRBranch is the branch-name claim for one PR: issueFromBranchName
+// on its head ref, except that a dependency bot's branch (DependencyBotBranch:
+// a `renovate/` head ref or a dependency-bot author) names no issue. Renovate
+// and Dependabot name their branches after the package and version they bump,
+// so a trailing number there is a version, never an issue:
+// `renovate/registry.fedoraproject.org-fedora-43` claimed utah#43, and the
+// supersession sweep then called the digest bump superseded by the unrelated
+// PR that had closed utah#43 (projectbluefin/utah#1494). Only the branch guess is
+// dropped: a closing keyword or reference in a bot PR's own text still counts.
+func issueFromPRBranch(pr *gh.PullRequest) (int, bool) {
+	ref := headRef(pr)
+	if DependencyBotBranch(ref, safeGetLogin(pr.GetUser())) {
+		return 0, false
+	}
+	return issueFromBranchName(ref)
+}
+
 // issueFromBranchName recovers an issue number from a branch name. It is a
 // heuristic, not a guarantee: it is only consulted when a PR carries no
-// closing-keyword reference at all, and a false positive costs at most one
-// suppressed kick for one cycle.
+// closing-keyword reference at all, and PR callers go through
+// issueFromPRBranch so a dependency bot's version-numbered branch is never
+// read as an issue.
 func issueFromBranchName(branch string) (int, bool) {
 	if branch == "" {
 		return 0, false
@@ -840,9 +858,12 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 	// is about common#1688, not this repo's #1688. The branch claim had
 	// pointed projectbluefin/testsuite#1262 at a testsuite issue that does
 	// not exist, and the supersession sweep stopped on the 404.
+	//
+	// A dependency bot's branch makes no branch-name claim at all
+	// (issueFromPRBranch): its trailing number is the version it bumps.
 	referencedRefs := ParseReferencedIssues(text, repo)
 	if len(refs) == 0 {
-		if n, ok := issueFromBranchName(headRef(pr)); ok && !referencesIssueNumber(referencedRefs, n) {
+		if n, ok := issueFromPRBranch(pr); ok && !referencesIssueNumber(referencedRefs, n) {
 			refs = []ClaimedRef{{Repo: repo, Issue: n}}
 			refsAreClosing = false
 		}
