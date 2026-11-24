@@ -18,14 +18,15 @@ import (
 // The embedded cncf-techdocs-assessment versions. Curated files are never
 // edited in place, so each version is its own file and the catalogue keeps
 // every one (hivecommons/hive#18139 step 4 added 2026.11.2,
-// hivecommons/hive#19609 added 2026.11.3).
+// hivecommons/hive#19611 added 2026.11.3, hivecommons/hive#19609 added
+// 2026.11.4).
 const (
 	mktTechDocsName          = "cncf-techdocs-assessment"
 	mktTechDocsVersion1      = "curated-2026.11.1"
-	mktTechDocsVersionLatest = "curated-2026.11.3"
+	mktTechDocsVersionLatest = "curated-2026.11.4"
 	mktTechDocsKey           = mktTechDocsName + "@" + mktTechDocsVersion1
 	mktTechDocsKeyLatest     = mktTechDocsName + "@" + mktTechDocsVersionLatest
-	mktTechDocsVersionCnt    = 3
+	mktTechDocsVersionCnt    = 4
 )
 
 // TestMarketplaceCuratedSeedPublishesAndIsIdempotent: the embedded curated

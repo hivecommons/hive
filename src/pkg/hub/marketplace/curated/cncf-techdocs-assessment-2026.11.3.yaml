@@ -1,12 +1,14 @@
 # Curated marketplace model: the CNCF TechDocs AI-assisted assessment
 # lifecycle (hivecommons/hive#17620), version curated-2026.11.3. Identical to
-# curated-2026.11.2 (cncf-techdocs-assessment-2026.11.2.yaml) except for three
-# whose-turn status labels in spec.labels.entries (hivecommons/hive#19609):
-# ready-for-techdocs-review, ready-for-stakeholder-review and
-# ready-for-approver name the audience that acts next on a deliverable PR, and
-# the stage reconciler puts them on and takes them off as the PR's state
-# moves. They are status only: verified and confirmed stay the gates. A new
-# version is a new file; this one is never edited in place.
+# curated-2026.11.2 (cncf-techdocs-assessment-2026.11.2.yaml) except that four
+# numbered states spell their own stage label (lifecycle.stageLabel,
+# hivecommons/hive#19611) in the same number band, so the label says what
+# the state means instead of the built-in name at that number:
+# accepted -> stage/020-accepted (not 020-claimed), drafting ->
+# stage/070-drafting (not 070-fixing), in-review -> stage/050-reviewer-check
+# (not 050-review-pending), stakeholder-review -> stage/060-stakeholder-review
+# (not 060-reviewed). A new version is a new file; this one is never edited
+# in place.
 apiVersion: workflow.hivecommons.dev/v1alpha1
 kind: WorkflowModel
 metadata:
@@ -23,9 +25,9 @@ metadata:
     workflow.hivecommons.dev/curated-by: Andrew Anderson <andy@clubanderson.com>
     workflow.hivecommons.dev/curated-from: ingest.Lifecycle(cncf/techdocs .github snapshot) + spec.Ingest(deterministic) skeleton, then hand-curated
     workflow.hivecommons.dev/spec-sections: "4. Roles; 5. Lifecycle; 6. Phases and deliverables; 7. Inputs: the assessment request; 12. Lifecycle bindings; 13. Components and repository layout; 14. Agent definitions; 15. The provenance block"
-    # What changed since curated-2026.11.2: three whose-turn status labels on
-    # deliverable PRs (hivecommons/hive#19609).
-    workflow.hivecommons.dev/changes: "curated-2026.11.3: adds the state-bound status labels ready-for-techdocs-review (drafting, in-review), ready-for-stakeholder-review (stakeholder-review) and ready-for-approver (awaiting-merge), reconciled by the hive so a deliverable PR names whose turn it is (hivecommons/hive#19609); lifecycle, gates and intake unchanged from curated-2026.11.2"
+    # What changed since curated-2026.11.2: four numbered states declare their
+    # own stage label slugs (hivecommons/hive#19611).
+    workflow.hivecommons.dev/changes: "curated-2026.11.3: accepted, drafting, in-review and stakeholder-review declare their own stage labels (stage/020-accepted, stage/070-drafting, stage/050-reviewer-check, stage/060-stakeholder-review; hivecommons/hive#19611); stage numbers, rules and intake unchanged from curated-2026.11.2"
 spec:
   meta:
     version: curated-2026.11.3
@@ -124,6 +126,7 @@ spec:
     lifecycle:
       column: accepted
       number: 20
+      stageLabel: stage/020-accepted
       kinds: [issue]
       waiting: [reviewer to delegate the phase drafter, or restart/hand-write after a discard]
       replies: ["/decline"]
@@ -195,6 +198,7 @@ spec:
     lifecycle:
       column: drafting
       number: 70
+      stageLabel: stage/070-drafting
       kinds: [pr]
       waiting: [drafter to finish, then the reviewer's /verify (or a recorded skip)]
       replies: ["/verify", "/discard"]
@@ -213,6 +217,7 @@ spec:
     lifecycle:
       column: review
       number: 50
+      stageLabel: stage/050-reviewer-check
       kinds: [pr]
       waiting: [reviewer to verify findings against source and comment /ready]
       replies: ["/ready", "/skip-implementation", "/discard"]
@@ -250,6 +255,7 @@ spec:
     lifecycle:
       column: stakeholders
       number: 60
+      stageLabel: stage/060-stakeholder-review
       kinds: [pr]
       waiting: [a stakeholder from the set frozen at acceptance to comment /confirm]
       replies: ["/confirm", "/discard"]
@@ -491,20 +497,6 @@ spec:
     - {name: verified, color: 0E8A16, description: Verification complete for this deliverable PR, state: in-review}
     - {name: confirmed, color: 006B75, description: Stakeholder confirmation recorded for this deliverable PR, state: awaiting-merge}
     - {name: skip-implementation, color: D4C5F9, description: Phase B skipped; phase A merge opens phase C}
-    # Whose turn (hivecommons/hive#19609): hive-owned status labels on the
-    # deliverable PR, one audience per moment. The reconciler adds the one
-    # whose state the PR is in and removes the others, so at most one is on a
-    # PR at a time, and none in checks-failing or a terminal state. They are
-    # status only: no rule, event or gate reads them, so removing one by hand
-    # changes nothing and the next pass puts it back; verified and confirmed
-    # remain the gates. Deliberately not hive's generic ready-for-review, a
-    # merge hold released by removal (hivecommons/hive#18468). The
-    # techdocs-review label marks two states, so it is declared once per state
-    # with the same name, colour and description.
-    - {name: ready-for-techdocs-review, color: FEF2C0, description: "Draft is open. TechDocs reviewer: run /verify, refine, then /ready.", state: drafting}
-    - {name: ready-for-techdocs-review, color: FEF2C0, description: "Draft is open. TechDocs reviewer: run /verify, refine, then /ready.", state: in-review}
-    - {name: ready-for-stakeholder-review, color: FBCA04, description: "Ready for the project. Named stakeholders: review for accuracy and comment /confirm.", state: stakeholder-review}
-    - {name: ready-for-approver, color: "5319E7", description: "Stakeholder confirmed and checks green. An independent approver merges.", state: awaiting-merge}
   transitions:
   # issues
   - {from: requested, to: accepted, on: accepted, gateRef: accept, note: "spec §12 Accept"}

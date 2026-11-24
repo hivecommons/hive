@@ -238,7 +238,7 @@ func TestBuildWorkflowDispatchPrompt(t *testing.T) {
 	}
 }
 
-// The curated-2026.11.3 whose-turn labels are the hive's (hivecommons/hive#19609):
+// The curated-2026.11.4 whose-turn labels are the hive's (hivecommons/hive#19609):
 // both TechDocs profiles are told to leave them alone, and the gate labels
 // keep their own "a person's gate" line instead.
 func TestWorkflowDispatchPromptStatusLabels(t *testing.T) {
@@ -248,7 +248,7 @@ func TestWorkflowDispatchPromptStatusLabels(t *testing.T) {
 	}
 	var p *workflowmodel.Profile
 	for _, e := range entries {
-		if e.Model.Metadata.Name == "cncf-techdocs-assessment" && e.Model.Spec.Meta.Version == "curated-2026.11.3" {
+		if e.Model.Metadata.Name == "cncf-techdocs-assessment" && e.Model.Spec.Meta.Version == "curated-2026.11.4" {
 			var err error
 			if p, _, err = workflowmodel.Compile(e.Model); err != nil {
 				t.Fatal(err)
@@ -256,7 +256,7 @@ func TestWorkflowDispatchPromptStatusLabels(t *testing.T) {
 		}
 	}
 	if p == nil {
-		t.Fatal("cncf-techdocs-assessment@curated-2026.11.3 not embedded")
+		t.Fatal("cncf-techdocs-assessment@curated-2026.11.4 not embedded")
 	}
 	const line = "Do not add or remove `ready-for-techdocs-review`, `ready-for-stakeholder-review`, `ready-for-approver`: the hive sets those status labels from the item's state."
 	for _, state := range []string{"accepted", "drafting"} {
@@ -265,7 +265,7 @@ func TestWorkflowDispatchPromptStatusLabels(t *testing.T) {
 			t.Fatalf("no dispatch in %s", state)
 		}
 		d := drafterDispatch()
-		d.Model, d.State, d.Target, d.Profile = "cncf-techdocs-assessment@curated-2026.11.3", state, target, p
+		d.Model, d.State, d.Target, d.Profile = "cncf-techdocs-assessment@curated-2026.11.4", state, target, p
 		msg := BuildWorkflowDispatchPrompt(WorkflowDispatchCandidate{Dispatch: d, Agent: "writer"}, "")
 		if !strings.Contains(msg, line) {
 			t.Errorf("%s (%s) prompt missing the status-label line:\n%s", target.Profile, state, msg)

@@ -153,7 +153,7 @@ func (d modelDeriver) decisionFor(state, reason string, f Facts) Decision {
 	if !stage.Applies(d.kind) {
 		return abstain(fmt.Sprintf("%s: state %q stage number %d is not a %s stage", ReasonNotCovered, state, st.Lifecycle.Number, d.kind))
 	}
-	dec.Stage = stage
+	dec.Stage, dec.StageLabel = stage, st.Lifecycle.StageLabel
 	if f.PR != nil {
 		dec.DCO = f.PR.DCO
 	}

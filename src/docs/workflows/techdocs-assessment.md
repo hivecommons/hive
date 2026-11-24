@@ -1,8 +1,11 @@
 # CNCF TechDocs AI-assisted assessment — curated workflow model
 
-`cncf-techdocs-assessment@curated-2026.11.3` is the current version of the first curated
+`cncf-techdocs-assessment@curated-2026.11.4` is the current version of the first curated
 model in the hub marketplace (https://hive.hivecommons.dev → Settings → Workflows →
-Marketplace on any hive); `curated-2026.11.1` and `curated-2026.11.2` stay in the catalogue unchanged. It encodes the CNCF TechDocs team's AI-assisted documentation assessment process
+Marketplace on any hive); `curated-2026.11.1`, `curated-2026.11.2` and `curated-2026.11.3`
+stay in the catalogue unchanged. 11.3 differs from 11.2 only in the stage labels four states
+write ([Stage labels](#stage-labels)); 11.4 differs from 11.3 only in the
+[whose-turn status labels](#whose-turn-status-labels-on-the-deliverable-pr). It encodes the CNCF TechDocs team's AI-assisted documentation assessment process
 so a hive bound to `cncf/techdocs` runs intake, drafting, verification, stakeholder review
 and approval as a visible lifecycle, with every agent action followed by a human gate.
 
@@ -19,7 +22,8 @@ annotations and in each element's `citations`):
 
 The model's scope is `github.com cncf/techdocs` — the upstream repository where the
 process runs; the fork above is where the spec was written. Model files:
-`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.3.yaml` (current),
+`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.4.yaml` (current),
+`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.3.yaml` (`curated-2026.11.3`),
 `pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.2.yaml` (`curated-2026.11.2`) and
 `pkg/hub/marketplace/curated/cncf-techdocs-assessment.yaml` (`curated-2026.11.1`)
 (`apiVersion: workflow.hivecommons.dev/v1alpha1`, `derivation.mode: rules`,
@@ -60,13 +64,14 @@ Issues (intake and per-phase tracking issues):
 | `closed` | terminal | closed | — |
 | `escalated` | 45 needs-decision | a hold label is present | administrator |
 | `draft-open` | 40 covered-by-PR | `triage/accepted` and a covering PR exists | registered agent |
-| `accepted` | 20 claimed | `triage/accepted` | reviewer (technical writer) |
+| `accepted` | 20 (`stage/020-accepted`) | `triage/accepted` | reviewer (technical writer) |
 | `requested` | 10 actionable | `needs-triage` | reviewer |
 
-The `accepted` state reuses the built-in stage number 20, so an accepted issue wears
-`stage/020-claimed`, but **no agent holds a claim on it**: the state means "waiting on the
-reviewer to start the drafter". The in-progress sweep leaves that label alone on a
-model-bound repository and does not withhold the issue for it
+The `accepted` state reuses the built-in stage number 20, but **no agent holds a claim on
+it**: the state means "waiting on the reviewer to start the drafter". From 11.3 an accepted
+issue wears `stage/020-accepted`; under 11.1 and 11.2 it wears the built-in
+`stage/020-claimed`, which the in-progress sweep leaves alone on a model-bound repository
+and does not withhold the issue for
 ([hivecommons/hive#18434](https://github.com/hivecommons/hive/issues/18434); before the fix
 the label was removed and re-added every enumeration cycle).
 
@@ -76,12 +81,31 @@ Pull requests (deliverables carry the `Docs analysis` label; anything else absta
 |---|---|---|
 | `merged` | terminal | merged |
 | `discarded` | terminal | closed unmerged |
-| `in-review` | 50 review-pending | draft and `verified` |
-| `drafting` | 70 fixing | draft |
+| `in-review` | 50 (`stage/050-reviewer-check`) | draft and `verified` |
+| `drafting` | 70 (`stage/070-drafting`) | draft |
 | `checks-failing` | 71 needs-author | checks red |
 | `awaiting-merge` | 90 ready-for-human-merge | `confirmed` |
-| `stakeholder-review` | 60 reviewed | ready and `verified` |
-| `in-review` | 50 review-pending | ready but not yet `verified` |
+| `stakeholder-review` | 60 (`stage/060-stakeholder-review`) | ready and `verified` |
+| `in-review` | 50 (`stage/050-reviewer-check`) | ready but not yet `verified` |
+
+#### Stage labels
+
+`curated-2026.11.3` gives four states their own stage label in the same number band
+(`lifecycle.stageLabel`, [hivecommons/hive#19611](https://github.com/hivecommons/hive/issues/19611)),
+because the built-in name at that number says something that is not true of the state:
+
+| State | Stage | 11.3 label | Built-in label (11.1, 11.2) |
+|---|---|---|---|
+| `accepted` | 20 | `stage/020-accepted` | `stage/020-claimed` |
+| `drafting` | 70 | `stage/070-drafting` | `stage/070-fixing` |
+| `in-review` | 50 | `stage/050-reviewer-check` | `stage/050-review-pending` |
+| `stakeholder-review` | 60 | `stage/060-stakeholder-review` | `stage/060-reviewed` |
+
+The number is unchanged, so the stage store, the Activity Monitor, anchors and replies see
+the same stage. After a rebind from 11.2 the hive creates the four labels and swaps each
+item's built-in label for the new one on its next pass. The built-in labels stay in the
+repository (the hive never deletes them) until an operator removes them. Searches or
+dashboards outside the hive that match the built-in slug need updating.
 
 ### Transitions
 
@@ -129,7 +153,7 @@ From `settings.yml`: `Docs analysis`. Proposed for the assessment: `needs-triage
 
 #### Whose turn: status labels on the deliverable PR
 
-`curated-2026.11.3` adds three hive-owned status labels
+`curated-2026.11.4` adds three hive-owned status labels
 ([hivecommons/hive#19609](https://github.com/hivecommons/hive/issues/19609)). The gate labels
 `verified` and `confirmed` record what has happened; these name the audience that acts next,
 with the action in the GitHub label description:
@@ -150,7 +174,7 @@ not hive's generic `ready-for-review`, which is a merge hold released by removal
 removing what they took for a status marker must never clear a merge gate. The
 `techdocs-drafter` and `techdocs-verifier` kicks tell the agent not to add or remove them.
 
-A hive picks them up by rebinding `cncf/techdocs` to `curated-2026.11.3`; the labels are
+A hive picks them up by rebinding `cncf/techdocs` to `curated-2026.11.4`; the labels are
 created on bind, and PRs already in flight get the label for their current state on the
 next pass. `cncf/techdocs` is to mirror the names in its own `.github/settings.yml` and spec §13.
 
@@ -171,7 +195,7 @@ required.
 
 #### Reference repos from the request
 
-`curated-2026.11.2` adds a `spec.intake` block (kept unchanged in `curated-2026.11.3`)
+`curated-2026.11.2` adds a `spec.intake` block (kept unchanged in 11.3 and 11.4)
 ([hivecommons/hive#18139](https://github.com/hivecommons/hive/issues/18139)):
 
 ```yaml
@@ -200,7 +224,7 @@ The first request through this path is
 What the operator of the TechDocs hive (authorized repo `cncf/techdocs`) does and sees:
 
 1. **Rebind to 11.2 or later.** Settings → Workflows → Marketplace, bind `cncf/techdocs` to
-   `cncf-techdocs-assessment@curated-2026.11.3` (or `curated-2026.11.2`, which has the same
+   `cncf-techdocs-assessment@curated-2026.11.4` (or 11.2 or 11.3, which have the same
    intake block without the whose-turn labels). This step is required: a hive still bound to
    `curated-2026.11.1` derives nothing, however many requests are accepted. No
    `reference_repos` entry is written by hand.
