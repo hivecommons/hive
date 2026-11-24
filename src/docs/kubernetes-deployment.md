@@ -172,9 +172,8 @@ and ban a signed-in user while the page is still loading.
   can fire. The stock CrowdSec `crowdsecurity/http-crawl-non_statics` scenario has a bucket
   capacity of 40 distinct non-static paths, so one load can exceed it. After the ban, the 403s can
   also trigger `crowdsecurity/http-probing`.
-- **Fix.** Exempt the dashboard host, or its `/api/` paths, from crawl, probing and rate rules. The
-  dashboard and `/api/*` require sign-in, so the exemption does not open an unauthenticated
-  surface. Keep your rules for other hosts.
+- **Fix.** Exempt the dashboard host, or its `/api/` paths, from crawl, probing and rate rules. Keep
+  your rules for other hosts.
 
 For CrowdSec, a parser whitelist (for example
 `/etc/crowdsec/parsers/s02-enrich/hive-dashboard-whitelist.yaml`) skips the dashboard host's
