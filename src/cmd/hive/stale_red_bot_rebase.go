@@ -57,7 +57,7 @@ import (
 // and the label marked as added by the sweep. Right before the request the
 // pass also reads the PR's label events once: the newest needs-human event
 // must be the App's own `labeled`, so a person who took the label off and
-// put it back is not overruled (a failed read counts as a person's). A
+// put it back is not overruled (a failed read asks nothing that pass). A
 // needs-human a person added, one from any other hand-off, or one recorded
 // for an older head still blocks, as do hold and do-not-merge. Such a PR is
 // asked about at most once per head, whatever the base does next: the
@@ -189,9 +189,9 @@ func staleRedWithoutNeedsHuman(pr github.PullRequest) github.PullRequest {
 // the needs-human the dependency-bot sweep's own red-CI hand-off added on
 // this head (staleRedOwnRedCIHandoff). Such a PR is asked about only when
 // the base clears every failing check (consider).
-// A head whose label events already showed a person's needs-human (or
-// could not be read) is not one (staleRedLabelNotOwn), so it costs no
-// further API call.
+// A head whose label events already showed a needs-human that is not the
+// App's own is not one (staleRedLabelNotOwn), so it costs no further API
+// call.
 func (p *staleRedBotPass) parkedByOwnRedCIHandoff(repo string, pr github.PullRequest) bool {
 	if p.rebaser == nil {
 		return false
@@ -204,23 +204,30 @@ func (p *staleRedBotPass) parkedByOwnRedCIHandoff(repo string, pr github.PullReq
 
 // labelIsOwn reads pr's label events once, right before a request on a PR
 // parked by the sweep's red-CI hand-off, and reports whether the newest
-// needs-human event is the App's own `labeled`. A failed read, a rebaser
-// that cannot read them, or another actor fails closed and is remembered
-// for this head (in memory), so the head is not read or asked about again.
-func (p *staleRedBotPass) labelIsOwn(ctx context.Context, repo, key string, pr github.PullRequest) bool {
+// needs-human event is the App's own `labeled`. Anything else fails closed.
+// A rebaser that cannot read them, or a read that shows another actor (or
+// no App label), is remembered for this head (in memory), so the head is
+// not read or asked about again. A failed read is not remembered: retry
+// is true, and the next pass reads again.
+func (p *staleRedBotPass) labelIsOwn(ctx context.Context, repo, key string, pr github.PullRequest) (own, retry bool) {
 	reader, ok := p.rebaser.(staleRedLabelActorReader)
 	if !ok {
 		p.check.store.rememberStaleRedLabelNotOwn(key, pr.HeadSHA)
-		return false
+		return false, false
 	}
 	own, err := reader.StaleRedNeedsHumanLabeledByApp(ctx, repo, pr.Number)
-	if err != nil || !own {
-		p.logger.Info("stale-red refresh: needs-human on this dependency-bot PR was not last added by Hive, or its label events could not be read; not asking the bot to rebase",
+	if err != nil {
+		p.logger.Warn("stale-red refresh: could not read the label events of a dependency-bot PR; not asking the bot to rebase, retrying next pass",
 			"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "error", err)
-		p.check.store.rememberStaleRedLabelNotOwn(key, pr.HeadSHA)
-		return false
+		return false, true
 	}
-	return true
+	if !own {
+		p.logger.Info("stale-red refresh: needs-human on this dependency-bot PR was not last added by Hive; not asking the bot to rebase",
+			"repo", repo, "pr", pr.Number, "head", pr.HeadSHA)
+		p.check.store.rememberStaleRedLabelNotOwn(key, pr.HeadSHA)
+		return false, false
+	}
+	return true, false
 }
 
 // possible reports, without an API call, whether the pass could ask pr's
@@ -352,10 +359,13 @@ func (p *staleRedBotPass) consider(ctx context.Context, repo string, pr github.P
 	}
 
 	// The last check before the request, so the label events are read only
-	// when the bot would otherwise be asked.
-	if parked && !p.labelIsOwn(ctx, repo, key, pr) {
-		out.Settled = true
-		return out
+	// when the bot would otherwise be asked. A failed read is not settled:
+	// the next pass reads again.
+	if parked {
+		if own, retry := p.labelIsOwn(ctx, repo, key, pr); !own {
+			out.Settled = !retry
+			return out
+		}
 	}
 
 	preview := fmt.Sprintf("tick the rebase/retry checkbox on %s#%d at %s (red on %s, behind %s@%s)",
@@ -527,7 +537,7 @@ func (s *depBotConflictStore) staleRedAsk(key string) (depBotStaleRedAsk, bool) 
 }
 
 // staleRedLabelNotOwn reports whether headSHA's needs-human was found not
-// to be the App's own (or unreadable) on an earlier pass.
+// to be the App's own on an earlier pass.
 func (s *depBotConflictStore) staleRedLabelNotOwn(key, headSHA string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

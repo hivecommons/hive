@@ -853,37 +853,61 @@ func TestStaleRedBotRebase_OwnRedCIHandoffOncePerHead(t *testing.T) {
 
 // Right before the request the pass reads the label events once: the
 // newest needs-human event must be the App's own. A person who took the
-// label off and put it back, or a failed read, means no request, and the
-// head is not read or asked about again, also at a new base tip.
+// label off and put it back means no request, and the head is not read or
+// asked about again, also at a new base tip. A failed read asks nothing on
+// that pass and is not remembered: the next pass reads again and, with the
+// App as the latest labeler, asks once.
 func TestStaleRedBotRebase_OwnRedCIHandoffLabelActor(t *testing.T) {
 	at := time.Date(2026, 11, 22, 7, 0, 0, 0, time.UTC)
-	cases := map[string]func(f *srbRefresher){
-		"a person relabelled": func(f *srbRefresher) { f.labelByPerson = true },
-		"events read fails":   func(f *srbRefresher) { f.labelErr = errors.New("502 bad gateway") },
-	}
-	for name, set := range cases {
-		t.Run(name, func(t *testing.T) {
-			resetStaleRedRefresh(t)
-			store := useSRBStore(t)
-			pr := srbRedCIHandoff(store, 570, "head1", depBotHandoffRedCI, true, at)
-			f := newSRBRefresher(greenPytestBase("base1"))
-			set(f)
-			cfg := escalationTestConfig()
-			refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour))
-			if f.asks != 0 || f.labelReads != 1 {
-				t.Fatalf("asks %d, label reads %d; want no request after one read", f.asks, f.labelReads)
-			}
-			if st, ok := store.rebaseState("acme/widgets#570"); ok && !st.RequestedAt.IsZero() {
-				t.Fatalf("a request was recorded: %+v", st)
-			}
+	cfg := escalationTestConfig()
 
-			// A new base tip on the same head: no read, no compare, no ask.
-			compares := f.compares
-			f.bases = greenPytestBase("base2")
-			refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour+staleRedRefreshInterval))
-			if f.asks != 0 || f.labelReads != 1 || f.compares != compares {
-				t.Fatalf("asks %d, label reads %d, compares %d (was %d) at a new base tip; want nothing more", f.asks, f.labelReads, f.compares, compares)
-			}
-		})
-	}
+	t.Run("a person relabelled", func(t *testing.T) {
+		resetStaleRedRefresh(t)
+		store := useSRBStore(t)
+		pr := srbRedCIHandoff(store, 570, "head1", depBotHandoffRedCI, true, at)
+		f := newSRBRefresher(greenPytestBase("base1"))
+		f.labelByPerson = true
+		refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour))
+		if f.asks != 0 || f.labelReads != 1 {
+			t.Fatalf("asks %d, label reads %d; want no request after one read", f.asks, f.labelReads)
+		}
+		if st, ok := store.rebaseState("acme/widgets#570"); ok && !st.RequestedAt.IsZero() {
+			t.Fatalf("a request was recorded: %+v", st)
+		}
+
+		// A new base tip on the same head: no read, no compare, no ask.
+		compares := f.compares
+		f.bases = greenPytestBase("base2")
+		refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour+staleRedRefreshInterval))
+		if f.asks != 0 || f.labelReads != 1 || f.compares != compares {
+			t.Fatalf("asks %d, label reads %d, compares %d (was %d) at a new base tip; want nothing more", f.asks, f.labelReads, f.compares, compares)
+		}
+	})
+
+	t.Run("events read fails, then succeeds", func(t *testing.T) {
+		resetStaleRedRefresh(t)
+		store := useSRBStore(t)
+		pr := srbRedCIHandoff(store, 570, "head1", depBotHandoffRedCI, true, at)
+		f := newSRBRefresher(greenPytestBase("base1"))
+		f.labelErr = errors.New("502 bad gateway")
+		refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour))
+		if f.asks != 0 || f.labelReads != 1 {
+			t.Fatalf("asks %d, label reads %d; want no request on the failing pass", f.asks, f.labelReads)
+		}
+		if store.staleRedLabelNotOwn("acme/widgets#570", "head1") {
+			t.Fatal("a failed read was remembered for the head")
+		}
+
+		// Next pass, same head and base tip: the read succeeds with the
+		// App as the latest labeler, and the bot is asked once.
+		f.labelErr = nil
+		refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour+staleRedRefreshInterval))
+		if f.asks != 1 || len(f.edits) != 1 || f.labelReads != 2 {
+			t.Fatalf("asks %d, edits %v, label reads %d on the next pass; want one request after a second read", f.asks, f.edits, f.labelReads)
+		}
+		refreshStaleRedBehindPRs(context.Background(), cfg, f, f.track(pr), nil, discardLogger(), at.Add(5*time.Hour+2*staleRedRefreshInterval))
+		if f.asks != 1 || f.labelReads != 2 {
+			t.Fatalf("asks %d, label reads %d on a third pass; want still one request", f.asks, f.labelReads)
+		}
+	})
 }

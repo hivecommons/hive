@@ -532,8 +532,8 @@ in repositories with auto-merge off:
     added by the sweep; otherwise the label still blocks. Right before the
     request the pass reads the PR's label events once, and asks only when
     the newest `needs-human` event is the App's own `labeled`: a person who
-    took the label off and put it back, or a failed read, means no request
-    on that head. A `needs-human` a person added, one from any other
+    took the label off and put it back means no request on that head, and a
+    failed read means no request on that pass (the next pass reads again). A `needs-human` a person added, one from any other
     hand-off, or one recorded for an older head blocks as before, and the
     PR-only trigger never applies to such a PR. Such a PR is asked at most
     once per head, whatever the base does next (the request is in the

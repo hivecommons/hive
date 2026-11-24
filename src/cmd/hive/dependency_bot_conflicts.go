@@ -83,8 +83,8 @@ type depBotConflictStore struct {
 	// PR, kept across the bot's new heads (stale_red_bot_rebase.go).
 	staleRedLast map[string]*depBotStaleRedAsk
 	// staleRedNotOwnLabel remembers, in memory only, the head per PR whose
-	// needs-human label events did not show the App's own label (or could
-	// not be read), so the stale-red pass reads them once per head
+	// needs-human label events did not show the App's own label, so the
+	// stale-red pass reads them once per head
 	// (stale_red_bot_rebase.go).
 	staleRedNotOwnLabel map[string]string
 }
