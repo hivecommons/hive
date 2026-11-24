@@ -7,6 +7,9 @@
     const ASK_PANEL_SCRIPT = '/ask-panel.js';
     const ASK_PANEL_STYLE = '/ask-panel.css';
     const ASK_SLOT_ID = 'hive-ask-slot';
+    // The Ask Hive items in the top bar Help menu and the sidebar Help group.
+    // They start hidden and are shown only once the panel is built.
+    const ASK_HELP_ITEM_IDS = ['ask-help-menu-item', 'ask-nav-item'];
     // A section counts as "current" once its top is above this fraction of
     // the viewport height.
     const ASK_SECTION_VIEWPORT_FRACTION = 3;
@@ -42,6 +45,25 @@
       return dashboardDocsHref(DASHBOARD_HELP_PAGE, entry ? dashboardSectionHelpAnchor(entry.heading) : '');
     }
 
+    // askShowHelpItems shows or hides the Ask Hive Help items. They follow the
+    // panel itself: shown only when ask_enabled loaded it and the backend
+    // built it for this person, so an item never opens nothing.
+    function askShowHelpItems(show) {
+      ASK_HELP_ITEM_IDS.forEach(id => {
+        const item = document.getElementById(id);
+        if (item) item.style.display = show ? '' : 'none';
+      });
+    }
+
+    // openAskFromHelp runs from either Ask Hive item (click, tap, or Enter
+    // and Space on the sidebar entry): it closes the Help menu and the phone
+    // navigation drawer, then opens the panel, which moves focus into it.
+    function openAskFromHelp() {
+      if (typeof closeHelpMenu === 'function') closeHelpMenu(false);
+      if (typeof window.hiveCloseMobileDrawer === 'function') window.hiveCloseMobileDrawer();
+      if (window.HiveAsk && typeof window.HiveAsk.open === 'function') window.HiveAsk.open();
+    }
+
     function loadAskPanel(cfg) {
       if (!cfg || cfg.ask_enabled !== true || askPanelRequested) return;
       if (!document.getElementById(ASK_SLOT_ID)) return;
@@ -54,7 +76,8 @@
       script.src = ASK_PANEL_SCRIPT;
       script.addEventListener('load', () => {
         if (window.HiveAsk && typeof window.HiveAsk.mount === 'function') {
-          window.HiveAsk.mount({ slot: ASK_SLOT_ID, base: '/api/ask', section: askCurrentSection, docsHref: askCurrentDocsHref });
+          Promise.resolve(window.HiveAsk.mount({ slot: ASK_SLOT_ID, base: '/api/ask', section: askCurrentSection, docsHref: askCurrentDocsHref }))
+            .then(panel => askShowHelpItems(!!panel));
         }
       });
       document.head.appendChild(script);

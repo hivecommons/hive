@@ -73,14 +73,15 @@ GitHub is the only forge agents can work against today. The GitLab and
 Gitea/Forgejo adapters in `src/pkg/forge/` cover reads and core writes
 (comment, label, hold), and GitLab's can merge. Two governor writes use them,
 but the GitHub-only enumeration that feeds those writes means they never fire
-on a non-GitHub hive. See [Forges](integrations/forges.md).
+on a non-GitHub hive. See [Forges](integrations/forges.md). Forgejo has its
+own page: [Forgejo](integrations/forgejo.md).
 
 <table>
 <tr><th>Logo</th><th>Integration</th><th>Status</th><th>Docs</th></tr>
 <tr><td><img src="assets/logos/github.svg" height="40" alt="GitHub logo"></td><td>GitHub.com and GitHub Enterprise</td><td>Supported</td><td><a href="github-app-setup.md">github-app-setup.md</a></td></tr>
 <tr><td><img src="assets/logos/gitlab.svg" height="40" alt="GitLab logo"></td><td>GitLab (SaaS or self-managed)</td><td>Planned</td><td><a href="forge-app-setup.md">forge-app-setup.md</a>, <a href="https://github.com/hivecommons/hive/issues/14096">#14096</a></td></tr>
 <tr><td><img src="assets/logos/gitea.svg" height="40" alt="Gitea logo"></td><td>Gitea</td><td>Planned</td><td><a href="forge-app-setup.md">forge-app-setup.md</a>, <a href="https://github.com/hivecommons/hive/issues/14096">#14096</a></td></tr>
-<tr><td><img src="assets/logos/forgejo.svg" height="40" alt="Forgejo logo"></td><td>Forgejo</td><td>Planned</td><td><a href="forge-app-setup.md">forge-app-setup.md</a>, <a href="https://github.com/hivecommons/hive/issues/14096">#14096</a></td></tr>
+<tr><td><img src="assets/logos/forgejo.svg" height="40" alt="Forgejo logo"></td><td>Forgejo (self-hosted or Codeberg)</td><td>Partial, in progress: forge kind and config on v5, agent work not yet</td><td><a href="integrations/forgejo.md">integrations/forgejo.md</a>, <a href="https://github.com/hivecommons/hive/issues/19494">#19494</a></td></tr>
 </table>
 
 ## Isolation
@@ -136,6 +137,7 @@ alternative for operators who already run a key manager.
 - [Landscape and positioning](landscape.md) — how Hive compares to nearby tools.
 - [Work-source provider contract](integrations/work-source-providers.md).
 - [Forges: GitLab, Gitea and Forgejo](integrations/forges.md).
+- [Forgejo](integrations/forgejo.md).
 - [Logo sources and licenses](assets/logos/SOURCES.md).
 
 Logos are trademarks of their respective owners. They are used here for
