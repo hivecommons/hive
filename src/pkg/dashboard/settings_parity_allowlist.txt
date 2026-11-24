@@ -553,7 +553,6 @@ repeat_failure.exclude[] # yaml-only until the check reaches the dashboard (#145
 repeat_failure.threshold # yaml-only until the check reaches the dashboard (#14550)
 repeat_failure.window_s # yaml-only until the check reaches the dashboard (#14550)
 repos.<key>.agents_md_max_bytes # TODO #18495 (per-repo AGENTS.md cap; Settings control pending)
-repos.<key>.parent_autoclose # TODO #18869 (per-repo decomposed-parent auto-close policy; Settings control pending)
 repos.<key>.review_preflight.block_severity # TODO #19069 (review preflight; Settings control pending)
 repos.<key>.review_preflight.cache_ttl # TODO #19069 (review preflight; Settings control pending)
 repos.<key>.review_preflight.dependencies # TODO #19069 (review preflight; Settings control pending)

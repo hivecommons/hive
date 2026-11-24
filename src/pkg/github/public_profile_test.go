@@ -71,7 +71,7 @@ func TestOptionalRESTStandDownIgnoresSearchBucket(t *testing.T) {
 	ResetRateLimitBudgetForTest()
 	t.Cleanup(ResetRateLimitBudgetForTest)
 	prev := sharedRESTAccountingPtr.Load()
-	sharedRESTAccountingPtr.Store(&restAccountingStore{now: time.Now, coreRemaining: -1})
+	sharedRESTAccountingPtr.Store(&restAccountingStore{now: time.Now})
 	t.Cleanup(func() { sharedRESTAccountingPtr.Store(prev) })
 	var nilClient *Client
 	if got := nilClient.OptionalRESTStandDown(); got == "" {
