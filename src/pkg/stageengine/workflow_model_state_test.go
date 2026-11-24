@@ -41,6 +41,37 @@ func TestModelInitialStateAndUnnumberedStates(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#19611: a numbered state's own stage label is the one the
+// Decision asks the writer for; the stage (and so the store record) is
+// still the built-in stage at that number.
+func TestModelStateStageLabel(t *testing.T) {
+	p := &workflowmodel.Profile{
+		Name: "custom", Mode: workflowmodel.DerivationRules,
+		States: map[string]*workflowmodel.State{
+			"accepted": {Lifecycle: workflowmodel.StateLifecycle{Number: 20, StageLabel: "stage/020-accepted", Kinds: []workflowmodel.ItemKind{workflowmodel.KindIssue}}},
+			"queued":   {Lifecycle: workflowmodel.StateLifecycle{Number: 10, Kinds: []workflowmodel.ItemKind{workflowmodel.KindIssue}}},
+		},
+		Rules: []workflowmodel.Rule{
+			{Kind: workflowmodel.KindIssue, State: "accepted", When: []workflowmodel.Predicate{{Fact: "labels", Op: workflowmodel.OpHas, Value: "accepted"}}},
+			{Kind: workflowmodel.KindIssue, State: "queued", When: []workflowmodel.Predicate{{Fact: "labels", Op: workflowmodel.OpHas, Value: "queued"}}},
+		},
+	}
+	d := DeriveFromModel(p, stagelabels.IssueItem)
+	f := Facts{Ref: Ref{Kind: stagelabels.IssueItem}, Open: true, Issue: &IssueFacts{}, Labels: []string{"accepted", stagelabels.Claimed.Label()}}
+	got := d.Derive(f)
+	if got.Abstain || got.Stage != stagelabels.Claimed || got.StageLabel != "stage/020-accepted" || got.Label() != "stage/020-accepted" {
+		t.Fatalf("accepted: %+v label %q", got, got.Label())
+	}
+	add, remove := stagelabels.Plan(f.Labels, got.Desired())
+	if a := stagelabels.StageLabels(add); len(a) != 1 || a[0] != "stage/020-accepted" || len(remove) != 1 || remove[0] != stagelabels.Claimed.Label() {
+		t.Fatalf("plan add=%v remove=%v", add, remove)
+	}
+	f.Labels = []string{"queued"}
+	if got = d.Derive(f); got.Stage != stagelabels.Actionable || got.StageLabel != "" || got.Label() != stagelabels.Actionable.Label() {
+		t.Fatalf("queued keeps the built-in label: %+v", got)
+	}
+}
+
 func TestIngestedIntakeSelection(t *testing.T) {
 	p := &workflowmodel.Profile{
 		Initial: "open",

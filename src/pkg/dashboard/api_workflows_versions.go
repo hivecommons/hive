@@ -170,7 +170,7 @@ func workflowLabelsPreview(p *workflowmodel.Profile) map[string]interface{} {
 			}
 			for _, def := range stagelabels.Table {
 				if def.Number == st.Lifecycle.Number {
-					stages = append(stages, workflowStageLabel{State: sid, Number: def.Number, Label: def.Stage.Label()})
+					stages = append(stages, workflowStageLabel{State: sid, Number: def.Number, Label: def.Stage.LabelAs(st.Lifecycle.StageLabel)})
 					break
 				}
 			}

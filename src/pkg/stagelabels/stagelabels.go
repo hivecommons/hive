@@ -857,6 +857,11 @@ type Desired struct {
 	// MergeCommit is the merge-method verdict for the head;
 	// MergeCommitUnknown leaves `merge-method/merge` as found.
 	MergeCommit MergeCommitState
+	// StageLabel is the bound workflow model's own spelling of Stage's
+	// label (`stage/020-accepted` for 020, #19611). Empty, or a label
+	// outside Stage's number band, means the built-in label
+	// (Stage.LabelAs).
+	StageLabel string
 	// Clear names labels outside the stage/role/author/health families
 	// that the item must not carry at this stage: a hive-stamped signal
 	// the stage has made stale (the reporter-trust awaiting label
@@ -895,7 +900,7 @@ func Plan(current []string, want Desired) (add, remove []string) {
 			wanted[strings.ToLower(l)] = l
 		}
 	}
-	wantLabel(want.Stage.Label())
+	wantLabel(want.Stage.LabelAs(want.StageLabel))
 	wantLabel(want.Role.Label())
 	wantLabel(want.KindLabels.Label(want.Kind))
 	if want.Stalled {
@@ -1048,8 +1053,10 @@ var Renames = map[string]Stage{
 	"stage/072-needs-author": ReturnedToContributor,
 }
 
-// Current returns the stage a label set carries, or None. An unknown
-// `stage/*` label (stale table entry, health marker) yields None. Should an
+// Current returns the stage a label set carries, or None. A `stage/NNN-*`
+// label is read by its number (StageOfLabel), so a workflow model's own
+// slug in a built-in number band carries that stage (#19611); a label at a
+// number the table does not have, or a health marker, yields None. Should an
 // item transiently carry two stage labels (mid-migration, before the
 // reconciler's next pass), the furthest along wins. Labels are normalized
 // (lowercased and trimmed) before matching, so Current and IssueCoveredByPR
@@ -1057,14 +1064,8 @@ var Renames = map[string]Stage{
 func Current(labels []string) Stage {
 	cur := None
 	for _, l := range labels {
-		l = strings.ToLower(strings.TrimSpace(l))
-		if s, ok := Renames[l]; ok && cur.Before(s) {
+		if s, ok := StageOfLabel(l); ok && cur.Before(s) {
 			cur = s
-		}
-		for _, d := range Table {
-			if l == d.Stage.Label() && cur.Before(d.Stage) {
-				cur = d.Stage
-			}
 		}
 	}
 	return cur
