@@ -128,6 +128,8 @@ func ParseSettlingRefs(reason, taskRepo string, taskIssue int) []SettlingRef {
 // record: a PR merged into the task repo before the task was dispatched, an
 // open PR in the task repo by someone else, or a commit reachable from the
 // task repo's default branch. Reason explains a negative for the log.
+// Settled here means "record this claim"; it is not IssueClaim.Settled, which
+// is false for the open-PR case because nothing has landed yet.
 type SettleVerification struct {
 	Settled bool
 	Claim   IssueClaim
@@ -153,7 +155,11 @@ type SettleVerifier func(ctx context.Context, taskRepo string, taskIssue int, re
 //     reporter is; the CALLER (the contribute hub's settleIssueFromVerdict)
 //     enforces "by someone other than the reporter" by comparing
 //     Claim.PRAuthor to the reporting contributor and dropping a self-authored
-//     open PR (hivecommons/hive#7890).
+//     open PR (hivecommons/hive#7890). Such a claim is NOT settled: nothing
+//     has landed. It covers the issue only while the PR stays open (the
+//     claim scan's open listing confirms that every pass at no extra API
+//     cost, see OpenPRListing) and is released the pass the PR closes or
+//     merges, after which the normal scan and settle paths decide.
 //   - A commit reachable from taskRepo's default branch settles the issue as a
 //     merged claim. When GitHub associates a merged PR with the commit, that
 //     PR is recorded; otherwise the commit itself is (PRNumber 0, commit URL).
@@ -166,9 +172,11 @@ type SettleVerifier func(ctx context.Context, taskRepo string, taskIssue int, re
 // with taskIssue. A settling PR by definition never referenced the issue, so
 // relevance cannot be checked mechanically; the defence here is against a
 // model fabricating a ref that does not exist, not against one citing a real
-// but unrelated ref. That residual is bounded by the claim TTL (a merged
-// claim expires after the merged-claim window, an open one when the PR
-// closes) and voided by newer activity on the issue.
+// but unrelated ref. That residual is bounded by the claim's lifetime (a
+// merged claim lasts while the issue stays open, up to settledClaimRetention
+// after it closes, and is put to a maintainer as merged_claim_stale after
+// SettledClaimStaleAfter; an open one ends when the PR closes or merges) and
+// voided by newer activity on the issue.
 func (c *Client) VerifySettlingRef(ctx context.Context, taskRepo string, taskIssue int, ref SettlingRef, dispatchedAt time.Time) (SettleVerification, error) {
 	if c == nil || c.client == nil {
 		return SettleVerification{Reason: "no github client configured"}, ErrNoGitHubClient
@@ -304,4 +312,128 @@ func (c *Client) verifySettlingCommit(ctx context.Context, owner, name, taskRepo
 		MergedAt:   committedAt,
 		Source:     ClaimSourceVerdict,
 	}}, nil
+}
+
+// OpenPRListing is the set of pull requests one claim scan's open-PR listing
+// returned, and the repos whose listing ran to its last page. The scan pages
+// through every open PR of every active repo anyway (to parse their claims),
+// so recording the numbers it saw costs no extra API call. Reconcile reads it
+// to keep an open-PR verdict claim alive (see IssueClaim.openVerdictClaim):
+// that PR never referenced the issue, so the scan produces no claim for it,
+// and without this the claim could not tell "the PR is still open" from "the
+// PR closed". A nil listing knows nothing, which is also what a scan that
+// never got as far as listing reports.
+type OpenPRListing struct {
+	prs   map[string]struct{}
+	repos map[string]struct{}
+}
+
+// openListingKey is the one key a repo is recorded and looked up under: the
+// lowercased "owner/name" when the owner is known, the bare lowercased name
+// only when it is not. A spelling that names an owner is never answered by
+// a bare key, because a hive can watch two repos with the same bare name in
+// different orgs and one org's complete listing says nothing about the
+// other's PRs. Verdict claims always carry the owner-qualified task repo,
+// and the scan knows each repo's owner whenever the client has an org.
+func openListingKey(owner, name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		return ""
+	}
+	owner = strings.ToLower(strings.TrimSpace(owner))
+	if owner == "" {
+		return name
+	}
+	return owner + "/" + name
+}
+
+// addPR records that the listing for owner/name returned PR number as open.
+func (o *OpenPRListing) addPR(owner, name string, number int) {
+	if o == nil || number <= 0 {
+		return
+	}
+	k := openListingKey(owner, name)
+	if k == "" {
+		return
+	}
+	if o.prs == nil {
+		o.prs = make(map[string]struct{})
+	}
+	o.prs[k+"#"+strconv.Itoa(number)] = struct{}{}
+}
+
+// markComplete records that the open listing for owner/name ran to its last
+// page, so a PR it did not return is known not to be open.
+func (o *OpenPRListing) markComplete(owner, name string) {
+	if o == nil {
+		return
+	}
+	k := openListingKey(owner, name)
+	if k == "" {
+		return
+	}
+	if o.repos == nil {
+		o.repos = make(map[string]struct{})
+	}
+	o.repos[k] = struct{}{}
+}
+
+// Lists reports whether the listing returned PR number in repo as open, and
+// whether it can say: known is true when it did, or when repo's listing ran
+// to its last page without it (the PR is closed or merged). A repo the scan
+// did not list completely (an API error, the page cap, a paused repo) is not
+// known either way.
+func (o *OpenPRListing) Lists(repo string, number int) (open, known bool) {
+	if o == nil || number <= 0 {
+		return false, false
+	}
+	key := openListingKey(splitRepoName(strings.Trim(strings.TrimSpace(repo), "/")))
+	if key == "" {
+		return false, false
+	}
+	if _, ok := o.prs[key+"#"+strconv.Itoa(number)]; ok {
+		return true, true
+	}
+	_, complete := o.repos[key]
+	return false, complete
+}
+
+// openVerdictClaim reports whether c is a verdict claim that cites a pull
+// request which was still OPEN when the verdict was checked: a weak external
+// claim that covers the issue while that PR stays open and ends when it
+// closes or merges. It is not settled (nothing has landed), so Reconcile
+// does not carry it as settled evidence; it carries it only while the scan's
+// open listing still shows the PR (see keepOpenVerdictClaim).
+func (c IssueClaim) openVerdictClaim() bool {
+	return c.Source == ClaimSourceVerdict && !c.MergedPR && c.PRNumber > 0
+}
+
+// keepOpenVerdictClaim decides whether an open-PR verdict claim outlives this
+// reconcile, and returns it with ObservedAt refreshed when the listing shows
+// its PR still open. A listing that knows the PR is no longer open releases
+// it: the PR closed (the issue is back up for work) or merged (the scan and
+// the next verdict decide whether that landed the fix). A listing that cannot
+// say leaves the claim on its ordinary TTL, measured from the last time it
+// was confirmed open, so a repo that keeps failing to list cannot pin it.
+// A claim the hub verified at or after listedAt (the scan's start) is newer
+// than the listing, which may predate the PR itself, so the listing's silence
+// does not release it (the same rule as hivecommons/hive#15559).
+func keepOpenVerdictClaim(c IssueClaim, listing *OpenPRListing, listedAt, now time.Time, ttl time.Duration) (IssueClaim, bool) {
+	prRepo := c.PRRepo
+	if prRepo == "" {
+		prRepo = c.Repo
+	}
+	open, known := listing.Lists(prRepo, c.PRNumber)
+	switch {
+	case !open && !listedAt.IsZero() && !c.ObservedAt.Before(listedAt):
+		return c, true
+	case open:
+		c.ObservedAt = now
+		c.PRState = PRStateOpen
+		return c, true
+	case known:
+		return c, false
+	default:
+		return c, !c.ObservedAt.Before(now.Add(-ttl))
+	}
 }
