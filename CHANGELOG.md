@@ -11,6 +11,24 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v5.362.0)
+
+### Added
+
+- Sandbox Job kicks on a model gateway backend can now reach hive's inference translator through the opt-in `agent_sandbox.job.inference_proxy` listener ([#19619](https://github.com/hivecommons/hive/issues/19619)). It is off by default, serves TLS only, and gives each kick a per-kick key that is revoked when the kick ends, so the Job holds no gateway key and usage is recorded as for other agents.
+
+### Changed
+
+- Ask Hive (the docs help panel and its Help menu item) is now on by default on hosted hives, in hub mode through the hub relay, so no Kapa key is needed on the hive ([#19739](https://github.com/hivecommons/hive/issues/19739)). An explicit `ask.enabled: false`, `HIVE_ASK_ENABLED=false` or `ask.mode: off` still turns it off, each person still confirms the notice before their first question, and the hub's `HIVE_ASK_RELAY_DISABLED_HIVES` still refuses single hives. Self-hosted hives keep the off default, since they need their own key. Settings, Features shows the default and calls the toggle **Ask Hive**; switching it off saves `ask.enabled: false`.
+
+### Fixed
+
+- The manual repository rescan now works on a hive whose repos are all on Gitea or Forgejo ([#19494](https://github.com/hivecommons/hive/issues/19494)). It used to fail with a missing-credentials error because it called the GitHub enumerator directly; it now enumerates through the repo's own forge, as the eval cycle does, and skips GitHub CI enrichment for PRs on other forges.
+- hub: the hive list now opens a self-hosted spoke through the hub SSO handoff (`/api/saas/hives/<id>/open`), the same as a hosted spoke, so a spoke holding `HIVE_HUB_SECRET` signs the user in instead of showing its own login page. The hive-name link, the "your hive is ready" callout and the Dashboard menu link share one decision; self-service (`byo-`) spokes keep their direct link and a row with no dashboard URL stays plain text.
+- Hive now remembers the sequence of a calendar cancellation and ignores older updates for the same event.
+- Hub backups validate recovery inputs before publishing, protect older backups during upgrades, and retain hub archives with spoke gaps separately from full fleet archives.
+- Hive now imports Linear issue priorities correctly, including issues with no priority.
+
 ## 2026-11-24 (v5.361.1)
 
 ### Security
