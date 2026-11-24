@@ -187,6 +187,10 @@
     .overview-chart-legend-section-note { font-size: var(--fs-xs); font-weight: 500; letter-spacing: 0; text-transform: none; }
     .overview-chart-legend-subtotal { font-weight: 800; border-top: 1px solid var(--border); border-radius: var(--sp-0); padding-top: var(--sp-3); }
     .overview-chart-legend-subtotal .overview-chart-legend-count { color: var(--text); }
+    /* The unexplained band (No rule matched) after the Needs a person subtotal: a hive bug, marked as a warning. */
+    .overview-chart-legend-warning .overview-chart-legend-label { font-weight: 600; }
+    .overview-chart-legend-warning .overview-chart-legend-label::before { content: "\26A0\FE0E\00A0" / ""; color: var(--status-warn); }
+    .overview-chart-legend-note { color: var(--muted); font-size: var(--fs-xs); font-weight: 500; }
     .overview-chart-legend-static { cursor: default; }
     .overview-chart-legend-static:hover { background: transparent; }
     .overview-chart-swatch-none { visibility: hidden; }

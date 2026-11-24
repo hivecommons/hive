@@ -4073,6 +4073,10 @@
     .overview-chart-legend-section-note { font-size: var(--fs-xs); font-weight: 500; letter-spacing: 0; text-transform: none; }
     .overview-chart-legend-subtotal { font-weight: 800; border-top: 1px solid var(--border); border-radius: var(--sp-0); padding-top: var(--sp-3); }
     .overview-chart-legend-subtotal .overview-chart-legend-count { color: var(--text); }
+    /* The unexplained band (No rule matched) after the Needs a person subtotal: a hive bug, marked as a warning. */
+    .overview-chart-legend-warning .overview-chart-legend-label { font-weight: 600; }
+    .overview-chart-legend-warning .overview-chart-legend-label::before { content: "\26A0\FE0E\00A0" / ""; color: var(--status-warn); }
+    .overview-chart-legend-note { color: var(--muted); font-size: var(--fs-xs); font-weight: 500; }
     .overview-chart-legend-static { cursor: default; }
     .overview-chart-legend-static:hover { background: transparent; }
     .overview-chart-swatch-none { visibility: hidden; }
@@ -38826,11 +38830,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return [overviewCardRuleTip(label, rule)].concat(where ? [where] : [], overviewCardSharedLines(items));
     }
 
-    // The card legend in plot order, in two sections. The first is the Your
+    // The card legend in plot order, except the unexplained row, which
+    // follows the Needs a person total. It has two sections. The first is the Your
     // turn group (card_group your-turn), headed and totalled with the group's
     // label, "Needs a person": that heading, its bands as plain rows, then a
     // bold subtotal in the group's colour, which takes the place of the
-    // group row. Status is every other group, drawn as
+    // group row. The unexplained band (No rule matched) is a hive bug, not a
+    // to-do: it still counts in that subtotal, but its row comes after it
+    // with a "should be 0" note, marked as a warning only above 0. Only the legend moves
+    // it; the donut keeps the slice order. Status is every other group, drawn as
     // before (a headed group such as Waiting on someone else, Blocked or Hive
     // has it is one bold subtotal row with its bands indented under it; the
     // other bands are plain rows), then a bold Status subtotal. The groups
@@ -38847,10 +38855,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const todo = (slices || []).filter(s => s.group === todoGroup);
       const status = (slices || []).filter(s => s.group !== todoGroup);
       const todoLabel = (groups.get(todoGroup) || {}).label || 'Needs a person';
+      const bugBand = 'unexplained';
       const rows = [{ type: 'section', label: todoLabel }];
-      todo.forEach(s => rows.push({ type: 'plain', slice: s }));
+      todo.filter(s => s.key !== bugBand).forEach(s => rows.push({ type: 'plain', slice: s }));
       const itemsOf = list => list.reduce((all, p) => all.concat(p.items || []), []);
       rows.push({ type: 'subtotal', key: todoGroup, groups: [todoGroup], label: todoLabel, rule: (groups.get(todoGroup) || {}).rule || '', count: sum(todo), items: itemsOf(todo), className: 'overview-card-group-' + todoGroup });
+      todo.filter(s => s.key === bugBand).forEach(s => rows.push({ type: 'warning', slice: s, note: 'should be 0' }));
       rows.push({ type: 'section', label: 'Status', note: 'nothing for a person to do' });
       const done = new Set();
       status.forEach(s => {
@@ -38870,7 +38880,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // rule as the tooltip; the tooltip then says where the row's items are
     // and what several of them share (overviewCardRowTip; a group or
     // subtotal row reads the items of its bands). Zero bands stay listed but
-    // dimmed, except the keep bands (Queued for agents, Unexplained), which
+    // dimmed, except the keep bands (Queued for agents, No rule matched), which
     // stay at full strength, and Held, which is hidden at zero; a group or
     // subtotal row never dims.
     // Section headings are role=heading level 4 under the chart title (level
@@ -38904,6 +38914,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (subtotal) classes.push('overview-chart-legend-subtotal');
         if (subtotal && !s.key) classes.push('overview-chart-legend-static');
         if (row.type === 'part') classes.push('overview-chart-legend-part');
+        // The warning mark only above 0; at 0 the row and its note stay, muted.
+        if (row.type === 'warning' && count > 0) classes.push('overview-chart-legend-warning');
         if (!head && !subtotal && !count && !s.keep) classes.push('overview-chart-legend-zero');
         const by = head || subtotal ? 'card_group' : 'card_band';
         const exportKey = subtotal ? s.groups.join(',') : s.key;
@@ -38912,8 +38924,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const action = s.key ? ` data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1"` : '';
         const swatch = s.className ? `<span class="overview-chart-swatch ${esc(s.className)}"></span>` : '<span class="overview-chart-swatch overview-chart-swatch-none" aria-hidden="true"></span>';
         const spoken = subtotal ? '<span class="overview-chart-legend-sr"> total</span>' : '';
+        // The comma is for screen readers, as on a section note.
+        const note = row.note ? `<span class="overview-chart-legend-sr">,</span> <span class="overview-chart-legend-note">${esc(row.note)}</span>` : '';
         const tip = overviewCardRowTip(s.label, s.rule, s.items, oneOwner).map(esc).join('&#10;');
-        return `<div class="${classes.join(' ')}"${action} title="${tip}">${swatch}<span class="overview-chart-legend-label">${esc(s.label)}</span>${spoken}<span class="overview-chart-legend-count">${esc(overviewSliceLabel(count, percentLabel, state))}</span>${download}</div>`;
+        return `<div class="${classes.join(' ')}"${action} title="${tip}">${swatch}<span class="overview-chart-legend-label">${esc(s.label)}${note}</span>${spoken}<span class="overview-chart-legend-count">${esc(overviewSliceLabel(count, percentLabel, state))}</span>${download}</div>`;
       }).join('');
     }
 
@@ -39585,14 +39599,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // A tile's ⓘ: its bands with counts. Zero bands are left out except the
-    // keep bands (Queued for agents, Unexplained). A band on both donuts is one
+    // keep bands (Queued for agents, No rule matched). A band on both donuts is one
     // row, "Human placed on hold (2 issues, 2 PRs)" (a kept band at zero is
     // just its name). Outside adds the
     // remainder; Your turn says how many of its items the inbox does not show.
     function overviewCardTermInfo(tile, kpi) {
       const issueSpecs = new Map(overviewCardSpecs('issue').map(spec => [spec.key, spec]));
       const prSpecs = new Map(overviewCardSpecs('pr').map(spec => [spec.key, spec]));
-      // Unexplained is listed in Your turn only when it is above zero; the
+      // No rule matched (unexplained) is listed in Your turn only when it is above zero; the
       // legend keeps it at zero as a keep band.
       const shown = row => Number(row.count || 0) > 0 || (row.keep && row.key !== 'unexplained');
       const rows = (tile.breakdown || []).filter(shown).map(row => {

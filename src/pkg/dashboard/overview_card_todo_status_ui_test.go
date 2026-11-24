@@ -18,9 +18,9 @@ const legendItems = html => html.split(/(?=<div class=")/).filter(Boolean).map(c
     assert.ok(m, 'a section heading is role=heading level 4: ' + chunk);
     return { section: true, label: m[1].trim(), note: m[2] || '' };
   }
-  const label = (chunk.match(/<span class="overview-chart-legend-label">([^<]*)<\/span>/) || [])[1];
+  const named = chunk.match(/<span class="overview-chart-legend-label">([^<]*)(?:<span class="overview-chart-legend-sr">,<\/span> <span class="overview-chart-legend-note">([^<]*)<\/span>)?<\/span>/) || [];
   return {
-    section: false, cls, label, chunk,
+    section: false, cls, label: named[1], note: named[2] || '', chunk,
     key: (chunk.match(/^<div [^>]*data-arg1="([^"]*)"/) || [])[1] || '',
     action: /^<div [^>]*data-action="overviewNavigateBand"/.test(chunk),
     count: (chunk.match(/<span class="overview-chart-legend-count">([^<]*)<\/span>/) || [])[1],
@@ -42,7 +42,8 @@ const pct = (n, total) => (n / total * 100).toFixed(1) + '%';
 // The card legend splits into Needs a person and Status: a Needs a person
 // heading (the Your turn group's label), the group's bands as plain rows in
 // plot order (no group row), then a Needs a person subtotal equal to their
-// sum; a Status heading with its note, every other group exactly as before,
+// sum, then the unexplained band (No rule matched, a hive bug), which the
+// subtotal counts, with its "should be 0" note (a warning only above 0); a Status heading with its note, every other group exactly as before,
 // then a Status subtotal. Both subtotals use the legend's own rounding, read
 // "<label> total" to a screen reader, and never dim; the Status subtotal
 // opens nothing and exports every other group.
@@ -62,13 +63,19 @@ for (const [kind, slices] of [['issues', overviewIssueBandSlices([repoA])], ['pr
   assert.deepEqual(items.filter(i => i.section).map(i => [i.label, i.note]), [['Needs a person', ''], ['Status', 'nothing for a person to do']], kind);
   assert.ok(items[0].section && items[0].label === 'Needs a person', kind + ': the legend opens with Needs a person');
   // Needs a person: exactly the Your turn bands (hide-at-zero ones hidden),
-  // plain rows in plot order, then the subtotal.
+  // plain rows in plot order, then the subtotal, then the unexplained
+  // warning row.
   const todo = sectionOf(items, 'Needs a person');
   const yourTurn = slices.filter(s => s.group === 'your-turn');
-  const todoRows = todo.slice(0, -1);
-  const todoTotal = todo[todo.length - 1];
-  assert.deepEqual(todoRows.map(r => r.key), yourTurn.filter(visible).map(s => s.key), kind + ' Needs a person rows');
-  for (const r of todoRows) assert.ok(!r.cls.includes('overview-chart-legend-part') && !r.cls.includes('overview-chart-legend-group'), kind + ': ' + r.label + ' is a plain row');
+  const at = todo.findIndex(r => r.cls.includes('overview-chart-legend-subtotal'));
+  const todoRows = todo.slice(0, at);
+  const todoTotal = todo[at];
+  const afterTotal = todo.slice(at + 1);
+  assert.deepEqual(todoRows.map(r => r.key), yourTurn.filter(visible).filter(s => s.key !== 'unexplained').map(s => s.key), kind + ' Needs a person rows');
+  for (const r of todoRows) assert.ok(!r.cls.includes('overview-chart-legend-part') && !r.cls.includes('overview-chart-legend-group') && !r.cls.includes('overview-chart-legend-warning'), kind + ': ' + r.label + ' is a plain row');
+  assert.deepEqual(afterTotal.map(r => r.key), ['unexplained'], kind + ': the unexplained row follows the subtotal');
+  assert.ok(!afterTotal[0].cls.includes('overview-chart-legend-warning') && !afterTotal[0].cls.includes('overview-chart-legend-zero'), kind + ': at 0 it is not a warning and never dims');
+  assert.equal(afterTotal[0].note, 'should be 0', kind);
   assert.equal(todoTotal.label, 'Needs a person');
   assert.ok(todoTotal.cls.includes('overview-chart-legend-subtotal') && !todoTotal.cls.includes('overview-chart-legend-zero'), kind + ' Needs a person subtotal');
   assert.equal(todoTotal.swatch, 'overview-card-group-your-turn', kind + ': the Your turn dot');
@@ -136,6 +143,45 @@ assert.doesNotMatch(overviewLegendHTML(overviewIssueBandSlices([old]), 'issues',
 	runOverviewCardNode(t, script)
 }
 
+// The unexplained band (No rule matched, a hive bug) is drawn after the
+// Needs a person subtotal with a muted "should be 0" note, marked as a
+// warning above 0.
+// It still counts in that subtotal and exports its own card_band; the donut
+// keeps its slice in plot order, so only the legend row moves.
+func TestOverviewCardLegendNoRuleMatchedAfterSubtotal(t *testing.T) {
+	html := indexHTML(t)
+	script := overviewCardUIPrelude(t, html) + overviewCardTodoStatusParse + `
+window._lastStatus = { hiveId: 'h', overview_card: cardFixture() };
+const repoA = cardRepoA();
+repoA.openPrs.push(cardRow(18, 'unexplained', 'your-turn', { ownership: { your_turn: false } }));
+_overviewLastRepos = [repoA];
+const slices = overviewPRBandSlices([repoA]);
+const keys = slices.map(s => s.key);
+assert.equal(keys.indexOf('unexplained'), keys.indexOf('to-close') + 1, 'the donut keeps unexplained in plot order');
+const total = sumOf(slices);
+const items = legendItems(overviewLegendHTML(slices, 'prs', { exportFormat: 'csv' }));
+const todo = sectionOf(items, 'Needs a person');
+const at = todo.findIndex(r => r.label === 'Needs a person');
+assert.ok(at > 0, 'the Needs a person subtotal');
+assert.equal(todo[at].count, '2 · ' + pct(2, total), 'the subtotal still counts the unexplained PR');
+assert.ok(!todo.slice(0, at).some(r => r.key === 'unexplained'), 'not among the to-do rows');
+const bug = todo[at + 1];
+assert.ok(bug, 'a row after the subtotal');
+assert.equal(bug.key, 'unexplained');
+assert.equal(bug.label, 'No rule matched (hive bug)');
+assert.equal(bug.note, 'should be 0');
+assert.match(bug.chunk, /<span class="overview-chart-legend-sr">,<\/span> <span class="overview-chart-legend-note">should be 0<\/span><\/span>/, 'the note sits inside the label, after a spoken comma');
+assert.ok(bug.cls.includes('overview-chart-legend-warning'), 'marked as a warning above 0');
+assert.ok(!bug.cls.includes('overview-chart-legend-part') && !bug.cls.includes('overview-chart-legend-subtotal'));
+assert.equal(bug.count, '1 · ' + pct(1, total));
+assert.equal(bug.swatch, 'overview-card-pr-unexplained');
+assert.equal(new URL(bug.url, 'https://hive.test').searchParams.get('card_band'), 'unexplained', 'it exports its own band');
+assert.equal(todo.length, at + 2, 'nothing else follows it in Needs a person');
+assert.doesNotMatch(overviewLegendHTML(slices, 'prs', {}), /[\u2013\u2014@]/);
+`
+	runOverviewCardNode(t, script)
+}
+
 // The served status (the server's own card) splits the same way: Needs a
 // person is the Your turn group's count and Status every other group's.
 func TestOverviewCardLegendToDoAndStatusServed(t *testing.T) {
@@ -184,6 +230,8 @@ func TestOverviewCardLegendToDoAndStatusStatic(t *testing.T) {
 		".overview-chart-legend-static { cursor: default; }",
 		".overview-chart-swatch-none { visibility: hidden; }",
 		".overview-chart-legend-sr {",
+		".overview-chart-legend-warning .overview-chart-legend-label {",
+		".overview-chart-legend-note {",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing %q", want)

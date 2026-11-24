@@ -35,7 +35,7 @@ function hintCard() {
   card.prs.find(s => s.key === 'review').rule = 'The hive wants a person to look at it before it goes on.';
   return card;
 }
-const hintRows = html => [...html.matchAll(/<div class="[^"]*"[^>]* title="([^"]*)">(?:<span class="overview-chart-swatch[^"]*"(?: aria-hidden="true")?><\/span>)<span class="overview-chart-legend-label">([^<]*)<\/span>/g)]
+const hintRows = html => [...html.matchAll(/<div class="[^"]*"[^>]* title="([^"]*)">(?:<span class="overview-chart-swatch[^"]*"(?: aria-hidden="true")?><\/span>)<span class="overview-chart-legend-label">([^<]*)(?:<span class="overview-chart-legend-sr">,<\/span> <span class="overview-chart-legend-note">[^<]*<\/span>)?<\/span>/g)]
   .map(m => ({ label: m[2], lines: m[1].split('&#10;') }));
 const hintOf = (rows, label) => {
   const row = rows.find(r => r.label === label);
@@ -84,7 +84,7 @@ assert.deepEqual(hintOf(rows, 'Review'), [
   'Where: lib 1',
 ]);
 // A zero band keeps its rule alone.
-assert.deepEqual(hintOf(rows, 'Unexplained'), ['Unexplained: unexplained rule.']);
+assert.deepEqual(hintOf(rows, 'No rule matched (hive bug)'), ['No rule matched (hive bug): no rule matched (hive bug) rule.']);
 // The Needs a person subtotal reads every band's items in its section.
 assert.deepEqual(hintOf(rows, 'Needs a person'), [
   'Needs a person: no agent will move these until a person acts.',
