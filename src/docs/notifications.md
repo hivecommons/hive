@@ -502,6 +502,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).closeVerified` | `status` |  |
 | `github.(*Client).parkVerifiedForClose` | `status` |  |
 | `github.(*Client).closeIssueForMergedPRClaimWithIssue` | `status` |  |
+| `forgesweep.(*Sweeper).closeOne` | `status` | Forgejo close-on-merge comment |
 | `github.(*Client).closeSupersededPRDecision` | `status` |  |
 | `github.(*Client).fileReviewBacklog` | `status` |  |
 | `github.(*Client).foldReviewFollowUps` | `status` | review Follow-ups checklist folded into the PR status card (quiet mode) |

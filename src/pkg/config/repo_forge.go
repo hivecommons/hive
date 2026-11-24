@@ -40,7 +40,9 @@ func (c *Config) ForgeKindForRepo(repo string) string {
 // close-on-merge sweeps, which call the GitHub API directly) may act on it. It
 // is false only for a repo that resolves to GitLab or Gitea; an unknown kind
 // is treated as GitHub, the same fallback the forge writer takes, so a typo'd
-// forge key never silently stops a GitHub hive's sweeps.
+// forge key never silently stops a GitHub hive's sweeps. A Forgejo repo gets
+// its own sweeps instead (pkg/forgesweep); GitLab and Gitea repos get none.
+// See ForgeSweepsFor.
 func (c *Config) RepoOnGitHub(repo string) bool {
 	switch c.ForgeKindForRepo(repo) {
 	case ForgeGitLab, ForgeGitea, ForgeForgejo:
