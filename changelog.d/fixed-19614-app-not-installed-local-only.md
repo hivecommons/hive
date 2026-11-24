@@ -1,0 +1,1 @@
+- Self-hosted spokes with no GitHub App installation id configured no longer file a `github_app_not_installed` selfreport upstream; it stays a local onboarding advisory (#19614).
