@@ -1,1 +1,0 @@
-- An agent that needs its backend login renewed no longer files an `agent_login_required` selfreport upstream. The login pause already notifies the spoke's operator with the login command, so the class stays local (#19628).

@@ -99,8 +99,7 @@ var outboundSites = map[string]outboundSite{
 	"worksource.(*jiraSource).doJSON":          filtered(),
 	"worksource.linearGraphQL":                 filtered(),
 	"notify.(*Notifier).sendNtfy":              via("notify.(*Notifier).Send", "ntfy alert"),
-	"notify.(*Notifier).sendSlack":             via("notify.(*Notifier).Send", "Slack webhook alert"),
-	"notify.(*Notifier).sendDiscordWebhook":    via("notify.(*Notifier).Send", "Discord webhook alert"),
+	"notify.(*Notifier).postWebhook":           via("notify.(*Notifier).Send", "Slack and Discord webhook alert"),
 	"main.hubSelfReportRelay":                  via("hub.postHubGitHubIssue", "spoke self-report; the hub files it"),
 	"dashboard.(*Server).forwardFeedbackToHub": via("hub.postHubGitHubIssue", "operator feedback; the hub files it"),
 
@@ -110,6 +109,7 @@ var outboundSites = map[string]outboundSite{
 	"hub.patchHubGitHubIssueComment":     template("pkg/fleetreport", reasonFleetReport),
 	"forge.(*gitLabForge).doWrite":       template("pkg/forge", reasonForgeWrite),
 	"forge.(*giteaForge).doWrite":        template("pkg/forge", reasonForgeWrite),
+	"forge.(*giteaForge).doWriteJSON":    template("pkg/forge", reasonForgeWrite),
 	"forge.(*giteaForge).Merge":          template("pkg/forge", "merge request on a non-GitHub forge"),
 	"forge.(*gitLabForge).doAcceptMerge": template("pkg/forge", "merge request on a non-GitHub forge"),
 	"feedbackbundle.githubJSON":          template("pkg/feedbackbundle", "feedback bundle commit message"),

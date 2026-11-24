@@ -14,7 +14,6 @@ Fetched from [simple-icons/simple-icons](https://github.com/simple-icons/simple-
 | `githubcopilot.svg` | GitHub Copilot | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/githubcopilot.svg> |
 | `gitlab.svg` | GitLab | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/gitlab.svg> |
 | `gitea.svg` | Gitea | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/gitea.svg> |
-| `forgejo.svg` | Forgejo | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/forgejo.svg> |
 | `jira.svg` | Jira | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/jira.svg> |
 | `linear.svg` | Linear | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/linear.svg> |
 | `claude.svg` | Claude | <https://github.com/simple-icons/simple-icons/blob/90646e4bf7f3b89df6c37e65baf3e7bc759a517c/icons/claude.svg> |
@@ -25,7 +24,7 @@ Fetched from [simple-icons/simple-icons](https://github.com/simple-icons/simple-
 ## Project artwork
 
 Fetched from each project's own repository at the commit named in the URL.
-`openshell.svg` and `openbao.svg` are unmodified. `agent-substrate.png` is the
+`openshell.svg`, `openbao.svg` and `forgejo.svg` are unmodified. `agent-substrate.png` is the
 project's `ate-logo.png` resized to 128 x 128 (the upstream SVG is about
 95 KB, over the 20 KB limit below).
 
@@ -34,8 +33,9 @@ project's `ate-logo.png` resized to 128 x 128 (the upstream SVG is about
 | `openshell.svg` | OpenShell (project mark, not the NVIDIA corporate logo) | [Apache-2.0](https://github.com/NVIDIA/OpenShell/blob/2e5589b2180dd432320adda124c4f7bcede119b5/LICENSE) | <https://github.com/NVIDIA/OpenShell/blob/2e5589b2180dd432320adda124c4f7bcede119b5/docs/brand/assets/openshell-mark.svg> |
 | `agent-substrate.png` | Agent Substrate ("Yolo", designed and donated by Nan Hockin) | [Apache-2.0 OR CC-BY-4.0](https://github.com/agent-substrate/substrate/blob/cf5768a075b741511829a207bdfb4e296d4114c7/logo/LICENSE), used here under CC-BY-4.0 | <https://github.com/agent-substrate/substrate/blob/cf5768a075b741511829a207bdfb4e296d4114c7/logo/ate-logo.png> |
 | `openbao.svg` | OpenBao | [CC-BY-4.0](https://github.com/openbao/artwork/blob/2387118edc846d2ec82ffd72409a3e0fe3be8519/LICENSE) | <https://github.com/openbao/artwork/blob/2387118edc846d2ec82ffd72409a3e0fe3be8519/color/openbao-color.svg> |
+| `forgejo.svg` | Forgejo (logo by Caesar Schinas) | [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/), per the [Forgejo branding page](https://codeberg.org/forgejo/meta/src/commit/9810d8469ab58d4604ed222eb2a47f90d2bc03fc/branding/README.md#logo) | <https://codeberg.org/forgejo/forgejo/src/commit/31bfb80c03287ab527eca7a72a2bbb029e2a43ab/assets/logo.svg> (the same artwork as the branding repository's `forgejo.svg`, without its RDF license metadata block) |
 
-The same three files are served on the hub landing page from
+The same four files are served on the hub landing page from
 `src/pkg/hub/static/integrations/`, next to copies of `podman.svg` and
 `kubernetes.svg` from the Simple Icons table above.
 

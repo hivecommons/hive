@@ -1,1 +1,0 @@
-- Hub runbook commands now scope `kubectl exec` and `kubectl logs` with `-c hub`, so they cannot hit a stray second hub container (#19344, #19345).

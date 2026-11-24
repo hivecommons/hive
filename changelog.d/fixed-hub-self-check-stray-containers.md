@@ -1,1 +1,0 @@
-- The hub now logs a warning during self-upgrade when its own Deployment runs any container besides `hub`, so a stray second hub container is reported instead of silently running with the hub's credentials (#19344).
