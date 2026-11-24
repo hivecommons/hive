@@ -25963,11 +25963,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const enabled = !!decide.enabled && !!o.enabled;
         return Object.assign({}, o, { target: decide.target, enabled, why: enabled ? '' : (decide.enabled ? o.why : decide.why) });
       }
+      const fallback = stageTrackerFallbackLead(item, actions);
+      if (fallback) return fallback;
+      if (typeof stageTrackerDevWarn === 'function' && stageTrackerMaintainerMoved(item)) stageTrackerDevWarn('row ' + stageTrackerRefOf(item) + ' waits on the maintainer but offers no lead action');
+      return null;
+    }
+    // Pure: the lead when nothing else leads: Adopt, Adopt now or Let hive
+    // decide — all N PRs, from the row's ⋯ actions. Adopt now never leads on
+    // a person's PR (author_kind 'human', or takeover.person on a linked
+    // sub-row): taking over a person's work is an
+    // explicit operator choice, so it stays in the ⋯ menu only
+    // (hivecommons/hive#19645).
+    function stageTrackerFallbackLead(item, actions) {
+      const human = !!item && (item.author_kind === 'human' || !!(item.takeover && item.takeover.person));
       for (const id of ['decide:adopt', 'decide:adopt-now', 'decide:delegate-all']) {
-        const a = actions.find(x => x.id === id);
+        if (id === 'decide:adopt-now' && human) continue;
+        const a = (actions || []).find(x => x.id === id);
         if (a && (a.enabled || id !== 'decide:adopt-now')) return a;
       }
-      if (typeof stageTrackerDevWarn === 'function' && stageTrackerMaintainerMoved(item)) stageTrackerDevWarn('row ' + stageTrackerRefOf(item) + ' waits on the maintainer but offers no lead action');
       return null;
     }
     // Pure: whether the server says the next move is the maintainer's.
