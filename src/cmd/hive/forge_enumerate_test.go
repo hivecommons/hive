@@ -274,7 +274,8 @@ func TestHoldLabelsForConfigMatchesGitHubClient(t *testing.T) {
 
 // TestEnumerateActionableForCycleKeepsGitHubPath is the negative test: a
 // GitHub hive, and a hive with any repo on GitHub, must still enumerate
-// through the GitHub client and never build a forge lister.
+// through the GitHub client first. A failed GitHub pass returns before any
+// forge lister is built, so the cycle keeps its prior state.
 func TestEnumerateActionableForCycleKeepsGitHubPath(t *testing.T) {
 	prev := forgeListerForRepo
 	t.Cleanup(func() { forgeListerForRepo = prev })

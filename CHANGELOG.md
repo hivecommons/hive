@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v5.359.0)
+
+### Added
+
+- The Gitea and Forgejo forge adapters can now file issues (`CreateIssue`, `FindIssueByMarker`) and open pull requests (`CreateChangeRequest`, a new optional `forge.ChangeRequestCreator` seam). Labels are added by name after the create, and a retried pull request from the same head returns the open one. Nothing on the GitHub path changes. Refs [#19670](https://github.com/hivecommons/hive/issues/19670).
+
+### Fixed
+
+- Dashboard: on a phone the "..." buttons are easy to tap again. The "..." on a stage tracker row's human-gate pill took taps only on its 16px-tall painted line, because the pill clipped its enlarged hit area; it now takes taps across a full 44x44 area, with 8px of space before Approve, and the card rows keep their height. The row's ⋯ menu button keeps 8px from the select box, the decision popover's "More ⋯" and the session ⋯ menu meet the 44px touch size, and the filter bar chips are spaced 8px apart. Desktop layout is unchanged.
+
 ## 2026-11-24 (v5.358.0)
 
 ### Added
