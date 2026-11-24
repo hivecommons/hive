@@ -482,9 +482,12 @@ func cardOwnershipBand(o *Ownership, kind string) (OverviewCardBand, bool) {
 // cardTurnBand is the Your turn band of a stored decision: what the person
 // has to do, read from its verb. Two PR review gates get their own band (a
 // person's approval, a hand merge); on an issue they stay Review, so an
-// issue never lands on a band the issue donut does not plot. A verb the card
-// does not know is Other, never dropped: every your-turn decision is in the
-// Your turn group.
+// issue never lands on a band the issue donut does not plot. A PR the
+// hive's review holds for a human decision is Decide: a person answers its
+// question, which is a call, not a look (an approving review or /hive
+// approve releases it; on a PR the hive opened, a /hive decision reply or a
+// changes-requested review answers it too). A verb the card does not know is
+// Other, never dropped: every your-turn decision is in the Your turn group.
 func cardTurnBand(verb, reasonCode, kind string) string {
 	switch verb {
 	case OwnershipVerbInspect:
@@ -498,6 +501,8 @@ func cardTurnBand(verb, reasonCode, kind string) string {
 				return cardBandApprove
 			case OwnershipReasonHandMerge:
 				return cardBandHandMerge
+			case OwnershipReasonReviewRequiresHuman:
+				return cardBandDecide
 			}
 		}
 		return cardBandReview

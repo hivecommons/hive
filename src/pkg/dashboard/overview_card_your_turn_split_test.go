@@ -28,8 +28,9 @@ func TestCardTurnBandFromTheStoredDecision(t *testing.T) {
 		OwnershipVerbClose:   cardBandToClose,
 	}
 	prOnly := map[string]string{
-		OwnershipReasonReviewDecision: cardBandApprove,
-		OwnershipReasonHandMerge:      cardBandHandMerge,
+		OwnershipReasonReviewDecision:      cardBandApprove,
+		OwnershipReasonHandMerge:           cardBandHandMerge,
+		OwnershipReasonReviewRequiresHuman: cardBandDecide,
 	}
 	inOrder := func(order []string, key string) bool {
 		for _, k := range order {
@@ -76,7 +77,7 @@ func TestCardTurnBandFromTheStoredDecision(t *testing.T) {
 		OwnershipReasonReviewDecision:      cardBandApprove,
 		OwnershipReasonHandMerge:           cardBandHandMerge,
 		OwnershipReasonPersonPRNeedsHuman:  cardBandReview,
-		OwnershipReasonReviewRequiresHuman: cardBandReview,
+		OwnershipReasonReviewRequiresHuman: cardBandDecide,
 		OwnershipReasonReviewLoopCap:       cardBandReview,
 		OwnershipReasonPolicyHold:          cardBandReview,
 	} {
@@ -185,6 +186,7 @@ func cardTurnCases() []cardTurnCase {
 		{"bot PR needs human, conflict", ownershipKindPR, own(OwnershipReasonPersonPRNeedsHuman), prRow(botConflict, none), cardBandTurnOther},
 		{"bot PR needs human, green", ownershipKindPR, own(OwnershipReasonPersonPRNeedsHuman), prRow(botGreen, none), cardBandReview},
 		{"PR parked for a decision", ownershipKindPR, own(OwnershipReasonParkedNeedsDecision), nil, cardBandDecide},
+		{"PR review needs a decision", ownershipKindPR, own(OwnershipReasonReviewRequiresHuman), nil, cardBandDecide},
 		{"PR superseded", ownershipKindPR, own(OwnershipReasonSupersededRecommendedClose), nil, cardBandToClose},
 		{"PR 085 not your turn", ownershipKindPR, nil, prRow(cardPRRow{pr: cardPR(1, "alice", "stage/085-needs-decision")}, none), cardBandUnexplained},
 	}

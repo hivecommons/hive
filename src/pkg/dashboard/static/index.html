@@ -40173,9 +40173,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // the un-park sweep skips an issue without one, so /hive approve and
       // /hive decision would do nothing there.
       const openForDiscussion = own.reason_code === 'open_for_discussion';
-      if ((own.verb === 'DECIDE' && !openForDiscussion) || own.verb === 'STEER' || (own.verb === 'REVIEW' && parkedIssue)) {
+      // A PR Hive's review holds for a human decision (the card's Decide
+      // band): /hive approve releases the hold on any PR, while a
+      // /hive decision <text> reply answers it only on a PR Hive opened.
+      const reviewQuestion = ctx.kind === 'pr' && own.reason_code === 'review_requires_human';
+      if ((own.verb === 'DECIDE' && !openForDiscussion) || own.verb === 'STEER' || (own.verb === 'REVIEW' && (parkedIssue || reviewQuestion))) {
         if (ctx.labelDriven) after.push({ type: 'note', text: 'This repository is label-driven: accept or un-park it with the repository\'s triage labels; Hive refuses /hive approve and /hive decision here.' });
-        else after.push({ type: 'copy', text: '/hive approve' }, { type: 'copy', text: '/hive decision <text>' });
+        else {
+          after.push({ type: 'copy', text: '/hive approve' }, { type: 'copy', text: '/hive decision <text>' });
+          if (reviewQuestion) after.push({ type: 'note', text: '/hive approve or an approving review releases the review hold; /hive decision <text> answers it only on a pull request Hive opened.' });
+        }
       }
       if (ctx.kind === 'issue' && own.action === 'release' && own.release_tag && ctx.canToggleHold && !ctx.labelDriven) {
         actions.push({ type: 'action', id: 'release', label: 'Release ' + own.release_tag });
