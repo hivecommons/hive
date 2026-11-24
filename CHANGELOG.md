@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v5.365.2)
+
+### Fixed
+
+- Calendar refreshes preserve the draft and focus in the Add meeting form.
+- The Hub bulk weekly upgrade action now saves the Tuesday 1 pm ET schedule for selected hives, including hives shared with the owner role. Reapplying Weekly preserves the current week's upgrade record.
+
 ## 2026-11-24 (v5.365.1)
 
 ### Fixed

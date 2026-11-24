@@ -1,1 +1,0 @@
-- The Hub bulk weekly upgrade action now saves the Tuesday 1 pm ET schedule for selected hives, including hives shared with the owner role. Reapplying Weekly preserves the current week's upgrade record.
