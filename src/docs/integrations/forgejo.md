@@ -1,0 +1,87 @@
+# Forgejo
+
+## Audience
+
+This page is for teams whose repositories live on [Forgejo](https://forgejo.org/), on their own instance or on [Codeberg](https://codeberg.org/), and who want to know what Hive does with Forgejo today. It is written from v5 code. The full forge reference, which covers GitLab and Gitea too, is [Forges: GitLab, Gitea and Forgejo](forges.md).
+
+## Status: partial, in progress
+
+**A Forgejo-only hive does not do agent work yet.** Hive has a first-class `forgejo` forge kind, and a hive with every repository on Forgejo boots without GitHub credentials. The governor still discovers work through GitHub only, so such a hive finds nothing to do. Agents cannot yet clone from or push to a Forgejo host. The remaining work is tracked in [#19494](https://github.com/hivecommons/hive/issues/19494) and [#19493](https://github.com/hivecommons/hive/issues/19493). This page is updated as each piece merges.
+
+## What Forgejo is
+
+Forgejo is a self-hosted software forge: Git hosting, issues, pull requests, packages and CI in one service. It is community-run, started as a fork of Gitea, and is developed under the umbrella of Codeberg e.V., the non-profit that runs codeberg.org. Forgejo serves a Gitea-compatible REST API under `/api/v1`.
+
+## What works on v5 today
+
+| Area | State on v5 |
+| --- | --- |
+| Forge kind | `project.forge: forgejo` and `forge: forgejo` on a `project.repo_policies[]` entry are valid, with a top-level `forgejo:` block. Forgejo is its own kind, separate from `gitea`, so a call that differs between the two can change for one without the other ([#19496](https://github.com/hivecommons/hive/pull/19496)). |
+| Config load without GitHub | When `project.forge` is `forgejo` and no `repo_policies` entry puts a repository on GitHub, validation does not ask for `github.token`, `github.app_id` or `github.forge`. It requires `forgejo.forgejo_url` (or a `forge_url` on each repo's policy) instead ([#19497](https://github.com/hivecommons/hive/pull/19497)). |
+| Token handling | `FORGEJO_TOKEN`, and the variable `forgejo.token_env` names, is stripped from agent panes, user sessions and tool shells ([#19498](https://github.com/hivecommons/hive/pull/19498)). The token is only sent to the host of the `forgejo:` block's URL. A `repo_policies[].forge_url` on another host fails config load ([#19572](https://github.com/hivecommons/hive/pull/19572)). |
+| Adapter calls | The Forgejo adapter in `src/pkg/forge/forgejo_forge.go` reads a repository, lists open issues and pull requests, comments, adds and removes labels, sets the `hold` label, and merges a pull request with a hold gate and an optional head-SHA guard. Unit tests run against a fake server. The nightly [Forgejo smoke workflow](https://github.com/hivecommons/hive/blob/v5/.github/workflows/forgejo-smoke.yml) runs read, comment, label and merge against a real Forgejo container. |
+| Dashboard and tools | A Projects card on a Forgejo repository names Forgejo and its host and links to the instance's `/issues` and `/pulls` pages. The Settings dialog has Forgejo URL and token variable fields. `hivectl` presets, the hub forge switch and the proxy deny messages accept `forgejo`. |
+
+The adapter calls exist, but on a Forgejo-only hive nothing reaches them yet, because the governor cycle that would call them starts from GitHub. [What runs through the adapter today](forges.md#what-runs-through-the-adapter-today) has the details.
+
+## In progress
+
+None of these has merged on v5. Each links to the issue that tracks it.
+
+- Work discovery through the forge adapter, so the governor finds issues and pull requests on Forgejo ([#19494](https://github.com/hivecommons/hive/issues/19494), item 3).
+- Clone and push to the Forgejo host, with credentials from the proxy ([#19494](https://github.com/hivecommons/hive/issues/19494), item 4).
+- Issue and pull request creation through the forge, and the request-file watchers ([#19494](https://github.com/hivecommons/hive/issues/19494), item 5).
+- Automerge and close-on-merge sweeps for Forgejo repositories ([#19494](https://github.com/hivecommons/hive/issues/19494), item 6).
+- Short-lived, per-tier Forgejo credentials signed by the hive ([#19493](https://github.com/hivecommons/hive/issues/19493), open PR [#19576](https://github.com/hivecommons/hive/pull/19576)).
+
+The hub's get-started flow provisions hosted hives on GitHub and GitHub Enterprise only. A Forgejo repository URL is refused there for now.
+
+## Configure a Forgejo repository in hive.yaml
+
+These keys parse and validate on v5. Setting them gives you a hive that loads and shows your Forgejo repositories on the dashboard. It does not yet give you agents that work on them.
+
+```yaml
+project:
+  org: my-org                 # the Forgejo owner (user or organization)
+  repos:
+    - my-repo
+  forge: forgejo              # "github" (default) | "gitlab" | "gitea" | "forgejo"
+
+forgejo:
+  forgejo_url: https://codeberg.org   # bare instance root; no default
+  token_env: FORGEJO_TOKEN            # env var NAME, never the token
+```
+
+Put the Forgejo access token in the environment variable that `token_env` names. The token never goes in `hive.yaml`.
+
+To keep most repositories on GitHub and put one on Forgejo, use a repository policy. Its `forge_url` must be on the same host and port as `forgejo.forgejo_url`, because the block's token is only sent to that host:
+
+```yaml
+project:
+  repo_policies:
+    - repo: mirror
+      forge: forgejo
+      forge_url: https://codeberg.org
+```
+
+| Key | Default | Notes |
+| --- | --- | --- |
+| `project.forge` | `github` | `forgejo` selects the Forgejo adapter for every repository in `project.repos`. |
+| `forgejo.forgejo_url` | none | Instance root, for example `https://codeberg.org` or `https://forgejo.example.com`. The adapter appends `/api/v1` itself, so do not add it. |
+| `forgejo.token_env` | `FORGEJO_TOKEN` | Name of the environment variable that holds the token. Sent as `Authorization: token <TOKEN>`. |
+| `project.repo_policies[].forge` | `project.forge` | Moves one repository to `forgejo`. |
+| `project.repo_policies[].forge_url` | `forgejo.forgejo_url` | Bare instance root for that repository. Must match the block's host and port. |
+
+The keys come from `ForgejoConfig` in `src/pkg/config/config.go` and the repository policy fields in `src/pkg/config/repo_policy.go`. Do not confuse `project.forge` with `github.forge`, which names a GitHub host for the GitHub App. See [Forge setup](../forge-app-setup.md#do-not-confuse-projectforge-with-githubforge).
+
+## Credits
+
+The Forgejo work on v5 (the `forgejo` forge kind, GitHub-free config load, forge token stripping and the token host check) was contributed by `sdwilsh`, who also wrote the plan in [#19493](https://github.com/hivecommons/hive/issues/19493) and [#19494](https://github.com/hivecommons/hive/issues/19494).
+
+The Forgejo logo was created by [Caesar Schinas](https://caesarschinas.com/) and is licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/). It is used unmodified from the [Forgejo source tree](https://codeberg.org/forgejo/forgejo/src/commit/31bfb80c03287ab527eca7a72a2bbb029e2a43ab/assets/logo.svg); the license is stated on the [Forgejo branding page](https://codeberg.org/forgejo/meta/src/commit/9810d8469ab58d4604ed222eb2a47f90d2bc03fc/branding/README.md#logo). Logos are trademarks of their owners and are used for identification only. See [Logo sources and licenses](https://github.com/hivecommons/hive/blob/v5/src/docs/assets/logos/SOURCES.md).
+
+## See also
+
+- [Forges: GitLab, Gitea and Forgejo](forges.md): the operations each adapter supports and the remaining gaps.
+- [Forge setup: GitLab, Gitea, and Forgejo](../forge-app-setup.md): why the agent execution path is GitHub-only today, and what full support requires.
+- [Integrations](../integrations.md).
