@@ -37,7 +37,7 @@ var (
 // decide, ...); card_group "your-turn" returns all of them.
 var (
 	issueCardBandKeys = []string{"inspect", "decide", "review", "triage", "admit", "your-turn-other", "to-close", "unexplained", "covered-by-pr", "waiting-on-item", "human-hold", "reporter-confirm", "queued", "working", "held", "not-work"}
-	prCardBandKeys    = []string{"inspect", "decide", "approve", "merge-by-hand", "review", "triage", "admit", "your-turn-other", "to-close", "unexplained", "human-hold", "author-update", "bot-rebase", "working", "will-merge", "held", "draft"}
+	prCardBandKeys    = []string{"inspect", "decide", "approve", "merge-by-hand", "review", "triage", "admit", "your-turn-other", "to-close", "unexplained", "waiting-on-item", "human-hold", "author-update", "bot-rebase", "working", "will-merge", "held", "draft"}
 	cardGroupKeys     = []string{"your-turn", "waiting-elsewhere", "held", "blocked", "actionable-now", "outside"}
 )
 

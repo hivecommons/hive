@@ -27,6 +27,7 @@
     "admit": 0,
     "your-turn-other": 1,
     "to-close": 0,
+    "waiting-on-item": 0,
     "human-hold": 0,
     "author-update": 1,
     "bot-rebase": 1,

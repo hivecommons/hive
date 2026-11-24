@@ -845,6 +845,12 @@ assert.deepEqual(kinds(model(own('CLOSE', 'verified_done'))), [open]);
 // REVIEW on PRs and on other issues: Open on GitHub only, unless the level gate is the only hold source.
 const pr = { kind: 'pr', url: 'https://github.com/o/r/pull/2' };
 assert.deepEqual(kinds(model(own('REVIEW', 'person_pr_needs_human'), pr)), [open]);
+// A PR Hive's review holds for a human decision sits in the card's Decide
+// band: the menu offers the replies that answer it, with a note on where
+// /hive decision works; label-driven keeps its note instead.
+assert.deepEqual(kinds(model(own('REVIEW', 'review_requires_human'), pr)), [open, 'copy:/hive approve', 'copy:/hive decision <text>', 'note:/hive approve or an approving review releases the review hold; /hive decision <text> answers it only on a pull request Hive opened.']);
+assert.deepEqual(kinds(model(own('REVIEW', 'review_requires_human'), Object.assign({ labelDriven: true }, pr))).length, 2);
+assert.deepEqual(kinds(model(own('REVIEW', 'review_requires_human'))), [open], 'the reason code is a PR one; an issue gets nothing extra');
 assert.deepEqual(kinds(model(own('REVIEW', 'stale_safety_net'))), [open], 'an issue the safety net surfaced');
 assert.deepEqual(kinds(model(own('REVIEW', 'policy_hold', undefined), Object.assign({ held: true }, pr))), [open]);
 const gated = own('REVIEW', 'level_gate_hold', 'release_hold');

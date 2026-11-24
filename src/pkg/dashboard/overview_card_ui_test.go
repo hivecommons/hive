@@ -106,7 +106,7 @@ function overviewApplyKPIProjectFilter(key) { applied = key; }
 		"issueUpdatedAt", "prUpdatedAt", "prCreatedAt", "prReviewClassRank",
 		"overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames",
 		"overviewCardMode", "overviewSliceSpecs", "overviewCardBandSlices", "overviewHistoryCounts", "overviewHBarRow", "renderOverviewBar", "overviewIssueBandSlices", "overviewPRBandSlices",
-		"overviewSliceLabel", "overviewExportURL", "overviewCardRuleTip", "overviewCardLegendRows", "overviewCardLegendHTML", "overviewLegendHTML",
+		"overviewSliceLabel", "overviewExportURL", "overviewCardRuleTip", "overviewCardOneOwner", "overviewCardWhereLine", "overviewCardSharedLines", "overviewCardRowTip", "overviewCardLegendRows", "overviewCardLegendHTML", "overviewLegendHTML",
 		"overviewCardTileForKey", "overviewNavigateBand",
 	} {
 		b.WriteString(jsFunc(t, html, name))
@@ -207,7 +207,7 @@ for (const r of issues) {
 assert.equal(row('Covered by an open PR').swatch, 'overview-card-issue-covered-by-pr');
 assert.equal(row('Waiting on someone else').swatch, 'overview-card-group-waiting-elsewhere');
 assert.equal(row('Waiting on another item').title, 'Waiting on another item: another issue or PR must finish first. Check that the blocker is still real and moving.');
-assert.equal(row('Waiting on someone else').title, 'Waiting on someone else: someone other than you has the next move. Nothing to do until they act.');
+assert.equal(row('Waiting on someone else').title, 'Waiting on someone else: someone other than you has the next move. Nothing to do until they act.&#10;Where: a 2');
 assert.doesNotMatch(issueHTML, /onclick=|[\u2013\u2014]/);
 
 // The PR donut also plots the drafts the hive sidelines.

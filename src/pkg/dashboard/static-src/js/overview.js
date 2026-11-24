@@ -870,6 +870,81 @@
       return String(label || '') + ': ' + lead;
     }
 
+    // Whether every repo among a donut's items has the same owner; the
+    // legend then drops the owner from every row's Where line, so a repo
+    // reads the same in each row.
+    function overviewCardOneOwner(items) {
+      const owners = new Set();
+      (items || []).forEach(entry => {
+        const repo = String((entry && entry.repo) || '').trim();
+        if (repo) owners.add(repo.includes('/') ? repo.slice(0, repo.indexOf('/')) : '');
+      });
+      return owners.size <= 1;
+    }
+
+    // Where a legend row's items are: "Where: api 8, cli 2, docs 2, 3 other
+    // repos 3". Repos come largest first (ties by name), at most three, then
+    // the rest as one count; a single repo left over is named instead. The
+    // owner is dropped when oneOwner is set (overviewCardOneOwner over the
+    // whole donut; read from these items when it is not given). '' for a row
+    // with no items, so a zero row's hover text gains no line.
+    function overviewCardWhereLine(items, oneOwner) {
+      const shownRepos = 3;
+      const counts = new Map();
+      (items || []).forEach(entry => {
+        const repo = String((entry && entry.repo) || '').trim();
+        if (repo) counts.set(repo, (counts.get(repo) || 0) + 1);
+      });
+      if (!counts.size) return '';
+      const strip = oneOwner === undefined ? overviewCardOneOwner(items) : !!oneOwner;
+      const name = repo => strip && repo.includes('/') ? repo.slice(repo.indexOf('/') + 1) : repo;
+      const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || name(a[0]).localeCompare(name(b[0])));
+      const shown = ranked.length === shownRepos + 1 ? ranked : ranked.slice(0, shownRepos);
+      const parts = shown.map(([repo, n]) => name(repo) + ' ' + n);
+      const rest = ranked.slice(shown.length);
+      if (rest.length) parts.push(rest.length + ' other repos ' + rest.reduce((n, [, c]) => n + c, 0));
+      return 'Where: ' + parts.join(', ');
+    }
+
+    // What two or more of a legend row's items are stuck on, one line per
+    // kind, read only from structured row facts (never from reason text):
+    // the failing check most of them share (failing_checks), and the
+    // approval count most of them have while GitHub still requires a review
+    // (protection.review_decision REVIEW_REQUIRED, protection.approvals_given).
+    // A required review can be a code owner's, so the line does not say how
+    // many more approvals are needed. Only PR rows carry these facts, so an
+    // issue row gets no line. [] when nothing is shared.
+    function overviewCardSharedLines(items) {
+      const minShared = 2;
+      const rows = (items || []).map(entry => (entry && (entry.item || entry)) || {});
+      const lines = [];
+      const checks = new Map();
+      rows.forEach(pr => {
+        const names = new Set((Array.isArray(pr.failing_checks) ? pr.failing_checks : []).map(c => String(c || '').trim()).filter(Boolean));
+        names.forEach(c => checks.set(c, (checks.get(c) || 0) + 1));
+      });
+      const check = [...checks.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+      if (check && check[1] >= minShared) lines.push(check[1] + ' fail the same check: ' + check[0]);
+      const approvals = new Map();
+      rows.forEach(pr => {
+        const p = (pr && pr.protection) || {};
+        const given = Number(p.approvals_given || 0);
+        if (given > 0 && String(p.review_decision || '').toUpperCase() === 'REVIEW_REQUIRED') approvals.set(given, (approvals.get(given) || 0) + 1);
+      });
+      const approval = [...approvals.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+      if (approval && approval[1] >= minShared) lines.push(approval[1] + ' have ' + approval[0] + ' ' + (approval[0] === 1 ? 'approval' : 'approvals') + '; GitHub still requires a review');
+      return lines;
+    }
+
+    // A legend row's hover text as lines: its rule, then where its items
+    // are, then what they share; a line with nothing to say is left out. The
+    // caller escapes each line and joins them with &#10; (esc() turns a
+    // newline into a space).
+    function overviewCardRowTip(label, rule, items, oneOwner) {
+      const where = overviewCardWhereLine(items, oneOwner);
+      return [overviewCardRuleTip(label, rule)].concat(where ? [where] : [], overviewCardSharedLines(items));
+    }
+
     // The card legend in plot order, in two sections. The first is the Your
     // turn group (card_group your-turn), headed and totalled with the group's
     // label, "Needs a person": that heading, its bands as plain rows, then a
@@ -893,7 +968,8 @@
       const todoLabel = (groups.get(todoGroup) || {}).label || 'Needs a person';
       const rows = [{ type: 'section', label: todoLabel }];
       todo.forEach(s => rows.push({ type: 'plain', slice: s }));
-      rows.push({ type: 'subtotal', key: todoGroup, groups: [todoGroup], label: todoLabel, rule: (groups.get(todoGroup) || {}).rule || '', count: sum(todo), className: 'overview-card-group-' + todoGroup });
+      const itemsOf = list => list.reduce((all, p) => all.concat(p.items || []), []);
+      rows.push({ type: 'subtotal', key: todoGroup, groups: [todoGroup], label: todoLabel, rule: (groups.get(todoGroup) || {}).rule || '', count: sum(todo), items: itemsOf(todo), className: 'overview-card-group-' + todoGroup });
       rows.push({ type: 'section', label: 'Status', note: 'nothing for a person to do' });
       const done = new Set();
       status.forEach(s => {
@@ -902,17 +978,20 @@
         done.add(s.group);
         const parts = status.filter(p => p.group === s.group);
         const g = groups.get(s.group) || {};
-        rows.push({ type: 'head', key: s.group, label: g.label || s.group, rule: g.rule || '', count: sum(parts), className: 'overview-card-group-' + s.group });
+        rows.push({ type: 'head', key: s.group, label: g.label || s.group, rule: g.rule || '', count: sum(parts), items: itemsOf(parts), className: 'overview-card-group-' + s.group });
         parts.forEach(p => rows.push({ type: 'part', slice: p }));
       });
-      rows.push({ type: 'subtotal', key: '', groups: [...new Set(status.map(s => s.group).filter(Boolean))], label: 'Status', rule: 'Nothing for a person to do. Someone else or the hive has the next move, or the item is not work.', count: sum(status), className: '' });
+      rows.push({ type: 'subtotal', key: '', groups: [...new Set(status.map(s => s.group).filter(Boolean))], label: 'Status', rule: 'Nothing for a person to do. Someone else or the hive has the next move, or the item is not work.', count: sum(status), items: itemsOf(status), className: '' });
       return rows;
     }
 
     // Every band and group row keeps its download button and its plain-words
-    // rule as the tooltip. Zero bands stay listed but dimmed, except the keep
-    // bands (Queued for agents, Unexplained), which stay at full strength, and
-    // Held, which is hidden at zero; a group or subtotal row never dims.
+    // rule as the tooltip; the tooltip then says where the row's items are
+    // and what several of them share (overviewCardRowTip; a group or
+    // subtotal row reads the items of its bands). Zero bands stay listed but
+    // dimmed, except the keep bands (Queued for agents, Unexplained), which
+    // stay at full strength, and Held, which is hidden at zero; a group or
+    // subtotal row never dims.
     // Section headings are role=heading level 4 under the chart title (level
     // 3). The Needs a person subtotal opens and exports the Your turn group,
     // as its group row did; the Status subtotal exports card_group=<every
@@ -923,6 +1002,9 @@
       const total = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
       if (!total) return '<div class="overview-empty">Nothing open here; the hive is caught up</div>';
       const format = ((state && state.exportFormat) || 'csv').toUpperCase();
+      // One owner test for the whole donut, so a repo reads the same in
+      // every row's Where line.
+      const oneOwner = overviewCardOneOwner((slices || []).reduce((all, s) => all.concat(s.items || []), []));
       return overviewCardLegendRows(slices).map(row => {
         if (row.type === 'section') {
           // The comma is for screen readers: "Status, nothing for a person to do".
@@ -949,7 +1031,8 @@
         const action = s.key ? ` data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1"` : '';
         const swatch = s.className ? `<span class="overview-chart-swatch ${esc(s.className)}"></span>` : '<span class="overview-chart-swatch overview-chart-swatch-none" aria-hidden="true"></span>';
         const spoken = subtotal ? '<span class="overview-chart-legend-sr"> total</span>' : '';
-        return `<div class="${classes.join(' ')}"${action} title="${esc(overviewCardRuleTip(s.label, s.rule))}">${swatch}<span class="overview-chart-legend-label">${esc(s.label)}</span>${spoken}<span class="overview-chart-legend-count">${esc(overviewSliceLabel(count, percentLabel, state))}</span>${download}</div>`;
+        const tip = overviewCardRowTip(s.label, s.rule, s.items, oneOwner).map(esc).join('&#10;');
+        return `<div class="${classes.join(' ')}"${action} title="${tip}">${swatch}<span class="overview-chart-legend-label">${esc(s.label)}</span>${spoken}<span class="overview-chart-legend-count">${esc(overviewSliceLabel(count, percentLabel, state))}</span>${download}</div>`;
       }).join('');
     }
 
