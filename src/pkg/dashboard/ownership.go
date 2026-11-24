@@ -651,7 +651,7 @@ func decideIssueOwnership(in issueOwnershipInput, env ownershipEnv) Ownership {
 	// (6b) a maintainer's comment that is still the newest from a person
 	// waits on whoever it asked (projectbluefin/server#655 and #679 sat
 	// in Admit after a maintainer had asked others for a fix or a design
-	// decision). The card's cardIssueWaitingCause calls the same helpers.
+	// decision). The Overview card derives its waiting cause from the same helpers.
 	if in.bucket == repoWorkBucketReporterTriage {
 		if reporterTriageOpenForDiscussion(labels) {
 			return yourTurn(OwnershipReasonOpenForDiscussion, "Design proposal open for discussion: decide or close")
