@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -48,6 +49,10 @@ type cardStash struct {
 	// capped is set when the ladder's bound may have cut the queue or the
 	// withheld list: rows past it have no verdict.
 	capped bool
+	// churnMerged holds, per merged pull request behind an issue_churn
+	// verdict (cardStashKey of the PR), what the merged ledger lists for
+	// it (addChurnMerged).
+	churnMerged map[string]MergedLedgerEntry
 	// builtAt is when the published snapshot's rows were built; stages are
 	// the stage records copied for them.
 	builtAt time.Time
@@ -126,6 +131,35 @@ func (st *cardStash) addAdmission(snap queueAdmissionSnapshot, seq int64, at tim
 	// The collector stops at the limit without saying whether more were
 	// refused, so a full list counts as capped.
 	st.capped = snap.offerableTotal > readyQueueDefaultLimit || len(snap.withheld) >= readyQueueDefaultLimit
+}
+
+// addChurnMerged copies, for each merged pull request behind an
+// issue_churn verdict, the merged ledger's entry (title, link, merge time),
+// so the card can name it without a forge call. entry is the ledger's
+// Entry, which takes the ledger's lock, so UpdateStatusIfFresh calls this
+// beside addAdmission, outside statusMu. It changes no verdict.
+func (st *cardStash) addChurnMerged(entry func(repo string, number int) (MergedLedgerEntry, bool)) {
+	if st == nil || entry == nil {
+		return
+	}
+	for _, item := range st.withheld {
+		if item.Reason != contributorAdmissionReasonIssueChurn {
+			continue
+		}
+		for _, pr := range cardChurnPRs(item, item.Repo, nil) {
+			if pr.State != github.PRStateMerged {
+				continue
+			}
+			e, ok := entry(pr.Repo, pr.Number)
+			if !ok {
+				continue
+			}
+			if st.churnMerged == nil {
+				st.churnMerged = map[string]MergedLedgerEntry{}
+			}
+			st.churnMerged[cardStashKey(pr.Repo, pr.Number)] = e
+		}
+	}
 }
 
 // cardAdmissionKey keys a queue or withheld row: its canonical key when it

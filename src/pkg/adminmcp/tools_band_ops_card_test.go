@@ -1,6 +1,7 @@
 package adminmcp
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -172,5 +173,69 @@ func TestBandReadResultCardFilterReturnsADuplicateOnce(t *testing.T) {
 	}
 	if all, _ := BandReadResult(ToolIssuesByBand, sampleOverviewCardResponse(), map[string]any{}); len(all.(map[string]any)["rows"].([]any)) != 4 {
 		t.Fatal("without a card filter every row stays")
+	}
+}
+
+// An issue churn row's card_churn_prs (the issue export's list of the pull
+// requests behind it) reaches issues_by_band unchanged, through the
+// card_band filter and the limit cap, and survives the JSON round trip.
+func TestBandReadResultKeepsIssueChurnPRs(t *testing.T) {
+	const export = `{"kind":"issues","bands":[{"key":"ready","label":"Unclaimed","count":2}],
+		"card_bands":[{"key":"triage","count":1},{"key":"queued","count":1}],
+		"rows":[
+			{"number":40,"repo":"octo/demo","band":"Unclaimed","card_band":"triage","card_group":"your-turn","card_reason_code":"verdict:issue_churn",
+			 "card_reason":"2 PRs merged (#1236, #1240), 1 closed unmerged (#1251) and it is still open; say what is left, or add hive: churn-triaged.",
+			 "card_churn_prs":[
+				{"repo":"octo/demo","number":1236,"state":"merged","title":"First slice","url":"https://github.com/octo/demo/pull/1236","merged_at":"2026-11-21T17:00:00Z"},
+				{"repo":"octo/demo","number":1240,"state":"merged","url":"https://github.com/octo/demo/pull/1240"},
+				{"repo":"octo/demo","number":1251,"state":"closed","url":"https://github.com/octo/demo/pull/1251"}]},
+			{"number":41,"repo":"octo/demo","band":"Unclaimed","card_band":"queued","card_group":"actionable-now","card_churn_prs":[]}]}`
+	var data any
+	if err := json.Unmarshal([]byte(export), &data); err != nil {
+		t.Fatal(err)
+	}
+	out, err := BandReadResult(ToolIssuesByBand, data, map[string]any{"card_band": "triage", "limit": float64(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Rows []struct {
+			Number       int    `json:"number"`
+			CardReason   string `json:"card_reason"`
+			CardChurnPRs []struct {
+				Repo     string `json:"repo"`
+				Number   int    `json:"number"`
+				State    string `json:"state"`
+				Title    string `json:"title"`
+				URL      string `json:"url"`
+				MergedAt string `json:"merged_at"`
+			} `json:"card_churn_prs"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatal(err)
+	}
+	if len(body.Rows) != 1 || body.Rows[0].Number != 40 {
+		t.Fatalf("rows = %+v, want the churn row only", body.Rows)
+	}
+	prs := body.Rows[0].CardChurnPRs
+	if len(prs) != 3 || prs[0].Number != 1236 || prs[0].State != "merged" || prs[0].Title != "First slice" ||
+		prs[0].URL != "https://github.com/octo/demo/pull/1236" || prs[0].MergedAt != "2026-11-21T17:00:00Z" ||
+		prs[2].Number != 1251 || prs[2].State != "closed" || prs[2].Title != "" {
+		t.Errorf("card_churn_prs = %+v", prs)
+	}
+	if !strings.Contains(body.Rows[0].CardReason, "(#1236, #1240)") {
+		t.Errorf("card_reason = %q", body.Rows[0].CardReason)
+	}
+	for _, tool := range Tools() {
+		if name, _ := tool["name"].(string); name == ToolIssuesByBand {
+			if desc, _ := tool["description"].(string); !strings.Contains(desc, "card_churn_prs") {
+				t.Errorf("issues_by_band description does not name card_churn_prs: %q", desc)
+			}
+		}
 	}
 }
