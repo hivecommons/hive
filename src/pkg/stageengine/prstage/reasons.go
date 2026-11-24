@@ -11,6 +11,16 @@ import (
 const SupersessionPendingLabel = "hive/supersession-pending"
 const ReasonSupersessionPending = "supersession-decision-pending"
 
+// StageLaneWorkflow records the open PRs of a repository bound to a
+// rules-mode workflow model that no auto-merge lane listed this pass
+// (auto-merge off, below ACMM L6): the model's rules derive their stage, so
+// the stage pass must see them (hivecommons/hive#19768). Its reason,
+// StageReasonWorkflowModel, is a hand-off: the lane has no built-in opinion.
+const (
+	StageLaneWorkflow        = "workflow-model"
+	StageReasonWorkflowModel = "workflow-model"
+)
+
 // Lane reasons are shared by the producers and the stage classifier.
 const (
 	ReviewGateOutcomeAwaiting             = "awaiting-review-approval"

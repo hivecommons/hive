@@ -191,6 +191,49 @@ project:
       forge_url: https://codeberg.org
 ```
 
+### Forgejo git credentials: one short-lived token per tier
+
+Git clone and push on a Forgejo repo send a token only to that repo's forge
+host. By default the token is the `forgejo.token_env` access token, the one
+every agent tier shares, and it never expires. Set `forgejo.integration` to
+have hive sign a one-hour JWT for each push and clone instead. Forgejo's
+authorized integrations accept these tokens, and each tier gets its own
+integration, the Forgejo analogue of a GitHub App installation token:
+
+```yaml
+forgejo:
+  forgejo_url: https://forgejo.example.com
+  integration:
+    issuer: https://keys.example.com      # https origin serving the key list
+    key_file: /etc/hive/forgejo-jwt.pem   # RSA key, mode 0600/0400, or 0440 group hive-launch
+    audiences:                            # token tier -> integration audience
+      contributor: "<audience>"
+      advisor: "<audience>"
+```
+
+1. Generate the RSA key (2048 bits or more), and publish the two files that
+   `hive forge key-list --issuer https://keys.example.com --key /etc/hive/forgejo-jwt.pem --out DIR`
+   writes at the issuer, over https.
+2. For each tier, run
+   `forgejo admin user create-authorized-integration --issuer https://keys.example.com --scope <scope> --repo <owner/repo> --claim-eq sub=hive:<tier>`.
+   Pass `--scope` and `--repo` explicitly, because both default to `all`.
+3. Copy each integration's audience under `audiences`, keyed by tier.
+
+A tier with no audience gets the closest less-privileged tier that has one,
+and never a more-privileged one. A tier with none cannot clone or push. The
+`sub` claim is `hive:<tier>`, so a token minted for one tier is refused by
+every other tier's integration.
+
+The key file must be owner-only (0600 or 0400), or group-readable only by
+`hive-launch` (GID 1002, the pod `fsGroup`), which is how a Kubernetes Secret
+mounted at `/secrets` with `defaultMode: 0440` presents it. hive refuses a
+group-readable key under any other group, because agent UIDs share group
+`node` (GID 1000), and refuses any key that others can read. A key kept under
+`/data/secrets` is sealed in place by the keystore at boot and still loads
+afterwards. The key file is read at every mint, so
+replacing it rotates the key; list the old and new key in the key list while
+the change rolls out.
+
 ### Do not confuse `project.forge` with `github.forge`
 
 Two unrelated settings share the word "forge", and mixing them up is the most
