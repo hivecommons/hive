@@ -248,16 +248,18 @@ const (
 	cardWaitBlockedBy       = "blocked_by"
 	cardWaitAdjudicator     = "adjudicator"
 	cardWaitAnswered        = "answered"
+	cardWaitMaintainerReply = "maintainer_reply"
 )
 
 // cardIssueWaitingCause copies the order of the waiting returns in
 // decideIssueOwnership (ownership.go) and blockedIssueOwnership
 // (ownership_gates.go): a person's hold or the dashboard pause, an open PR
 // that covers the issue, a decision park a hive PR closes, a decision park
-// another decision blocks, the reporter's confirmation, an issue-filter row
-// a PR closes, and a blocked issue with an open blocked-by link. "" means
-// none of them matches.
-func cardIssueWaitingCause(row cardIssueRow, parking string) string {
+// another decision blocks, an untrusted reporter's issue a maintainer
+// replied on last, the reporter's confirmation, an issue-filter row a PR
+// closes, and a blocked issue with an open blocked-by link. "" means none
+// of them matches.
+func cardIssueWaitingCause(row cardIssueRow, parking string, in cardInputs) string {
 	labels := labelSet(row.labels())
 	if row.held && holdSourcesHide(row.holdSources) {
 		return cardWaitHold
@@ -274,6 +276,9 @@ func cardIssueWaitingCause(row cardIssueRow, parking string) string {
 		}
 		return ""
 	}
+	if row.bucket() == repoWorkBucketReporterTriage && maintainerReplyWaitReason(labels, row.work.Author, row.work.LatestPersonComment, cardStaleDays(in.cfg), in.now) != "" {
+		return cardWaitMaintainerReply
+	}
 	if labels[ownershipLabelReporterConfirmation] || (row.bucket() == repoWorkBucketFiltered && row.bucketReason() == ownershipLabelReporterConfirmation) ||
 		(row.reporterGate() && ownershipLikelyDone(labels)) {
 		return cardWaitReporter
@@ -285,6 +290,15 @@ func cardIssueWaitingCause(row cardIssueRow, parking string) string {
 		return cardWaitBlockedBy
 	}
 	return ""
+}
+
+// cardStaleDays is the stale period the your-turn decision reads
+// (ownershipEnv.staleDaysOrDefault, set in newOwnershipEnv).
+func cardStaleDays(cfg *config.Config) int {
+	if cfg != nil && cfg.Dashboard.IssueBands.StaleDays > 0 {
+		return cfg.Dashboard.IssueBands.StaleDays
+	}
+	return defaultStaleDays
 }
 
 // cardPRWaitingCause copies the waiting returns of decidePROwnership

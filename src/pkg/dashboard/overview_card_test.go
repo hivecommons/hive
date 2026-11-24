@@ -742,7 +742,7 @@ func TestCardIssueWaitingReturnsAreCounted(t *testing.T) {
 		file, fn string
 		want     int
 	}{
-		{"ownership.go", "decideIssueOwnership", 6},
+		{"ownership.go", "decideIssueOwnership", 7},
 		{"ownership_gates.go", "blockedIssueOwnership", 1},
 	} {
 		data, err := os.ReadFile(tc.file)

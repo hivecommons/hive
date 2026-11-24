@@ -179,6 +179,9 @@ func TestCardIssueWaitingCauseMatchesTheOwnershipDecision(t *testing.T) {
 	linked.LinkedPRs = []github.IssueLinkedPR{{Number: 30, State: "open"}}
 	blocked := cardIssue(8, blockedWorkflowLabel)
 	blocked.DependsOn = []github.IssueDependency{{Key: "octo/demo#80"}}
+	maintainerReply := &github.IssuePersonComment{Login: "maintainer", AuthorAssociation: "MEMBER", CreatedAt: cardTestNow.Add(-time.Hour), Mentions: []string{"jeefy"}}
+	replied := cardWork(9, repoWorkBucketReporterTriage, "Awaiting maintainer triage label")
+	replied.Author, replied.LatestPersonComment = "reporter", maintainerReply
 	cases := []struct {
 		name string
 		in   issueOwnershipInput
@@ -217,13 +220,17 @@ func TestCardIssueWaitingCauseMatchesTheOwnershipDecision(t *testing.T) {
 			issueOwnershipInput{repo: cardTestRepo, number: 8, labels: []string{blockedWorkflowLabel}, actionable: true, openBlockers: blocked.OpenBlockers()},
 			cardIssueRow{repoFull: cardTestRepo, issue: blocked},
 			cardWaitBlockedBy},
+		{"untrusted reporter's issue a maintainer replied on last",
+			issueOwnershipInput{repo: cardTestRepo, number: 9, bucket: repoWorkBucketReporterTriage, author: "reporter", latestPersonComment: maintainerReply},
+			cardIssueRow{repoFull: cardTestRepo, work: replied, nonActionable: true},
+			cardWaitMaintainerReply},
 	}
 	for _, tc := range cases {
 		o := decideIssueOwnershipGated(tc.in, env)
 		if !o.WaitingElsewhere {
 			t.Fatalf("%s: the fixture does not wait in ownership (%+v)", tc.name, o)
 		}
-		if got := cardIssueWaitingCause(tc.row, cardIssueParking(tc.row, nil)); got != tc.want {
+		if got := cardIssueWaitingCause(tc.row, cardIssueParking(tc.row, nil), cardTestInputs(nil)); got != tc.want {
 			t.Errorf("%s: card cause %q, want %q", tc.name, got, tc.want)
 		}
 	}
