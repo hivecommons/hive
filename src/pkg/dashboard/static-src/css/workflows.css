@@ -9,6 +9,8 @@
     .wf-enabled-toggle { margin: var(--sp-3) 0 var(--sp-1); }
     .wf-enabled-toggle .config-toggle-label { font-weight: 700; }
     .wf-enabled-explain { margin: 0 0 var(--sp-4); max-width: 60em; }
+    .wf-repo-binding { min-width: 0; max-width: 100%; }
+    .wf-repo-select { min-width: 0; max-width: min(100%, 32em); text-overflow: ellipsis; }
     .wf-derivation-off { color: var(--status-warn); }
     .wf-dispatch-gap { color: var(--status-warn); white-space: normal; }
     .wf-prov, .wf-compiled { display: inline-block; border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; border: var(--line-width) solid var(--border); color: var(--muted); }
