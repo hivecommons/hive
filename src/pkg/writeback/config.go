@@ -142,6 +142,7 @@ type Config struct {
 	PerRepo     map[string]RepoOverride       `yaml:"per_repo,omitempty" json:"per_repo,omitempty"`
 	Kinds       map[string]KindPolicyOverride `yaml:"kinds,omitempty" json:"kinds,omitempty"`
 	Dedupe      DedupeConfig                  `yaml:"dedupe,omitempty" json:"dedupe,omitzero"`
+	repoOwner   string
 }
 
 // MinLevelOrDefault resolves unsolicited.min_level.
@@ -162,20 +163,62 @@ func (c Config) BackfillEnabled() bool {
 	return c.Unsolicited.Backfill != nil && *c.Unsolicited.Backfill
 }
 
-// RepoModeFor returns the per-repo override for repo (any case, bare or
-// owner-qualified key match) or RepoModeDefault.
+// WithRepoOwner resolves bare repo lookups in the context of the live project.
+// Existing bare config keys still act as fallbacks for any owner.
+func (c Config) WithRepoOwner(owner string) Config {
+	c.repoOwner = repoKey(owner)
+	return c
+}
+
+// RepoModeFor prefers an exact key, including an explicit default, over a
+// legacy bare or owner-qualified fallback.
 func (c Config) RepoModeFor(repo string) RepoMode {
-	want := strings.ToLower(strings.TrimSpace(repo))
+	want := repoKey(repo)
 	if want == "" {
 		return RepoModeDefault
 	}
-	for key, ov := range c.PerRepo {
-		k := strings.ToLower(strings.TrimSpace(key))
-		if k == want || strings.HasSuffix(want, "/"+k) || strings.HasSuffix(k, "/"+want) {
-			return ov.Mode
+	if c.repoOwner != "" && !strings.Contains(want, "/") {
+		want = c.repoOwner + "/" + want
+	}
+	if override, ok := c.PerRepo[want]; ok {
+		return override.Mode
+	}
+	var exact, fallback string
+	for key := range c.PerRepo {
+		k := repoKey(key)
+		if k == want {
+			if exact == "" || key < exact {
+				exact = key
+			}
+		} else if strings.HasSuffix(want, "/"+k) || strings.HasSuffix(k, "/"+want) {
+			if fallback == "" || key < fallback {
+				fallback = key
+			}
 		}
 	}
-	return RepoModeDefault
+	if exact != "" {
+		return c.PerRepo[exact].Mode
+	}
+	return c.PerRepo[fallback].Mode
+}
+
+// SetRepoMode replaces only the selected repository's override. A default
+// must shadow an inherited mode without removing the fallback for other repos.
+func (c *Config) SetRepoMode(repo string, mode RepoMode) {
+	target := repoKey(repo)
+	perRepo := make(map[string]RepoOverride, len(c.PerRepo)+1)
+	for key, override := range c.PerRepo {
+		if repoKey(key) != target {
+			perRepo[key] = override
+		}
+	}
+	c.PerRepo = perRepo
+	if mode != RepoModeDefault || c.RepoModeFor(target) != RepoModeDefault {
+		perRepo[target] = RepoOverride{Mode: mode}
+	}
+	if len(perRepo) == 0 {
+		c.PerRepo = nil
+	}
 }
 
 // Policy resolves the effective policy for kind: the default matrix with

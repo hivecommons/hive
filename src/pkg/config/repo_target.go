@@ -7,6 +7,14 @@ import (
 
 const repoTargetFixCTA = "Fix in Settings → Repos."
 
+// SetProjectOrg keeps owner changes synchronized with config saves and
+// write-back lookups.
+func (c *Config) SetProjectOrg(org string) {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	c.Project.Org = org
+}
+
 // RepoTargetIssue is the operator-facing validation result for project.org,
 // project.repos, and project.primary_repo. It is safe to expose in API errors,
 // dashboard status payloads, logs, and hub heartbeat state.

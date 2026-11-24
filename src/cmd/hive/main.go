@@ -4024,7 +4024,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		prevGitHub := b.cfg.GitHub
 
 		// Swap the in-memory config pointer contents
-		*b.cfg = *newCfg
+		b.cfg.ReplaceFromReload(newCfg)
 		nextACMMLevel = b.cfg.ACMMLevelOrZero()
 
 		// Re-sync subsystems that cache config values
@@ -5914,7 +5914,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					"was_org", b.cfg.Project.Org, "now_org", pc.Org,
 					"repos", pc.Repos, "primary_repo", pc.PrimaryRepo,
 					"acmm_level", pc.ACMMLevel)
-				b.cfg.Project.Org = pc.Org
+				b.cfg.SetProjectOrg(pc.Org)
 				b.cfg.Project.Repos = pc.Repos
 				b.cfg.Project.PrimaryRepo = pc.PrimaryRepo
 				// Only adopt a non-empty author. The hub echoes this struct back on

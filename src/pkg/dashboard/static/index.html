@@ -35120,18 +35120,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const opts = [''].concat(REPO_WRITEBACK_MODES).map(m => `<option value="${esc(m)}" ${m === mode ? 'selected' : ''}>${esc(m || 'default')}</option>`).join('');
       return chip + `<select class="repo-writeback-select" data-change-action="setRepoWritebackMode" data-arg0="${esc(repo)}" data-arg-types="s,v,t" data-stop="1" aria-label="${esc('Write-back mode for ' + repo)}" title="${esc(tip)}">${opts}</select>`;
     }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(() => {
+      if (window._lastStatus) renderRepos(window._lastStatus.repos || []);
+    });
     async function setRepoWritebackMode(repo, mode, sel) {
       if (sel && sel.dataset.busy === '1') return;
       const st = repoWritebackState(repo, window._lastStatus || {});
-      const perRepo = {};
-      if (st && st.status && st.status.repos) {
-        for (const k of Object.keys(st.status.repos)) { const m = st.status.repos[k] && st.status.repos[k].mode; if (m) perRepo[k] = m; }
-      }
-      for (const k of Object.keys(perRepo)) { if (k.toLowerCase() === String(repo).toLowerCase()) delete perRepo[k]; }
-      if (mode) perRepo[repo] = mode;
       if (sel) sel.dataset.busy = '1';
       try {
-        const resp = await fetch('/api/config/governor/features', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writebackPerRepo: perRepo }) });
+        const resp = await fetch('/api/config/governor/features', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writebackRepo: { repo, mode } }) });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         showToast('Write-back for ' + repo + ': ' + (mode || 'default'), 'success');
@@ -81990,7 +81987,6 @@ function burnAreaChart() {
       f = f || {}; platformDefaults = platformDefaults || {};
       const defMin = platformDefaults.writebackMinLevel || 5;
       const optIn = (f.writebackOptInLabels || []).join(', ') || 'hive-review';
-      const modes = f.writebackRepoModes || ['off', 'issues-only', 'labels-only', 'full'];
       const perRepo = f.writebackPerRepo || {};
       const perRepoText = Object.keys(perRepo).sort().map(r => r + '=' + perRepo[r]).join('\n');
       const matrix = f.writebackKindMatrix || [];
@@ -82016,7 +82012,7 @@ function burnAreaChart() {
           </div>
           <div class="config-toggle" data-setting-key="writeback.unsolicited.require_labels"><div class="config-toggle-switch ${f.writebackRequireLabels !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="writebackRequireLabels"></div><span class="config-toggle-label">Only PRs carrying the review opt-in label ${settingHelpMark('settings', 'features', 'Write-back requires opt-in label', `When on (default), unsolicited write-backs on a foreign PR also need the review opt-in label (${esc(optIn)}, from review.require_labels). Turning it off lets each kind's level floor alone decide.`)}</span></div>
           <div class="config-toggle" data-setting-key="writeback.unsolicited.backfill"><div class="config-toggle-switch ${f.writebackBackfill ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="writebackBackfill"></div><span class="config-toggle-label">Backfill pre-existing items ${settingHelpMark('settings', 'features', 'Write-back backfill', `Off (default): when hive first sees a repo, or first gains write access to one, PRs and issues created before that moment are never written to unsolicited. On: process them like new items.`)}</span></div>
-          <div class="config-field"><label>Per-repo mode ${yamlHint('writeback.per_repo')} ${settingHelpMark('settings', 'features', 'Write-back per-repo mode', `One <code>owner/name=mode</code> per line. Modes: ${esc(modes.join(', '))}. <code>off</code> writes nothing unsolicited there; <code>issues-only</code> allows only hive-filed issues (e.g. a repo listed so the deps agent can file regressions); <code>labels-only</code> allows labels but no comments; <code>full</code> skips the level and label gates for that repo. Empty lines clear.`)}</label><textarea rows="3" spellcheck="false" data-setting-key="writeback.per_repo.<key>.mode" placeholder="torch-spyre/torch-spyre=issues-only" data-change-action="markDirtyWritebackPerRepo" data-arg-types="v">${esc(perRepoText)}</textarea></div>
+          <div class="config-field"><label>Per-repo mode ${yamlHint('writeback.per_repo')} ${settingHelpMark('settings', 'features', 'Write-back per-repo mode', `One <code>owner/name=mode</code> per line. <code>default</code> uses the per-kind policy for that repo, even if it inherits a bare-name override. <code>off</code> writes nothing unsolicited there; <code>issues-only</code> allows only hive-filed issues (e.g. a repo listed so the deps agent can file regressions); <code>labels-only</code> allows labels but no comments; <code>full</code> skips the level and label gates for that repo. Empty lines clear.`)}</label><textarea rows="3" spellcheck="false" data-setting-key="writeback.per_repo.<key>.mode" placeholder="torch-spyre/torch-spyre=issues-only" data-change-action="markDirtyWritebackPerRepo" data-arg-types="v">${esc(perRepoText)}</textarea></div>
           <details class="config-field"><summary>Per-kind matrix ${yamlHint('writeback.kinds.<kind>.{min_level,require_label}')} ${settingHelpMark('settings', 'features', 'Write-back per-kind matrix', `What hive will say on GitHub at each ACMM level. Each kind has a minimum level and whether the opt-in label is required; leave a cell empty to keep the default shown as placeholder.`)}</summary>
             <table class="qa-table" id="wb-kind-table"><thead><tr><th>Kind</th><th>Scope</th><th>Min level</th><th>Opt-in label</th></tr></thead><tbody>${rows}</tbody></table>
           </details>

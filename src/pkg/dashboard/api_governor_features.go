@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -170,6 +171,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		featuresOpsBody
 		featuresPlatformBody
+		featuresWritebackBody
 		featuresRunsBody
 		featuresAskBody
 		featuresEnrichmentBody
@@ -292,6 +294,11 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	applyPlatform, err := body.featuresPlatformBody.prepare()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	editWriteback, err := body.featuresWritebackBody.prepare()
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -480,12 +487,23 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		cfg.Governor.Rotation.AgentTiers = *body.RotationAgents
 	}
 
-	if err := s.saveConfig(); err != nil {
+	if editWriteback != nil {
+		err := s.saveConfigWith(func() error { return cfg.SaveWritebackEdit(editWriteback) })
+		if err != nil {
+			s.logger.Error("failed to persist write-back settings", "error", err)
+			if errors.Is(err, config.ErrConfigChangedOnDisk) {
+				jsonError(w, "Configuration changed on disk. Refresh and try again.", http.StatusConflict)
+			} else {
+				jsonError(w, "Could not persist write-back settings.", http.StatusInternalServerError)
+			}
+			return
+		}
+	} else if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after features update", "error", err)
 	}
 	s.auditFromRequest(r, "config_governor_features", auditDetail("section", "features"), "")
-	s.refreshAndPersist()
-	okResponse(w, map[string]string{"status": "updated"})
+	floor := s.refreshAndPersistSeq()
+	jsonResponse(w, map[string]any{"ok": true, "status": "updated", "minStatusSeq": floor})
 }
 
 // applyClaimsTTLs sets each claim lifetime the request carried.
