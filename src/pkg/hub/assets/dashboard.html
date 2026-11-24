@@ -2789,7 +2789,8 @@
     }
 
     /* ---- Clickable user avatars ---------------------------------------
-       Every face in this dashboard is a link to that person's GitHub profile.
+       Every GitHub face in this dashboard is a link to that person's GitHub
+       profile. A face from another identity provider has no link.
        The avatar IS the affordance: a separate ↗ glyph or a separately-linked
        username next to it was two controls for one destination, so those are
        gone and the picture carries the click.
@@ -3662,20 +3663,24 @@
       }
       return lines.join('\n');
     }
-    function inlineAccessAvatar(a) {
+    function accessFace(a, px, label, extraStyle) {
       var uname = String(a.username || '');
-      var role = String(a.role || '');
-      var provider = a.provider || identityProviderFromKey(uname);
-      var extraStyle = 'border:1px solid ' + accessRoleColor(role) + ';background:var(--surface);flex:0 0 auto';
       // A non-GitHub key (ibmid/google/microsoft) has no github.com profile to
       // link to — linkedAvatar would build a 404'ing image and a link to
       // someone else's account by coincidence of URL-shape. userAvatar uses
       // the provider-stored avatar_url when present, else initials derived
       // from the real display label (never from the opaque provider:sub key).
-      var avatar = provider === 'github'
-        ? linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), extraStyle)
+      return (a.provider || identityProviderFromKey(uname)) === 'github'
+        ? linkedAvatar(uname, px, label, extraStyle)
         : userAvatar({display_name: a.display_label, avatar_url: a.avatar_url, github_username: uname},
-            INLINE_ACCESS_AVATAR_PX, extraStyle);
+            px, extraStyle);
+    }
+    function inlineAccessAvatar(a) {
+      var uname = String(a.username || '');
+      var role = String(a.role || '');
+      var provider = a.provider || identityProviderFromKey(uname);
+      var extraStyle = 'border:1px solid ' + accessRoleColor(role) + ';background:var(--surface);flex:0 0 auto';
+      var avatar = accessFace(a, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), extraStyle);
       if (provider === 'github') return avatar;
       // userAvatar returns a bare <img> with no title/tooltip and no profile
       // link (there is none to link to) — wrap it so the same rich tooltip
@@ -4401,8 +4406,7 @@
            TestSingleHoverPanelInvariant), not that the panel's contents are
            tooltip-free. */
         return '<div style="display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-1) var(--sp-0)">' +
-          linkedAvatar(a.username, PANEL_ACCESS_AVATAR_PX,
-            accessAvatarTitle(a), 'flex:0 0 auto') +
+          accessFace(a, PANEL_ACCESS_AVATAR_PX, accessAvatarTitle(a), 'flex:0 0 auto') +
           '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(a.username) + '</span>' +
           '<span style="color:' + rc + ';font-size:var(--fs-2xs);font-weight:600;white-space:nowrap">' + esc(a.role) + '</span>' +
           '</div>';
@@ -4731,6 +4735,21 @@
       }
     }
 
+    /* The viewer's own face links to their own profile, like every other
+       GitHub face in the dashboard. avatar_url comes from the auth payload (it
+       is GitHub's CDN URL, not derivable from the login), so this one builds
+       its <img> directly rather than via avatarImg — but the anchor, the
+       role tooltip, and the initials fallback on load failure are shared.
+       NAV_AVATAR_PX mirrors the .nav-avatar CSS rule's fixed 28px size, so
+       the fallback SVG matches the box it is replacing. Any other viewer
+       gets the <img> with no anchor, because their login is a display name
+       or an email, not a GitHub account. */
+    function navAvatarHTML(data, label) {
+      var img = '<img src="' + escAttr(data.avatar_url) + '" class="nav-avatar" alt="" ' +
+        'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(data.login, NAV_AVATAR_PX)) + '">';
+      return data.provider === 'github' ? avatarProfileLink(data.login, label, img) : img;
+    }
+
     async function loadUser() {
       try {
         var resp = await fetch('/api/auth/user');
@@ -4751,17 +4770,8 @@
              normalizes to '' and renders the empty ＋ control. */
           _myCountry = normalizeCountryCode(data.country);
           var roleText = data.hub_admin ? 'Hub Admin' : 'User';
-          /* The viewer's own face links to their own profile, like every other
-             face in the dashboard. avatar_url comes from the auth payload (it is
-             GitHub's CDN URL, not derivable from the login), so this one builds
-             its <img> directly rather than via avatarImg — but the anchor, the
-             role tooltip, and the initials fallback on load failure are shared.
-             NAV_AVATAR_PX mirrors the .nav-avatar CSS rule's fixed 28px size, so
-             the fallback SVG matches the box it is replacing. */
           document.getElementById('nav-user').innerHTML =
-            avatarProfileLink(data.login, String(data.login || '') + ' — ' + roleText,
-              '<img src="' + escAttr(data.avatar_url) + '" class="nav-avatar" alt="" ' +
-              'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(data.login, NAV_AVATAR_PX)) + '">') +
+            navAvatarHTML(data, String(data.login || '') + ' — ' + roleText) +
             /* The viewer's country, immediately after their face — and, unlike
                every other flag in the dashboard, CLICKABLE, because this is the
                viewer's own record. Wrapped in a stable #nav-country host so a

@@ -27,13 +27,18 @@ import (
 // rather than silently testing the wrong text.
 func jsFunc(t *testing.T, name string) string {
 	t.Helper()
-	re := regexp.MustCompile(`(?m)^ {4}function ` + regexp.QuoteMeta(name) + `\s*\(`)
-	loc := re.FindStringIndex(dashboardHTML)
+	return jsFuncIn(t, dashboardHTML, "    ", name)
+}
+
+func jsFuncIn(t *testing.T, page, indent, name string) string {
+	t.Helper()
+	re := regexp.MustCompile(`(?m)^` + indent + `function ` + regexp.QuoteMeta(name) + `\s*\(`)
+	loc := re.FindStringIndex(page)
 	if loc == nil {
-		t.Fatalf("function %s not found in dashboardHTML — the predicate under test "+
+		t.Fatalf("function %s not found in the page source — the predicate under test "+
 			"was renamed or removed; update this test deliberately, do not delete it", name)
 	}
-	src := dashboardHTML[loc[0]:]
+	src := page[loc[0]:]
 	// Advance to the body's opening brace, then match to its close.
 	open := strings.Index(src, "{")
 	if open < 0 {
