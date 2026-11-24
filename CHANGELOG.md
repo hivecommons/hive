@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v6.61.4)
+
+### Changed
+
+- **Overview card: "Other" and "Unexplained" no longer read as the same thing.** The Needs a person band "Other" is now **Other reason**: a person is needed for a known reason that has no band of its own, and the export's `card_reason` names it. "Unexplained" is now **No rule matched (hive bug)**: no rule explains what happens next for the item, which is a hive bug that should be 0 and should be reported. In the band legend that row now sits after the Needs a person total with a muted "should be 0" note, and is marked as a warning when it is above 0, so it no longer looks like one of the to-dos; it still counts in the Needs a person total and tile, and stays listed at 0. The band keys (`your-turn-other`, `unexplained`), filters, CSV columns and the donut's slice order are unchanged; the labels and rules in `card_bands[]`, and the Your turn group rule in `card_groups[]`, carry the new words.
+
+### Fixed
+
+- **Overview card: an issue several pull requests have not settled is Check if finished, not Yours to close.** The contributor queue withholds such an issue (reason `issue_churn`), but the hive does not claim the work is done, and it often labels the issue partly addressed. So the row no longer sits in a band named for closing. It has its own issue-only band in Needs a person, **Check if finished** (key `check-finished`), whose rule reads "Several PRs merged or were closed on it and it is still open. Close it if it is done, or add hive: churn-triaged so agents keep going." Yours to close keeps the rows where the hive does think the work is done. The `issues_by_band` MCP tool and the issue export accept `card_band=check-finished`, and the old `card_band=your-turn` filter returns the same rows as before: the churn rows, and no Yours to close row. This is display only: the churn guard, the queue, the inbox, ownership, labels and the Needs a person count are untouched.
+
 ## 2026-11-24 (v6.61.3)
 
 ### Fixed
