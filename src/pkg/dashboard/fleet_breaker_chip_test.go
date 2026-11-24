@@ -21,7 +21,7 @@ func TestFleetBreakerRendersAsSingleStatusChipButton(t *testing.T) {
 		`aria-pressed="false"`,
 		`<span id="fleet-breaker-dot" class="nav-chip__dot" aria-hidden="true">●</span>`,
 		`<span id="fleet-breaker-pill" class="nav-chip__label">running</span>`,
-		`btn.setAttribute('aria-label', canToggle`,
+		`btn.setAttribute('aria-label', view.ariaLabel)`,
 		`btn.disabled = !canToggle`,
 		`btn.setAttribute('aria-disabled', canToggle ? 'false' : 'true')`,
 	} {

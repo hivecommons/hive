@@ -19,6 +19,12 @@
           <span id="fleet-breaker-pill" class="nav-chip__label">running</span>
           <span id="fleet-breaker-icon" class="nav-chip__icon" aria-hidden="true"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span>
         </button>
+        <!-- Shown only while the breaker is engaged and this viewer cannot
+             release it here: points at the hub My Hives page, whose ⋮ menu
+             carries "Resume hive" for the owner or a hub admin (#19778). -->
+        <a id="fleet-breaker-hub-link" class="nav-chip nav-chip--action" href="#" target="_blank" rel="noopener noreferrer"
+           title="Resume this hive from the hub: My Hives → ⋮ → Resume hive (hive owner or hub admin)"
+           aria-label="Resume this hive from My Hives on the hub" hidden><span class="nav-chip__label">Resume in My Hives ↗</span></a>
       </span>
       <span id="agent-navbar-upnext" class="agent-navbar-upnext" hidden aria-label="Upcoming agent run order" title="Upcoming agent run order"></span>
     </div>

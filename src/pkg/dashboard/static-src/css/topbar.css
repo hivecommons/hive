@@ -201,7 +201,8 @@
     .avatar-menu-signout { color: var(--red); }
     /* Guide button remains the topbar CTA through the shared primary chip
        recipe; its size/shape intentionally match every other nav chip. */
-    #fleet-breaker-wrap { display: inline-flex; align-items: center; }
+    #fleet-breaker-wrap { display: inline-flex; align-items: center; gap: var(--nav-chip-gap, 8px); }
+    #fleet-breaker-hub-link[hidden] { display: none; }
     #fleet-breaker-btn2[data-status="ok"] { --nav-chip-color: var(--status-ok); }
     #fleet-breaker-btn2[data-status="error"] { --nav-chip-color: var(--status-error); }
     #fleet-breaker-dot, #fleet-breaker-icon { transition: color .15s, transform .15s; }
