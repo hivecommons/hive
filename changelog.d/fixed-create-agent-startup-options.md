@@ -1,1 +1,0 @@
-- Create Agent now respects Agent power and On Demand. Hive leaves disabled agents off and starts on-demand agents only when explicitly requested.
