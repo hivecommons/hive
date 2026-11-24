@@ -53489,7 +53489,8 @@ function burnAreaChart() {
       const last = (e.history || []).length ? e.history[e.history.length - 1] : null;
       const mid = e.meeting_id || (last && last.meeting_id) || '';
       if (!mid) return '';
-      const live = e.status === 'live' || (last && last.status === 'live');
+      const occurrence = (e.history || []).find(h => h?.meeting_id === mid);
+      const live = e.status === 'live' || occurrence?.status === 'live';
       return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="calendarOpenMeeting" data-arg0="' + escapeHtml(mid) + '">' + (live ? 'Open live panel' : 'Notes') + '</button>';
     }
 

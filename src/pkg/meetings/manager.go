@@ -222,6 +222,9 @@ type Options struct {
 	Now func() time.Time
 }
 
+// ErrJoinSuperseded means a scheduled join was withdrawn before dispatch.
+var ErrJoinSuperseded = errors.New("meetings: scheduled join superseded")
+
 // JoinRequest is a request to send hive to a meeting.
 type JoinRequest struct {
 	URL       string `json:"url,omitempty"`
@@ -231,6 +234,8 @@ type JoinRequest struct {
 	Title     string `json:"title,omitempty"`
 	Voice     bool   `json:"voice,omitempty"`
 	InvitedBy string `json:"-"`
+	// BeforeDispatch can withdraw a scheduled join before each Quorum request.
+	BeforeDispatch func() error `json:"-"`
 }
 
 // Update is what listeners receive: the meeting after the change, and the
@@ -384,7 +389,7 @@ func (m *Manager) Join(ctx context.Context, req JoinRequest) (Meeting, error) {
 	}
 	return m.start(ctx, mt, JoinArgs{
 		URL: req.URL, DisplayName: m.opts.BotName, Platform: req.Platform, GuildID: req.GuildID, ChannelID: req.ChannelID,
-		Voice: voice, VoiceID: strings.TrimSpace(m.opts.VoiceID),
+		Voice: voice, VoiceID: strings.TrimSpace(m.opts.VoiceID), beforeDispatch: req.BeforeDispatch,
 	})
 }
 
@@ -397,6 +402,12 @@ func (m *Manager) start(ctx context.Context, mt Meeting, args JoinArgs) (Meeting
 		return Meeting{}, err
 	}
 	res, err := m.opts.Quorum.Join(ctx, args)
+	if errors.Is(err, ErrJoinSuperseded) {
+		if removeErr := m.opts.Store.Remove(mt.ID); removeErr != nil {
+			m.log.Warn("[meetings] removing a superseded join failed", "meeting", mt.ID, "error", removeErr)
+		}
+		return Meeting{}, err
+	}
 	if err != nil {
 		mt.State, mt.StateReason = StateFailed, err.Error()
 		if IsCode(err, CodeBlocked) {
