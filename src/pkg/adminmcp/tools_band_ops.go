@@ -43,13 +43,24 @@ var (
 
 // cardBandYourTurnAlias is the single Your turn band of before the split. A
 // card_band filter still accepts it and returns the rows it held: every row
-// in the your-turn group but to-close and unexplained (cardTurnAction in
-// pkg/dashboard). card_group=your-turn returns the whole group.
+// in the your-turn group but to-close and unexplained, plus the issue churn
+// rows (card_reason_code verdict:issue_churn), which that band held and
+// which are to-close rows now (cardTurnAliasRow in pkg/dashboard).
+// card_group=your-turn returns the whole group.
 const cardBandYourTurnAlias = "your-turn"
+
+// cardChurnReasonCode is an issue churn row's card_reason_code.
+const cardChurnReasonCode = "verdict:issue_churn"
 
 // cardTurnActionRow reports a row the your-turn card_band alias returns.
 func cardTurnActionRow(m map[string]any) bool {
-	return m["card_group"] == "your-turn" && m["card_band"] != "to-close" && m["card_band"] != "unexplained"
+	if m["card_group"] != "your-turn" {
+		return false
+	}
+	if m["card_band"] == "to-close" {
+		return m["card_reason_code"] == cardChurnReasonCode
+	}
+	return m["card_band"] != "unexplained"
 }
 
 // validCardBandsFor returns the card band keys a band-read tool accepts:
