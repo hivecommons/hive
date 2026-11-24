@@ -4966,6 +4966,7 @@
       background: var(--green);
       border-color: var(--green);
     }
+    .config-toggle-note-warn { color: var(--status-warn); }
     .config-toggle-switch.disabled {
       opacity: 0.5;
       cursor: not-allowed;
@@ -67536,15 +67537,19 @@ function burnAreaChart() {
     }
 
     // dashboard.github_sign_in (#19721): an unset key reads as on. The note
-    // names the hub link the login page falls back to when it is off, or warns
-    // that there is none, so an owner does not lock everyone out by accident.
+    // names the hub link the login page falls back to when it is off. With no
+    // link the switch is disabled while on (the server refuses that save too),
+    // because turning it off would lock everyone out, the owner included.
     function renderGovDashboardGitHubSignIn(dash) {
       const on = dash.github_sign_in !== false;
       const link = dash.hub_sign_in_link || '';
+      const locked = on && !link;
       const note = link
         ? ' <span class="text-muted">When off, the login page links to ' + esc(link) + '.</span>'
-        : ' <span class="text-warn">No hub sign-in link: set hub.url (or dashboard.hub_sign_in_url) and hive_id before turning this off, or the login page will say hub sign-in is not configured.</span>';
-      return '<div class="config-toggle"><div class="config-toggle-switch ' + (on ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="github_sign_in"></div><span class="config-toggle-label">GitHub sign-in ' + yamlHint('dashboard.github_sign_in') + ' ' + settingHelpMark('settings', 'dashboard', 'GitHub sign-in', 'Offers the "Sign in with GitHub" device flow on the login page. On by default. When off, the login page shows a "Sign in through the hub" link instead, /api/gh-user-auth/start and /poll refuse, and hivectl login to this hive stops working. Applies without a restart.') + note + '</span></div>';
+        : ' <span class="config-toggle-note-warn">' + (on
+          ? 'Cannot be turned off: this hive has no hub sign-in link, so the login page would offer no way to sign in. Set dashboard.hub_sign_in_url (or hub.url / HIVE_HUB_URL) and hive_id first.'
+          : 'No hub sign-in link: the login page says hub sign-in is not configured. Turn this back on, or set dashboard.hub_sign_in_url (or hub.url / HIVE_HUB_URL) and hive_id.') + '</span>';
+      return '<div class="config-toggle"><div class="config-toggle-switch' + (on ? ' on' : '') + (locked ? ' disabled' : '') + '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"' + (locked ? ' aria-disabled="true" data-disabled="true"' : '') + ' data-action="toggleConfigSwitch" data-section="dashboard" data-key="github_sign_in"></div><span class="config-toggle-label">GitHub sign-in ' + yamlHint('dashboard.github_sign_in') + ' ' + settingHelpMark('settings', 'dashboard', 'GitHub sign-in', 'Offers the "Sign in with GitHub" device flow on the login page. On by default. When off, the login page shows a "Sign in through the hub" link instead, /api/gh-user-auth/start and /poll refuse, and hivectl login to this hive stops working. It can only be turned off when the hive has a hub sign-in link. Applies without a restart.') + note + '</span></div>';
     }
 
     function renderGovDashboard(dash) {

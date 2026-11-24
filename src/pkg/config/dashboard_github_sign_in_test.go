@@ -29,6 +29,7 @@ func TestDashboardGitHubSignInEnabled(t *testing.T) {
 }
 
 func TestConfigHubSignInLink(t *testing.T) {
+	t.Setenv(HubURLEnvVar, "")
 	for _, tc := range []struct {
 		name, hubURL, signInURL, hiveID, want string
 	}{
@@ -51,5 +52,23 @@ func TestConfigHubSignInLink(t *testing.T) {
 	var nilCfg *Config
 	if got := nilCfg.HubSignInLink(); got != "" {
 		t.Fatalf("nil config: got %q, want empty", got)
+	}
+}
+
+// HIVE_HUB_URL is how hosted spokes learn their hub, often with hub.url left
+// empty, so the sign-in link follows it; dashboard.hub_sign_in_url still wins.
+func TestConfigHubSignInLinkHonorsHubURLEnv(t *testing.T) {
+	t.Setenv(HubURLEnvVar, "https://hub.env.example.com")
+	c := &Config{HiveID: "h1"}
+	if got, want := c.HubSignInLink(), "https://hub.env.example.com/api/saas/hives/h1/open"; got != want {
+		t.Fatalf("env only: HubSignInLink() = %q, want %q", got, want)
+	}
+	c.Hub.URL = "http://hub.svc:8080"
+	if got, want := c.HubSignInLink(), "https://hub.env.example.com/api/saas/hives/h1/open"; got != want {
+		t.Fatalf("env over hub.url: HubSignInLink() = %q, want %q", got, want)
+	}
+	c.Dashboard.HubSignInURL = "https://hub.example.com"
+	if got, want := c.HubSignInLink(), "https://hub.example.com/api/saas/hives/h1/open"; got != want {
+		t.Fatalf("hub_sign_in_url over env: HubSignInLink() = %q, want %q", got, want)
 	}
 }

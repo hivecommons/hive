@@ -9,6 +9,10 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
+// githubSignInNoHubLinkError is the refusal for turning dashboard.github_sign_in
+// off on a hive whose login page would then offer no way to sign in.
+const githubSignInNoHubLinkError = "GitHub sign-in cannot be turned off: this hive has no hub sign-in link, so the login page would offer no way to sign in and would lock everyone out, the owner included. Set dashboard.hub_sign_in_url (or hub.url / HIVE_HUB_URL) and hive_id first."
+
 type dashboardSettingsPayload struct {
 	Port                    int                          `json:"port"`
 	AgentPollIntervalS      int                          `json:"agent_poll_interval_s"`
@@ -214,6 +218,14 @@ func (s *Server) handleDashboardSettingsPut(w http.ResponseWriter, r *http.Reque
 		next.HubProxied = *body.HubProxied
 	}
 	if body.GitHubSignIn != nil {
+		// With GitHub sign-in off the login page offers only the hub link.
+		// Without one (no browser hub URL from dashboard.hub_sign_in_url,
+		// HIVE_HUB_URL or hub.url, or no hive_id) nobody could sign in, the
+		// owner included, so the save is refused (#19721).
+		if !*body.GitHubSignIn && cfg.HubSignInLink() == "" {
+			jsonError(w, githubSignInNoHubLinkError, http.StatusConflict)
+			return
+		}
 		// Stored explicitly either way; signInPage and the device-flow
 		// handlers read the live config, so this applies without a restart.
 		githubSignIn := *body.GitHubSignIn

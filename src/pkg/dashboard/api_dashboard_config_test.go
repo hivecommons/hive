@@ -118,8 +118,12 @@ func TestDashboardSettingsAPISubscriptionGaugeHeaderToggle(t *testing.T) {
 // on, an omitted field leaves it unchanged, and the login page follows the
 // saved value without a restart.
 func TestDashboardSettingsAPIGitHubSignInToggle(t *testing.T) {
+	t.Setenv(config.HubURLEnvVar, "")
 	s := govServer(t)
 	s.deps.Config.Dashboard.GitHubSignIn = nil
+	// Turning it off needs a hub sign-in link (see the refusal test below).
+	s.deps.Config.HiveID = "h1"
+	s.deps.Config.Hub.URL = "https://hub.example.com"
 
 	var got dashboardSettingsPayload
 	get := doOwnerGet(s, "/api/config/dashboard")
@@ -162,6 +166,41 @@ func TestDashboardSettingsAPIGitHubSignInToggle(t *testing.T) {
 	}
 	if s.signInPage() != loginPage {
 		t.Fatal("login page does not offer GitHub sign-in after the toggle was turned back on")
+	}
+}
+
+// TestDashboardSettingsAPIGitHubSignInOffNeedsHubLink: with no hub sign-in
+// link, turning GitHub sign-in off would leave the login page with no way in,
+// so the PUT is refused and the value stays on. HIVE_HUB_URL counts as a hub
+// URL, as it does for the login page.
+func TestDashboardSettingsAPIGitHubSignInOffNeedsHubLink(t *testing.T) {
+	t.Setenv(config.HubURLEnvVar, "")
+	s := govServer(t)
+	s.deps.Config.Dashboard.GitHubSignIn = nil
+	s.deps.Config.Dashboard.HubSignInURL = ""
+	s.deps.Config.Hub.URL = ""
+	s.deps.Config.HiveID = "h1"
+
+	put := doPut(s, "/api/config/dashboard", map[string]any{"github_sign_in": false})
+	if put.Code != http.StatusConflict {
+		t.Fatalf("PUT off without a hub link = %d, want 409: %s", put.Code, put.Body.String())
+	}
+	if !strings.Contains(put.Body.String(), "no hub sign-in link") {
+		t.Fatalf("refusal does not explain itself: %s", put.Body.String())
+	}
+	if !s.deps.Config.Dashboard.GitHubSignInEnabled() || s.signInPage() != loginPage {
+		t.Fatal("a refused PUT still turned GitHub sign-in off")
+	}
+	if rec := doPut(s, "/api/config/dashboard", map[string]any{"github_sign_in": true}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT on without a hub link = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	t.Setenv(config.HubURLEnvVar, "https://hub.example.com")
+	if rec := doPut(s, "/api/config/dashboard", map[string]any{"github_sign_in": false}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT off with HIVE_HUB_URL set = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.Dashboard.GitHubSignInEnabled() {
+		t.Fatal("dashboard.github_sign_in not saved as false with HIVE_HUB_URL set")
 	}
 }
 
