@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v6.61.1)
+
+### Fixed
+
+- **Contribute queue: a `no_work_needed` verdict that cites an open PR no longer holds the issue after that PR closes.** The hub records such a verdict as a weak external claim, but the claim ledger treated every verdict claim as settled, as if the fix had landed. So the claim was kept while the issue stayed open, outlived its PR closing unmerged, and after 7 days the issue was withheld as `merged_claim_stale` with "Fixed by a verified no_work_needed verdict citing merged PR #N" for a PR that never merged. Now only a verdict citing a merged PR or a commit on the default branch is settled. A verdict citing an open PR covers the issue while that PR stays open: each claim scan checks the PR against the open-PR list it already fetches, at no extra API cost, and releases the issue the first time a complete list no longer shows the PR. If the list for that repo is incomplete, the claim falls back to the usual 72h limit. Claims already stored in the old shape go through the same check on the next scan, with no migration step. The `merged_claim_stale` detail now says "merged" only when the ledger records a merge.
+
 ## 2026-11-24 (v6.61.0)
 
 ### Added
