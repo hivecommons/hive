@@ -9881,7 +9881,11 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
   <div class="mt-6 mb-8" id="calendar-section" data-dashboard-section="calendar-section">
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="calendar-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Calendar section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📅 Calendar</h2>
     <div class="section-body">
-      <div id="calendar-panel" class="calendar-panel"><p class="muted-xs">Loading calendar…</p></div>
+      <div id="calendar-panel" class="calendar-panel">
+        <div id="calendar-email-in" hidden></div>
+        <div id="calendar-add-form" hidden></div>
+        <div id="calendar-results" class="calendar-panel"><p class="muted-xs">Loading calendar…</p></div>
+      </div>
       <div id="meeting-drafts-panel" class="calendar-panel"></div>
     </div>
   </div>
@@ -10311,6 +10315,13 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       // token. Without this, every one of those failures would open its own
       // the in-app dialog. All concurrent callers now share one dialog.
       let _ensureAuthTokenFlight = null;
+      const _authPromptEvents = new EventTarget();
+      let _authPromptOpen = false;
+      function _setAuthPromptOpen(open) {
+        _authPromptOpen = open;
+        _authPromptEvents.dispatchEvent(new Event('change'));
+      }
+
       function _ensureAuthToken() {
         if (!_ensureAuthTokenFlight) {
           _ensureAuthTokenFlight = _ensureAuthTokenInner().finally(() => { _ensureAuthTokenFlight = null; });
@@ -10339,12 +10350,14 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
           } catch {}
           // Self-hosted hive with a token configured but none stored locally:
           // ask the operator to paste it once. It persists in localStorage.
-          const entered = await hivePrompt({
+          const prompt = hivePrompt({
             title: 'Dashboard token required',
             label: _authRejected
               ? 'The stored dashboard token was rejected — it is probably stale (rotated since this browser saved it). Paste the current HIVE_DASHBOARD_TOKEN:'
               : 'This hive requires its dashboard token to make changes. Paste HIVE_DASHBOARD_TOKEN:'
           });
+          _setAuthPromptOpen(true);
+          const entered = await prompt.finally(() => _setAuthPromptOpen(false));
           if (entered && entered.trim()) {
             _authToken = entered.trim();
             try { localStorage.setItem('hive-token', _authToken); } catch {}
@@ -10468,9 +10481,16 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
             _authToken = null;
             _authRejected = true;
           }
+          const onPromptChange = opts.__hiveOnAuthPromptChange;
+          const notifyPrompt = onPromptChange && (() => onPromptChange(_authPromptOpen));
+          if (notifyPrompt) {
+            _authPromptEvents.addEventListener('change', notifyPrompt, { signal: opts.signal });
+            if (_authPromptOpen) notifyPrompt();
+          }
           try {
             await _ensureAuthToken();
           } finally {
+            if (notifyPrompt) _authPromptEvents.removeEventListener('change', notifyPrompt);
             _authRejected = false;
           }
           if (_authToken) {
@@ -53388,13 +53408,8 @@ function burnAreaChart() {
     }
 
     async function fetchCalendar() {
-      const host = document.getElementById('calendar-panel');
-      if (!calendarRoleKnown()) {
-        if (host) host.innerHTML = '<p class="muted-xs">Loading calendar…</p>';
-        return;
-      }
-      if (!calendarCanView()) {
-        if (host) host.innerHTML = '<p class="empty-dashed">The calendar is visible to the hive owner and read-write users.</p>';
+      if (!calendarRoleKnown() || !calendarCanView()) {
+        renderCalendar();
         return;
       }
       try {
@@ -53411,7 +53426,7 @@ function burnAreaChart() {
     dashboardSetInterval('calendar', fetchCalendar, CALENDAR_POLL_MS);
 
     function calendarFormHtml() {
-      return '<details class="calendar-add"><summary class="calendar-add-summary">Add meeting</summary><div class="calendar-add-grid mt-2">' +
+      return '<details class="calendar-add"><summary class="calendar-add-summary">Add meeting</summary><form><div class="calendar-add-grid mt-2">' +
         '<label>Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-calendar-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
         '<label>Title (optional)<input class="kb-search-box" type="text" data-calendar-field="title" maxlength="200" placeholder="Weekly sync" autocomplete="off"></label>' +
         '<label>Starts<input class="kb-search-box" type="datetime-local" data-calendar-field="start"></label>' +
@@ -53419,9 +53434,8 @@ function burnAreaChart() {
         '<label>Repeats<select class="kb-search-box" data-calendar-field="repeat"><option value="none">Does not repeat</option><option value="daily">Daily</option>' +
         '<option value="weekdays">Every weekday</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>' +
         '<button type="button" class="hv-btn btn-primary btn-sm" data-action="calendarAdd">Add meeting</button></div>' +
-        '<p class="muted-xs">Times are in your time zone (' + escapeHtml(calendarViewerTimeZone() || 'local') + '). ' +
-        (calendarIsOwner() ? 'Hive joins about a minute before the start.' : 'The hive owner approves meetings you add.') + '</p>' +
-        '<div class="hive-dialog-error" role="alert" data-calendar-field="error"></div></details>';
+        '<p class="muted-xs">Times are in your time zone (' + escapeHtml(calendarViewerTimeZone() || 'local') + '). <span data-calendar-field="hint"></span></p>' +
+        '<div class="hive-dialog-error" role="alert" data-calendar-field="error"></div></form></details>';
     }
 
     function calendarActionButtons(e) {
@@ -53575,20 +53589,45 @@ function burnAreaChart() {
 
     function renderCalendar() {
       refreshSectionCardShell('calendar-section');
-      const host = document.getElementById('calendar-panel');
+      const email = document.getElementById('calendar-email-in');
+      const add = document.getElementById('calendar-add-form');
+      const results = document.getElementById('calendar-results');
+      const known = calendarRoleKnown();
+      const canView = known && calendarCanView();
+      if (!canView) {
+        _calendarData = null;
+        _calendarError = '';
+      }
       renderCalendarIndicator();
-      if (!host) return;
-      if (_calendarError) {
-        host.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_calendarError) + '</p>';
-        setSectionSummary('calendar-section', 'unavailable');
+      if (!email || !add || !results) return;
+      if (!canView) {
+        email.innerHTML = add.innerHTML = '';
+        email.hidden = add.hidden = true;
+        results.innerHTML = known
+          ? '<p class="empty-dashed">The calendar is visible to the hive owner and read-write users.</p>'
+          : '<p class="muted-xs">Loading calendar…</p>';
         return;
       }
       const data = _calendarData || {};
+      const emailHtml = !_calendarError && typeof emailInRowHtml === 'function' ? emailInRowHtml('calendar', data.email_in) : '';
+      email.innerHTML = emailHtml;
+      email.hidden = !emailHtml;
+      // Polls may update the schedule while an operator is editing the form.
+      if (add.hidden && !_calendarError) {
+        add.innerHTML = calendarFormHtml();
+        add.hidden = false;
+      }
+      const hint = calendarField('hint');
+      if (hint) hint.textContent = calendarIsOwner() ? 'Hive joins about a minute before the start.' : 'The hive owner approves meetings you add.';
+      if (_calendarError) {
+        results.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_calendarError) + '</p>';
+        setSectionSummary('calendar-section', 'unavailable');
+        return;
+      }
       const upcoming = data.upcoming || [];
       const recent = data.recent || [];
       const pending = upcoming.filter(e => e.status === 'awaiting_approval').length;
-      host.innerHTML = (typeof emailInRowHtml === 'function' ? emailInRowHtml('calendar', data.email_in) : '') + calendarFormHtml() +
-        '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
+      results.innerHTML = '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
         (recent.length ? '<div class="calendar-subsection"><div class="section-label m-0">Recent</div><div class="calendar-list">' + recent.map(calendarRowHtml).join('') + '</div></div>' : '');
       setSectionSummary('calendar-section', upcoming.length + ' upcoming' + (pending ? ' · ' + pending + ' awaiting approval' : ''));
     }
@@ -53612,21 +53651,37 @@ function burnAreaChart() {
 
     async function calendarAdd() {
       const err = calendarField('error');
-      const repeat = (calendarField('repeat') || {}).value || 'none';
+      if (!err) return;
+      const form = err.closest('form');
+      const button = form.querySelector('[data-action="calendarAdd"]');
+      if (button.disabled) return;
+      const fields = ['url', 'title', 'start', 'end', 'repeat'].map(calendarField);
+      const values = fields.map(field => field.value);
+      const [url, title, start, end, repeat] = values;
       const body = {
-        url: ((calendarField('url') || {}).value || '').trim(),
-        title: ((calendarField('title') || {}).value || '').trim(),
-        start: calendarLocalISO((calendarField('start') || {}).value),
-        end: calendarLocalISO((calendarField('end') || {}).value),
+        url: url.trim(),
+        title: title.trim(),
+        start: calendarLocalISO(start),
+        end: calendarLocalISO(end),
         rrule: CALENDAR_REPEAT_RULES[repeat] || '',
         timezone: calendarViewerTimeZone()
       };
-      if (!body.url || !body.start) { if (err) err.textContent = 'A meeting link and a start time are required.'; return; }
+      if (!body.url || !body.start) { err.textContent = 'A meeting link and a start time are required.'; return; }
+      err.textContent = '';
+      button.disabled = true;
       try {
         const ev = await calendarPost('/api/meetings/schedule', body);
+        if (fields.every((field, i) => field.value === values[i])) {
+          form.reset();
+          form.closest('details').open = false;
+        }
         showToast(ev && ev.status === 'awaiting_approval' ? 'Meeting added; it waits for the owner to approve' : 'Meeting scheduled', 'success');
         fetchCalendar();
-      } catch (e) { if (err) err.textContent = e.message; }
+      } catch (e) {
+        err.textContent = e.message;
+      } finally {
+        button.disabled = false;
+      }
     }
 
     async function calendarAct(id, action) {
@@ -56364,10 +56419,7 @@ function burnAreaChart() {
       if (paging) {
         var multiPage = _reviewQueueHasMore || _reviewQueueOffset > 0;
         paging.style.display = multiPage ? 'flex' : 'none';
-        var prev = document.getElementById('review-queue-prev');
-        var next = document.getElementById('review-queue-next');
-        if (prev) prev.disabled = _reviewQueueOffset <= 0;
-        if (next) next.disabled = !_reviewQueueHasMore;
+        updateReviewQueuePageButtons();
         var range = document.getElementById('review-queue-range');
         if (range) {
           var first = items.length ? _reviewQueueOffset + 1 : 0;
@@ -56377,31 +56429,81 @@ function burnAreaChart() {
       }
     }
 
-    async function fetchReviewQueue() {
+    const REVIEW_QUEUE_FETCH_TIMEOUT_MS = 12000;
+    let _reviewQueueRequest = null;
+
+    function updateReviewQueuePageButtons() {
+      const pagePending = _reviewQueueRequest?.paging === true;
+      const prev = document.getElementById('review-queue-prev');
+      const next = document.getElementById('review-queue-next');
+      // Keep the active button focusable during the request.
+      if (prev) {
+        prev.disabled = _reviewQueueOffset <= 0;
+        prev.setAttribute('aria-disabled', String(prev.disabled || pagePending));
+      }
+      if (next) {
+        next.disabled = !_reviewQueueHasMore;
+        next.setAttribute('aria-disabled', String(next.disabled || pagePending));
+      }
+    }
+
+    async function fetchReviewQueue(offset = _reviewQueueOffset) {
+      // Keep polling and repeat clicks from superseding an in-flight page change.
+      if (_reviewQueueRequest?.paging) return;
+      const request = { paging: offset !== _reviewQueueOffset };
+      _reviewQueueRequest = request;
+      if (request.paging) updateReviewQueuePageButtons();
       var panel = document.getElementById('review-queue-panel');
+      const controller = new AbortController();
+      let timer;
+      let expire;
+      const deadline = new Promise((_, reject) => {
+        expire = () => {
+          controller.abort();
+          reject(new Error('Review queue request timed out'));
+        };
+      });
+      // Pause the deadline while the operator enters a new dashboard token.
+      const onAuthPromptChange = open => {
+        clearTimeout(timer);
+        if (!open && !controller.signal.aborted) timer = setTimeout(expire, REVIEW_QUEUE_FETCH_TIMEOUT_MS);
+      };
+      onAuthPromptChange(false);
       try {
-        var resp = await fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + _reviewQueueOffset);
+        var resp = await Promise.race([
+          fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + offset, {
+            signal: controller.signal,
+            __hiveOnAuthPromptChange: onAuthPromptChange,
+          }),
+          deadline,
+        ]);
+        if (_reviewQueueRequest !== request) return;
         if (!resp.ok) {
           if (panel && !panel.querySelector('.review-queue-entry')) {
             panel.innerHTML = '<div class="review-queue-empty">Review queue unavailable.</div>';
           }
           return;
         }
-        var data = await resp.json();
-        renderReviewQueue(data);
-      } catch (e) {}
+        var data = await Promise.race([resp.json(), deadline]);
+        if (_reviewQueueRequest === request) renderReviewQueue(data);
+      } catch (e) {
+      } finally {
+        clearTimeout(timer);
+        if (_reviewQueueRequest === request) {
+          _reviewQueueRequest = null;
+          if (request.paging) updateReviewQueuePageButtons();
+        }
+      }
     }
 
     function reviewQueuePrevPage() {
       if (_reviewQueueOffset <= 0) return;
-      _reviewQueueOffset = Math.max(0, _reviewQueueOffset - REVIEW_QUEUE_PAGE_SIZE);
-      fetchReviewQueue();
+      return fetchReviewQueue(Math.max(0, _reviewQueueOffset - REVIEW_QUEUE_PAGE_SIZE));
     }
 
     function reviewQueueNextPage() {
       if (!_reviewQueueHasMore) return;
-      _reviewQueueOffset += REVIEW_QUEUE_PAGE_SIZE;
-      fetchReviewQueue();
+      return fetchReviewQueue(_reviewQueueOffset + REVIEW_QUEUE_PAGE_SIZE);
     }
     // fetchReviewQueue() — deferred to _deferredInit
 

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hivecommons/hive/crux/forgejwt"
 	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/config"
@@ -19,8 +20,9 @@ import (
 //   - github (and an unknown kind, which falls back to GitHub everywhere
 //     else too): ok=false, so the caller keeps github.com and its GitHub App
 //     minter unchanged.
-//   - forgejo: the repo's forge URL and a minter for the forgejo block's
-//     token. The token goes only to the forgejo block's host
+//   - forgejo: the repo's forge URL and forgejoMinter (a per-tier JWT with
+//     forgejo.integration, else the forgejo block's access token). The
+//     token goes only to the forgejo block's host
 //     (CheckForgeTokenHost, #19572), and the resolver refuses a repo whose
 //     forge_url would send it elsewhere.
 //   - gitlab and gitea: clone and push are NOT implemented for them yet, so
@@ -64,11 +66,27 @@ func forgejoRemote(cfg *config.Config, repo string) (pushbroker.ForgeRemote, boo
 	if u, err := url.Parse(base); err == nil {
 		proxy.RegisterForgeHost(u.Hostname())
 	}
+	return pushbroker.ForgeRemote{BaseURL: base, Minter: forgejoMinter(cfg)}, true, nil
+}
+
+// forgejoMinter is the minter for git on a Forgejo repo. With
+// forgejo.integration set it signs a one-hour JWT per token tier for that
+// tier's authorized integration (crux/forgejwt, #19576), the Forgejo
+// analogue of a GitHub App installation token. Without it, every tier uses
+// the forgejo block's access token, the same one the REST adapter sends.
+func forgejoMinter(cfg *config.Config) pushbroker.TokenMinter {
+	if in := cfg.Forgejo.Integration; in != nil {
+		auds := make(map[string]forgejwt.Audience, len(in.Audiences))
+		for tier, aud := range in.Audiences {
+			auds[tier] = forgejwt.Audience(strings.TrimSpace(aud))
+		}
+		return forgejwt.Minter{
+			Signer:    forgejwt.Signer{Issuer: forgejwt.Issuer(in.IssuerOrigin()), KeyFile: strings.TrimSpace(in.KeyFile)},
+			Audiences: auds,
+		}
+	}
 	envName := cfg.Forgejo.TokenEnvName()
-	return pushbroker.ForgeRemote{
-		BaseURL: base,
-		Minter:  pushbroker.StaticTokenMinter{Token: func() string { return os.Getenv(envName) }},
-	}, true, nil
+	return pushbroker.StaticTokenMinter{Token: func() string { return os.Getenv(envName) }}
 }
 
 // forgejoHosts lists the hosts of every forge URL a Forgejo repo of cfg

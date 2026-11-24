@@ -11,6 +11,26 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-24 (v5.365.1)
+
+### Fixed
+
+- A repository bound to a rules-mode workflow model now gets the model's stage and whose-turn labels on its pull requests when auto-merge is off, which it always is below ACMM L6 ([#19768](https://github.com/hivecommons/hive/issues/19768)). Each auto-merge lane skipped such a repository before listing its PRs, so the stage pass never saw them. The request issue was staged, but the deliverable PR never got `stage/*` or `ready-for-*` labels (cncf/techdocs on `cncf-techdocs-assessment@curated-2026.11.4`). A workflow lane now lists the open PRs no auto-merge lane recorded. A PR that every lane handed off is also derived through the model's rules instead of being skipped.
+
+## 2026-11-24 (v5.365.0)
+
+### Added
+
+- `forgejo.integration` makes git clone and push on Forgejo repos use a one-hour JWT per agent token tier, signed with an operator-held RSA key for that tier's Forgejo authorized integration, instead of the shared `forgejo.token_env` access token (#19760, from #19576).
+
+## 2026-11-24 (v5.364.0)
+
+### Added
+
+- **Settings → Dashboard has a GitHub sign-in toggle** (#19721). `dashboard.github_sign_in` (#19618) could only be set by editing `hive.yaml.runtime` on the data volume; it now has a switch next to Hub-proxied auth, and `GET`/`PUT /api/config/dashboard` read and write `github_sign_in`. Turning it off swaps the login page's "Sign in with GitHub" button for a "Sign in through the hub" link and makes the device-flow endpoints (and `hivectl login`) refuse, without a restart. The toggle shows the hub link the login page will use. Without one (no `dashboard.hub_sign_in_url`, `HIVE_HUB_URL` or `hub.url`, or no `hive_id`) the toggle is disabled and the server refuses to turn it off, so the owner cannot lock everyone out. The hub link now also follows `HIVE_HUB_URL`. The default stays on.
+- The emitted `.hive/workflows/checks.yml` now resolves `spec:` check sources to a permalink built from the model's `workflow.hivecommons.dev/source` annotation and keeps the section title in a `description` field; non-spec and unresolvable sources are unchanged ([#19756](https://github.com/hivecommons/hive/issues/19756)).
+- `hive forge key-list --issuer https://keys.example.org --key /secrets/forgejo/jwt-signing.pem --out DIR` writes the two static files a Forgejo 17 authorized integration fetches to verify hive's JWTs: `.well-known/openid-configuration` and `jwks.json`. Serve `DIR` at the issuer URL over https. Pass `--key` once per key to publish the old and the new key during a rotation. The command refuses a key file that others can read, or that any group but `hive-launch` (GID 1002, the pod `fsGroup`) can read, so the shipped `/secrets` mount at `defaultMode: 0440` works while group `node`, which every agent UID shares, is refused. It never prints the private key. A key kept under `/data/secrets` still loads after the boot keystore sweep seals it in place. The new `crux/forgejwt` package signs the tokens: RS256, `kid` set to the key's RFC 7638 thumbprint, `iat` 60 s in the past, and `exp` one hour after minting. Nothing reads it from config yet. Refs [#19494](https://github.com/hivecommons/hive/issues/19494).
+
 ## 2026-11-24 (v5.363.0)
 
 ### Added

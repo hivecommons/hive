@@ -251,7 +251,7 @@ func StageHumanApprovalReason(d stageDetail, head string) string {
 var stageHandoffReasons = map[string]bool{
 	"not-app-authored": true, trustedBotLaneSkipReason: true, "repo-auto-merge-disabled": true,
 	trustedAuthorReasonAppAuthored: true, contributorLaneReasonAppAuthored: true, contributorLaneReasonNoAuthor: true, "missing-head-sha": true,
-	"fetch-pr": true, "fetch-pr-recheck": true,
+	"fetch-pr": true, "fetch-pr-recheck": true, prstage.StageReasonWorkflowModel: true,
 }
 
 // stageAdmissionReasons are reasons that mean "this lane cannot vouch for
