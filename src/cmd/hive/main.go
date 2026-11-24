@@ -7566,6 +7566,8 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 	case auditVerifySubcommand:
 		// Checks the audit log's hash chain; see audit_verify_cmd.go.
 		return true, runAuditVerify(args[1:], stdout, stderr)
+	case forgeSubcommand:
+		return true, runForge(args[1:], stdout, stderr)
 	case memoryDrainSubcommand:
 		// Run as the agent by the Claude Code memory hooks Hive seeds; see
 		// memory_drain_cmd.go. Always exits 0.

@@ -4966,6 +4966,7 @@
       background: var(--green);
       border-color: var(--green);
     }
+    .config-toggle-note-warn { color: var(--status-warn); }
     .config-toggle-switch.disabled {
       opacity: 0.5;
       cursor: not-allowed;
@@ -5325,6 +5326,8 @@
     .wf-enabled-toggle { margin: var(--sp-3) 0 var(--sp-1); }
     .wf-enabled-toggle .config-toggle-label { font-weight: 700; }
     .wf-enabled-explain { margin: 0 0 var(--sp-4); max-width: 60em; }
+    .wf-repo-binding { min-width: 0; max-width: 100%; }
+    .wf-repo-select { min-width: 0; max-width: min(100%, 32em); text-overflow: ellipsis; }
     .wf-derivation-off { color: var(--status-warn); }
     .wf-dispatch-gap { color: var(--status-warn); white-space: normal; }
     .wf-prov, .wf-compiled { display: inline-block; border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; border: var(--line-width) solid var(--border); color: var(--muted); }
@@ -67535,6 +67538,22 @@ function burnAreaChart() {
         '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.autostart !== false ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="autostart"></div><span class="config-toggle-label">Answer the CLI startup screens ' + yamlHint('dashboard.sessions.autostart') + ' ' + settingHelpMark('settings', 'dashboard', 'Session startup', 'When a session starts, Hive takes the vendor CLI through its startup screens (first-run notice, trust for the session folder, onboarding) to its input prompt, so the first request runs without a person. It never answers a tool or command permission prompt and never signs in. On by default; the HIVE_SESSIONS_AUTOSTART environment variable, when set, overrides this switch.') + '</span></div>';
     }
 
+    // dashboard.github_sign_in (#19721): an unset key reads as on. The note
+    // names the hub link the login page falls back to when it is off. With no
+    // link the switch is disabled while on (the server refuses that save too),
+    // because turning it off would lock everyone out, the owner included.
+    function renderGovDashboardGitHubSignIn(dash) {
+      const on = dash.github_sign_in !== false;
+      const link = dash.hub_sign_in_link || '';
+      const locked = on && !link;
+      const note = link
+        ? ' <span class="text-muted">When off, the login page links to ' + esc(link) + '.</span>'
+        : ' <span class="config-toggle-note-warn">' + (on
+          ? 'Cannot be turned off: this hive has no hub sign-in link, so the login page would offer no way to sign in. Set dashboard.hub_sign_in_url (or hub.url / HIVE_HUB_URL) and hive_id first.'
+          : 'No hub sign-in link: the login page says hub sign-in is not configured. Turn this back on, or set dashboard.hub_sign_in_url (or hub.url / HIVE_HUB_URL) and hive_id.') + '</span>';
+      return '<div class="config-toggle"><div class="config-toggle-switch' + (on ? ' on' : '') + (locked ? ' disabled' : '') + '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"' + (locked ? ' aria-disabled="true" data-disabled="true"' : '') + ' data-action="toggleConfigSwitch" data-section="dashboard" data-key="github_sign_in"></div><span class="config-toggle-label">GitHub sign-in ' + yamlHint('dashboard.github_sign_in') + ' ' + settingHelpMark('settings', 'dashboard', 'GitHub sign-in', 'Offers the "Sign in with GitHub" device flow on the login page. On by default. When off, the login page shows a "Sign in through the hub" link instead, /api/gh-user-auth/start and /poll refuse, and hivectl login to this hive stops working. It can only be turned off when the hive has a hub sign-in link. Applies without a restart.') + note + '</span></div>';
+    }
+
     function renderGovDashboard(dash) {
       const bands = dash.issue_bands || {};
       const authTokenText = dash.auth_token_configured ? 'Configured — enter a new token to rotate, or save an empty value to clear.' : 'Not configured.';
@@ -67548,6 +67567,7 @@ function burnAreaChart() {
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.experiment_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="experiment_lab"></div><span class="config-toggle-label">Experiment Lab ' + yamlHint('dashboard.experiment_lab') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.subscription_gauge_header ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="subscription_gauge_header"></div><span class="config-toggle-label">Also show the usage gauge in the header ' + yamlHint('dashboard.subscription_gauge_header') + ' ' + settingHelpMark('settings', 'dashboard', 'Usage gauge in the header', 'The usage fuel gauge is on the Overview by default for the owner, with a row for each provider the agents use (Claude, Copilot and others). This also shows it as a small chip in the header on every page, with the needle on the limit closest to empty. It reads the usage measurements hive already makes, so it adds no calls to any provider. Only the hive owner sees it. These are the plans this hive is signed in with, not the hive token budget. Off by default.') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.hub_proxied ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="hub_proxied"></div><span class="config-toggle-label">Hub-proxied auth ' + yamlHint('dashboard.hub_proxied') + ' <span class="text-muted">Managed by hub on hosted hives.</span></span></div>' +
+        renderGovDashboardGitHubSignIn(dash) +
         renderGovDashboardSessions(dash) +
         '<div class="config-field"><label>Dashboard auth token ' + yamlHint('dashboard.auth_token') + '</label><input type="password" autocomplete="new-password" placeholder="' + esc(authTokenText) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="auth_token" data-arg-types="s,s,v"><div class="config-help">Write-only; the current token is never echoed.</div></div>' +
         '<h3>Access allowlist</h3>' +
@@ -74840,13 +74860,17 @@ function burnAreaChart() {
       const options = _workflowState.workflows.map(w => {
         const key = workflowKey(w.name, w.version);
         const compiled = w.compiled !== false;
-        const label = key + (w.description ? ' — ' + w.description : '') + (compiled ? '' : ' (draft, does not compile)');
-        return `<option value="${esc(key)}" ${key === current ? 'selected' : ''} ${compiled ? '' : 'disabled'}>${esc(label)}</option>`;
+        // The label is the key alone: the description can run to hundreds
+        // of characters and would widen the select past the dialog
+        // (hivecommons/hive#19744); it stays available on hover.
+        const label = key + (compiled ? '' : ' (draft, does not compile)');
+        const desc = w.description ? ` title="${esc(w.description)}"` : '';
+        return `<option value="${esc(key)}"${desc} ${key === current ? 'selected' : ''} ${compiled ? '' : 'disabled'}>${esc(label)}</option>`;
       }).join('');
       const flag = _workflowState.enabled || !bound
         ? ''
         : '<span class="rt-inherit wf-derivation-off" title="workflow.enabled is off: the binding is recorded and the monitor shows the model\'s columns, but stage derivation still runs the built-in engine. Turn on &quot;Derive stages from bound models&quot; on Settings → Workflows.">columns only — turn on derivation in Workflows</span>';
-      return `<div class="config-list-item ld-sub" data-wf-repo="${esc(repo)}"><label class="rt-check" title="Which workflow model this repository follows (hivecommons/hive#17620). hive-default is the built-in lifecycle; a custom model changes the monitor's columns and, when workflow.enabled is on, how stages are derived.">Workflow <select ${locked ? 'disabled' : ''} data-change-action="setRepoWorkflow" data-arg0="${esc(repo)}" data-arg-types="s,v">${options}</select></label>${flag}${bound ? `<span class="rt-inherit" title="Bound to ${esc(current)}">bound</span>` : '<span class="rt-inherit">default</span>'}</div>${bound ? renderRepoWorkflowProfileRows(repo, workflowDispatchProfilesFor(bound, _workflowState.dispatch), _workflowState.agents, locked) : ''}`;
+      return `<div class="config-list-item ld-sub" data-wf-repo="${esc(repo)}"><label class="rt-check wf-repo-binding" title="Which workflow model this repository follows (hivecommons/hive#17620). hive-default is the built-in lifecycle; a custom model changes the monitor's columns and, when workflow.enabled is on, how stages are derived.">Workflow <select class="wf-repo-select" ${locked ? 'disabled' : ''} data-change-action="setRepoWorkflow" data-arg0="${esc(repo)}" data-arg-types="s,v">${options}</select></label>${flag}${bound ? `<span class="rt-inherit" title="Bound to ${esc(current)}">bound</span>` : '<span class="rt-inherit">default</span>'}</div>${bound ? renderRepoWorkflowProfileRows(repo, workflowDispatchProfilesFor(bound, _workflowState.dispatch), _workflowState.agents, locked) : ''}`;
     }
 
     // Which hive agent fills each profile the bound model hands items to

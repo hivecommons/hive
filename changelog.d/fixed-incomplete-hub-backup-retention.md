@@ -1,1 +1,0 @@
-- Hub backups validate recovery inputs before publishing, protect older backups during upgrades, and retain hub archives with spoke gaps separately from full fleet archives.

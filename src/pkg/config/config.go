@@ -6208,9 +6208,14 @@ func (d DashboardConfig) GitHubSignInEnabled() bool {
 	return d.GitHubSignIn == nil || *d.GitHubSignIn
 }
 
+// HubURLEnvVar overrides hub.url at runtime. Hosted spokes are provisioned
+// with it (the hub's public URL) and often leave hub.url empty in hive.yaml.
+const HubURLEnvVar = "HIVE_HUB_URL"
+
 // HubSignInLink returns the browser URL that signs a person in to this hive
 // through its hub: <hub>/api/saas/hives/<hive_id>/open, where <hub> is
-// dashboard.hub_sign_in_url, else hub.url. It returns "" when either part is
+// dashboard.hub_sign_in_url, else HIVE_HUB_URL, else hub.url (the same
+// precedence the hub heartbeat uses). It returns "" when either part is
 // missing or the hub origin is not an http(s) URL.
 func (c *Config) HubSignInLink() string {
 	if c == nil {
@@ -6218,6 +6223,9 @@ func (c *Config) HubSignInLink() string {
 	}
 	hiveID := strings.TrimSpace(c.HiveID)
 	base := strings.TrimSpace(c.Dashboard.HubSignInURL)
+	if base == "" {
+		base = strings.TrimSpace(os.Getenv(HubURLEnvVar))
+	}
 	if base == "" {
 		base = strings.TrimSpace(c.Hub.URL)
 	}

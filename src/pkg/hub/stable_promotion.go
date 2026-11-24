@@ -133,6 +133,12 @@ func (s *HubServer) stablePromotionStatus(targets []ChannelTarget) StablePromoti
 			status.PausedAt = &pausedAt
 		}
 	}
+	if releaseTrackingDisabled() {
+		// No GHCR tag reads, GitHub workflow-run fetches or commit lookups
+		// with release tracking off; the status keeps only local state.
+		status.MaintainedHives = s.maintainedCandidateHivesCached(status.Candidate)
+		return status
+	}
 	for _, t := range targets {
 		switch t.Channel {
 		case ReleaseChannelCandidate:

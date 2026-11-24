@@ -33,6 +33,12 @@ func TestStageTrackerWorkflowColumnsWiring(t *testing.T) {
 		`.ham-seg.ham-wf-uncovered {`,
 		// Settings → Repos binding select.
 		`function renderRepoWorkflowRow(repo)`,
+		// The option label is the key alone and the select is capped, so a
+		// long model description cannot widen it past the dialog
+		// (hivecommons/hive#19744); the description is on hover.
+		`const label = key + (compiled ? '' : ' (draft, does not compile)');`,
+		`Workflow <select class="wf-repo-select"`,
+		`.wf-repo-select { min-width: 0; max-width: min(100%, 32em);`,
 		`async function setRepoWorkflow(repo, value)`,
 		`fetch('/api/workflows/bindings', {`,
 		`+ ldSub + renderRepoWorkflowRow(r);`,
