@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -397,5 +399,141 @@ func TestEnsureStageLabelsExportedUsesEngineTrackerAndPolicy(t *testing.T) {
 	}
 	if err := New(nil, Options{}).EnsureStageLabels(ctx, "acme", "widget"); err == nil {
 		t.Fatal("engine without a transport must report an error")
+	}
+}
+
+// --- PR-side model state with no auto-merge lane (hivecommons/hive#19768) ---
+
+// workflowPRListAPI serves GET /repos/acme/widget/pulls (the workflow lane's
+// listing) from prs and counts the calls.
+type workflowPRListAPI struct {
+	prs   []map[string]any
+	lists int
+}
+
+func (p *workflowPRListAPI) install(api *stageAPI) {
+	api.extra = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls" {
+			p.lists++
+			_ = json.NewEncoder(w).Encode(p.prs)
+			return true
+		}
+		return false
+	}
+}
+
+func workflowListedPR(number int, draft bool, labels ...string) map[string]any {
+	ls := make([]map[string]string, 0, len(labels))
+	for _, l := range labels {
+		ls = append(ls, map[string]string{"name": l})
+	}
+	setStagePRTruth(number, labels...)
+	return map[string]any{
+		"number": number, "state": "open", "draft": draft, "labels": ls,
+		"user": map[string]any{"login": "quality-agent"},
+		"head": map[string]any{"sha": "head" + strconv.Itoa(number), "ref": "docs-analysis"},
+		"base": map[string]any{"ref": "main"},
+	}
+}
+
+func newWorkflowStagePassEngine(t *testing.T, apiURL string, lookup func(owner, repo string) *workflowmodel.Profile) *Engine {
+	t.Helper()
+	clock := &contributorLaneClock{at: time.Date(2026, 11, 24, 19, 30, 0, 0, time.UTC)}
+	client := hgithub.NewClient("token", "acme", []string{"widget"}, nil, apiURL)
+	client.SetAppBotLogin(testHiveAppBotLogin)
+	return New(client, Options{
+		Now:                  clock.now,
+		StageLabelPolicy:     func() StageLabelPolicy { return StageLabelPolicy{Enabled: true, StalledRequireQuiet: true} },
+		StageTracker:         NewStageTracker(),
+		StageStore:           stagelabels.NewStore(filepath.Join(t.TempDir(), "stage.json"), clock.now),
+		StageEngine:          &stageengine.Options{WorkflowFor: lookup},
+		RepoAutoMergeEnabled: func(string) bool { return false },
+	})
+}
+
+// A repository with auto-merge off (below ACMM L6) is skipped by every
+// auto-merge lane before its PRs are listed, so the stage pass used to see
+// none of them: a deliverable PR in a rules-mode model never got its state's
+// stage or whose-turn label (cncf/techdocs pull 424). The workflow lane lists
+// those PRs and the model's PR rules label them, the draft one included.
+func TestApplyStageLabelsWorkflowModelLabelsPRsNoLaneListed(t *testing.T) {
+	api := &stageAPI{}
+	list := &workflowPRListAPI{}
+	list.install(api)
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	profile := workflowTestProfile(t,
+		workflowmodel.LabelEntry{Name: "docs/ready-for-reviewer", State: "draft-review"},
+		workflowmodel.LabelEntry{Name: "docs/drafting", State: "drafting"},
+	)
+	if profile.Mode != workflowmodel.DerivationRules {
+		t.Fatalf("fixture: mode %q, want rules", profile.Mode)
+	}
+	list.prs = []map[string]any{
+		workflowListedPR(424, false, "techdocs/analysis", "ready-for-review"),
+		workflowListedPR(425, true, "techdocs/analysis"),
+	}
+	e := newWorkflowStagePassEngine(t, srv.URL, func(string, string) *workflowmodel.Profile { return profile })
+
+	if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if list.lists != 1 {
+		t.Fatalf("workflow lane listed PRs %d times, want 1", list.lists)
+	}
+	api.mu.Lock()
+	var added []string
+	for _, batch := range api.added {
+		added = append(added, batch...)
+	}
+	api.mu.Unlock()
+	for _, want := range []string{stagelabels.ReviewPending.Label(), "docs/ready-for-reviewer", stagelabels.Fixing.Label(), "docs/drafting"} {
+		if !slices.Contains(added, want) {
+			t.Fatalf("added %v, want %q among them", added, want)
+		}
+	}
+}
+
+// A PR some lane already recorded is not listed again by the workflow lane,
+// and an unbound or builtin-mode repository is never listed by it at all.
+func TestObserveWorkflowModelPRsSkipsRecordedAndUnboundRepos(t *testing.T) {
+	ctx := context.Background()
+	api := &stageAPI{}
+	list := &workflowPRListAPI{}
+	list.install(api)
+	srv := newStageAPI(t, api)
+	defer srv.Close()
+	list.prs = []map[string]any{workflowListedPR(426, false, "techdocs/analysis"), workflowListedPR(427, false, "techdocs/analysis")}
+
+	var current *workflowmodel.Profile
+	e := newWorkflowStagePassEngine(t, srv.URL, func(string, string) *workflowmodel.Profile { return current })
+	tracker := e.stageTrackerOrShared()
+	e.observeWorkflowModelPRs(ctx, tracker)
+	if list.lists != 0 || len(tracker.drain()) != 0 {
+		t.Fatalf("unbound repo: lists=%d", list.lists)
+	}
+
+	builtin := workflowTestProfile(t)
+	builtin.Mode = workflowmodel.DerivationBuiltin
+	current = builtin
+	e.observeWorkflowModelPRs(ctx, tracker)
+	if list.lists != 0 || len(tracker.drain()) != 0 {
+		t.Fatalf("builtin-mode model: lists=%d", list.lists)
+	}
+
+	current = workflowTestProfile(t)
+	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", stagePR(426, "techdocs/analysis"), contributorLaneReasonNoVerdict, false, nil)
+	e.observeWorkflowModelPRs(ctx, tracker)
+	if list.lists != 1 {
+		t.Fatalf("rules-mode model: lists=%d, want 1", list.lists)
+	}
+	got := map[int][]string{}
+	for _, obs := range tracker.drain() {
+		for _, o := range obs {
+			got[o.Number] = append(got[o.Number], o.Lane)
+		}
+	}
+	if !slices.Equal(got[426], []string{stageLaneContributor}) || !slices.Equal(got[427], []string{stageLaneWorkflow}) {
+		t.Fatalf("lanes per PR %v", got)
 	}
 }

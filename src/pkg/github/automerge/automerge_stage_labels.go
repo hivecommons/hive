@@ -251,6 +251,7 @@ const (
 	stageLaneSelf        = prstage.StageLaneSelf
 	stageLaneTrusted     = prstage.StageLaneTrusted
 	stageLaneContributor = contributorLaneTier
+	stageLaneWorkflow    = prstage.StageLaneWorkflow
 )
 
 var stageLanePrecedence = map[string]int{stageLaneSelf: 3, stageLaneTrusted: 2, stageLaneContributor: 1}
@@ -325,6 +326,13 @@ func (t *StageTracker) record(obs stageObservation) {
 		t.obs[key] = lanes
 	}
 	lanes[obs.Lane] = obs
+}
+
+// has reports whether any lane recorded key since the last drain.
+func (t *StageTracker) has(key string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.obs[key]) > 0
 }
 
 // drain returns and clears the cycle's observations, sorted by key.
@@ -909,6 +917,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		return result, err
 	}
 	ctx = hgithub.WithRESTCaller(ctx, stageRESTCaller)
+	c.observeWorkflowModelPRs(ctx, tracker)
 	now := c.now()
 	var firstErr error
 	var pending []prStagePending
@@ -922,6 +931,15 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		c.foldForkGuard(ctx, tracker, store, list, now)
 		verdict, role, obs := resolveStage(list)
 		key := stageKey(obs.Owner, obs.Repo, obs.Number)
+		if verdict.Rank == stageRankNone && c.workflowDerivesPRs(obs.Owner, obs.Repo) {
+			// No lane has a built-in opinion (every one handed the PR
+			// off, or only the workflow lane listed it), but the bound
+			// model's rules derive PR state from the facts alone: the PR
+			// goes to the reconciler with no built-in stage, as a draft
+			// does, and the model writes its state's stage and whose-turn
+			// labels (hivecommons/hive#19768).
+			verdict = stageVerdict{Stage: stagelabels.None, Rank: stageRankOwned}
+		}
 		if verdict.Rank == stageRankNone {
 			result.Skipped++
 			continue
@@ -1772,6 +1790,54 @@ func (c *Engine) workflowProfile(owner, repo string) *workflowmodel.Profile {
 		return nil
 	}
 	return p
+}
+
+// workflowDerivesPRs reports whether owner/repo is bound to a workflow
+// model whose rules derive PR state (derivation mode rules): its PRs have a
+// stage whatever the auto-merge lanes think of them.
+func (c *Engine) workflowDerivesPRs(owner, repo string) bool {
+	p := c.workflowProfile(owner, repo)
+	return p != nil && p.Mode == workflowmodel.DerivationRules
+}
+
+// observeWorkflowModelPRs records, on the workflow lane, every open PR of a
+// rules-mode bound repository that no auto-merge lane recorded since the
+// last drain. The lanes skip a repository with auto-merge off (every
+// repository below ACMM L6) before listing its PRs, so without this the
+// stage pass never saw a PR there and the model's PR rules never ran: the
+// deliverable PR carried no stage or whose-turn label while its request
+// issue was staged (hivecommons/hive#19768). A listing failure is logged
+// and the repository waits for the next pass.
+func (c *Engine) observeWorkflowModelPRs(ctx context.Context, tracker *StageTracker) {
+	if c == nil || c.stageEngine == nil || c.stageEngine.WorkflowFor == nil || tracker == nil {
+		return
+	}
+	for _, repo := range c.activeRepos() {
+		owner, name := c.transport.SplitRepo(repo)
+		if owner == "" || name == "" || !c.workflowDerivesPRs(owner, name) {
+			continue
+		}
+		prs, skipReason, err := c.openPullRequests(ctx, owner, name, nil)
+		if err != nil {
+			c.warn("stage labels: workflow lane could not list open PRs", "repo", repo, "error", err)
+			continue
+		}
+		if skipReason != "" {
+			c.debug("stage labels: workflow lane skipped repo", "repo", repo, "reason", skipReason)
+			continue
+		}
+		for _, pr := range prs {
+			if pr == nil || pr.GetNumber() <= 0 || tracker.has(stageKey(owner, name, pr.GetNumber())) {
+				continue
+			}
+			reason := prstage.StageReasonWorkflowModel
+			if pr.GetDraft() {
+				// The model's `draft` fact is read from this reason.
+				reason = "draft"
+			}
+			c.recordStage(stageLaneWorkflow, repo, owner, name, pr, reason, false, nil)
+		}
+	}
 }
 
 // ApplyStageLabels runs the reconcile pass on a one-shot engine. The
