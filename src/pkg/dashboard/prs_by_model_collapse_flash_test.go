@@ -63,6 +63,8 @@ function isSectionCollapsed(id) { assert.equal(id, 'governor-pr-models-section')
 function toggleSection(id, opts) { toggles.push([id, opts]); collapsed = !!opts.collapsed; }
 function loadGovernorPRModels(force, w) { loads.push([force, w]); }
 function renderGovernor() { renders++; }
+let windowRenders = 0;
+function renderGovernorFromLastStatus() { windowRenders++; }
 `)
 	for _, name := range []string{"normalizeGovernorPRModelsWindowName", "expandGovernorPRModelsSection", "setGovernorPRModelsWindow", "setGovernorPRModelsSort", "renderGovernorPRModelsTile"} {
 		script.WriteString(jsFunc(t, html, name) + "\n")
@@ -84,6 +86,7 @@ assert.match(bodyTag(html), /class="section-body collapsed"/);
 setGovernorPRModelsWindow('30d');
 assert.deepEqual(toggles, [['governor-pr-models-section', { collapsed: false }]]);
 assert.deepEqual(loads, [[true, '30d']]);
+assert.equal(windowRenders, 1, 'a window pill re-renders at once so the new window shows as loading');
 html = renderGovernorPRModelsTile();
 assert.doesNotMatch(sectionTag(html), /\bcollapsed\b/);
 assert.match(headerTag(html), /aria-expanded="true"/);
@@ -96,6 +99,7 @@ setGovernorPRModelsSort('count');
 assert.equal(toggles.length, 1, 'a pill click must not collapse an expanded subsection');
 assert.equal(govPRModelsSort, 'count');
 assert.equal(renders, 1);
+assert.equal(windowRenders, 2);
 
 // A sort pill on the collapsed subsection expands it too.
 collapsed = true;
