@@ -27,13 +27,14 @@ func phoneTierBlocks(html string) []string {
 }
 
 // TestStageTrackerOverflowButtonsTapTarget pins the phone tap targets of the
-// dashboard's "…" / ⋯ overflow buttons. The human gate's … segment used to
-// pad its hit area out with a ::before slop, but the pill's overflow: hidden
-// clipped that slop, so on a phone the … took taps on a 44×16 strip only.
-// On the phone tier the gate is now a real tap-target-tall, unclipped pill;
-// the … sits 8px clear of the verb before it; the row ⋯ kebab sits 8px clear
-// of the select box; the decision popover's "More ⋯" is tap-sized; and the
-// sessions ⋯ meets the coarse-pointer floor. Desktop rules are unchanged.
+// dashboard's "…" / ⋯ overflow buttons. The human gate's … segment pads its
+// hit area out with a ::before slop, but the pill's overflow: hidden clipped
+// that slop, so on a phone the … took taps on a 44×16 strip only. On the
+// phone tier the pill no longer clips, the slop reaches below the one-line
+// pill (keeping the #17161 card height), the … sits 8px clear of the verb
+// before it, the row ⋯ kebab sits 8px clear of the select box, the decision
+// popover's "More ⋯" is tap-sized, and the sessions ⋯ meets the
+// coarse-pointer floor. Desktop rules are unchanged.
 func TestStageTrackerOverflowButtonsTapTarget(t *testing.T) {
 	html := indexHTML(t)
 	blocks := phoneTierBlocks(html)
@@ -49,20 +50,23 @@ func TestStageTrackerOverflowButtonsTapTarget(t *testing.T) {
 		return false
 	}
 	for _, rule := range []string{
-		// The gate pill is tap-target tall and no longer clips its segments.
-		"#activity-monitor-section .ham-human-gate { display: inline-flex; align-items: stretch; min-height: var(--tap-target); overflow: visible;",
-		// Every gate segment, the … included, is at least tap-target square.
-		"#activity-monitor-section .ham-human-gate .ham-gate-more, #activity-monitor-section .ham-human-gate > button.ham-gate-status { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: var(--tap-target); min-height: var(--tap-target);",
+		// The gate pill no longer clips its segments' hit slop.
+		"#activity-monitor-section .ham-human-gate { display: inline-flex; overflow: visible;",
+		// Every gate segment, the … included, is at least tap-target wide and
+		// sits above the strip line that paints after it.
+		"#activity-monitor-section .ham-human-gate > button.ham-gate-status { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; min-width: var(--tap-target);",
+		// The slop makes each segment tap-target tall: --sp-1 above the pill
+		// (clear of the title link), the rest below it.
+		`#activity-monitor-section .ham-human-gate .ham-gate-more::before, #activity-monitor-section .ham-human-gate > button.ham-gate-status::before { content: ""; position: absolute; left: 0; right: 0; top: calc(-1 * var(--sp-1)); bottom: calc(100% + var(--sp-1) - var(--tap-target)); }`,
 		// The … keeps 8px between itself and the verb before it.
 		"#activity-monitor-section .ham-human-gate .ham-gate-more-wrap { display: inline-flex; align-items: stretch; margin-left: var(--sp-4); }",
-		// The head's inline lead-action slop must not spill past the unclipped pill.
-		"#activity-monitor-section .ham-human-gate .ham-lead-act::before { content: none; }",
 		// Focus stays visible on the … and the kebab.
 		"#activity-monitor-section .ham-human-gate .ham-gate-more:focus-visible, #activity-monitor-section .ham-kebab:focus-visible { outline: calc(var(--line-width) * 2) solid var(--accent);",
-		// The row ⋯ kebab: tap-target square, 8px from the select box.
+		// The row ⋯ kebab: tap-target square, 8px from the select box, and the
+		// head keeps 8px clear of the tools.
 		"#activity-monitor-section .ham-sel, #activity-monitor-section .ham-kebab { width: var(--tap-target); height: var(--tap-target); min-width: var(--tap-target); min-height: var(--tap-target);",
 		"flex-direction: row; align-items: flex-start; gap: var(--sp-4); z-index: 1; }",
-		"padding-right: calc(2 * var(--tap-target) + var(--sp-4) + var(--sp-3));",
+		"padding-right: calc(2 * var(--tap-target) + var(--sp-4) + var(--sp-4));",
 		// The decision popover's "More ⋯" and its sibling verbs.
 		".ham-decision-acts { gap: var(--sp-4); }",
 		".ham-decision-act { min-height: var(--tap-target-touch); min-width: var(--tap-target-touch);",
@@ -73,10 +77,12 @@ func TestStageTrackerOverflowButtonsTapTarget(t *testing.T) {
 			t.Errorf("phone tier is missing overflow-button tap-target rule %q", rule)
 		}
 	}
-	// The clipped ::before slop on the gate's … must not come back.
-	if strings.Contains(html, "#activity-monitor-section .ham-human-gate .ham-gate-more::before { content: \"\"; position: absolute;") ||
-		strings.Contains(html, "#activity-monitor-section .ham-human-gate .ham-gate-more::before, ") {
-		t.Errorf("gate … must not rely on a ::before hit slop: the pill's overflow clipped it to the painted line")
+	// The phone tier must not clip the gate again: overflow: hidden on the
+	// pill is what shrank the … to its 16px painted line.
+	for _, b := range blocks {
+		if strings.Contains(b, "#activity-monitor-section .ham-human-gate { display: inline-flex; overflow: hidden") {
+			t.Errorf("phone-tier gate pill must not clip its segments' hit slop")
+		}
 	}
 	// The touch floor itself.
 	if !strings.Contains(html, "--tap-target-touch: 44px;") {
