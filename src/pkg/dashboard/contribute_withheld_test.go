@@ -272,6 +272,67 @@ func withheldCases() []withheldCase {
 			},
 		},
 		{
+			// A verdict citing a PR that really merged is settled evidence:
+			// stale after SettledClaimStaleAfter, and the prose names the
+			// merged PR, as before.
+			name:   "merged-PR verdict claim stale",
+			reason: contributorAdmissionReasonMergedClaimStale,
+			arrange: func(t *testing.T, hub *ContributeWSHub, s *Server) {
+				mergedAt := time.Now().Add(-(ghpkg.SettledClaimStaleAfter + 24*time.Hour))
+				s.deps.IssueClaimed = func(repo string, number int) (ghpkg.IssueClaim, bool) {
+					if number == 601 {
+						return ghpkg.IssueClaim{
+							PRNumber: 544,
+							PRURL:    "https://github.com/octo/demo/pull/544",
+							PRAuthor: "mendezr",
+							MergedPR: true, MergedAt: mergedAt,
+							ObservedAt: mergedAt, FirstObservedAt: mergedAt,
+							Source: ghpkg.ClaimSourceVerdict,
+						}, true
+					}
+					return ghpkg.IssueClaim{}, false
+				}
+			},
+			evidence: func(t *testing.T, item AdmissionWithheldItem) {
+				if !strings.Contains(item.Detail, "verdict citing merged PR #544") {
+					t.Errorf("detail = %q, want the merged PR the verdict cited", item.Detail)
+				}
+			},
+		},
+		{
+			// A verdict citing an OPEN PR (one that later closed unmerged
+			// in the case behind this fix) is a weak external claim, not settled evidence. However long it has
+			// covered the issue it is an open-PR claim, never
+			// merged_claim_stale, and never described as a merge.
+			name:   "open-PR verdict claim never goes stale",
+			reason: contributorAdmissionReasonOpenPRClaim,
+			arrange: func(t *testing.T, hub *ContributeWSHub, s *Server) {
+				verdictAt := time.Now().Add(-(ghpkg.SettledClaimStaleAfter + 24*time.Hour))
+				s.deps.IssueClaimed = func(repo string, number int) (ghpkg.IssueClaim, bool) {
+					if number == 601 {
+						return ghpkg.IssueClaim{
+							PRNumber:  544,
+							PRURL:     "https://github.com/octo/demo/pull/544",
+							PRAuthor:  "claimer",
+							PRState:   ghpkg.PRStateOpen,
+							Reference: true, ExternalAuthor: true,
+							ObservedAt: time.Now(), FirstObservedAt: verdictAt,
+							Source: ghpkg.ClaimSourceVerdict,
+						}, true
+					}
+					return ghpkg.IssueClaim{}, false
+				}
+			},
+			evidence: func(t *testing.T, item AdmissionWithheldItem) {
+				if item.ClaimURL != "https://github.com/octo/demo/pull/544" {
+					t.Errorf("claim_url = %q, want the open PR's URL", item.ClaimURL)
+				}
+				if strings.Contains(strings.ToLower(item.Detail), "merged") {
+					t.Errorf("detail = %q, must not describe an open PR as merged", item.Detail)
+				}
+			},
+		},
+		{
 			// governor.labels.stage.abandon_after: the ledger's covering PR
 			// is flagged abandoned. The issue stays locked (a, b); only the
 			// reason and its detail change (c).
@@ -849,6 +910,40 @@ func TestRepoContributeFiltersAgreeBetweenSelectionAndWithheld(t *testing.T) {
 			}
 			if item.Detail != tc.wantDetail {
 				t.Fatalf("detail = %q, want %q", item.Detail, tc.wantDetail)
+			}
+		})
+	}
+}
+
+// mergedClaimStaleDetail says "merged" only when the ledger records a merge
+// (a verdict citing an open PR that later closed unmerged used to read
+// "citing merged PR #N"). Merged-PR, commit and plain merged claims keep their text.
+func TestMergedClaimStaleDetail_SaysMergedOnlyForAMerge(t *testing.T) {
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	at := now.Add(-9 * 24 * time.Hour)
+	cases := []struct {
+		name  string
+		claim ghpkg.IssueClaim
+		want  string
+	}{
+		{"merged PR", ghpkg.IssueClaim{PRNumber: 133, MergedPR: true, MergedAt: at}, "Fixed by merged PR #133 9 days ago"},
+		{"merged-PR verdict", ghpkg.IssueClaim{PRNumber: 544, MergedPR: true, MergedAt: at, Source: ghpkg.ClaimSourceVerdict}, "Fixed by a verified no_work_needed verdict citing merged PR #544 9 days ago"},
+		{"commit verdict", ghpkg.IssueClaim{MergedPR: true, MergedAt: at, Source: ghpkg.ClaimSourceVerdict}, "Fixed by a verified no_work_needed verdict 9 days ago"},
+		// Unreachable through admission (an open-PR verdict is never
+		// settled, so never stale); only the merge wording is pinned.
+		{"open-PR verdict", ghpkg.IssueClaim{PRNumber: 544, Reference: true, ExternalAuthor: true, FirstObservedAt: at, Source: ghpkg.ClaimSourceVerdict}, "citing PR #544"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := mergedClaimStaleDetail(tc.claim, now)
+			if tc.claim.MergedPR {
+				if !strings.HasPrefix(got, tc.want) {
+					t.Fatalf("detail = %q, want prefix %q", got, tc.want)
+				}
+				return
+			}
+			if !strings.Contains(got, tc.want) || strings.Contains(strings.ToLower(got), "merged") {
+				t.Fatalf("detail = %q, want %q and no mention of a merge", got, tc.want)
 			}
 		})
 	}

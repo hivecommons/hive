@@ -173,9 +173,14 @@ func TestSettledClaim_Stale(t *testing.T) {
 	if !claim.SettledStale(merged.Add(SettledClaimStaleAfter)) {
 		t.Fatal("stale at SettledClaimStaleAfter")
 	}
-	verdict := IssueClaim{Repo: "o/r", Issue: 1, PRNumber: 2, PRRepo: "o/r", Source: ClaimSourceVerdict, ObservedAt: merged, FirstObservedAt: merged}
+	verdict := IssueClaim{Repo: "o/r", Issue: 1, PRNumber: 2, PRRepo: "o/r", MergedPR: true, Source: ClaimSourceVerdict, ObservedAt: merged, FirstObservedAt: merged}
 	if !verdict.SettledStale(merged.Add(SettledClaimStaleAfter)) {
-		t.Fatal("a verdict claim anchors staleness at its first observation")
+		t.Fatal("a merged verdict claim with no merge instant anchors staleness at its first observation")
+	}
+	openVerdict := verdict
+	openVerdict.MergedPR, openVerdict.Reference, openVerdict.ExternalAuthor = false, true, true
+	if openVerdict.SettledStale(merged.Add(365 * 24 * time.Hour)) {
+		t.Fatal("a verdict citing an open PR is never settled-stale")
 	}
 	open := IssueClaim{Repo: "o/r", Issue: 3, PRNumber: 4, PRRepo: "o/r", ObservedAt: merged, FirstObservedAt: merged}
 	if open.SettledStale(merged.Add(365 * 24 * time.Hour)) {
