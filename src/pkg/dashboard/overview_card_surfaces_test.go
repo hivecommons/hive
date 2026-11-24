@@ -55,7 +55,7 @@ func cardPartitionStatus() *StatusPayload {
 			Name: "demo", Full: cardTestRepo,
 			Issues: 20, PRs: 17,
 			ActionableIssues: []any{
-				issue(1, "agent/strategist"), issue(2, ownershipLabelAlreadyDone), issue(3), assigned, issue(5), issue(13, "needs-triage"),
+				issue(1, "agent/strategist"), issue(2, ownershipLabelAlreadyDone), issue(3), assigned, issue(5), issue(13),
 			},
 			HeldIssues: []any{
 				github.HoldItem{Repo: cardTestRepo, Number: 6, Type: "issue", Labels: []string{"hold"}, HoldSources: []string{github.HoldSourceLevelGate}},
@@ -118,14 +118,14 @@ func cardPartitionStatus() *StatusPayload {
 }
 
 // cardPartitionServer is a server whose stash holds one card-only your-turn
-// verdict (#13, needs-triage) and whose dispatch loader reads no file.
+// verdict (#13, issue churn) and whose dispatch loader reads no file.
 func cardPartitionServer() *Server {
 	s := &Server{}
 	s.cardDispatch.load = func() (review.DispatchState, time.Time, error) { return review.DispatchState{}, time.Time{}, nil }
 	s.cardDispatch.stat = func() time.Time { return time.Time{} }
 	st := newCardStash(cardTestNow)
 	st.addAdmission(queueAdmissionSnapshot{withheld: []AdmissionWithheldItem{
-		{Repo: cardTestRepo, Number: 13, Key: cardTestRepo + "#13", Reason: contributorAdmissionReasonLabelSkipped, SkippedLabel: "needs-triage"},
+		{Repo: cardTestRepo, Number: 13, Key: cardTestRepo + "#13", Reason: contributorAdmissionReasonIssueChurn, ChurnMerged: 3},
 	}}, 1, cardTestNow)
 	s.storeCardStash(st)
 	return s
@@ -136,7 +136,7 @@ var cardPartitionWant = map[string]string{
 	"issue#1": cardBandTriage, "issue#2": cardBandToClose, "issue#3": cardBandQueued, "issue#4": cardBandWorking,
 	"issue#5": cardBandWaitingOnItem, "issue#6": cardBandHeld, "issue#7": cardBandHumanHold, "issue#8": cardBandNotWork,
 	"issue#9": cardBandWaitingOnItem, "issue#10": cardBandCoveredByPR, "issue#11": cardBandReporterConfirm,
-	"issue#12": cardBandReview, "issue#13": cardBandTriage, "issue#14": cardBandWorking,
+	"issue#12": cardBandReview, "issue#13": cardBandCheckFinished, "issue#14": cardBandWorking,
 	"issue#16": cardBandDecide, "issue#17": cardBandAdmit, "issue#18": cardBandUnexplained,
 	"pr#20": cardBandReview, "pr#21": cardBandWillMerge, "pr#22": cardBandAuthorUpdate, "pr#23": cardBandBotRebase,
 	"pr#24": cardBandDraft, "pr#25": cardBandWorking, "pr#26": cardBandUnexplained, "pr#27": cardBandHeld, "pr#28": cardBandDraft,
@@ -276,7 +276,7 @@ func TestOverviewCardTilesSumToTheDisplayedTotals(t *testing.T) {
 
 func TestOverviewCardNotInInboxCountsOnlyCardOnlyRows(t *testing.T) {
 	card := cardClassifyForTest(cardPartitionServer(), cardPartitionStatus()).card
-	// #13 (needs-triage), #16 (release step) and #17 (no decision yet) are
+	// #13 (issue churn), #16 (release step) and #17 (no decision yet) are
 	// the card-only Your turn rows; the two Unexplained rows are listed
 	// apart, not in the not-in-inbox count.
 	if card.YourTurnNotInInbox != (OverviewCardKinds{Issues: 3}) {
@@ -719,12 +719,12 @@ func TestAdminMCPCardKeysMatchTheCard(t *testing.T) {
 	for name := range want {
 		t.Errorf("tool %s not found", name)
 	}
-	// The your-turn alias keeps an issue churn row by its card reason code;
-	// adminmcp spells that code itself, so it must be the card's. A plain
-	// Yours to close row stays out.
+	// The your-turn alias keeps an issue churn row, which is Check if
+	// finished, and leaves a plain Yours to close row out, in adminmcp's
+	// copy of the rule as on the card (cardTurnAction).
 	churn := decideIssueCard(cardIssueRow{repoFull: cardTestRepo, issue: cardIssue(1)}, cardTestInputs(cardTestStash(1, churnItem(3, 0))))
-	if churn.Key != cardBandToClose || churn.ReasonCode != cardChurnReasonCode {
-		t.Fatalf("churn row band %q code %q, want %q %q", churn.Key, churn.ReasonCode, cardBandToClose, cardChurnReasonCode)
+	if churn.Key != cardBandCheckFinished || churn.ReasonCode != cardChurnReasonCode || !cardTurnAction(churn.Key) {
+		t.Fatalf("churn row band %q code %q, want %q %q", churn.Key, churn.ReasonCode, cardBandCheckFinished, cardChurnReasonCode)
 	}
 	closeRow := cardBand(cardBandToClose, "ownership:"+OwnershipReasonVerifiedDone, "reason")
 	row := func(n int, b OverviewCardBand) any {

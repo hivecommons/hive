@@ -13,9 +13,12 @@ import (
 	"github.com/hivecommons/hive/pkg/review"
 )
 
-// An issue churn row (Yours to close) names the pull requests behind it: inline in
-// the card reason, capped, and as card_churn_prs on the status, export and
-// MCP rows, so a maintainer does not have to hunt for them.
+// An issue churn row (Check if finished) names the pull requests behind it:
+// inline in the card reason, capped, and as card_churn_prs on the status,
+// export and MCP rows, so a maintainer does not have to hunt for them.
+
+// cardChurnReasonCode is an issue churn row's card reason code.
+const cardChurnReasonCode = "verdict:" + contributorAdmissionReasonIssueChurn
 
 func churnItem(merged, closed int, prs ...string) AdmissionWithheldItem {
 	return AdmissionWithheldItem{Reason: contributorAdmissionReasonIssueChurn, ChurnMerged: merged, ChurnClosed: closed, ChurnPRs: prs}
@@ -46,7 +49,7 @@ func TestIssueChurnCardReasonListsThePRs(t *testing.T) {
 		{"no list (an older verdict)", churnItem(3, 0), "3 PRs merged" + tail},
 	} {
 		got := decideIssueCard(cardIssueRow{repoFull: cardTestRepo, issue: cardIssue(1)}, cardTestInputs(cardTestStash(1, tc.item)))
-		if got.Key != cardBandToClose || got.ReasonCode != cardChurnReasonCode || !cardTurnAliasRow(got) {
+		if got.Key != cardBandCheckFinished || got.ReasonCode != cardChurnReasonCode || !cardTurnAction(got.Key) {
 			t.Errorf("%s: band %q code %q", tc.name, got.Key, got.ReasonCode)
 		}
 		if got.Reason != tc.want {
@@ -167,7 +170,7 @@ func TestIssueChurnPRsOnStatusAndExportRows(t *testing.T) {
 		map[string]any{"repo": cardTestRepo, "number": float64(1240), "state": "merged"},
 		map[string]any{"repo": cardTestRepo, "number": float64(1251), "state": "closed"},
 	}
-	if rows[0]["card_band"] != cardBandToClose || !reflect.DeepEqual(rows[0]["card_churn_prs"], wantStatus) {
+	if rows[0]["card_band"] != cardBandCheckFinished || !reflect.DeepEqual(rows[0]["card_churn_prs"], wantStatus) {
 		t.Errorf("status churn row: band %v, card_churn_prs %#v", rows[0]["card_band"], rows[0]["card_churn_prs"])
 	}
 	if _, ok := rows[1]["card_churn_prs"]; ok {
@@ -213,10 +216,11 @@ func TestIssueChurnPRsOnStatusAndExportRows(t *testing.T) {
 	}
 }
 
-// An issue churn row is Yours to close, not Triage, and the card_band
-// your-turn alias still returns it: the single Your turn band of before
-// the split held it. The alias adds no other Yours to close row.
-func TestIssueChurnRowIsYoursToCloseAndInTheYourTurnAlias(t *testing.T) {
+// An issue churn row is Check if finished, not Yours to close or Triage,
+// and the card_band your-turn alias still returns it: the single Your turn
+// band of before the split held it, and Check if finished is a what-to-do
+// band. The alias returns no Yours to close row.
+func TestIssueChurnRowIsCheckIfFinishedAndInTheYourTurnAlias(t *testing.T) {
 	s, status := churnServer(t)
 	verified := github.Issue{Repo: cardTestRepo, Number: 42, Title: "Done", CreatedAt: cardTestNow.Add(-480 * time.Hour), UpdatedAt: cardTestNow.Add(-time.Hour)}
 	status.Repos[0].ActionableIssues = append(status.Repos[0].ActionableIssues, verified)
@@ -238,11 +242,14 @@ func TestIssueChurnRowIsYoursToCloseAndInTheYourTurnAlias(t *testing.T) {
 		return out
 	}
 	for query, want := range map[string][]int{
-		"?card_band=to-close":                     {40, 42},
-		"?card_band=triage":                       nil,
-		"?card_band=your-turn":                    {40},
-		"?card_band=your-turn&card_band=to-close": {40, 42},
-		"?card_band=your-turn&card_group=outside": nil,
+		"?card_band=check-finished":                     {40},
+		"?card_band=to-close":                           {42},
+		"?card_band=triage":                             nil,
+		"?card_band=your-turn":                          {40},
+		"?card_band=your-turn&card_band=to-close":       {40, 42},
+		"?card_band=your-turn&card_band=check-finished": {40},
+		"?card_band=your-turn&card_group=outside":       nil,
+		"?card_group=your-turn":                         {40, 42},
 	} {
 		if got := numbers(query); !reflect.DeepEqual(got, want) {
 			t.Errorf("%s: rows %v, want %v", query, got, want)
