@@ -69,10 +69,19 @@ func (m *Manager) setSandboxRunnerForTest(r sandboxCommandRunner) {
 	m.sandboxRunner = r
 }
 
+// sandboxGitWiring is what a sandbox kick clones and pushes with.
+type sandboxGitWiring struct {
+	// pushMinter is the GitHub App minter for repos on github.com.
+	pushMinter pushbroker.TokenMinter
+	// forgeRemotes resolves a repo that is not on github.com to its forge URL
+	// and minter (SetSandboxForgeRemotes). Nil: every repo is on github.com.
+	forgeRemotes pushbroker.ForgeRemoteResolver
+}
+
 func (m *Manager) SetSandboxPushMinter(minter pushbroker.TokenMinter) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.sandboxPushMinter = minter
+	m.sandboxGit.pushMinter = minter
 }
 
 // SetSandboxForgeRemotes installs the resolver that names the forge and
@@ -82,16 +91,16 @@ func (m *Manager) SetSandboxPushMinter(minter pushbroker.TokenMinter) {
 func (m *Manager) SetSandboxForgeRemotes(resolve pushbroker.ForgeRemoteResolver) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.sandboxForgeRemotes = resolve
+	m.sandboxGit.forgeRemotes = resolve
 }
 
 // sandboxForgeRemoteLocked resolves repo ("owner/name") through the installed
 // resolver. ok=false means github.com.
 func (m *Manager) sandboxForgeRemoteLocked(repo string) (pushbroker.ForgeRemote, bool, error) {
-	if m.sandboxForgeRemotes == nil {
+	if m.sandboxGit.forgeRemotes == nil {
 		return pushbroker.ForgeRemote{}, false, nil
 	}
-	remote, ok, err := m.sandboxForgeRemotes(repo)
+	remote, ok, err := m.sandboxGit.forgeRemotes(repo)
 	if err != nil {
 		return pushbroker.ForgeRemote{}, false, fmt.Errorf("sandbox kick on %s: %w", repo, err)
 	}
@@ -122,7 +131,7 @@ func (m *Manager) SetSandboxPRClient(client PRCreator) {
 func (m *Manager) SandboxGitHubWiring() (PRCreator, pushbroker.TokenMinter) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.sandboxPRClient, m.sandboxPushMinter
+	return m.sandboxPRClient, m.sandboxGit.pushMinter
 }
 
 func (m *Manager) SetSandboxAuditCallback(fn func(agent, action, detail string)) {
@@ -333,7 +342,7 @@ func (m *Manager) sandboxWorkspaceDirLocked() string {
 }
 
 func (m *Manager) tieredSandboxMinterLocked(tier string) pushbroker.TokenMinter {
-	return pushbroker.WithTier(m.sandboxPushMinter, tier)
+	return pushbroker.WithTier(m.sandboxGit.pushMinter, tier)
 }
 
 func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator, prReader crux.PRReviewContextReader, targetReader crux.PRPushTargetReader, mutationBoundary effects.Boundary) {

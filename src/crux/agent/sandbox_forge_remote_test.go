@@ -136,17 +136,17 @@ func TestSandboxForgeRemoteLocked(t *testing.T) {
 	if _, ok, err := m.sandboxForgeRemoteLocked("team/app"); ok || err != nil {
 		t.Fatalf("no resolver: ok=%v err=%v", ok, err)
 	}
-	m.sandboxForgeRemotes = func(string) (pushbroker.ForgeRemote, bool, error) { return pushbroker.ForgeRemote{}, false, nil }
+	m.sandboxGit.forgeRemotes = func(string) (pushbroker.ForgeRemote, bool, error) { return pushbroker.ForgeRemote{}, false, nil }
 	if _, ok, err := m.sandboxForgeRemoteLocked("team/app"); ok || err != nil {
 		t.Fatalf("github repo: ok=%v err=%v", ok, err)
 	}
-	m.sandboxForgeRemotes = func(string) (pushbroker.ForgeRemote, bool, error) {
+	m.sandboxGit.forgeRemotes = func(string) (pushbroker.ForgeRemote, bool, error) {
 		return pushbroker.ForgeRemote{BaseURL: "https://u:p@forgejo.example.com", Minter: sandboxFakeMinter{}}, true, nil
 	}
 	if _, _, err := m.sandboxForgeRemoteLocked("team/app"); err == nil {
 		t.Fatal("invalid forge URL accepted")
 	}
-	m.sandboxForgeRemotes = func(string) (pushbroker.ForgeRemote, bool, error) {
+	m.sandboxGit.forgeRemotes = func(string) (pushbroker.ForgeRemote, bool, error) {
 		return pushbroker.ForgeRemote{BaseURL: "https://forgejo.example.com"}, true, nil
 	}
 	if _, _, err := m.sandboxForgeRemoteLocked("team/app"); err == nil || !strings.Contains(err.Error(), "no token minter") {
