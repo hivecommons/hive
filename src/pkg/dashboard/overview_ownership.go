@@ -278,25 +278,33 @@ const (
 	waitingCauseReporter    = "reporter"
 	waitingCauseCovered     = "covered"
 	waitingCauseAdjudicator = "adjudicator"
+	// waitingCauseMaintainerReply: an untrusted reporter's issue whose
+	// newest comment by a person is a maintainer's (decideIssueOwnership
+	// rule 6b); a reporter_triage row waits for no other reason.
+	waitingCauseMaintainerReply = "maintainer_reply"
 )
 
 var overviewWaitingCauseLabels = map[string]string{
-	waitingCauseHold:        "held by a person or paused",
-	waitingCauseReporter:    "awaiting reporter confirmation",
-	waitingCauseCovered:     "covered by an open PR",
-	waitingCauseAdjudicator: "within the adjudicator wait",
+	waitingCauseHold:            "held by a person or paused",
+	waitingCauseReporter:        "awaiting reporter confirmation",
+	waitingCauseCovered:         "covered by an open PR",
+	waitingCauseAdjudicator:     "within the adjudicator wait",
+	waitingCauseMaintainerReply: "waiting on a reply a maintainer asked for",
 }
 
-var overviewWaitingCauseOrder = []string{waitingCauseHold, waitingCauseAdjudicator, waitingCauseReporter, waitingCauseCovered}
+var overviewWaitingCauseOrder = []string{waitingCauseHold, waitingCauseAdjudicator, waitingCauseReporter, waitingCauseCovered, waitingCauseMaintainerReply}
 
 // overviewIssueWaitingCause names why a not-your-turn issue waits on someone
-// else: a hold, an open PR that covers it, or the reporter's confirmation.
+// else: a hold, an open PR that covers it, a maintainer's reply on an
+// untrusted reporter's issue, or the reporter's confirmation.
 func overviewIssueWaitingCause(held bool, bucket string) string {
 	switch {
 	case held:
 		return waitingCauseHold
 	case bucket == repoWorkBucketClaimedByPR:
 		return waitingCauseCovered
+	case bucket == repoWorkBucketReporterTriage:
+		return waitingCauseMaintainerReply
 	}
 	return waitingCauseReporter
 }
