@@ -10,7 +10,7 @@ import (
 // project.repo_policies[].forge may name. The values match pkg/forge.Kind by
 // value (pkg/forge cannot be imported from here); a test in pkg/forge pins
 // that they stay equal.
-var KnownForgeKinds = []string{ForgeGitHub, ForgeGitLab, ForgeGitea}
+var KnownForgeKinds = []string{ForgeGitHub, ForgeGitLab, ForgeGitea, ForgeForgejo}
 
 func isKnownForgeKind(kind string) bool {
 	for _, k := range KnownForgeKinds {
@@ -43,10 +43,64 @@ func (c *Config) ForgeKindForRepo(repo string) string {
 // forge key never silently stops a GitHub hive's sweeps.
 func (c *Config) RepoOnGitHub(repo string) bool {
 	switch c.ForgeKindForRepo(repo) {
-	case ForgeGitLab, ForgeGitea:
+	case ForgeGitLab, ForgeGitea, ForgeForgejo:
 		return false
 	}
 	return true
+}
+
+func onNonGitHubForge(kind string) bool {
+	switch kind {
+	case ForgeGitLab, ForgeGitea, ForgeForgejo:
+		return true
+	}
+	return false
+}
+
+// AllReposOffGitHub reports whether every repo resolves to a non-GitHub forge:
+// project.forge names one and no repo_policies entry moves a repo to GitHub.
+// Such a hive needs the forge's own URL and token, not a GitHub credential.
+// An unknown or unset project.forge is GitHub, so this is false for it.
+func (c *Config) AllReposOffGitHub() bool {
+	if c == nil || !onNonGitHubForge(c.Project.ForgeKind()) {
+		return false
+	}
+	repoPauseMu.RLock()
+	defer repoPauseMu.RUnlock()
+	for _, rp := range c.Project.RepoPolicies {
+		if k := strings.ToLower(strings.TrimSpace(rp.Forge)); k != "" && !onNonGitHubForge(k) {
+			return false
+		}
+	}
+	return true
+}
+
+func forgeURLKey(kind string) string {
+	switch kind {
+	case ForgeGitLab:
+		return "gitlab.gitlab_url"
+	case ForgeGitea:
+		return "gitea.gitea_url"
+	}
+	return "forgejo.forgejo_url"
+}
+
+func (c *Config) validateForgeCredentials() error {
+	repos := append([]string{""}, c.Project.Repos...)
+	for _, rp := range c.Project.RepoPolicies {
+		repos = append(repos, rp.Repo)
+	}
+	for _, repo := range repos {
+		if c.ForgeURLForRepo(repo) != "" {
+			continue
+		}
+		kind := c.ForgeKindForRepo(repo)
+		if repo == "" {
+			return fmt.Errorf("project.forge is %s, so %s is required (github.token, github.app_id or github.forge is not needed when every repo is on another forge)", kind, forgeURLKey(kind))
+		}
+		return fmt.Errorf("repo %q is on %s, so %s or a repo_policies forge_url is required", repo, kind, forgeURLKey(kind))
+	}
+	return nil
 }
 
 // ForgeURLForRepo returns the instance root of repo's forge: its
@@ -68,6 +122,8 @@ func (c *Config) ForgeURLForRepo(repo string) string {
 		return c.GitLab.InstanceURL()
 	case ForgeGitea:
 		return c.Gitea.InstanceURL()
+	case ForgeForgejo:
+		return c.Forgejo.InstanceURL()
 	default:
 		return c.GitHub.ResolvedBaseURL()
 	}
@@ -115,6 +171,9 @@ func (c *Config) validateRepoForges() error {
 		// project.forge: gitea hive must load exactly as it did before.
 		if kind == ForgeGitea && c.ForgeURLForRepo(rp.Repo) == "" {
 			return fmt.Errorf("%s: repo %q is on gitea but neither forge_url nor gitea.gitea_url is set", field, rp.Repo)
+		}
+		if kind == ForgeForgejo && c.ForgeURLForRepo(rp.Repo) == "" {
+			return fmt.Errorf("%s: repo %q is on forgejo but neither forge_url nor forgejo.forgejo_url is set", field, rp.Repo)
 		}
 	}
 	return nil

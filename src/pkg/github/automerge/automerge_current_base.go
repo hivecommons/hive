@@ -23,7 +23,79 @@ const (
 	// gated only by auto_merge.require_current_base_default has a behind head
 	// the App cannot update, so the head merges as it was tested.
 	currentBaseFallbackMessage = "automerge current-base gate: head is behind the base but the branch cannot be updated; merging as tested (list the repo in auto_merge.require_current_base to park it instead)"
+	// currentBaseChangelogOnlyReason is the reason logged when a behind head
+	// is treated as current because every file the base changed since the
+	// PR's merge base is release-note bookkeeping (see changelogOnlyFile and
+	// changelogOnlyFragmentDir).
+	currentBaseChangelogOnlyReason = "behind only by changelog-only commits"
+	// changelogOnlyFile is the repo-root changelog the release gate rewrites.
+	// It is one half of the changelog-only allowlist: a base move that
+	// touches only this file and changelogOnlyFragmentDir cannot change what
+	// the PR's CI tested, so it does not make a green head stale.
+	changelogOnlyFile = "CHANGELOG.md"
+	// changelogOnlyFragmentDir is the repo-root directory of per-PR
+	// changelog fragments (trailing slash included), the other half of the
+	// changelog-only allowlist.
+	changelogOnlyFragmentDir = "changelog.d/"
+	// compareFilesResponseCap is the most files GitHub returns in one
+	// compare response. A list this long may be truncated, so it can never
+	// prove a base move changelog-only.
+	compareFilesResponseCap = 300
 )
+
+// isChangelogOnlyPath reports whether path is on the changelog-only
+// allowlist: the repo-root changelogOnlyFile, or a file under the repo-root
+// changelogOnlyFragmentDir.
+func isChangelogOnlyPath(path string) bool {
+	if path == changelogOnlyFile {
+		return true
+	}
+	rest, ok := strings.CutPrefix(path, changelogOnlyFragmentDir)
+	return ok && rest != "" && !strings.Contains(rest, "..")
+}
+
+// behindOnlyByChangelog reports whether a head that is behind its base is
+// behind only by release-note bookkeeping: every file the base changed
+// between the PR's merge base and the base tip is on the changelog-only
+// allowlist and none of them is a file the PR itself changes. Such a base
+// move cannot change what the head's CI tested, so refreshing the branch
+// would only re-run CI for nothing. headSide is the base...head comparison
+// the gate already read. Fails closed: a missing merge base, a possibly
+// truncated file list on either side, an API error, an unexpected compare
+// status or any other path reads as stale (false).
+func (c *Engine) behindOnlyByChangelog(ctx context.Context, owner, repo, baseBranch string, headSide *gh.CommitsComparison) bool {
+	if c == nil || c.gh == nil || headSide == nil {
+		return false
+	}
+	mergeBase := strings.TrimSpace(headSide.GetMergeBaseCommit().GetSHA())
+	if mergeBase == "" || len(headSide.Files) >= compareFilesResponseCap {
+		return false
+	}
+	baseSide, _, err := c.gh.Repositories.CompareCommits(hgithub.WithRESTCaller(ctx, "hive:automerge_current_base"), owner, repo, mergeBase, baseBranch, nil)
+	if err != nil || baseSide == nil || !strings.EqualFold(baseSide.GetStatus(), "ahead") || baseSide.GetTotalCommits() <= 0 {
+		return false
+	}
+	if len(baseSide.Files) == 0 || len(baseSide.Files) >= compareFilesResponseCap {
+		return false
+	}
+	ours := make(map[string]bool, len(headSide.Files))
+	for _, f := range headSide.Files {
+		ours[f.GetFilename()] = true
+		if prev := f.GetPreviousFilename(); prev != "" {
+			ours[prev] = true
+		}
+	}
+	for _, f := range baseSide.Files {
+		name := f.GetFilename()
+		if !isChangelogOnlyPath(name) || ours[name] {
+			return false
+		}
+		if prev := f.GetPreviousFilename(); prev != "" && (!isChangelogOnlyPath(prev) || ours[prev]) {
+			return false
+		}
+	}
+	return true
+}
 
 func (c *Engine) requireCurrentBaseFor(repo string) bool {
 	if c == nil || c.requireCurrentBase == nil {
@@ -113,6 +185,11 @@ func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo s
 	if baseBranch == "" || strings.TrimSpace(headSHA) == "" {
 		return AutoMergeSweepEvent{}, autoMergeReasonCurrentBaseCheck, true, nil
 	}
+	if reason := c.preparationOwnerHoldsSuccessor(ctx, owner, repo, baseBranch, number); reason != "" {
+		// A preparation owner already green and reviewed on its refresh
+		// merges first; overtaking it would make it stale again.
+		return AutoMergeSweepEvent{}, reason, true, nil
+	}
 	cmp, _, err := c.gh.Repositories.CompareCommits(hgithub.WithRESTCaller(ctx, "hive:automerge_current_base"), owner, repo, baseBranch, headSHA, &gh.ListOptions{PerPage: 1})
 	if err != nil {
 		return AutoMergeSweepEvent{}, autoMergeReasonCurrentBaseCheck, true, err
@@ -124,6 +201,14 @@ func (c *Engine) currentBaseGate(ctx context.Context, displayRepo, owner, repo s
 	}
 	if c.mergeQueueBaseHoldsRefresh(owner, repo, baseBranch) {
 		c.debug("automerge head is behind a merge-queue-only base; not updating", "repo", displayRepo, "pr", number, "base", baseBranch, "behind_by", cmp.GetBehindBy())
+		return AutoMergeSweepEvent{}, "", false, nil
+	}
+	if c.behindOnlyByChangelog(ctx, owner, repo, baseBranch, cmp) {
+		// The release gate's CHANGELOG-only merges move the base without
+		// changing anything CI tests. Refreshing for them re-runs every
+		// workflow on the head and starves the preparation front, so the
+		// head counts as current. Anything else still refreshes.
+		c.info("automerge head treated as current", "repo", displayRepo, "pr", number, "base", baseBranch, "behind_by", cmp.GetBehindBy(), "reason", currentBaseChangelogOnlyReason)
 		return AutoMergeSweepEvent{}, "", false, nil
 	}
 	if !branchUpdateAllowed {

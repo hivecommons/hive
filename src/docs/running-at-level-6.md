@@ -257,8 +257,13 @@ workflow. Default is `off`.
 `pr-gate: comparison with the workflow result agrees`. See
 [the setup note](github-app-setup.md#pr-contents-gate-posted-by-the-hive).
 
-**Limit:** needs the Hive App's Commit statuses read and write grant; `shadow`
-cannot satisfy a required context, and `enforce` runs as `shadow` for now.
+**Limit:** needs the Hive App's Commit statuses read and write grant. A missing
+grant forces the gate off and raises a dashboard banner and a hub health cause
+(red when a required check depends on the gate, amber otherwise); `shadow`
+cannot satisfy a required context. `enforce` posts the real `verify PR
+contents`, `PR Type` and `PR Issue` statuses once the grant is confirmed (it
+runs as `shadow` until then); see
+[Switch a repository to enforce](github-app-setup.md#switch-a-repository-to-enforce).
 
 #### H3. Leave no-CI exceptions empty
 

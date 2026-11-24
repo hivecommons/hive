@@ -637,13 +637,18 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 			})
 			return
 		}
-		c.recordMergeFailure(path, req, attempts, fmt.Sprintf("%s (still pending after %d polls over %s)", why, waits, now.Sub(since).Round(time.Second)), nowFn)
+		reason := fmt.Sprintf("%s (still pending after %d polls over %s)", why, waits, now.Sub(since).Round(time.Second))
+		if attempts >= mergeRequestMaxAttempts {
+			c.quarantineMergeRequest(ctx, path, req, attempts, verdict, reason, nowFn)
+			return
+		}
+		c.recordMergeFailure(path, req, attempts, reason, nowFn)
 		return
 	case mergeCINeverCreated:
 		// Terminal on the first verdict: no retry or wait can create the
 		// check, and no code push from the fix loop can either, so the
 		// request is quarantined now without the re-engage hook.
-		c.quarantineMergeRequest(path, req, attempts, why, nowFn)
+		c.quarantineMergeRequest(ctx, path, req, attempts, verdict, why, nowFn)
 		return
 	default:
 		c.recordMergeFailure(path, req, attempts, why, nowFn)
@@ -769,17 +774,22 @@ func (c *Client) recordMergeFailure(path string, req MergeRequest, attempts int,
 		slog.Int("attempts", attempts), slog.String("error", errMsg))
 }
 
-// quarantineMergeRequest sets a request aside on its first terminal verdict
-// (mergeCINeverCreated): nothing a retry, a wait or a pushed fix can change.
-// It records the exhaustion against the PR+SHA so re-requests for the same
-// head are refused, and deliberately does NOT call the re-engage hook.
-func (c *Client) quarantineMergeRequest(path string, req MergeRequest, attempts int, reason string, nowFn func() time.Time) {
+// quarantineMergeRequest sets aside a request when the CI gate is terminal:
+// a required check was never created or pending CI exhausted the retry budget.
+// It records exhaustion against the PR+SHA without calling the fix loop.
+func (c *Client) quarantineMergeRequest(ctx context.Context, path string, req MergeRequest, attempts int, verdict mergeCIVerdict, reason string, nowFn func() time.Time) {
 	now := nowFn()
 	c.writeMergeResult(path, MergeResponse{Number: req.Number, Attempts: attempts, OK: false, Error: reason, At: now.UTC().Format(time.RFC3339)})
 	c.putMergeRequestState(req.Repo, req.Number, mergeRequestPRState{SHA: req.ExpectSHA, Attempts: attempts, Exhausted: true, Reason: reason, At: now})
 	c.raiseMergeFailureAlert(req.Repo, req.Number, reason, req.ExpectSHA, req.Method)
 	_ = os.Rename(path, path+".exhausted")
-	c.logger.Warn("merge-request watcher: merge cannot proceed on this head, quarantined without retry",
+	level, message := slog.LevelWarn, "merge-request watcher: merge cannot proceed on this head, quarantined without retry"
+	if verdict == mergeCIPending {
+		// CI can be slow without a hive defect. Keep the reason visible
+		// without feeding this expected outcome to fleet self-reporting.
+		level, message = slog.LevelInfo, "merge-request watcher: CI wait budget exhausted; request quarantined"
+	}
+	c.logger.LogAttrs(ctx, level, message,
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("sha", req.ExpectSHA), slog.String("reason", reason))
 }

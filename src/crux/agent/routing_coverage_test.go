@@ -311,7 +311,14 @@ func TestConnectionMCPFlags_NonClaude(t *testing.T) {
 
 func TestNormalizeModelName(t *testing.T) {
 	cases := []struct{ model, backend, want string }{
-		{"opus", "claude", "opus"},                // claude passes through
+		{"opus", "claude", "opus"}, // claude passes through
+		{"claude-sonnet-5-5", "claude", "claude-sonnet-5-5"},
+		// A copilot-spelled id carried over by a backend switch is launched
+		// in the Claude CLI's dashed spelling instead of failing every kick.
+		{"claude-sonnet-5.5", "claude", "claude-sonnet-5-5"},
+		// And the other way: the Claude CLI spelling on copilot launches as
+		// the Copilot spelling, even for an id the alias list does not know.
+		{"claude-haiku-5-5", "copilot", "claude-haiku-5.5"},
 		{"deepseek-14", "litellm", "deepseek-14"}, // inference passes through
 		// copilot no longer takes the blind digit-suffix dot-rewrite (#4262):
 		// ids are canonicalized against the CLI-accepted list and UNKNOWN ids

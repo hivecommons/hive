@@ -1,0 +1,95 @@
+name: ioscan classifier bench
+
+# Non-blocking benchmark of the ioscan semantic classifier (hivecommons/hive#19516,
+# part of #19442). It runs TestClassifierBench in src/pkg/ioscan/classifierbench_test.go
+# over the vendored and in-house corpora and writes catch rate, false-positive
+# rate, errors, latency, tokens and cost per backend and split to the job summary.
+#
+# It is not a merge gate: it never runs on pull requests, is never a required
+# check, and the job is continue-on-error, so it only adds a number.
+#
+# Credentials and spend (why this differs from the closed #19464): no
+# repository secret is used. Each backend is a GitHub Models model reached
+# with the job's own GITHUB_TOKEN (`models: read`), which is free and rate
+# limited, so there is no paid key within reach of the adversarial corpus. The
+# bench's local metering proxy still enforces a hard token ceiling
+# (IOSCAN_CLASSIFIER_BENCH_MAX_TOKENS) and spaces calls to stay under the
+# per-minute limit; MAX_PER_CLASS keeps the call count inside the daily limit.
+# The cost column prices tokens at each model's OpenAI list price, as the
+# cost of running that backend with a paid key.
+
+on:
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      split:
+        description: 'Which split to run'
+        type: choice
+        options: [both, dev, heldout]
+        default: both
+
+permissions:
+  contents: read
+  models: read
+
+concurrency:
+  group: ioscan-classifier-bench
+  cancel-in-progress: false
+
+jobs:
+  bench:
+    if: github.repository == 'hivecommons/hive'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - model: openai/gpt-4o-mini
+            usd_in: '0.15'
+            usd_out: '0.60'
+          - model: openai/gpt-4.1-mini
+            usd_in: '0.40'
+            usd_out: '1.60'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          cache: false
+          go-version-file: src/go.mod
+      - name: Run classifier bench
+        working-directory: src
+        env:
+          IOSCAN_CLASSIFIER_BENCH: '1'
+          IOSCAN_CLASSIFIER_BENCH_OPENAI_ENDPOINT: https://models.github.ai/inference/chat/completions
+          IOSCAN_CLASSIFIER_BENCH_API_KEY: ${{ github.token }}
+          IOSCAN_CLASSIFIER_BENCH_MODEL: ${{ matrix.model }}
+          IOSCAN_CLASSIFIER_BENCH_USD_PER_MTOK_IN: ${{ matrix.usd_in }}
+          IOSCAN_CLASSIFIER_BENCH_USD_PER_MTOK_OUT: ${{ matrix.usd_out }}
+          IOSCAN_CLASSIFIER_BENCH_MAX_TOKENS: '150000'
+          IOSCAN_CLASSIFIER_BENCH_MAX_PER_CLASS: '30'
+          IOSCAN_CLASSIFIER_BENCH_MIN_INTERVAL: 5s
+          SPLIT_INPUT: ${{ inputs.split }}
+          REPORT: ${{ runner.temp }}/ioscan-classifier-bench.md
+        run: |
+          if [ -n "$SPLIT_INPUT" ] && [ "$SPLIT_INPUT" != both ]; then
+            export IOSCAN_CLASSIFIER_BENCH_SPLIT="$SPLIT_INPUT"
+          fi
+          export IOSCAN_CLASSIFIER_BENCH_REPORT="$REPORT"
+          go test ./pkg/ioscan/ -run 'TestClassifierBench$' -count=1 -timeout 40m -v
+      - name: Publish report to the job summary
+        if: always()
+        env:
+          REPORT: ${{ runner.temp }}/ioscan-classifier-bench.md
+        run: |
+          if [ -f "$REPORT" ]; then
+            cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### ioscan classifier benchmark" >> "$GITHUB_STEP_SUMMARY"
+            echo "No report was written; see the job log." >> "$GITHUB_STEP_SUMMARY"
+          fi

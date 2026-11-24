@@ -39,7 +39,8 @@ func TestPRApproveReply(t *testing.T) {
 		{name: "owner approval releases workflow fence", author: "contributor", actor: "owner", file: ".github/workflows/ci.yml", releaseFence: true, want: "merges only on a hive owner's explicit approval"},
 		{name: "workflow fence with removed test stays manual", author: "contributor", actor: "owner", file: ".github/workflows/ci.yml", removedTest: "src/pkg/widget/widget_test.go", releaseFence: true, want: "requires a person to merge manually"},
 		{name: "manual path", author: testHiveAppBotLogin, actor: "owner", file: "sensitive/config.yaml", want: "requires a person to merge manually"},
-		{name: "carried fence on App lane", author: testHiveAppBotLogin, actor: "owner", body: CarriedFenceMarker(contributorLaneReasonTestsRemoved, 9), want: "carries a diff fence from the contributor PR it supersedes"},
+		{name: "carried fence on App lane", author: testHiveAppBotLogin, actor: "owner", file: ".github/workflows/ci.yml", body: CarriedFenceMarker(contributorLaneReasonWorkflowPath, 9), want: "carries a diff fence from the contributor PR it supersedes"},
+		{name: "carried fence the current diff no longer trips", author: testHiveAppBotLogin, actor: "owner", body: CarriedFenceMarker(contributorLaneReasonWorkflowPath, 9), want: "does not consume it on a pull request"},
 		{name: "disabled lane", author: "contributor", actor: "owner", disabled: true, want: "must merge it manually"},
 		{name: "missing path evidence", author: "contributor", actor: "owner", readError: true},
 	} {

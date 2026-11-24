@@ -85,6 +85,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Ioscan.Classifier.ValidateCLI(); err != nil {
 		return err
 	}
+	if d := c.Ioscan.SourceMemoryDays; d != nil && *d < 0 {
+		return fmt.Errorf("ioscan.source_memory_days: %d is negative", *d)
+	}
 	// Deliberately a bare zero-test, NOT HasApp(): PlaceholderAppID exists
 	// precisely so a hive awaiting its real App can satisfy this check and boot
 	// into dashboard-only mode. Everywhere else, use HasApp().
@@ -99,7 +102,11 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	// Forge() — Forge() INFERS public for a blank config, which would make an
 	// empty github block validate and silently boot a hive with no credentials
 	// at all. Only a forge the operator actually wrote counts.
-	if c.GitHub.Token == "" && c.GitHub.AppID == 0 &&
+	if c.AllReposOffGitHub() {
+		if err := c.validateForgeCredentials(); err != nil {
+			return err
+		}
+	} else if c.GitHub.Token == "" && c.GitHub.AppID == 0 &&
 		(strings.TrimSpace(c.GitHub.Forge_) == "" || c.GitHub.ResolvedAppID() == 0) {
 		return fmt.Errorf("github.token, github.app_id or github.forge is required")
 	}
@@ -193,6 +200,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		return err
 	}
 	if err := c.Review.ValidateDeltaMaxAge(); err != nil {
+		return err
+	}
+	if err := c.ValidateReviewPreflight(); err != nil {
 		return err
 	}
 	if err := c.Review.ValidatePendingFixTTL(); err != nil {

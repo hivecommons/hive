@@ -93,6 +93,12 @@ type StateLifecycle struct {
 	// Number is the stage/NNN label number; zero for states that carry
 	// no label (terminal observation states).
 	Number int `json:"number,omitempty"`
+	// StageLabel is the model's own spelling of the stage label for
+	// Number (`stage/020-accepted` instead of the built-in
+	// `stage/020-claimed`, hivecommons/hive#19611). It must stay in
+	// Number's band (`stage/NNN-<slug>`) so everything keyed on the number
+	// keeps working; empty uses the built-in label.
+	StageLabel string `json:"stageLabel,omitempty"`
 	// Kinds says which item kinds may be in this state.
 	Kinds []ItemKind `json:"kinds,omitempty"`
 	// Waiting are the waiting reasons the monitor may show in this state.

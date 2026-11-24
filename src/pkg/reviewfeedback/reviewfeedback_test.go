@@ -3,6 +3,7 @@ package reviewfeedback
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -170,7 +171,7 @@ func TestBuildBrief_CarriesWholeThreadAndLatestPositionRules(t *testing.T) {
 	}
 	for _, want := range []string{
 		"(the hive, your earlier reply)", "NEW id inline:3", "apply the LATEST position", "Wrong facts about people first",
-		"re-verify the source the reviewer cites", "too positive on one point and too negative", "hivectl knowledge create",
+		"re-verify the source the reviewer cites", "too positive on one point and too negative", "a person needs to record it",
 		"do NOT write there", "what you verified, what you changed",
 	} {
 		if !strings.Contains(brief, want) {
@@ -207,6 +208,22 @@ func TestBuildBrief_RequiredInstructionsAndDataFencing(t *testing.T) {
 	}
 	if strings.Count(brief, "```") != 4 {
 		t.Errorf("a comment broke out of its fence: %d fence markers", strings.Count(brief, "```"))
+	}
+}
+
+// A follow-up commit that answers review can leave the PR description stale;
+// the brief tells the agent to refresh it itself through the edit_pr relay
+// rather than ask a maintainer (#19399).
+func TestBuildBrief_RefreshesStaleDescriptionThroughRelay(t *testing.T) {
+	brief := BuildBrief("o/r", 12, "fix/x", "", []github.FeedbackItem{item("inline:1")})
+	for _, want := range []string{
+		"re-read the PR title and body against the new diff",
+		"hive-open-issue edit-pr --repo OWNER/REPO N --body-file FILE",
+		"Do not ask a maintainer or another lane to fix the description",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Errorf("brief missing %q", want)
+		}
 	}
 }
 
@@ -285,7 +302,7 @@ func TestLimitsNormalized_FillsInvalidKnobs(t *testing.T) {
 }
 
 func TestNeedsHumanNote_CarriesMarkerReasonAndLinks(t *testing.T) {
-	note := NeedsHumanNote("no agent", []github.FeedbackItem{item("inline:1"), item("inline:2")})
+	note := NeedsHumanNote("no agent", []github.FeedbackItem{item("inline:1"), item("inline:2")}, nil)
 	for _, want := range []string{github.FeedbackNeedsHumanMarker, "no agent", "https://example.invalid/inline:1", "https://example.invalid/inline:2"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("note missing %q", want)
@@ -305,5 +322,132 @@ func TestBuildBrief_TruncatesLongBodiesAndShowsThreadlessInlineItem(t *testing.T
 		Thread: []github.FeedbackMessage{{ID: "inline:6", Author: "n", Body: "b", URL: "https://example.invalid/6"}}}
 	if b := BuildBrief("o/r", 1, "", "", []github.FeedbackItem{withURL}); !strings.Contains(b, "a.md:3") || !strings.Contains(b, "https://example.invalid/6") {
 		t.Fatal("thread header must carry path:line and message url")
+	}
+}
+
+func TestCheckReply(t *testing.T) {
+	kicked := time.Now().Add(-time.Hour)
+	p := PendingReply{RuleIDs: []string{"R-3"}, KickedAt: kicked}
+	reply := func(body string, at time.Time) []github.FeedbackMessage {
+		return []github.FeedbackMessage{{ID: "conversation:1", Body: body, CreatedAt: at}}
+	}
+	cases := []struct {
+		name    string
+		replies []github.FeedbackMessage
+		now     time.Time
+		want    string
+	}{
+		{"names the rule", reply("Captured as R-3.", kicked.Add(time.Minute)), time.Now(), ReplyOK},
+		{"names another rule", reply("Captured as R-30.", kicked.Add(time.Minute)), time.Now(), ReplyMissing},
+		{"does not name it", reply("Fixed.", kicked.Add(time.Minute)), time.Now(), ReplyMissing},
+		{"older reply does not count", reply("R-3", kicked.Add(-time.Minute)), time.Now(), ReplyWaiting},
+		{"no reply within grace", nil, time.Now(), ReplyWaiting},
+		{"no reply after grace", nil, kicked.Add(ReplyGrace + time.Minute), ReplyMissing},
+	}
+	for _, tc := range cases {
+		if got, _ := CheckReply(p, tc.replies, tc.now); got != tc.want {
+			t.Errorf("%s: verdict = %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestBlockedReplies_RecordDedupeDueAndMark(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	now := time.Now()
+	key := "o/r#7"
+	const window = 24 * time.Hour
+	if got := s.BlockedDraftsDue(key, now, window); got != nil {
+		t.Fatalf("no drafts yet, got %v", got)
+	}
+	cases := []struct {
+		name string
+		d    ReplyDraft
+	}{
+		{"thread reply", ReplyDraft{InReplyTo: "11", Body: "fixed in abc123", Agent: "quality", At: now}},
+		{"duplicate is kept once", ReplyDraft{InReplyTo: "11", Body: "  fixed in abc123  ", Agent: "quality", At: now}},
+		{"pr comment", ReplyDraft{Body: "summary reply", Agent: "quality", At: now}},
+		{"empty body ignored", ReplyDraft{InReplyTo: "12", Body: "   ", At: now}},
+	}
+	for _, tc := range cases {
+		if err := s.RecordBlockedReply(key, tc.d); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+	}
+	due := s.BlockedDraftsDue(key, now, window)
+	if len(due) != 2 {
+		t.Fatalf("due = %d drafts, want 2 (deduped, empty dropped): %+v", len(due), due)
+	}
+	reloaded, err := Open(dir)
+	if err != nil || len(reloaded.BlockedDraftsDue(key, now, window)) != 2 {
+		t.Fatalf("drafts must survive a reload: err=%v", err)
+	}
+	if err := s.MarkBlockedNoted(key, due, now); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.BlockedDraftsDue(key, now, window); got != nil {
+		t.Fatalf("posted drafts must be dropped, got %v", got)
+	}
+	_ = s.RecordBlockedReply(key, ReplyDraft{InReplyTo: "13", Body: "later draft", At: now.Add(time.Minute)})
+	if got := s.BlockedDraftsDue(key, now.Add(time.Hour), window); got != nil {
+		t.Fatalf("a new draft inside the window must wait, got %v", got)
+	}
+	if got := s.BlockedDraftsDue(key, now.Add(window+time.Minute), window); len(got) != 1 {
+		t.Fatalf("after the window the waiting draft is due, got %v", got)
+	}
+}
+
+func TestRecordBlockedReply_BoundedPerPR(t *testing.T) {
+	s, _ := Open(t.TempDir())
+	now := time.Now()
+	for i := 0; i < maxBlockedDrafts+5; i++ {
+		_ = s.RecordBlockedReply("o/r#1", ReplyDraft{InReplyTo: strconv.Itoa(i), Body: "draft " + strconv.Itoa(i), At: now})
+	}
+	if got := len(s.BlockedDraftsDue("o/r#1", now, time.Hour)); got != maxBlockedDrafts {
+		t.Fatalf("held %d drafts, want cap %d", got, maxBlockedDrafts)
+	}
+}
+
+func TestNeedsHumanNote_WithDraftsQuotesEachReplyAsText(t *testing.T) {
+	note := NeedsHumanNote("the proxy refused the reply", nil, []ReplyDraft{
+		{InReplyTo: "4616203214", Body: "Verified; fixed in abc123. ```nested```"},
+		{Body: "Thanks, all threads addressed."},
+	})
+	for _, want := range []string{github.FeedbackNeedsHumanMarker, "could not post its replies", "the proxy refused the reply", "Reply to review comment 4616203214", "PR comment:", "```text", "'''nested'''"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("note missing %q:\n%s", want, note)
+		}
+	}
+}
+
+func TestStorePendingReplyPersistsAndMerges(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	now := time.Now()
+	if err := s.RecordPendingReply("o/r#1", []string{"R-2"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordPendingReply("o/r#1", []string{"R-1"}, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	s2, _ := Open(dir)
+	p, ok := s2.PendingReplyFor("o/r#1")
+	if !ok || strings.Join(p.RuleIDs, ",") != "R-1,R-2" {
+		t.Fatalf("pending = %+v ok=%v", p, ok)
+	}
+	if err := s2.ClearPendingReply("o/r#1", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s2.PendingReplyFor("o/r#1"); ok {
+		t.Fatal("pending not cleared")
+	}
+}
+
+func TestBuildBrief_RepliesEndpointAndNoProbeComments(t *testing.T) {
+	brief := BuildBrief("o/r", 1, "", "", []github.FeedbackItem{item("inline:1")})
+	for _, want := range []string{"comments/ID/replies", "Never post a test, probe or placeholder comment", "If a reply or any other write is refused", "STOP"} {
+		if !strings.Contains(brief, want) {
+			t.Errorf("brief missing %q", want)
+		}
 	}
 }

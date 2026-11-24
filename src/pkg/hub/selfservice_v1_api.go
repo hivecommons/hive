@@ -5,14 +5,15 @@ package hub
 // /api/hub/v1 is a versioned resource view of the self-service (byo-)
 // registry that selfservice_api.go already serves under /api/hub/selfservice.
 // It adds discovery (GET /api/hub/v1) and the registry as resources: create,
-// list, get, delete and key rotation, with an ETag on every record and an
-// optional If-Match on every write. In-place edits (PATCH) are a later PR of
-// the same rollout. The legacy routes keep their bodies and status codes.
+// list, get, update (PATCH, selfservice_v1_patch.go), delete and key rotation,
+// with an ETag on every record and an If-Match on every write (required on
+// PATCH, optional on delete and rotate). The legacy routes keep their bodies
+// and status codes.
 //
 // Invariants (in addition to selfservice_api.go's):
-//   - Nothing here writes to GitHub. The only GitHub call is the read-only
-//     ownership check (GET /repos/{owner}/{repo}) at create, shared with the
-//     legacy route.
+//   - Nothing here writes to GitHub. The only GitHub calls are the read-only
+//     ownership checks (GET /repos/{owner}/{repo}, and GET /user for the
+//     github-user-token proof) at create and PATCH.
 //   - Every write carries an ETag precondition check inside the store lock, so
 //     two operators acting at once get 412, never a silent overwrite.
 
@@ -34,10 +35,9 @@ const (
 	hubV1Protocol = "hive-hub-registration"
 	// hubV1ProtocolVersion is the protocol version discovery advertises.
 	hubV1ProtocolVersion = "1"
-	// hubV1ProofHubSessionToken is the only ownership proof step 1 offers: the
-	// hub checks permissions.admin on each repo with the GitHub token stored at
-	// hub sign-in. The RFC's github-user-token (a per-request token with
-	// explicit scopes) is rollout step 2 and is not advertised until it exists.
+	// hubV1ProofHubSessionToken is the default ownership proof: the hub checks
+	// permissions.admin on each repo with the GitHub token stored at hub
+	// sign-in. The other methods are in selfservice_v1_proof.go.
 	hubV1ProofHubSessionToken = "hub-session-token"
 )
 
@@ -50,29 +50,33 @@ type hubV1Operation struct {
 	IfMatch string `json:"if_match,omitempty"`
 }
 
-// hubV1Operations is what this hub implements. Discovery lists exactly this.
+// hubV1Operations are the operations available on every enabled hub.
 var hubV1Operations = []hubV1Operation{
 	{Name: "discovery", Method: http.MethodGet, Path: hubV1BasePath},
 	{Name: "create", Method: http.MethodPost, Path: hubV1BasePath + "/registrations"},
 	{Name: "list", Method: http.MethodGet, Path: hubV1BasePath + "/registrations"},
 	{Name: "get", Method: http.MethodGet, Path: hubV1BasePath + "/registrations/{id}"},
+	{Name: "update", Method: http.MethodPatch, Path: hubV1BasePath + "/registrations/{id}", IfMatch: "required"},
 	{Name: "rotate_key", Method: http.MethodPost, Path: hubV1BasePath + "/registrations/{id}/keys", IfMatch: "optional"},
 	{Name: "delete", Method: http.MethodDelete, Path: hubV1BasePath + "/registrations/{id}", IfMatch: "optional"},
 }
 
-// hubV1PatchFields are the registration fields an update may change. Empty
-// until the update operation exists.
-var hubV1PatchFields = []string{}
+// hubV1PatchFields are the registration fields an update may change. org is
+// not one of them: changing it would mean re-proving every repo, so a client
+// deletes and registers again (#18642).
+var hubV1PatchFields = []string{"repos", "dashboard_url"}
 
 // registerHubV1Routes wires the v1 routes onto the hub mux. Discovery is
-// public (a spoke reads it before it has a session); every other route is
-// behind the hub session like the v6 routes. All of them answer 404 while
-// HIVE_HUB_SELFSERVICE_REGISTRATION is off.
+// public (a spoke reads it before it has a session); the registration-key
+// PATCH lane is opt-in, and the remaining routes require hub auth.
+// All routes answer 404 while HIVE_HUB_SELFSERVICE_REGISTRATION is off
+// for callers with the appropriate credential.
 func (s *HubServer) registerHubV1Routes() {
 	s.mux.HandleFunc("GET "+hubV1BasePath, s.handleHubV1Discovery)
 	s.mux.HandleFunc("POST "+hubV1BasePath+"/registrations", s.requireAuth(s.handleHubV1Create))
 	s.mux.HandleFunc("GET "+hubV1BasePath+"/registrations", s.requireAuth(s.handleHubV1List))
 	s.mux.HandleFunc("GET "+hubV1BasePath+"/registrations/{id}", s.requireAuth(s.handleHubV1Get))
+	s.mux.HandleFunc("PATCH "+hubV1BasePath+"/registrations/{id}", s.routeHubV1Patch)
 	s.mux.HandleFunc("DELETE "+hubV1BasePath+"/registrations/{id}", s.requireAuth(s.handleHubV1Delete))
 	s.mux.HandleFunc("POST "+hubV1BasePath+"/registrations/{id}/keys", s.requireAuth(s.handleHubV1RotateKey))
 }
@@ -82,8 +86,9 @@ func (s *HubServer) registerHubV1Routes() {
 // proof times.
 type hubV1RegistrationView struct {
 	selfServiceHiveView
-	ETag       string           `json:"etag"`
-	RepoProofs []hubV1RepoProof `json:"repo_proofs"`
+	ETag         string           `json:"etag"`
+	RepoProofs   []hubV1RepoProof `json:"repo_proofs"`
+	PendingProof []string         `json:"pending_proof,omitempty"`
 }
 
 // hubV1RepoProof is when the owner's admin permission on one repo was last
@@ -108,10 +113,11 @@ func (s *HubServer) hubV1View(h SelfServiceHive) hubV1RegistrationView {
 		selfServiceHiveView: selfServiceView(h, s.selfServiceOnline(h.ID)),
 		ETag:                selfServiceETag(h),
 		RepoProofs:          proofs,
+		PendingProof:        h.PendingProof,
 	}
 }
 
-// writeHubV1RepoCapError is the v1 over-cap answer for create (and, later, PATCH): 413
+// writeHubV1RepoCapError is the v1 over-cap answer for create and PATCH: 413
 // naming the limit, so a client can read it without parsing the message.
 func writeHubV1RepoCapError(w http.ResponseWriter, err error, maxRepos int) {
 	writeHubV1JSON(w, http.StatusRequestEntityTooLarge, "", hubV1RepoCapBody(err, maxRepos))
@@ -135,19 +141,27 @@ func (s *HubServer) handleHubV1Discovery(w http.ResponseWriter, r *http.Request)
 	if !s.requireSelfServiceEnabled(w) {
 		return
 	}
+	operations := hubV1Operations
+	if hubV1SyncReposEnabled() {
+		operations = append(operations, hubV1Operation{
+			Name: hubV1SyncReposOp, Method: http.MethodPatch,
+			Path: hubV1BasePath + "/registrations/{id}", IfMatch: "required",
+		})
+	}
 	writeHubV1JSON(w, http.StatusOK, "", map[string]any{
 		"protocol":     hubV1Protocol,
 		"version":      hubV1ProtocolVersion,
 		"base_path":    hubV1BasePath,
-		"operations":   hubV1Operations,
+		"operations":   operations,
 		"patch_fields": hubV1PatchFields,
 		"limits": map[string]any{
 			"max_repos":            selfServiceMaxRepos(),
 			"max_per_user":         selfServiceMaxPerUser(),
 			"expiry":               selfServiceExpiry().String(),
-			"key_rotation_overlap": selfServiceKeyRotationOverlap.String(),
+			"key_rotation_overlap": currentSelfServiceKeyRotationPolicy().window.String(),
 		},
-		"proof_methods": []string{hubV1ProofHubSessionToken},
+		"proof_methods":        hubV1ProofMethods(),
+		"proof_method_details": hubV1ProofMethodDetails(),
 	})
 }
 
@@ -218,8 +232,8 @@ func decodeStrict(data []byte, v any) error {
 }
 
 // handleHubV1RotateKey is POST /api/hub/v1/registrations/{id}/keys: the v6
-// rotation (the previous key keeps working for selfServiceKeyRotationOverlap)
-// with an optional If-Match. A caller-chosen grace window is rollout step 3,
+// rotation (the previous key keeps working for the current rotation policy's
+// window, selfservice_key_grace.go) with an optional If-Match. A caller-chosen grace window is rollout step 3,
 // so a body asking for one is refused rather than silently ignored.
 func (s *HubServer) handleHubV1RotateKey(w http.ResponseWriter, r *http.Request) {
 	if !s.requireSelfServiceEnabled(w) {
@@ -235,14 +249,15 @@ func (s *HubServer) handleHubV1RotateKey(w http.ResponseWriter, r *http.Request)
 		writeJSONError(w, http.StatusBadRequest, "could not read the request body")
 		return
 	}
+	policy := currentSelfServiceKeyRotationPolicy()
 	if len(bytes.TrimSpace(data)) > 0 {
 		var body struct{}
 		if err := decodeStrict(data, &body); err != nil {
-			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("this hub takes no rotation options; the previous key stays valid for %s", selfServiceKeyRotationOverlap))
+			writeJSONError(w, http.StatusBadRequest, fmt.Sprintf("this hub takes no rotation options; the previous key stays valid for %s", policy.window))
 			return
 		}
 	}
-	rawKey, err := s.selfService.rotateIfMatch(h.ID, r.Header.Get("If-Match"))
+	rawKey, rotation, err := s.selfService.rotateWithPolicy(h.ID, r.Header.Get("If-Match"), policy)
 	if err != nil {
 		switch {
 		case errors.Is(err, errSelfServiceNotFound):
@@ -258,14 +273,14 @@ func (s *HubServer) handleHubV1RotateKey(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
-	s.logger.Info("audit: selfservice_hive_rotated", "user", login, "hive", h.ID, "overlap", selfServiceKeyRotationOverlap.String())
+	s.auditSelfServiceRotated(login, h.ID, policy, rotation)
 	stored, _ := s.selfService.get(h.ID)
 	hubURL := hubPublicURL()
 	writeHubV1JSON(w, http.StatusCreated, selfServiceETag(stored), map[string]any{
 		"id":       h.ID,
 		"key":      rawKey,
 		"hub_url":  hubURL,
-		"overlap":  selfServiceKeyRotationOverlap.String(),
+		"overlap":  policy.window.String(),
 		"snippets": selfServiceSnippets(hubURL, h.ID, rawKey),
 	})
 }

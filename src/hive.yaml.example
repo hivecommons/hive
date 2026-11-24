@@ -113,6 +113,17 @@ project:
 # sentinel:
 #   trusted_authors_block: false  # set true to block trusted authors too
 
+# Optional observe-only session taint recorder (docs/design/session-taint.md).
+# Default: off, and nothing is recorded. When enabled it keeps a bounded,
+# in-memory record of coarse labels per agent session and logs and audits which
+# rule WOULD have held a later relay write. It never blocks, holds or changes
+# anything and stores labels, counts and ids only. Takes effect at restart.
+# session_taint:
+#   enabled: false
+#   max_sessions: 256
+#   max_labels_per_session: 32
+#   max_decisions: 128
+
 # Hive-curated `good first issue` advertising (default ON; `enabled: false`
 # opts out). A periodic sweep scores open, unclaimed issues; the few that qualify get
 # GitHub's canonical `good first issue` + `help wanted` labels and ONE welcome
@@ -193,7 +204,8 @@ project:
 #   close_on_merge: true
 #   close_on_merge_backfill_interval: 1h
 #   reporter_confirmation: false
-#   # Trusted reporters' SHA-less bugs get this soft label, not `hold` (#12002).
+#   # Non-exempt reporters' SHA-less bugs get this soft label, not `hold` (#12002).
+#   # Owners/maintainers, hive accounts, issues naming repo paths and waived issues are exempt (#18866).
 #   sha_hold_trusted_label: needs-sha
 #   # Lift hive-applied hold/blocked once a referencing PR merges (#12002).
 #   lift_hive_hard_suppress: true
@@ -1107,6 +1119,18 @@ governor:
 #                         # File: "kind: ReviewPerspectives" + "perspectives: [{name, focus}]". Names and
 #                         # focus only; combined_perspectives, plan_match and max_perspectives_per_pr stay
 #                         # here. Format: src/docs/review-swarm.md, "Live-linked perspectives".
+#   preflight:           # facts gathered for the reviewer before it starts (#19069); per-repo
+#                       # overrides under repos.<repo>.review_preflight. src/docs/review-swarm.md,
+#                       # "Review preflight", lists every key and exactly what leaves the hive.
+#     rule_docs: true   # default on: start from README/CONTRIBUTING/agent files and follow
+#                       # the documents they link to; rule_doc_paths: [...] overrides discovery
+#     rules: []         # named operator rules: [{id, text, severity}]
+#     dependencies: false # default OFF: advisory and release-age lookups send package names
+#                       # and versions to OSV and the package registries
+#     offline: false    # or HIVE_REVIEW_PREFLIGHT_OFFLINE=true: no lookups, "could not check: offline"
+#     min_release_age_days: 0 # 0 = no policy: publish dates are reported as facts, no verdict
+#     block_severity: high
+#     ignore: []        # accepted risks: [{id, package, reason, expires}]
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
 #   fixer_fallback_agents: [] # opt-in ordered repair lanes, e.g. [fixer, scanner-2]
 #   fixer_fallback_after_undeliverable: 3 # consecutive refusals before rerouting;
@@ -1267,9 +1291,10 @@ dashboard:
   #   autostart: true                   # answer the CLI's startup screens (first-run notice, folder trust) so the first request runs unattended; never permission prompts or sign-in (env HIVE_SESSIONS_AUTOSTART)
   # stage_tracker:
   #   cache_ttl_s: 300                    # Hive activity monitor payload cache; default = governor.eval_interval_s
-  # theme: hive                         # Built-in theme id from /api/themes (for example hive, hive-dark, hive-light, star-wars, dungeons-and-dragons, star-trek, cyberpunk, terminal, solarized-dark, nord); or custom
+  # theme: hive                         # Built-in theme id from /api/themes (for example hive, hive-dark, hive-light, star-wars, dungeons-and-dragons, star-trek, cyberpunk, terminal, solarized-dark, nord, sandstone); or custom
   # theme_overrides:
   #   tokens: { "--accent": "#e0a33a" } # CSS variables from the dashboard :root allow-list
+  #   light_tokens: { "--surface-0": "#fdfaf3" } # same allow-list, light mode only (layered on the preset's light palette)
   #   background:
   #     image: https://example.org/bg.svg # https or data: URI (inlined data capped at 256 KiB)
   #     opacity: 0.08
@@ -1300,6 +1325,20 @@ dashboard:
 #       deny_titles: ["WIP*"]
 #       authors_mode: deny
 #       deny_authors: [dependabot[bot]]
+#   # Umbrella / tracker / owner-only issues are never handed to a contributor relay
+#   # (they stay actionable for the owner and the hive, and stay closable). All keys
+#   # are optional; per_repo fields left out inherit the hive-wide value.
+#   contribute_umbrella:
+#     enabled: true
+#     labels: [umbrella, tracker, epic, meta-tracker]
+#     title_prefixes: ["[Tracking]", "[Epic]", "[Umbrella]", "[Tracker]"]
+#     task_list_min: 2                  # issue or PR references in a checklist
+#     human_only_labels: [needs-human, human-only]
+#     withdraw_advertisement: true      # drop help wanted / good first issue from an umbrella on the next sweep
+#     per_repo:
+#       owner/repo:
+#         labels: [umbrella, program]
+#         withdraw_advertisement: false
 #   contribute_needs_decision_label: needs-decision  # label relays apply for no_work_needed — decision: ...; empty disables
 #   # Relay audit level this hive ASKS contributors to share (lifecycle |
 #   # commands | reasoning), shown on auth_ok and /contribute. A request only:
@@ -1632,6 +1671,9 @@ nous:
 #   mention_search:
 #     enabled: false         # true (or env HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED=true) runs one budgeted GitHub search for mentions and comments when an owner accepts a suggested GitHub login; default off
 #     max_requests_per_hour: 10  # search requests all accepts may spend together per hour (default 10, at most 60); each accept spends at most 2
+#   profile_fill:
+#     enabled: false         # true (or env HIVE_CUSTOMERS_PROFILE_FILL_ENABLED=true) fills empty real name, organization, location and country from each confirmed customer's public GitHub, GitHub Enterprise, GitLab or Gitea/Forgejo profile (and Linear member name); default off
+#     max_requests_per_hour: 60  # forge requests the fill may spend per hour across backfill, refresh, accepts and "Refresh from profiles" (default 60, at most 300)
 
 
 # Sandbox Job GitHub read relay (docs/sandbox-isolation.md): lets sandbox Jobs

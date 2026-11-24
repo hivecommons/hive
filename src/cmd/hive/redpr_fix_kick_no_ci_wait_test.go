@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/escalation"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // The targeted FIX-BEFORE-NEW re-engagement kick carries no policy template,
@@ -29,14 +30,14 @@ func TestRedPRFixKickForbidsCIPolling(t *testing.T) {
 func TestRedPRFixKickNamesDCORehomeFirstForNoDCO(t *testing.T) {
 	got := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 14618, Labels: []string{"no-dco"}, FailingChecks: []string{"DCO"}}, false)
 	first := strings.Index(got, "FIRST (required)")
-	if first < 0 || !strings.Contains(got, "git rebase --signoff") {
+	if first < 0 || !strings.Contains(got, "--exec "+redPRFixOwnSignoffExec) {
 		t.Fatalf("no-dco kick lacks the DCO re-sign action:\n%s", got)
 	}
 	if first > strings.Index(got, "→ fix → git commit -s") {
 		t.Errorf("DCO re-sign must come before the generic fix step:\n%s", got)
 	}
 	plain := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 1}, false)
-	if strings.Contains(plain, "git rebase --signoff") {
+	if strings.Contains(plain, "FIRST (required)") || strings.Contains(plain, "--signoff") {
 		t.Errorf("DCO action leaked into a signed PR's kick:\n%s", plain)
 	}
 }
@@ -56,6 +57,44 @@ func TestRedPRFixKickDemandsResignOnlyWhenDCOGates(t *testing.T) {
 		gated := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 1, Labels: []string{"no-dco"}, FailingChecks: []string{"build", gate}}, false)
 		if !strings.Contains(gated, "FIRST (required)") {
 			t.Errorf("gated (%s) no-dco kick lost the re-sign:\n%s", gate, gated)
+		}
+	}
+}
+
+// hivecommons/hive#19102: `git rebase --signoff <base>` appended the agent's
+// bot Signed-off-by to a person's commit and broke the "Sign-off survives
+// the squash" check. The no-dco advice signs off only the agent's own
+// commits and tells it to leave everyone else's alone.
+func TestRedPRFixKickSignsOffOnlyOwnCommits(t *testing.T) {
+	got := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 19102, Labels: []string{"no-dco"}}, false)
+	if strings.Contains(got, "git rebase --signoff <base>") {
+		t.Errorf("no-dco kick still tells the agent to rebase --signoff every commit:\n%s", got)
+	}
+	for _, want := range []string{"Sign off ONLY the commits you authored", "NEVER add your Signed-off-by to a commit someone else wrote", "asking the author to sign them off"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no-dco kick missing %q:\n%s", want, got)
+		}
+	}
+	// The exec amends only when the commit's author email is the agent's own.
+	for _, want := range []string{"git var GIT_AUTHOR_IDENT", "git log -1 --format=%ae", "git commit --amend --no-edit --signoff"} {
+		if !strings.Contains(redPRFixOwnSignoffExec, want) {
+			t.Errorf("own-signoff exec %q lacks %q", redPRFixOwnSignoffExec, want)
+		}
+	}
+}
+
+// hivecommons/hive#19110: the merge-request re-engagement kick reached a
+// person's red PR and the lane pushed its own coverage fix, which the squash
+// would land under the person's name with the lane's sign-off. The kick
+// carries the person's-PR rule whatever the labels say.
+func TestRedPRFixKickCarriesPersonPRRule(t *testing.T) {
+	for _, o := range []escalation.Observation{
+		{Repo: "hivecommons/hive", Number: 19110},
+		{Repo: "hivecommons/hive", Number: 19110, Labels: []string{"no-dco"}},
+	} {
+		got := redPRFixKick(o, false)
+		if !strings.Contains(got, "author is a person") || !strings.Contains(got, stagelabels.PersonPRAgentCommitRule) {
+			t.Errorf("kick for %v lacks the person's-PR rule:\n%s", o.Labels, got)
 		}
 	}
 }

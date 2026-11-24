@@ -479,6 +479,9 @@ func prGitHubReview(pr github.PullRequest) *prReviewInfo {
 		}
 		return &prReviewInfo{glyph: "👍", label: label}
 	case "CHANGES_REQUESTED":
+		if addressed := stageTrackerChangesAddressedBy(pr); len(addressed) > 0 {
+			return &prReviewInfo{glyph: "🔁", label: changesAddressedWord + who}
+		}
 		return &prReviewInfo{glyph: "👎", label: "changes requested" + who}
 	case "REVIEW_REQUIRED":
 		label := "approving review required by branch protection"

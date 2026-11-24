@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/askai"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
@@ -29,6 +30,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	}
 	s.deps = deps
 	s.surfaceLaunchCmdDegradations()
+	s.surfaceModelIDNormalizations()
 	s.loadSidebarFromDisk()
 	s.mergedLedger()
 	s.registerContributeRoutes()
@@ -86,6 +88,13 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/feedback/nps/status", s.handleNPSStatus)
 	s.mux.HandleFunc("POST /api/feedback/nps", s.handleNPSSubmit)
 	s.mux.HandleFunc("POST /api/feedback/nps/issue", s.handleNPSIssue)
+	// Ask AI help (#19183): 404 unless ask is on and configured.
+	s.mux.HandleFunc("GET /api/ask/status", s.handleAskStatus)
+	s.mux.HandleFunc("PUT /api/ask/consent", s.handleAskConsent)
+	s.mux.HandleFunc("DELETE /api/ask/consent", s.handleAskConsent)
+	s.mux.HandleFunc("POST /api/ask", s.handleAsk)
+	s.mux.HandleFunc("GET /ask-panel.js", s.handleAskPanelAsset("text/javascript; charset=utf-8", askai.PanelJS))
+	s.mux.HandleFunc("GET /ask-panel.css", s.handleAskPanelAsset("text/css; charset=utf-8", askai.PanelCSS))
 	s.mux.HandleFunc("GET /api/feedback/status", s.handleFeedbackStatus)
 	s.mux.HandleFunc("POST /api/feedback/report", s.handleFeedbackReport)
 	s.mux.HandleFunc("GET /api/feedback/mine", s.handleFeedbackMine)
@@ -352,6 +361,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// monitor's ✓ badge remembers them (operator_actions.go).
 	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/items/{number}", s.handleRepoItemDetail)
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/hold", s.recordOperatorAction(s.handleRepoItemHold))
+	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/sha-waiver", s.handleRepoItemSHAWaiver)
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/decision", s.recordOperatorAction(s.handleRepoItemDecision))
 	s.mux.HandleFunc("POST /api/repos/{owner}/{repo}/items/{number}/sentinel-confirm", s.recordOperatorAction(s.handleRepoItemSentinelConfirm))
 	// Per-item maintainer notes shared across the hive's maintainers
@@ -598,6 +608,14 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// project.reference_repos editor on the Repos tab (#18136, api_config_reference_repos.go).
 	s.mux.HandleFunc("GET /api/config/reference-repos", s.handleReferenceReposGet)
 	s.mux.HandleFunc("PUT /api/config/reference-repos", s.handleReferenceReposPut)
+	// repos.<repo>.parent_autoclose editor on the Repos tab (#19070, api_config_parent_autoclose.go).
+	s.mux.HandleFunc("GET /api/config/repos/parent-autoclose", s.handleParentAutoCloseGet)
+	s.mux.HandleFunc("PUT /api/config/repos/parent-autoclose", s.handleParentAutoClosePut)
+	// review_feedback.rules.* editor on the Features tab (#19135, api_config_review_rules.go).
+	s.mux.HandleFunc("GET /api/config/review-feedback/rules", s.handleReviewRulesGet)
+	s.mux.HandleFunc("PUT /api/config/review-feedback/rules", s.handleReviewRulesPut)
+	s.mux.HandleFunc("GET /api/config/review-feedback/retry", s.handleReviewRetryGet)
+	s.mux.HandleFunc("PUT /api/config/review-feedback/retry", s.handleReviewRetryPut)
 	// project.remote_write_identity on the same Settings section (#18516, api_config_remote_write_identity.go).
 	s.mux.HandleFunc("PUT /api/config/reference-repos/write-identity", s.handleRemoteWriteIdentityPut)
 	// The hive owner's GitHub identity for remote repos (#18197,
@@ -822,10 +840,14 @@ func (s *Server) saveConfig() error {
 	if s.deps == nil || s.deps.Config == nil || s.deps.Config.SourcePath == "" {
 		return nil
 	}
+	return s.saveConfigWith(s.deps.Config.Save)
+}
+
+func (s *Server) saveConfigWith(save func() error) error {
 	if s.deps.SkipReloadFunc != nil {
 		s.deps.SkipReloadFunc()
 	}
-	if err := s.deps.Config.Save(); err != nil {
+	if err := save(); err != nil {
 		return err
 	}
 	if s.deps.Governor != nil {

@@ -142,7 +142,9 @@ func TestRefreshClearsLaunchForgeOutageOnlyOnSuccess(t *testing.T) {
 				return nil
 			}
 			_ = refresh()
-			if got := rec.active(crux.ClassForgeUnreachable); len(got) != 1 {
+			// A failed periodic refresh re-observes the outage (#19403), so
+			// only require that it is still open.
+			if got := rec.active(crux.ClassForgeUnreachable); len(got) == 0 {
 				t.Fatalf("failed refresh cleared outage: %+v", got)
 			}
 			minter.err = nil
@@ -156,5 +158,27 @@ func TestRefreshClearsLaunchForgeOutageOnlyOnSuccess(t *testing.T) {
 				t.Fatalf("outage clears = %+v, want only %s", got, a.Name)
 			}
 		})
+	}
+}
+
+// A periodic refresh that still cannot reach the forge re-observes the
+// outage, so a long outage keeps a current condition instead of aging out of
+// the fleet report's TTL; a refresh refused by the forge itself does not
+// (hivecommons/hive#19403).
+func TestRefreshTransportFailureReobservesForgeUnreachable(t *testing.T) {
+	minter := &failingMinter{err: context.DeadlineExceeded}
+	m, a := mintClassManager(t, minter)
+	m.mu.Lock()
+	a.State = StateRunning
+	m.mu.Unlock()
+	rec := recordConditions(t, m)
+	m.refreshAgentTokens(context.Background())
+	if got := rec.observations(crux.ClassForgeUnreachable); len(got) != 1 || got[0].Key != a.Name {
+		t.Fatalf("forge_unreachable observations after transport refresh failure = %+v, want one for %s", got, a.Name)
+	}
+	minter.err = errors.New("creating installation token: POST .../access_tokens: 401 Bad credentials")
+	m.refreshAgentTokens(context.Background())
+	if got := rec.observations(crux.ClassForgeUnreachable); len(got) != 1 {
+		t.Fatalf("an HTTP refresh failure observed forge_unreachable: %+v", got)
 	}
 }

@@ -929,7 +929,7 @@
         const percent = (s.count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
         const format = ((state && state.exportFormat) || 'csv').toUpperCase();
-        const download = kind ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, s.key, 'slice'))}" title="Export ${esc(s.label)} as ${format}" aria-label="Export ${esc(s.label)} as ${format}">⬇</button>` : '';
+        const download = kind && !s.outside ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, s.key, 'slice'))}" title="Export ${esc(s.label)} as ${format}" aria-label="Export ${esc(s.label)} as ${format}">⬇</button>` : '';
         return `<div class="overview-chart-legend-row" data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1" title="${esc(s.label + (s.rule ? ': ' + s.rule : ''))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${esc(overviewSliceLabel(s.count, percentLabel, state))}</span>${download}</div>`;
       }).join('');
     }
@@ -1188,6 +1188,34 @@
         return null;
       }
       return overviewRepoForgeTotals(repos);
+    }
+
+    // The bands draw only tracked items (actionable + held) while the "Total
+    // open" cards count every open item from the same forge totals, so the
+    // charts showed fewer items than the cards with nothing saying why. The
+    // Outside slice is the difference, so each chart adds up to its card for
+    // any repo selection; its rule carries the same breakdown the card does.
+    function overviewOutsideSlice(kind, slices, forgeTotals) {
+      const total = forgeTotals && forgeTotals[kind === 'pr' ? 'prs' : 'issues'];
+      const drawn = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
+      const count = total ? Math.max(0, Number(total.forge || 0) - drawn) : 0;
+      const labels = kind === 'pr' ? OVERVIEW_PR_BREAKDOWN_LABELS : OVERVIEW_ISSUE_BREAKDOWN_LABELS;
+      const parts = Object.entries(labels).filter(([key]) => key !== 'hold').map(([key, label]) => {
+        const n = Number(total?.breakdown?.[key] || 0);
+        return n > 0 ? `${n} ${label}` : '';
+      }).filter(Boolean);
+      const what = kind === 'pr' ? 'Open PRs' : 'Open issues';
+      const rule = `${what} not in any band, left out by this hive's scanner settings${parts.length ? ': ' + parts.join(' · ') : ''}`;
+      return { key: 'outside', label: 'Outside', rule, count, className: 'overview-' + kind + '-outside', items: [], outside: true };
+    }
+
+    // overviewChartSlices is what the charts draw: the band slices plus the
+    // Outside slice when it is non-empty. The KPI cards keep the band slices.
+    function overviewChartSlices(kind, slices, repos) {
+      // renderOverviewKPIs sets the same scope; the forge totals read it.
+      _overviewKPILocalScope = overviewKPIRepoScope(repos);
+      const outside = overviewOutsideSlice(kind, slices, overviewKPIForgeTotals(repos));
+      return outside.count > 0 ? (slices || []).concat([outside]) : (slices || []);
     }
 
     function overviewKPIBreakdownSubline(total, labels) {
@@ -1932,6 +1960,7 @@
     // With the Overview card a band row goes to its group's tile (the spec's
     // group) and a group row to its own; old slice keys keep their map.
     function overviewNavigateBand(kind, slice) {
+      if (slice === 'outside') return overviewApplyKPIProjectFilter('outside');
       const cardKey = overviewCardMode() ? overviewCardTileForKey(slice) : '';
       const key = cardKey || { 'your-turn': 'your-turn', 'to-close': 'your-turn', 'waiting-elsewhere': 'waiting-elsewhere', blocked: 'blocked', draft: 'outside' }[slice] || 'actionable-now';
       overviewApplyKPIProjectFilter(key);
@@ -2046,17 +2075,21 @@
       const repoSuffix = overviewRepoSubtitleSuffix(_overviewLastRepos, selectedNames);
       const issueSlices = overviewIssueBandSlices(selectedRepos);
       const prSlices = overviewPRBandSlices(selectedRepos);
-      const animationSignature = overviewAnimationSignature(issueSlices, prSlices, selectedNames);
+      // The charts add v5's Outside slice to the band slices; the Overview
+      // card draws its own groups and is left as it is.
+      const issueChartSlices = overviewCardMode() ? issueSlices : overviewChartSlices('issue', issueSlices, selectedRepos);
+      const prChartSlices = overviewCardMode() ? prSlices : overviewChartSlices('pr', prSlices, selectedRepos);
+      const animationSignature = overviewAnimationSignature(issueChartSlices, prChartSlices, selectedNames);
       const dataChanged = overviewShouldAnimateData(animationSignature);
-      const issueSampled = overviewSampleHistory('issue', issueSlices, state);
-      const prSampled = overviewSampleHistory('pr', prSlices, state);
+      const issueSampled = overviewSampleHistory('issue', issueChartSlices, state);
+      const prSampled = overviewSampleHistory('pr', prChartSlices, state);
       const sampled = issueSampled || prSampled;
-      const total = issueSlices.concat(prSlices).reduce((n, s) => n + s.count, 0);
+      const total = issueChartSlices.concat(prChartSlices).reduce((n, s) => n + s.count, 0);
       const kpis = renderOverviewKPIs(selectedRepos, issueSlices, prSlices, state);
       // The card's legend rows are bands (the approved mock-up's words).
       const hover = overviewCardMode() ? ' · hover a band for its rule' : ' · hover a slice for its rule';
       const html = total
-        ? `${kpis}<div class="overview-grid">${renderOverviewPanel('issue', 'Issues by band', 'Open issues ' + repoSuffix + hover, issueSlices, state)}${renderOverviewPanel('pr', 'PRs by band', 'Open and held pull requests ' + repoSuffix + hover, prSlices, state)}</div>`
+        ? `${kpis}<div class="overview-grid">${renderOverviewPanel('issue', 'Issues by band', 'Open issues ' + repoSuffix + hover, issueChartSlices, state)}${renderOverviewPanel('pr', 'PRs by band', 'Open and held pull requests ' + repoSuffix + hover, prChartSlices, state)}</div>`
         : `${kpis}<div class="overview-empty">Nothing actionable — the hive is caught up</div>`;
       if (sampled) saveOverviewChartsState(state);
       setIfChanged(el, html);

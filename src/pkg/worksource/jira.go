@@ -13,6 +13,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 const (
@@ -553,6 +555,9 @@ func jiraADFDocument(text string) map[string]any {
 	}
 }
 
+// jiraProseKeys are the Jira payload fields people read.
+var jiraProseKeys = prosefilter.Keys{"summary": prosefilter.Title, "description": prosefilter.Prose, "body": prosefilter.Prose, "text": prosefilter.Prose}
+
 func (s *jiraSource) doJSON(ctx context.Context, method, reqURL string, payload any, wantStatus int, out any) error {
 	if s.tlsErr != nil {
 		return s.tlsErr
@@ -564,6 +569,12 @@ func (s *jiraSource) doJSON(ctx context.Context, method, reqURL string, payload 
 			return fmt.Errorf("encode request: %w", err)
 		}
 		body = &buf
+	}
+	if buf, ok := body.(*bytes.Buffer); ok {
+		// Issue summaries, descriptions and comments, plain or ADF text
+		// nodes (#19103).
+		clean, _ := prosefilter.SanitizeJSON(buf.Bytes(), jiraProseKeys)
+		body = bytes.NewReader(clean)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {

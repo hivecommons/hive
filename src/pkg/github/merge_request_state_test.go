@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -56,6 +57,8 @@ func TestMergeRequestWatcher_PendingCIBacksOff(t *testing.T) {
 	srv := countingCIServer(t, f, &prGets)
 	defer srv.Close()
 	c := testMergeClient(t, srv.URL)
+	var logs strings.Builder
+	c.logger = slog.New(slog.NewTextHandler(&logs, nil))
 
 	start := fixedNow()
 	clock := start
@@ -96,6 +99,23 @@ func TestMergeRequestWatcher_PendingCIBacksOff(t *testing.T) {
 	resp = readMergeResult(t, reqPath)
 	if resp.Attempts != 1 || !strings.Contains(resp.Error, "still pending after") {
 		t.Fatalf("an hour of pending CI must become a failed attempt, got %+v", resp)
+	}
+
+	for attempt := 2; attempt <= mergeRequestMaxAttempts; attempt++ {
+		c.handleOneMergeRequest(context.Background(), reqPath, now)
+		clock = clock.Add(mergeRequestMaxCIWait)
+		c.handleOneMergeRequest(context.Background(), reqPath, now)
+	}
+	mustNotExist(t, reqPath, "request still pending after the final attempt")
+	mustExist(t, reqPath+".exhausted", "quarantined pending request")
+	resp = readMergeResult(t, reqPath)
+	if resp.OK || resp.Attempts != mergeRequestMaxAttempts || !strings.Contains(resp.Error, "still pending after") {
+		t.Fatalf("exhausting the retry budget must retain the pending CI reason, got %+v", resp)
+	}
+	out := logs.String()
+	if !strings.Contains(out, `level=INFO msg="merge-request watcher: CI wait budget exhausted; request quarantined"`) ||
+		strings.Contains(out, `level=WARN msg="merge-request watcher: merge failed, giving up after max attempts"`) {
+		t.Fatalf("pending CI exhaustion must log a classified INFO outcome, got:\n%s", out)
 	}
 }
 

@@ -162,10 +162,12 @@ type SandboxRun struct {
 	// scrubbed tail of the transcript. Bounded; see sandboxRunSummaryMax.
 	Summary string          `json:"summary,omitempty"`
 	Usage   SandboxRunUsage `json:"usage,omitempty"`
-	// FailReason is "node_unhealthy" (the node preflight failed) or
-	// "waiting_for_node" (no node took the pod in time) when the run failed
-	// for the infrastructure's reason rather than the agent's; Node is where
-	// the pod ran, when known (hivecommons/hive#18811).
+	// FailReason is "node_unhealthy" (the node preflight or a setup health
+	// command failed) or "waiting_for_node" (no node took the pod in time)
+	// when the run failed for the infrastructure's reason rather than the
+	// agent's, or "setup_failed" when a sandbox.setup command failed
+	// (hivecommons/hive#19574); Node is where the pod ran, when known
+	// (hivecommons/hive#18811).
 	FailReason string `json:"failReason,omitempty"`
 	Node       string `json:"node,omitempty"`
 }

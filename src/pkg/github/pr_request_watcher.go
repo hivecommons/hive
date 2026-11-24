@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux/sessiontaint"
 )
 
 // PRRequestDir is where agents drop PR-open requests. An agent pushes its branch
@@ -528,6 +530,11 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 			c.rejectPRRequest(path, req, "base-drift", reason, nowFn)
 			return
 		}
+		// A base branch that does not exist can never be fixed by retrying.
+		if reason, policy := missingBaseReason(err); policy {
+			c.rejectPRRequest(path, req, "base", reason, nowFn)
+			return
+		}
 		c.failPRRequest(path, req, err, nowFn)
 		return
 	}
@@ -597,6 +604,12 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	if err != nil {
 		c.failPRRequest(path, req, err, nowFn)
 		return
+	}
+	// Session taint (#18987), observe only. Recorded once per PR this request
+	// opened, after every gate; a reused or duplicate PR is not a new write.
+	// The enforcement phases move this check before the write.
+	if !res.AlreadyExisted && !res.IsDuplicate() {
+		c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayPR, req.Repo)
 	}
 	resp.OK = true
 	resp.Number = res.Number

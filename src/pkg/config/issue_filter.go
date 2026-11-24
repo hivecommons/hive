@@ -64,6 +64,12 @@ const (
 	// suppress — no agent claims a parked issue — and it is not configurable:
 	// the stage table owns the spelling (stagelabels contract tests pin it).
 	PossiblyExistsStageLabel = "stage/017-possible-existing"
+	// VerifyCloseLabel is the verify-close lane: the scanner verified the
+	// issue complete (`<!-- hive:verification verdict=complete … -->`) but a
+	// guard kept the hive from closing it itself, so a person confirms the
+	// close. It parks the issue in the decision bucket (045) like the
+	// stage label, and it is not configurable.
+	VerifyCloseLabel = "hive/verify-close"
 
 	// LegacyNeedsDecisionLabel and LegacyNeedsDirectionLabel are the retired
 	// park labels. Every hive still reads them as the decision bucket so an
@@ -295,6 +301,9 @@ func (f IssueFilterConfig) HardSuppressIssueBucket(labels []string) string {
 		}
 		if labelMatches(PossiblyExistsStageLabel, actual) {
 			return PossiblyExistsStageLabel
+		}
+		if labelMatches(VerifyCloseLabel, actual) {
+			return DefaultNeedsDecisionLabel
 		}
 	}
 	return ""

@@ -3,10 +3,13 @@ package config
 import "gopkg.in/yaml.v3"
 
 // Snapshot copies persisted configuration for background readers. Callers must
-// serialize this with configuration writers and treat the result as immutable.
+// serialize this with writers that do not use Save's lock and treat the result
+// as immutable.
 // YAML (rather than JSON) includes internal notification credentials that are
 // deliberately omitted from API responses. Never log the serialized bytes.
 func (c *Config) Snapshot() (*Config, error) {
+	saveMu.Lock()
+	defer saveMu.Unlock()
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return nil, err
@@ -29,4 +32,12 @@ func (c *Config) Snapshot() (*Config, error) {
 		out.GitHub.reporterTrustHoldEnvOverride = &v
 	}
 	return &out, nil
+}
+
+// ReplaceFromReload installs a loaded config without racing config saves or
+// readers of the live write-back policy.
+func (c *Config) ReplaceFromReload(next *Config) {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	*c = *next
 }

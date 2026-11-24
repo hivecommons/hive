@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/pushbroker"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/cruxhost"
 	"github.com/hivecommons/hive/pkg/fleetreport"
 	"github.com/hivecommons/hive/pkg/ioscan"
@@ -76,6 +77,11 @@ type sidecarHost struct {
 	mint         crux.AgentMintIssuer
 	bobKey       func() string
 	bobKeySource func() string
+	// knowledge is the mid-task adviser chain boot installed
+	// (hivecommons/hive#17157). It is held, not served: POST
+	// /v1/knowledge/advise answers from it only while
+	// knowledge.sidecar_advise is on, and the setter changes nothing else.
+	knowledge crux.KnowledgeAdviser
 }
 
 var _ hostedRuntime = (*sidecarHost)(nil)
@@ -343,12 +349,26 @@ func (h *sidecarHost) SetSandboxMutationBoundary(boundary effects.Boundary) {
 // the runtime's own process); trajectory events do not depend on it.
 func (h *sidecarHost) SetSpanStarter(crux.SpanStarter) { h.inProcessOnly("SetSpanStarter") }
 
-// SetKnowledgeAdviser is in-process-only in phase 1 of hivecommons/hive#17052:
-// the adviser searches the knowledge store that lives in the hive process.
-// A sidecar runtime runs without the mid-task advisor until a callback route
-// carries the scope → advice exchange.
-func (h *sidecarHost) SetKnowledgeAdviser(crux.KnowledgeAdviser) {
-	h.inProcessOnly("SetKnowledgeAdviser")
+// SetKnowledgeAdviser holds the adviser chain for the hive callback's
+// POST /v1/knowledge/advise (hivecommons/hive#17157). The adviser searches the
+// knowledge store that lives in the hive process, so the sidecar runtime sends
+// the scope across and gets advice lines back; it never holds the chain. The
+// route is off unless knowledge.sidecar_advise is set (default false), so with
+// the knob off this changes nothing and a sidecar runtime runs without the
+// mid-task advisor exactly as before.
+func (h *sidecarHost) SetKnowledgeAdviser(adviser crux.KnowledgeAdviser) {
+	h.mu.Lock()
+	h.knowledge = adviser
+	h.mu.Unlock()
+	h.callbackCarried("SetKnowledgeAdviser")
+}
+
+// knowledgeAdviser is the chain SetKnowledgeAdviser installed, nil before
+// boot has.
+func (h *sidecarHost) knowledgeAdviser() crux.KnowledgeAdviser {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.knowledge
 }
 
 // SetSandboxGitHubReadRelay is in-process-only (#18865): the relay holds the
@@ -518,6 +538,7 @@ func (b *boot) hiveCallbackCapabilities() *cruxhost.Capabilities {
 		deps.Mutation = sh
 		deps.Mint = sh
 		deps.Bob = sh.bobCredential
+		deps.Knowledge = newSidecarKnowledgeAdvise(func() *config.Config { return b.cfg }, sh.knowledgeAdviser, sh.GetStatusFast)
 	}
 	return cruxhost.New(deps)
 }

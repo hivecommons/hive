@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/egressmark"
 	"github.com/hivecommons/hive/crux/inferencehealth"
+	"github.com/hivecommons/hive/crux/prosefilter"
 	"github.com/hivecommons/hive/crux/upstreamproxy"
 )
 
@@ -73,6 +74,7 @@ var (
 // GitHubProxy is an HTTP CONNECT proxy that performs MITM TLS
 // inspection on GitHub API traffic and enforces ACMM mode rules.
 type GitHubProxy struct {
+	graphQLRepos graphQLRepoCache
 	// localInferencePaths records CLI telemetry paths already logged once by
 	// localInferenceResponse, so per-path DEBUG lines do not repeat.
 	localInferencePaths sync.Map
@@ -84,6 +86,10 @@ type GitHubProxy struct {
 	caCert        tls.Certificate
 	caX509        *x509.Certificate
 	logger        *slog.Logger
+	// proseFilterOff turns off the agent-write dash filter
+	// (outbound_prose.go). Zero means on, so every proxy, test literals
+	// included, filters unless the operator set HIVE_AGENT_PROSE_FILTER=false.
+	proseFilterOff bool
 	// uidMap is read through loadedUIDMap and swapped only by refreshUIDMap
 	// under uidMapMu (#18184): agents added at runtime land in uid-map.json
 	// after construction. uidMapPath/uidMapInfo are what the refresh compares
@@ -104,6 +110,9 @@ type GitHubProxy struct {
 	referenceRepos    map[string]ReferenceRepoPolicy
 	referenceDefaults map[string]referenceDefaultBranch
 	referenceLookup   referenceLookupFunc
+	// reviewGuard holds the ownership seams for review-thread replies and
+	// own-comment deletes on the hive's own PRs (#19096, review_thread.go).
+	reviewGuard reviewGuardState
 
 	// repoPaused reports whether a repo ("owner/repo", as ExtractRepo yields it)
 	// is under an operator pause (#6203). Guarded because the dashboard can
@@ -342,6 +351,7 @@ func newGitHubProxyWithCA(caCert tls.Certificate, caX509 *x509.Certificate, logg
 		proxyAdvisoryOK:     advisoryOK,
 		allowPrivateForward: allowPrivateForward,
 		injectGHAuth:        injectGHAuth,
+		proseFilterOff:      !prosefilter.AgentWritesEnabled(),
 		allowedRepos:        allowed,
 		violations:          make(map[string]int),
 		certCache:           make(map[string]cachedCert),

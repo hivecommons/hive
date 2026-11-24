@@ -80,6 +80,9 @@ type issueStageServer struct {
 	// default); timelineGets counts the reads.
 	timelines    map[int][]map[string]any
 	timelineGets int
+	// pullRequests marks numbers GET /issues/N reports as pull requests,
+	// with their merged_at ("" = not merged), for the verified-close sweep.
+	pullRequests map[int]string
 }
 
 func newIssueStageServer(t *testing.T) *issueStageServer {
@@ -219,7 +222,15 @@ func newIssueStageServer(t *testing.T) *issueStageServer {
 			if _, done := s.closed[n]; done {
 				state = "closed"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "labels": labels, "state": state, "body": s.bodies[n], "user": map[string]any{"login": "hive[bot]", "type": "Bot"}})
+			resp := map[string]any{"number": n, "labels": labels, "state": state, "body": s.bodies[n], "user": map[string]any{"login": "hive[bot]", "type": "Bot"}}
+			if mergedAt, ok := s.pullRequests[n]; ok {
+				link := map[string]any{"url": "https://api.example/pulls"}
+				if mergedAt != "" {
+					link["merged_at"] = mergedAt
+				}
+				resp["pull_request"] = link
+			}
+			_ = json.NewEncoder(w).Encode(resp)
 		case r.Method == http.MethodGet && strings.HasSuffix(rest, "/timeline"):
 			var n int
 			_, _ = sscanIssue(rest, &n)
@@ -392,6 +403,12 @@ func TestIssueDiscussionSignal(t *testing.T) {
 		{"rfc word without marker", nil, "RFC process cleanup", ""},
 		{"rfc mid-title", nil, "Implement the [RFC] runtime", ""},
 		{"empty title", nil, "", ""},
+		// hivecommons/hive#19573: approved-direction is a recorded owner
+		// decision, so the issue is past discussion.
+		{"approved-direction outranks proposal", []string{"proposal", HumanAckLabel}, "", ""},
+		{"approved-direction outranks rfc title", []string{"Epic", HumanAckLabel}, "📝 RFC: LLM-ranked knowledge advisor", ""},
+		{"approved-direction is case-insensitive", []string{"Proposal", "Approved-Direction"}, "[RFC] v6", ""},
+		{"rfc title without approval still signals", []string{"Epic"}, "📝 RFC: LLM-ranked knowledge advisor", rfcTitleDiscussionReason},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -419,6 +436,38 @@ func TestIssueStageFor_DiscussionSignals(t *testing.T) {
 		{"[RFC] title claimed by a person", IssueStageInput{Title: "[RFC] v6 agent runtime", Bucket: workBucketClaimed, ClaimKind: "human", ClaimedBy: "alice"}, stagelabels.Claimed, "live issue claim"},
 		{"architecture discussion claimed with a PR under way", IssueStageInput{Labels: []string{"architecture discussion"}, Title: "Hold: v6 agent runtime", Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), ClaimedBy: "scanner", PRStarted: true}, stagelabels.PRInProgress, "live claim with a PR under way"},
 		{"plain title stays 010", IssueStageInput{Labels: []string{"Epic", "help wanted"}, Title: "v6 agent runtime"}, stagelabels.Actionable, "actionable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stage, covered, reason := IssueStageFor(tc.in, nil)
+			if stage != tc.want || covered || reason != tc.wantReason {
+				t.Fatalf("got stage=%v covered=%v reason=%q; want stage=%v reason=%q", stage, covered, reason, tc.want, tc.wantReason)
+			}
+		})
+	}
+}
+
+// TestIssueStageFor_ApprovedRFCLeavesDiscussion pins hivecommons/hive#19573:
+// an RFC / proposal without approval stays 018, one carrying
+// approved-direction does not, an approved epic with open children keeps
+// the decomposed-parent stage (010, waiting on children), and an approved
+// parent whose children are all closed derives the plain 010 with no
+// waiting suffix.
+func TestIssueStageFor_ApprovedRFCLeavesDiscussion(t *testing.T) {
+	const rfcTitle = "📝 RFC: LLM-ranked knowledge advisor"
+	cases := []struct {
+		name       string
+		in         IssueStageInput
+		want       stagelabels.Stage
+		wantReason string
+	}{
+		{"rfc title + proposal, no approval", IssueStageInput{Labels: []string{"Epic", "proposal"}, Title: rfcTitle}, stagelabels.OpenForDiscussion, "open for discussion: proposal"},
+		{"rfc title only, no approval", IssueStageInput{Labels: []string{"Epic"}, Title: rfcTitle}, stagelabels.OpenForDiscussion, "open for discussion: rfc title"},
+		{"rfc title + proposal + approved-direction", IssueStageInput{Labels: []string{"Epic", "proposal", HumanAckLabel}, Title: rfcTitle}, stagelabels.Actionable, "actionable"},
+		{"approved epic with open children", IssueStageInput{Labels: []string{"Epic", "proposal", HumanAckLabel}, Title: rfcTitle, Children: &IssueChildren{Total: 5, Completed: 3}}, stagelabels.Actionable, "actionable; waiting on 2 open child issue(s)"},
+		{"unapproved epic with open children stays 018", IssueStageInput{Labels: []string{"Epic", "proposal"}, Title: rfcTitle, Children: &IssueChildren{Total: 5, Completed: 3}}, stagelabels.OpenForDiscussion, "open for discussion: proposal; waiting on 2 open child issue(s)"},
+		{"approved parent, every child closed", IssueStageInput{Labels: []string{"Epic", "proposal", HumanAckLabel}, Title: rfcTitle, Children: &IssueChildren{Total: 5, Completed: 5}}, stagelabels.Actionable, "actionable"},
+		{"approved rfc with a human claim is still 020", IssueStageInput{Labels: []string{"proposal", HumanAckLabel}, Title: rfcTitle, Bucket: workBucketClaimed, ClaimKind: "human", ClaimedBy: "alice"}, stagelabels.Claimed, "live issue claim"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -588,6 +637,21 @@ func TestIssueStageInputs_CarriesAuthorKind(t *testing.T) {
 	}
 	if len(got) != 3 || got[0] != authorkind.Human || got[1] != authorkind.Hive || got[2] != authorkind.Unknown {
 		t.Fatalf("author kinds = %v", got)
+	}
+}
+
+// A Jira or Linear item rides the actionable list with Number 0. It has no
+// GitHub issue, so it gets no stage row: before, every such item became one
+// "repo#0" row whose label write failed with a 404.
+func TestIssueStageInputs_SkipsItemsWithoutGitHubNumber(t *testing.T) {
+	res := &ActionableResult{}
+	res.Issues.Items = []Issue{
+		{Repo: "o/r", Number: 0, SourceType: "jira", ExternalID: "CEH-1"},
+		{Repo: "o/r", Number: 7},
+	}
+	got := IssueStageInputs(res)
+	if len(got) != 1 || got[0].Number != 7 {
+		t.Fatalf("stage inputs = %+v, want only o/r#7", got)
 	}
 }
 
@@ -1063,6 +1127,9 @@ func TestSyncIssueStageLabels_MergedFullFixPRClosesIssue(t *testing.T) {
 		name          string
 		priorComments []string
 		closeFails    bool
+		// alreadyClosed makes GitHub report the issue closed before the
+		// sweep closes it (its own closing keyword won the race).
+		alreadyClosed bool
 		wantClosed    int
 		wantComments  int
 		wantBodies    int
@@ -1070,6 +1137,9 @@ func TestSyncIssueStageLabels_MergedFullFixPRClosesIssue(t *testing.T) {
 		{name: "first pass comments once and closes", wantClosed: 1, wantComments: 1, wantBodies: 1},
 		{name: "close failure keeps the single comment", closeFails: true, wantClosed: 0, wantComments: 1, wantBodies: 1},
 		{name: "retry after a failed close does not comment again", priorComments: []string{marker + "\nFixed by #67 (merged)."}, wantClosed: 1, wantComments: 0, wantBodies: 1},
+		// hivecommons/hive#19369: an issue GitHub already closed is the close
+		// this lane wanted, not a failure to retry and warn about every pass.
+		{name: "issue already closed upstream counts as closed", priorComments: []string{marker + "\nFixed by #67 (merged)."}, alreadyClosed: true, wantClosed: 1, wantComments: 0, wantBodies: 1},
 		{name: "another PR's marker does not suppress the note", priorComments: []string{"<!-- hive:closed-by-merged-pr pr=12 -->\nFixed by #12 (merged)."}, wantClosed: 1, wantComments: 1, wantBodies: 2},
 	}
 	for _, tt := range tests {
@@ -1077,6 +1147,9 @@ func TestSyncIssueStageLabels_MergedFullFixPRClosesIssue(t *testing.T) {
 			fake := newIssueStageServer(t)
 			fake.commentBodies[64] = append([]string(nil), tt.priorComments...)
 			fake.closeFails[64] = tt.closeFails
+			if tt.alreadyClosed {
+				fake.closed[64] = IssueStateReasonCompleted
+			}
 			c := issueStageTestClient(t, fake.srv, true)
 			store := stagelabels.NewStore("", stageNow)
 			result := &ActionableResult{}

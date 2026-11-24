@@ -6,12 +6,12 @@ import (
 )
 
 // The Twitch live stream is a community link and must appear wherever the
-// Discord link does in the dashboard shell (sidebar Help, FAQ, Welcome).
+// Discord link does in the dashboard shell (sidebar Community, FAQ, Welcome).
 func TestTwitchLiveStreamLinkInDashboardShell(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		`<a class="oc-nav-item" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener"`,
-		`<span class="oc-nav-text">Watch live on Twitch</span>`,
+		`<span class="oc-nav-text">Live on Twitch</span>`,
 		`Watch the hive live on Twitch</a>.`,
 	} {
 		if !strings.Contains(html, want) {

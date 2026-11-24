@@ -124,6 +124,13 @@ func (c *Config) saveLocked() error {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
 
+	// hivecommons/hive#19561: a layer file someone else rewrote since this
+	// config last loaded or saved it holds an edit memory does not have yet.
+	// Writing now would revert it, so write nothing and let the reload win.
+	if err := c.refuseSaveIfChangedLocked(); err != nil {
+		return err
+	}
+
 	saveSeq.Add(1)
 	notifySaveObserver()
 
@@ -157,9 +164,16 @@ func (c *Config) saveLocked() error {
 	// K8s first-boot/reprovision merge input). Record the source failure, keep
 	// writing the runtime layer, and report success iff the state will actually
 	// survive a restart.
+	//
+	// The process write is recorded before the write so the watcher, which
+	// may see the rename before this returns, knows it for our own.
+	dataSum := sumBytes(data)
+	recordProcessWrite(c.SourcePath, dataSum)
 	var srcErr error
 	if err := writeFileAtomic(c.SourcePath, data, sourceConfigMode(c.SourcePath)); err != nil {
 		srcErr = fmt.Errorf("writing config: %w", err)
+	} else {
+		c.recordLayerSum(c.SourcePath, dataSum)
 	}
 
 	// Persist the runtime config to the PVC. In K8s this is the boot input
@@ -180,6 +194,7 @@ func (c *Config) saveLocked() error {
 	// github.token in PAT mode), and /data is world-traversable on hive
 	// hosts, so a group/world-readable runtime config hands the dashboard
 	// owner credential to every unprivileged agent user (#5331).
+	recordProcessWrite(runtimePath, dataSum)
 	if guardLivePVCPathUnderTest(runtimePath, defaultRuntimeConfigFile, "RuntimeConfigFile") {
 		runtimeErr = errLivePVCPathGuarded
 	} else if err := writeFileAtomic(runtimePath, data, 0o600); err != nil {
@@ -522,10 +537,13 @@ func (c *Config) saveDashboardOverlay() error {
 		log.Printf("[config] warning: failed to close dashboard overlay temp file %s (dashboard saves will not survive pod restarts): %v", tmpPath, err)
 		return err
 	}
+	overlaySum := sumBytes(data)
+	recordProcessWrite(DashboardOverlayFile, overlaySum)
 	if err := os.Rename(tmpPath, DashboardOverlayFile); err != nil {
 		log.Printf("[config] warning: failed to rename dashboard overlay into place %s (dashboard saves will not survive pod restarts): %v", DashboardOverlayFile, err)
 		return err
 	}
+	c.recordLayerSum(DashboardOverlayFile, overlaySum)
 	log.Printf("[config] dashboard overlay written to %s (merged over the ConfigMap seed at next boot)", DashboardOverlayFile)
 	return nil
 }

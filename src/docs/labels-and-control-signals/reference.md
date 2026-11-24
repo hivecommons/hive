@@ -196,7 +196,7 @@ The labels the hive applies instead of `hold` ([#18468](https://github.com/hivec
 | `ready-for-review` | Hive's work is done; a maintainer reviews, then removes this label to let it merge. | The ACMM level gate (L3-L5, and cross-repo outreach at every level). |
 | `decision-needed` | Hive is blocked on a human decision; a maintainer decides (see hive's comment). | The #5117 self-authorization gate, the #9665 reporter-trust gate (with `needs-human`), the holdguard re-hold, and an owner-only delegated decision (with `needs-owner`). |
 
-Every gate posts its existing notice comment saying why. Agents cannot add or remove either label through the relay. Neither label stops the hive from answering review feedback: when a person leaves an inline comment, a review (`COMMENTED` or `CHANGES_REQUESTED`) or a comment addressed to the hive on a PR the hive's own agent opened, that agent is kicked to verify the claim and push a signed revision or reply with evidence, whether the PR is a draft, held, or in a repo the hive does not manage ([#19027](https://github.com/hivecommons/hive/issues/19027); `src/cmd/hive/review_feedback_wire.go`, `src/pkg/reviewfeedback/reviewfeedback.go`). A hold means do not merge, not do not respond. A burst of comments is coalesced into one kick after `HIVE_REVIEW_FEEDBACK_DEBOUNCE` (default 3m); comments that arrive while the agent works get their own follow-up kick; each PR is capped at `HIVE_REVIEW_FEEDBACK_WINDOW_CAP` kicks (default 12) per `HIVE_REVIEW_FEEDBACK_WINDOW` (default 24h), the cap posts a needs-human note, and a person's next comment resets it; `HIVE_REVIEW_FEEDBACK_MAX_ITEMS` (default 30) bounds one brief. Set `HIVE_REVIEW_FEEDBACK_RESPONSE=off` to disable the sweep.
+Every gate posts its existing notice comment saying why. Agents cannot add or remove either label through the relay. Neither label stops the hive from answering review feedback: when a person leaves an inline comment, a review (`COMMENTED` or `CHANGES_REQUESTED`) or a comment addressed to the hive on a PR the hive's own agent opened, that agent is kicked to verify the claim and push a signed revision or reply with evidence, whether the PR is a draft, held, or in a repo the hive does not manage ([#19027](https://github.com/hivecommons/hive/issues/19027); `src/cmd/hive/review_feedback_wire.go`, `src/pkg/reviewfeedback/reviewfeedback.go`). A hold means do not merge, not do not respond. When the hive's `hive:feedback-handled` replies cover every point of a person's standing CHANGES_REQUESTED review (its body and each inline comment they left, answered by a handled marker, a hive reply in the thread or a resolved thread, with at least one handled marker), the sweep re-requests that reviewer's review once per (reviewer, head) and posts one short note listing what changed, marked `<!-- hive:review-rerequested reviewer=<login> head=<sha> -->`; the dashboard then shows the PR as **changes addressed, re-approve** rather than a bare needs decision, and an owner can approve the head. The hive never dismisses a human review: it stands until its reviewer approves, asks for changes again, or dismisses it ([#19538](https://github.com/hivecommons/hive/issues/19538); `src/pkg/github/pr_feedback_rerequest.go`). A burst of comments is coalesced into one kick after `HIVE_REVIEW_FEEDBACK_DEBOUNCE` (default 3m); comments that arrive while the agent works get their own follow-up kick; each PR is capped at `HIVE_REVIEW_FEEDBACK_WINDOW_CAP` kicks (default 12) per `HIVE_REVIEW_FEEDBACK_WINDOW` (default 24h), the cap posts a needs-human note, and a person's next comment resets it; `HIVE_REVIEW_FEEDBACK_MAX_ITEMS` (default 30) bounds one brief. Set `HIVE_REVIEW_FEEDBACK_RESPONSE=off` to disable the sweep. A comment that states a rule or a source of truth for future work is also captured into the hive's knowledge with its provenance, gated on the reviewer's association, and acknowledged on the PR ([#19046](https://github.com/hivecommons/hive/issues/19046); see [review-feedback-rules.md](../review-feedback-rules.md)). Replies inside a review thread (the replies endpoint) are allowed by the proxy only on the hive's own PR and only for the agent that opened it; the agent may delete a hive comment within 15 minutes only on a PR it opened, never anyone else's or one on another agent's PR, and is told never to post test or probe comments. If a reply is refused, the agent stops, the proxy keeps the drafted reply, and the sweep posts it in a needs-human note for a person to place ([#19096](https://github.com/hivecommons/hive/issues/19096); `src/crux/proxy/review_thread.go`, [GitHub write surface](../github-write-surface.md#review-thread-replies-on-the-hives-own-prs)).
 
 **Migration.** On boot, Hive creates both labels (with their descriptions) in each active repository and swaps a literal `hold` for the matching gate label only when the newest `hold` event is a `labeled` by the Hive App **and** an App-authored gate notice is on the thread (level-hold notice → `ready-for-review`; reporter-trust, #5117, holdguard or owner-only decision notice → `decision-needed`). It adds the gate label before removing `hold` and leaves one `<!-- hive:hold-relabel-18468 -->` comment. A `hold` a person applied (or re-applied) is never touched. Bounded to 50 items per repository per boot (`src/pkg/github/hive_gate_label_migration.go`).
 
@@ -300,15 +300,39 @@ The hard-suppress reconcile also lifts this `hold` once a PR referencing the iss
 
 **Applies to:** Issues. **Kind:** Hard (issue gate; not a PR merge gate).
 
-A `kind/bug` without a SHA gets this label plus the `<!-- hive:sha-hold -->` notice. While it is on the issue no agent implements, decomposes or claims it, whatever the reporter-trust setting; the issue shows as filtered in the work list. The sweep removes it once a SHA appears, which releases the issue. Description: "Waiting on the reporter for the commit SHA; hive won't work this until it's added."
+A primary-repo `kind/bug` filed by an outside reporter without a SHA gets this label plus the `<!-- hive:sha-hold -->` notice. While it is on the issue no agent implements, decomposes or claims it, whatever the reporter-trust setting; the issue shows as filtered in the work list and never reaches the Actionable stage. The sweep removes it once a SHA appears, which releases the issue. Description: "Waiting on the reporter for the commit SHA; hive won't work this until it's added."
+
+**Exempt from the gate** ([#18866](https://github.com/hivecommons/hive/issues/18866)): the gate exists to get a reproducible build out of an outside reporter, so the sweep never applies it to
+- an issue authored by the hive's own accounts (`project.ai_author`, `[bot]` logins, the App);
+- an issue authored by an owner or maintainer: GitHub author association in `project.issue_filter.reporter_trust.trusted_associations` (default OWNER, MEMBER, COLLABORATOR);
+- an issue whose **body** names a concrete repository file path: a repo-relative path under a known top-level directory (`src/`, `pkg/`, `cmd/`, `internal/`, `docs/`, `bin/`, `config/`, `dashboard/`, `examples/`, `systemd/`, `launchd/`, `githooks/`, `.github/`) ending in a known source or config extension (`.go`, `.js`, `.ts`, `.py`, `.sh`, `.yaml`, `.json`, `.md`, ...), such as `src/pkg/github/client.go`. Absolute paths, URLs and bare file names do not count; comments are not scanned. **This signal is self-attested:** the hive only pattern-matches the text and never checks that the path exists, so any outside reporter can skip the SHA gate by writing a path such as `src/pkg/x.go` in the issue body. That is accepted by design in #18866 (a reporter who cites the code is treated as informed), not a hardened check;
+- an issue carrying `sha-waived` (below).
+
+An exemption is evaluated on every sweep, so a `needs-sha` that was applied before the issue qualified is removed by the next sweep. Outside reporters whose body has neither a SHA nor such a path are still held.
 
 **Who applies it:** Hive.
 
 **Checked by:** SHA-hold sweep. **When:** Eval tick SHA sweep.
 
-**Release or override.** Add SHA evidence, or remove the label
+**Release or override.** Post a commit SHA in a comment; or a maintainer waives the requirement (`sha-waived`, next entry); or remove the label by hand (the sweep re-adds it on the next tick unless the issue is waived or exempt).
 
-**Configuration and implementation.** `issues.sha_hold_trusted_label` (default `needs-sha`; `hold` is treated as unset, since the sweep never applies `hold`)
+**Dashboard.** An issue held by `needs-sha` shows the pill *Held: needs commit SHA* on its Activity Monitor row (hover: "Post a commit SHA in the issue, or waive this requirement.") and a *held: post a commit SHA* note on the Open chevron, from the `sha_hold` field of `GET /api/stage-tracker`. A `hold` already shows its own pill.
+
+**Configuration and implementation.** `issues.sha_hold_trusted_label` (default `needs-sha`; `hold` is treated as unset, since the sweep never applies `hold`); `project.issue_filter.reporter_trust.trusted_associations` for the maintainer exemption (`src/pkg/github/client.go` `EnforceSHAHold`, `src/pkg/github/sha_hold_exempt.go`, `src/pkg/dashboard/stage_tracker_sha_hold.go`)
+
+#### `sha-waived` from the SHA-hold override
+
+**Applies to:** Issues. **Kind:** Override (persistent marker).
+
+A maintainer's waiver of the SHA requirement for one issue ([#18866](https://github.com/hivecommons/hive/issues/18866)). While `sha-waived` is on the issue the SHA sweep neither applies nor keeps `needs-sha` (a lingering one is removed on the next sweep), and the issue is eligible for the stage-label pass and agent work like any other. Description: "A maintainer waived the commit-SHA requirement; hive will not hold this issue for a SHA."
+
+**Who applies it:** A person: the Activity Monitor row menu's *Waive SHA requirement* (`POST /api/repos/{owner}/{repo}/items/{number}/sha-waiver`, `{"waived": true}`), or by hand. The dashboard action is gated like releasing a `hold` (the verified owner role, or write/maintain/admin on the repo), removes `needs-sha` at once, and posts one App-authored comment carrying `<!-- hive:sha-waived by=<login> -->`, from which the pill reads *SHA waived by <login>*.
+
+**Checked by:** SHA-hold sweep, enumeration. **When:** Eval tick SHA sweep; enumeration.
+
+**Release or override.** *Restore SHA requirement* in the row menu (or removing the label) re-arms the gate: the next sweep holds the issue again if it still has no SHA and no exemption. The hive never adds or removes `sha-waived` itself.
+
+**Configuration and implementation.** None; the label name is fixed (`src/pkg/github/sha_hold_exempt.go` `SHAWaivedLabel`, `src/pkg/dashboard/api_repo_item_sha_waiver.go`)
 
 ### Issue admission and triage
 
@@ -680,6 +704,24 @@ Umbrella issue is never a unit of agent work: every automated claim producer (re
 
 **Configuration and implementation.** `src/pkg/github/issue_claim_gate.go`, `src/pkg/github/issue_stage_labels.go`, `src/pkg/claims/neverclaim.go`
 
+#### `umbrella` (also `tracker`, `epic`, `meta-tracker`), `<!-- hive:umbrella -->`, `human-only`
+
+**Applies to:** Issues. **Kind:** Hard for contributors; display-only for the hive.
+
+An umbrella, epic, tracker or decomposed parent is coordination work: its children carry the code. An owner-only issue waits on a person. Neither is ever handed to a contributor relay, listed as workable, or advertised with `help wanted` / `good first issue` ([#19078](https://github.com/hivecommons/hive/issues/19078)). Both stay actionable for the owner and the hive and keep their stage; the dashboard row reads **Umbrella · owner** or **Owner only**.
+
+An issue is an umbrella when ANY of these holds: a label from `hub.contribute_umbrella.labels` (default `umbrella`, `tracker`, `epic`, `meta-tracker`; case-insensitive, last segment so `kind/epic` counts), the body marker `<!-- hive:umbrella -->`, a title opening with one of `title_prefixes` (default `[Tracking]`, `[Epic]`, `[Umbrella]`, `[Tracker]`, after any emoji), a task list with at least `task_list_min` (default 2) issue or PR references (`- [ ] #123`), sub-issues, or the legacy tracker detector. It is owner-only when it carries `needs-human`, `human-only` or `human-only:*` (`human_only_labels`), or the body marker `<!-- hive:human-only -->`.
+
+**Who applies it:** Human or hive (a label or marker the owner writes; nothing is applied automatically).
+
+**Checked by:** Contributor selection, the ready-work queue, `GET /api/contribute/status` counts, the good-first-issue sweep and the dashboard tracker row. **When:** Contributor admission, sweep, render.
+
+**Not the `hive/tracking` marker.** `hive/tracking` issues are never auto-closed by any path. An umbrella is: the owner can close it, it is closable under the per-repo `parent_autoclose` policy (an `epic` label still needs `parent_autoclose: epics_too`, as before) and by the tracker-closing sweep, and closing it removes its stage labels like any other close.
+
+**Release or override.** Remove the label or marker; or `hub.contribute_umbrella.enabled: false` (hive-wide or under `per_repo.<owner/repo>`) to restore the previous tracker check only; `withdraw_advertisement: false` keeps `help wanted` on an umbrella.
+
+**Configuration and implementation.** `hub.contribute_umbrella` (`src/pkg/config/contribute_umbrella.go`), classifier `src/pkg/gfi/umbrella.go`, offer gate `src/pkg/dashboard/contribute_umbrella.go`, sweep `src/pkg/gfi/gfi.go`
+
 #### `hive-plan`, `hive-design`
 
 **Applies to:** Issues. **Kind:** Gate when enabled.
@@ -718,7 +760,7 @@ A merged PR covered only part of the issue ([#11931](https://github.com/hivecomm
 
 **Checked by:** Close-on-merge sweep, PR-claim label sync and task-list sweep. **When:** Close-on-merge sweep for issues behind a confirmation gate.
 
-**Release or override.** Hive removes it when a later merged PR fully covers the issue and `hive/likely-done` is applied; humans may remove it
+**Release or override.** Hive removes it when a later merged PR fully covers the issue and `hive/likely-done` is applied; the hive closes the issue when the scanner's verification marker says complete and the guards hold, or parks it in `hive/verify-close`; humans may remove it
 
 **Configuration and implementation.** Fixed label (`src/pkg/github/close_on_merge.go`, `src/pkg/github/task_list_sweep.go`)
 
@@ -737,6 +779,22 @@ The two verdicts never stand together. When the label relay adds `hive/verified-
 **Release or override.** Human removes when the issue is really done, or close-on-merge closes the issue. A later verified `hive/already-done` removes it, and the issue stage sweep keeps the later of the two verdicts when both are worn
 
 **Configuration and implementation.** Fixed label (`src/pkg/github/prclaims.go` `VerifiedOpenLabel`, `src/cmd/hive/verifyonce.go`)
+
+#### `hive/verify-close`
+
+**Applies to:** Issues. **Kind:** Hard suppress (the 045 park); dashboard one-click Close.
+
+The verify-close lane. The scanner's verify-once note ends with a machine-readable verdict, `<!-- hive:verification verdict=complete prs=19172,19179 -->` (nothing left; `prs` names the merged PRs that delivered it) or `<!-- hive:verification verdict=partial prs=19172 -->` (work remains). For an open issue labelled `hive/partially-addressed`, the issue stage sweep reads the marker from the hive's own comments only (an agent note is relayed under the hive identity; a marker anyone else writes is ignored) and, once two reads `verifyCloseSettleInterval` (15 minutes, the tracker auto-close's settle interval) apart see the same evidence: closes the issue as *completed* with an evidence comment citing the merged PRs when every cited PR (the marker's plus the merged claim's) is merged and no PR linked from the timeline is still open; otherwise applies this label with one status note naming the unmet guard (a cited PR not merged, an open linked PR, notes that disagree, no cited PR, more than 20 PRs, or a human-filed bug whose reporter confirms the close). `verdict=partial` adds `hive/verified-open` instead. Never touched: a held or `hive/tracking` issue, an umbrella or tracker (the tracker auto-close owns those), a decomposed parent with an open child, an issue a person reopened, and an issue a person took out of the lane by removing this label. While the label is on, the issue derives `stage/045-needs-decision`, no agent is offered it, and the activity monitor row asks *The scanner verified this issue complete* and leads with **Close as completed** (one click, `decide:close-issue`).
+
+**Who applies it:** Hive.
+
+**Checked by:** Issue stage sweep (`closeVerifiedComplete`). **When:** Every stage sweep, at most one read of a candidate per settle interval.
+
+**Release or override.** A person closes the issue from the row, or removes the label when work remains (the hive does not re-apply it after that); the hive removes it when it closes the issue itself once the guards hold
+
+**Configuration and implementation.** Fixed label (`src/pkg/github/verified_close.go`, `src/pkg/config/issue_filter.go` `VerifyCloseLabel`, `src/pkg/scheduler/kickmessage.go` verify-once wording)
+
+**Claims across a relaunch.** A scanner claim on a partially-addressed issue is still released when its agent's CLI is relaunched (`releaseClaimsOnAgentRelaunch`): the relaunch notice fires only when a fresh CLI replaces the old one (a surviving pane never releases), and crux does not resume the previous session on a fresh launch, so "the same agent resumes" never reaches that path; keeping the claim would park the issue at 020 on a context that no longer exists (the #13083 incident the release was added for). The verdict no longer depends on the claim: it is on the issue as the marker, the verify-once gate still withholds the issue from a second verification (it reads the ledger's last attempt, which the release keeps), and this sweep acts on the marker whoever holds the issue next.
 
 #### `hive/already-done`
 

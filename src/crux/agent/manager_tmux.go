@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +60,9 @@ var defaultTmuxSocket string
 // year-long credential it has no use for.
 var inheritedCredentialEnvVars = []string{
 	"HIVE_GITHUB_TOKEN",
+	"GITLAB_TOKEN",
+	"GITEA_TOKEN",
+	"FORGEJO_TOKEN",
 	claude.OperatorTokenEnvVar,
 	linearAPIKeyEnvVar,
 	linearAccessTokenEnvVar,
@@ -98,6 +102,10 @@ var inheritedCredentialEnvVars = []string{
 	"HIVE_NO_PROXY",
 }
 
+func credentialEnvVars() []string {
+	return append(slices.Clone(inheritedCredentialEnvVars), config.ExtraCredentialEnvVars()...)
+}
+
 // githubTokenEnvVars are the environment variables gh, git tooling and the
 // backends' GitHub MCP servers read a GitHub token from. The hive process may
 // carry real values for any of them (a PAT, the installation token), and a
@@ -133,7 +141,7 @@ func (m *Manager) stripsInheritedGitHubTokens(agent *AgentProcess) bool {
 // of it — ensureTmuxSession respawns that pane afterwards so the CLI it
 // launches inherits the populated set.
 func (m *Manager) applySessionEnv(agent *AgentProcess) {
-	for _, k := range inheritedCredentialEnvVars {
+	for _, k := range credentialEnvVars() {
 		_ = m.tmuxCmd(agent, "set-environment", "-t", agent.tmuxSession, "-r", k).Run()
 	}
 	// gh/git tokens: push-capable agents receive their per-agent SCOPED token

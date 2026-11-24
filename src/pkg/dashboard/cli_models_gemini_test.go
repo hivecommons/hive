@@ -112,6 +112,36 @@ func TestDiscoverGeminiModels_FiltersProviderOnlyModels(t *testing.T) {
 	}
 }
 
+// TestDiscoverGeminiModels_KeepsCurrentCLIModels pins #19520: the Gemini 3.x
+// ids the current Gemini CLI accepts survive the allowlist when the models
+// API returns them, while ids the CLI does not list (gemini-3.6-flash) stay
+// filtered out.
+func TestDiscoverGeminiModels_KeepsCurrentCLIModels(t *testing.T) {
+	clearGeminiEnv(t)
+	t.Setenv("GEMINI_API_KEY", "test-gemini-secret-key")
+
+	respBody := `{
+		"models": [
+			{"name": "models/gemini-3.1-pro-preview", "supportedGenerationMethods": ["generateContent"]},
+			{"name": "models/gemini-3.8-flash", "supportedGenerationMethods": ["generateContent"]},
+			{"name": "models/gemini-3.6-flash", "supportedGenerationMethods": ["generateContent"]},
+			{"name": "models/gemini-3.5-flash", "supportedGenerationMethods": ["generateContent"]}
+		]
+	}`
+	ts := geminiModelsTestServer(t, http.StatusOK, respBody, nil)
+	redirectGeminiEndpoint(t, ts.URL)
+
+	s := &Server{cliModels: newCLIModelCache(), logger: testLogger()}
+	r := s.discoverGeminiModels()
+	if r.fallback {
+		t.Fatalf("supported intersection must remain live, got %+v", r)
+	}
+	want := []string{"gemini-3.1-pro-preview", "gemini-3.8-flash", "gemini-3.5-flash"}
+	if !equalStrings(r.models, want) {
+		t.Fatalf("got %v, want %v", r.models, want)
+	}
+}
+
 func TestDiscoverGeminiModels_AlternativeEnvKeys(t *testing.T) {
 	canned := `{"models":[{"name":"models/gemini-2.5-flash","supportedGenerationMethods":["generateContent"]}]}`
 

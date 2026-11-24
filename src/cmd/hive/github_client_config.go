@@ -106,6 +106,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// The gate labels the hive applies instead of `hold`
 	// (hivecommons/hive#18468): process-wide, like github.HoldLabels.
 	github.SetHiveGateLabelNames(b.cfg.Governor.Labels.ReadyForReviewLabelOrDefault(), b.cfg.Governor.Labels.DecisionNeededLabelOrDefault())
+	// Jira/Linear keys, so a branch named after a tracker item claims no
+	// GitHub issue by its number.
+	github.SetTrackerKeyPrefixes(b.trackerKeyPrefixes())
 	// Umbrella issues no automated claim may take and no claim stages
 	// (governor.claims.never_claim_labels, default `epic`).
 	client.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
@@ -612,12 +615,15 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 	})
 	client.SetAgentActionHook(func(a github.AgentAction) { kickOutcomeAgentAction(kickOutcomesFor(b.cfg, b.logger), a) })
 	client.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, b.handleCanaryLeak)
+	// Observe-only session taint (#18987, phase 0): nil unless enabled.
+	client.SetSessionTaint(b.sessionTaintObserver())
 }
 
 // handleCanaryLeak records an ioscan canary leak on the audit log and as a
 // critical advisory bead for the leaking agent. Shared by the GitHub client
 // and the GitHub proxy scanners.
 func (b *boot) handleCanaryLeak(leak ioscan.CanaryLeak) {
+	b.recordCanaryTaint(leak)
 	detail := fmt.Sprintf("rule=%s, agent=%s, source=%s", ioscan.CanaryLeakRule, leak.Agent, leak.Source)
 	b.dashSrv.AuditLog(leak.Agent, "ioscan_canary_leak", detail, leak.Agent)
 	if store, ok := b.beadStores[leak.Agent]; ok && store != nil {
@@ -699,9 +705,8 @@ func evictHiveClosedPR(srv *dashboard.Server, rec github.AuditRecord, now time.T
 func (b *boot) writebackGate() *writeback.Gate {
 	b.writebackOnce.Do(func() {
 		deps := b.cfg.WritebackGateDeps()
-		deps.Config = func() writeback.Config { return b.cfg.Writeback }
 		deps.Logger = b.logger
-		b.writeback = writeback.New(b.cfg.Writeback, deps, writebackStatePath())
+		b.writeback = writeback.New(b.cfg.WritebackPolicy(), deps, writebackStatePath())
 		for _, repo := range b.cfg.Project.Repos {
 			b.writeback.ObserveRepo(repo)
 		}
@@ -726,4 +731,15 @@ func (b *boot) observeWritebackRepos() {
 	for _, repo := range b.cfg.Project.Repos {
 		g.ObserveRepo(repo)
 	}
+}
+
+// trackerKeyPrefixes lists the project keys of the configured Jira and
+// Linear work sources.
+func (b *boot) trackerKeyPrefixes() []string {
+	ws := b.cfg.Governor.WorkSource
+	keys := append([]string(nil), ws.Jira.ProjectKeys...)
+	for _, t := range ws.Linear.Teams {
+		keys = append(keys, t.Key)
+	}
+	return keys
 }

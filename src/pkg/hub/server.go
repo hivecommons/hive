@@ -191,6 +191,12 @@ type RegistryEntry struct {
 	// StartedAt is the spoke process start time, reported over the heartbeat.
 	// Rendered as an uptime pill in My Hives so a crash-looping hive is visible.
 	StartedAt string `json:"startedAt,omitempty"`
+	// AuditChainSeq and AuditChainHead are the newest row of the spoke's
+	// hash-chained audit log as of its last heartbeat (#19439). Carried
+	// forward across a beat that omits them; a seq that goes backwards is
+	// recorded on the timeline (TimelineAuditChainRegressed).
+	AuditChainSeq  int64  `json:"auditChainSeq,omitempty"`
+	AuditChainHead string `json:"auditChainHead,omitempty"`
 	// AdvisoryLastPostedAt is when the spoke last SUCCESSFULLY posted its
 	// advisory digest (RFC3339), reported over the heartbeat. Empty means the
 	// hive has never posted one — not-advisory-mode or an old spoke — which the
@@ -393,6 +399,8 @@ type RegistryEntry struct {
 	GitHubAppRequired        bool         `json:"githubAppRequired,omitempty"`
 	GitHubAppPermIssue       string       `json:"githubAppPermIssue,omitempty"`
 	GitHubAppState           string       `json:"githubAppState,omitempty"`
+	PRGateCause              string       `json:"prGateCause,omitempty"`
+	PRGateDependsOn          bool         `json:"prGateDependsOn,omitempty"`
 	GitHubAppTokenStatus     string       `json:"githubAppTokenStatus,omitempty"`
 	GitHubAppTokenLastMintAt string       `json:"githubAppTokenLastMintAt,omitempty"`
 	GitHubAppTokenError      string       `json:"githubAppTokenError,omitempty"`
@@ -1017,6 +1025,7 @@ type HubServer struct {
 	selfExperimentFlags  sync.Map // hive ID -> nous.SelfFlagAssignment; restart fails closed
 	mux                  *http.ServeMux
 	mailReply            *mailReplier // nil unless the reply DKIM key is configured (#18746)
+	ask                  *hubAsk      // nil unless Ask AI help is enabled and configured (#19180)
 	registry             Registry
 	mu                   sync.RWMutex
 	logger               *slog.Logger
@@ -1107,7 +1116,9 @@ type HubServer struct {
 	// dashboard instead of only in `kubectl describe` — the `target1` incident
 	// left the hub serving stale code for ~20 minutes with nothing surfaced.
 	hubUpgradeFault string
-	hubUpgradeMu    sync.Mutex // guards lastHubUpgradeTrigger + hubUpgradeTarget + hubUpgradeFault
+	hubUpgradeMu    sync.Mutex // guards lastHubUpgradeTrigger + hubUpgradeTarget + hubUpgradeFault + hubWatcherRunning
+	// hubWatcherRunning is true while a watchHubRollout goroutine is alive.
+	hubWatcherRunning bool
 	// Admin upgrade kill switch (upgrade_pause.go). Lazily loaded from its
 	// durable JSON file on first use so the state survives the hub's own
 	// frequent auto-rolls; guarded by its own mutex because it is consulted on
@@ -2065,6 +2076,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		AIAuthor:          sanitizeField(payload.AIAuthor),
 		AIAuthorEffective: sanitizeField(payload.AIAuthorEffective),
 		StartedAt:         sanitizeHeartbeatTime(payload.StartedAt),
+		AuditChainSeq:     clampInt64(payload.AuditChainSeq, 0, math.MaxInt64),
+		AuditChainHead:    sanitizeAuditChainHead(payload.AuditChainHead),
 		// Duplicate-instance detection. noteReporter returns "" until two
 		// distinct reporters have ALTERNATED (A→B→A), so a normal rollout
 		// (A→B, B stays) never trips it.
@@ -2210,6 +2223,8 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// identifier sanitizer stripped every space out of it.
 		GitHubAppPermIssue:       sanitizeProseField(payload.GitHubAppPermIssue),
 		GitHubAppState:           sanitizeHeartbeatField(payload.GitHubAppState),
+		PRGateCause:              sanitizeHeartbeatField(payload.PRGateCause),
+		PRGateDependsOn:          payload.PRGateDependsOn,
 		GitHubAppTokenStatus:     sanitizeHeartbeatField(payload.GitHubAppTokenStatus),
 		GitHubAppTokenLastMintAt: sanitizeField(payload.GitHubAppTokenLastMintAt),
 		GitHubAppTokenError:      sanitizeProseField(payload.GitHubAppTokenError),
@@ -2439,6 +2454,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			entry.RegisteredAt = h.RegisteredAt
 			if entry.SnapshotURL == "" {
 				entry.SnapshotURL = h.SnapshotURL
+			}
+			// A beat without the audit chain head (old spoke, minimal
+			// liveness beat) keeps the last one reported, so the next full
+			// beat is compared against it rather than against zero.
+			if entry.AuditChainSeq == 0 {
+				entry.AuditChainSeq, entry.AuditChainHead = h.AuditChainSeq, h.AuditChainHead
 			}
 			// Project-identity carry-forward for DEGRADED beats. Three beat
 			// classes legitimately omit project fields: the pre-restart
@@ -2915,6 +2936,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 	resp.SelfExperimentFlag = s.selfExperimentFlagForHeartbeat(payload.HiveID, payload.SelfExperimentsOptIn)
 	resp.ActivityETag = activityAck
 	resp.ActivityEventsAck = s.activity.eventsAck(payload.HiveID)
+	resp.Protocol = heartbeatProtocolAckFor(payload.Protocol)
 
 	if entry.IsPublic != payload.IsPublic {
 		resp.IsPublic = &entry.IsPublic
@@ -5175,6 +5197,7 @@ func (s *HubServer) handleContributeProxy(w http.ResponseWriter, r *http.Request
 		return
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.Transport = pinnedOrReplacedDefault(contributeProxyTransport)
 	r.URL.Path = "/api/contribute/register"
 	r.Host = target.Host
 	s.logger.Info("proxying contribute registration", "hive", hive.ID, "target", target.String())
@@ -5212,6 +5235,9 @@ func (s *HubServer) handleContributeWSProxy(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	proxy := newContributeWSReverseProxy(target)
+	if proxy.Transport == nil {
+		proxy.Transport = pinnedOrReplacedDefault(contributeProxyTransport)
+	}
 	r.URL.Path = "/api/contribute/ws"
 	r.Host = target.Host
 	s.logger.Info("proxying contribute WS", "hive", hive.ID, "target", target.String())
@@ -5219,6 +5245,35 @@ func (s *HubServer) handleContributeWSProxy(w http.ResponseWriter, r *http.Reque
 }
 
 var newContributeWSReverseProxy = httputil.NewSingleHostReverseProxy
+
+// contributeProxyTransport carries the contribute registration and WS proxies
+// to the selected hive (#19221, part of #18986). findContributeHive admits a
+// hive only when its self-reported DashboardURL passes isPrivateURL, but
+// httputil's default transport resolved the name again when it dialled, so a
+// DashboardURL whose name rebinds was checked as public and proxied to as
+// private. This transport resolves each dial once, checks every answer with
+// isPrivateURL, and connects only to an address it checked.
+var contributeProxyTransport http.RoundTripper = pinnedFetchTransport(isPrivateURL)
+
+// replacedDefaultTransport reports http.DefaultTransport when it was replaced
+// with something other than *http.Transport (tests and instrumented builds
+// inject a RoundTripper there). Every pinned call site shares this check so
+// they honour the override the same way.
+func replacedDefaultTransport() (http.RoundTripper, bool) {
+	if _, ok := http.DefaultTransport.(*http.Transport); ok {
+		return nil, false
+	}
+	return http.DefaultTransport, true
+}
+
+// pinnedOrReplacedDefault returns pinned, unless http.DefaultTransport was
+// replaced; then that replacement is used.
+func pinnedOrReplacedDefault(pinned http.RoundTripper) http.RoundTripper {
+	if rt, ok := replacedDefaultTransport(); ok {
+		return rt
+	}
+	return pinned
+}
 
 // privateURLDNSTimeout bounds DNS resolution inside the SSRF guard so a
 // slow or malicious DNS server cannot block the caller indefinitely.
@@ -5428,6 +5483,20 @@ func sanitizeHeartbeatTime(s string) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
+// sanitizeAuditChainHead keeps a heartbeat's audit_chain_head only when it is
+// what the spoke writes, a lowercase hex SHA-256, and drops anything else.
+func sanitizeAuditChainHead(s string) string {
+	if len(s) != 64 {
+		return ""
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return ""
+		}
+	}
+	return s
+}
+
 func clampInt64(v, min, max int64) int64 {
 	if v < min {
 		return min
@@ -5616,7 +5685,7 @@ func sanitizeRepoEntry(s string) string {
 // legacy kind retains the original host-based GitHub/GHE inference.
 func forgeAPIURLForHost(kind, host string) string {
 	switch ForgeKind(strings.ToLower(strings.TrimSpace(kind))) {
-	case ForgeGitLab, ForgeGitea:
+	case ForgeGitLab, ForgeGitea, ForgeForgejo:
 		return ""
 	}
 	host = strings.TrimSpace(strings.ToLower(host))

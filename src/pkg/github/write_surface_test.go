@@ -92,6 +92,7 @@ func TestIssueRequestWriteOpMapping(t *testing.T) {
 		"comment": WriteOpComment,
 		"claim":   WriteOpClaim,
 		"close":   WriteOpCloseIssue,
+		"edit_pr": WriteOpEditPR,
 	} {
 		if got := issueRequestWriteOp(kind); got != want {
 			t.Errorf("issueRequestWriteOp(%q) = %q, want %q", kind, got, want)

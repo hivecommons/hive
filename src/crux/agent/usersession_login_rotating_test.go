@@ -80,6 +80,63 @@ func openCodeRefresh(t *testing.T, path, provider string) string {
 	return e.Refresh
 }
 
+// rotatingAccessAndRefresh returns the access token and the refresh token of
+// the vendor's login in data (OpenCode: the "anthropic" entry) and whether
+// the refresh key is present at all. It accepts a refresh-less copy.
+func rotatingAccessAndRefresh(t *testing.T, rel string, data []byte) (access, refresh string, hasKey bool) {
+	t.Helper()
+	switch rel {
+	case userSessionCodexLoginRel:
+		var f struct {
+			Tokens map[string]*string `json:"tokens"`
+		}
+		if err := json.Unmarshal(data, &f); err != nil || f.Tokens == nil {
+			t.Fatalf("not a Codex ChatGPT login: %v", err)
+		}
+		if a := f.Tokens["access_token"]; a != nil {
+			access = *a
+		}
+		r, ok := f.Tokens["refresh_token"]
+		if ok && r != nil {
+			refresh = *r
+		}
+		return access, refresh, ok
+	case userSessionOpenCodeLoginRel:
+		var top map[string]map[string]any
+		if err := json.Unmarshal(data, &top); err != nil || top["anthropic"] == nil {
+			t.Fatalf("not an OpenCode login with an anthropic entry: %v", err)
+		}
+		e := top["anthropic"]
+		access, _ = e["access"].(string)
+		r, ok := e["refresh"]
+		refresh, _ = r.(string)
+		return access, refresh, ok
+	}
+	t.Fatalf("no rotating login at %s", rel)
+	return "", "", false
+}
+
+// assertRotatingRefreshless fails unless the session's copy at path is a
+// refresh-less copy holding wantAccess: the refresh key kept (both CLIs
+// require it) with nothing in it, and no refresh token anywhere in the file.
+func assertRotatingRefreshless(t *testing.T, rel, path, wantAccess string) {
+	t.Helper()
+	raw := mustRead(t, path)
+	access, refresh, hasKey := rotatingAccessAndRefresh(t, rel, raw)
+	l, _ := rotatingSessionLoginFor(rel)
+	if refresh != "" || !hasKey || len(l.refreshTokens(raw)) != 0 || bytes.Contains(raw, []byte(`"ref-`)) {
+		t.Error("the session's copy carries a refresh token (or lost the required key): the session could rotate the fleet's login")
+	}
+	if access != wantAccess {
+		t.Error("the session's copy does not hold the expected access token")
+	}
+	if st, err := os.Lstat(path); err != nil || st.Mode().Perm() != 0o400 {
+		t.Errorf("the session's copy is not read-only: %v", err)
+	}
+}
+
+func testAccess(tag string) string { return "acc-" + tag + "-" + bridgeTestTokenSentinel }
+
 // rotatingTestVendor drives one vendor through the shared scenarios.
 type rotatingTestVendor struct {
 	rel string
@@ -219,9 +276,7 @@ func TestSessionRefresh_CodexAndOpenCodeNeverLeaveTheSharedLoginStale(t *testing
 			writeLoginAt(t, target, v.login("shared", now.Add(-2*time.Hour)), now.Add(-time.Hour))
 			f.start(t)
 			path := filepath.Join(userSessionHome(testSessionID), v.rel)
-			if got := v.refresh(t, path); got != "ref-shared-"+bridgeTestTokenSentinel {
-				t.Fatal("the session did not get the shared login")
-			}
+			assertRotatingRefreshless(t, v.rel, path, testAccess("shared"))
 			if len(f.adoptionsOf(vendor)) != 0 {
 				t.Fatal("a plain start adopted a login")
 			}
@@ -254,20 +309,20 @@ func TestSessionRefresh_CodexAndOpenCodeNeverLeaveTheSharedLoginStale(t *testing
 			if !bytes.Equal(mustRead(t, target), before) || len(f.adoptionsOf(vendor)) != 1 {
 				t.Error("the login did not settle after one adoption")
 			}
-			if got := v.refresh(t, path); got != "ref-rotated-"+bridgeTestTokenSentinel {
-				t.Error("the session lost the login it refreshed")
-			}
+			// The session keeps using the login it refreshed, now as a
+			// refresh-less copy of the shared file.
+			assertRotatingRefreshless(t, v.rel, path, testAccess("rotated"))
 			f.assertNoTokenMaterial(t)
 		})
 	}
 }
 
 // The shared login stays the single owner of the refresh token (#18740): an
-// adoption moves the session's login INTO the shared file and never writes
-// the session's own copy, so after it exactly one file the hive manages
-// holds the refreshed token as its authority, and a later agent refresh of
-// the shared file is not undone by the session's older copy.
-func TestSessionRefresh_AdoptionNeverWritesTheSessionCopy(t *testing.T) {
+// adoption moves the session's login INTO the shared file and puts the
+// session back on a refresh-less copy, so after it exactly one file the hive
+// manages holds the refreshed token, and a later agent refresh of the shared
+// file reaches the session and is not undone by it.
+func TestSessionRefresh_AdoptionPutsTheSessionBackOnARefreshlessCopy(t *testing.T) {
 	for vendor, v := range rotatingTestVendors() {
 		t.Run(vendor, func(t *testing.T) {
 			f := newSessionLoginFixture(t)
@@ -277,33 +332,23 @@ func TestSessionRefresh_AdoptionNeverWritesTheSessionCopy(t *testing.T) {
 			f.start(t)
 			path := filepath.Join(userSessionHome(testSessionID), v.rel)
 			writeLoginAt(t, path, v.login("rotated", now.Add(8*time.Hour)), now)
-			sessBefore := mustRead(t, path)
-			infoBefore, err := os.Stat(path)
-			if err != nil {
-				t.Fatal(err)
-			}
 
 			f.m.syncUserSessionClaudeLogins(sessionLoginTriggerWatchdog)
 			if len(f.adoptionsOf(vendor)) != 1 {
 				t.Fatal("the session's refreshed login was not adopted")
 			}
-			infoAfter, err := os.Stat(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(mustRead(t, path), sessBefore) || !infoAfter.ModTime().Equal(infoBefore.ModTime()) {
-				t.Error("an adoption wrote the session's own copy")
-			}
+			assertRotatingRefreshless(t, v.rel, path, testAccess("rotated"))
 
-			// An agent refreshes the shared login afterwards: the session's
-			// older copy must not take it back.
+			// An agent refreshes the shared login afterwards: the session
+			// must follow it and must not take it back.
 			agent := v.login("agent", now.Add(16*time.Hour))
-			writeLoginAt(t, target, agent, now.Add(time.Minute))
+			writeLoginAt(t, target, agent, now.Add(time.Hour))
 			f.m.syncUserSessionClaudeLogins(sessionLoginTriggerSignIn)
 			f.r.copyLoginFiles(testSessionID, testSessionUID)
 			if !bytes.Equal(mustRead(t, target), agent) || len(f.adoptionsOf(vendor)) != 1 {
 				t.Error("the session's older copy displaced the agents' newer shared login")
 			}
+			assertRotatingRefreshless(t, v.rel, path, testAccess("agent"))
 			f.assertNoTokenMaterial(t)
 		})
 	}
@@ -503,7 +548,7 @@ func TestSessionLogin_ConcurrentCodexChecksConvergeOnOneLogin(t *testing.T) {
 		wg.Add(2)
 		go func(id string) {
 			defer wg.Done()
-			_, _ = ops.checkRotatingLogin(id, codex)
+			_, _ = ops.checkRotatingLogin(id, codex, sessionLoginModeWatch)
 		}(id)
 		go func() {
 			defer wg.Done()

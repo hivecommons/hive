@@ -527,11 +527,17 @@ func (s *Store) SetNotes(id, notes string) (Person, error) {
 
 // SetProfileField sets one profile field by hand. An empty value clears it
 // and keeps the manual mark, so the automatic source does not refill what a
-// person removed.
+// person removed. A country is read as an ISO code or a country name. Setting
+// the location re-derives an automatic country from it.
 func (s *Store) SetProfileField(id, field, value, by string) (Person, error) {
 	value, err := cleanText(value, MaxProfileFieldLen, false)
 	if err != nil {
 		return Person{}, err
+	}
+	if field == FieldCountry && value != "" {
+		if value = CountryFromInput(value); value == "" {
+			return Person{}, fmt.Errorf("%w: not a country", ErrInvalid)
+		}
 	}
 	return s.changePerson(id, func(p *Person) error {
 		f := p.Profile.Field(field)
@@ -539,12 +545,16 @@ func (s *Store) SetProfileField(id, field, value, by string) (Person, error) {
 			return fmt.Errorf("%w: unknown profile field", ErrInvalid)
 		}
 		*f = ProfileField{Value: value, Source: SourceManual, At: s.now(), By: by}
+		if field == FieldLocation {
+			deriveAutoCountry(p, s.now())
+		}
 		return nil
 	})
 }
 
 // ResetProfileField hands a field back to the automatic source: it is
-// emptied and the next accept-time fetch may fill it.
+// emptied and the next accept-time fetch may fill it. A country is derived
+// again at once from the location the profile already holds.
 func (s *Store) ResetProfileField(id, field string) (Person, error) {
 	return s.changePerson(id, func(p *Person) error {
 		f := p.Profile.Field(field)
@@ -552,28 +562,206 @@ func (s *Store) ResetProfileField(id, field string) (Person, error) {
 			return fmt.Errorf("%w: unknown profile field", ErrInvalid)
 		}
 		*f = ProfileField{}
+		deriveAutoCountry(p, s.now())
+		return nil
+	})
+}
+
+// deriveAutoCountry keeps an automatic country in step with the location: it
+// fills or updates it from DeriveCountry, and drops one the location no longer
+// supports. A country a person set or cleared, or one from the hub, is never
+// touched, except that a location-derived country replaces a hub derived or
+// admin-set one (forge public > hub derived, #19306). It reports
+// whether anything changed.
+func deriveAutoCountry(p *Person, now time.Time) bool {
+	c := &p.Profile.Country
+	if c.Source == SourceManual || (c.Source == SourceHub && !HubValueYieldsToForge(*c)) {
+		return false
+	}
+	code := DeriveCountry(p.Profile.Location.Value)
+	if c.Source == SourceHub && code == "" {
+		// A hub derived or admin-set country is not the location's to drop.
+		return false
+	}
+	if code == c.Value {
+		return false
+	}
+	if code == "" {
+		*c = ProfileField{}
+		return true
+	}
+	*c = ProfileField{Value: code, Source: SourceAuto, Rule: CountryRuleLocation, At: now}
+	return true
+}
+
+// DismissAffiliation remembers a refused affiliation suggestion so it is not
+// offered again. The list is bounded; the oldest refusal is forgotten first.
+func (s *Store) DismissAffiliation(id, value string) (Person, error) {
+	value, err := cleanText(value, MaxProfileFieldLen, false)
+	if err != nil {
+		return Person{}, err
+	}
+	key := strings.ToLower(value)
+	if key == "" {
+		return Person{}, fmt.Errorf("%w: empty affiliation", ErrInvalid)
+	}
+	return s.changePerson(id, func(p *Person) error {
+		if affiliationDismissed(p.Profile, key) {
+			return nil
+		}
+		d := append(p.Profile.DismissedAffiliations, key)
+		if len(d) > MaxDismissedAffiliations {
+			d = d[len(d)-MaxDismissedAffiliations:]
+		}
+		p.Profile.DismissedAffiliations = d
 		return nil
 	})
 }
 
 // ApplyAutoProfile fills profile fields from a public GitHub profile. It
-// only writes a field a person has not set (manual) and only with a
-// non-empty value, and it reports whether anything changed.
+// only writes a field a person has not set (manual) and the hub did not fill
+// (hub), only with a non-empty value, derives the country from the location,
+// and reports whether anything changed.
 func (s *Store) ApplyAutoProfile(id string, values map[string]string) (Person, bool, error) {
 	changed := false
 	p, err := s.changePerson(id, func(p *Person) error {
 		for _, name := range ProfileFields {
 			f := p.Profile.Field(name)
 			v, err := cleanText(values[name], MaxProfileFieldLen, false)
-			if err != nil || v == "" || f.Source == SourceManual || f.Value == v {
+			if err != nil || v == "" || f.Source == SourceManual || (f.Source == SourceHub && !HubValueYieldsToForge(*f)) || f.Value == v {
 				continue
 			}
 			*f = ProfileField{Value: v, Source: SourceAuto, Rule: ProfileSourceGitHub, At: s.now()}
 			changed = true
 		}
+		if deriveAutoCountry(p, s.now()) {
+			changed = true
+		}
 		return nil
 	})
 	return p, changed, err
+}
+
+// Hub rules for values the person entered themselves (#19319 labels hub
+// values by who supplied them). Precedence: a value set here by hand, then
+// one the person entered on the hub, then the person's public forge profile,
+// then a hub value the hub derived or an admin set.
+const (
+	hubRulePersonEntered = "hub_person"
+	hubRuleUnrecorded    = "hub_unrecorded"
+)
+
+// hubYieldsToForge reports whether a hub field may be replaced by the
+// person's public forge profile: only a value the hub labeled as derived or
+// admin-set. A consented or person-entered value, an unlabeled one and one
+// saved before the hub recorded its source are kept.
+func hubYieldsToForge(f ProfileField) bool {
+	switch f.Rule {
+	case "", ProfileSourceHub, hubRulePersonEntered, hubRuleUnrecorded:
+		return false
+	}
+	return f.Source == SourceHub
+}
+
+// ProfileFillValue is one field value the profile fill read, with where it
+// came from.
+type ProfileFillValue struct {
+	Value  string
+	Source string // a ProfileSource* rule
+	Login  string
+}
+
+// profileFillFields are the fields a forge profile may fill. The country is
+// never read from a forge: it is derived from the location.
+var profileFillFields = []string{FieldRealName, FieldOrganization, FieldLocation}
+
+// ApplyProfileFill writes one profile-fill lookup to a person and records the
+// fetch. Rules, each pinned by profilefill_test.go:
+//   - A manual field, and a hub value the person entered or consented to, is
+//     never touched. A hub value the hub derived or an admin set yields to a
+//     non-empty forge value (hubYieldsToForge).
+//   - An empty field is filled.
+//   - An automatic field a source that answered this time filled before is
+//     the fill's own: it is updated, or cleared when that source no longer
+//     publishes it. Any other non-empty field is kept.
+//   - The country is derived again from the location.
+//
+// values is already merged in source priority order. It reports whether a
+// field changed, and records an "unchanged" fetch that changed a field as
+// "filled".
+func (s *Store) ApplyProfileFill(id string, values map[string]ProfileFillValue, fetch ProfileFetch) (Person, bool, error) {
+	changed := false
+	answered := map[string]bool{}
+	for _, src := range fetch.Sources {
+		answered[src] = true
+	}
+	p, err := s.changePerson(id, func(p *Person) error {
+		for _, name := range profileFillFields {
+			f := p.Profile.Field(name)
+			if f.Source == SourceManual || (f.Source == SourceHub && !hubYieldsToForge(*f)) {
+				continue
+			}
+			if f.Source == SourceHub {
+				// A hub value the hub derived or an admin set yields to the
+				// person's own public profile: treat it as empty.
+				if strings.TrimSpace(values[name].Value) == "" {
+					continue
+				}
+				*f = ProfileField{}
+			}
+			nv := values[name]
+			v, err := cleanText(nv.Value, MaxProfileFieldLen, false)
+			if err != nil {
+				v = ""
+			}
+			owned := f.Source == SourceAuto && IsForgeProfileRule(f.Rule) && answered[f.Rule]
+			switch {
+			case v != "" && (f.Value == "" || owned):
+				if f.Value == v && f.Rule == nv.Source && f.Login == nv.Login {
+					continue
+				}
+				*f = ProfileField{Value: v, Source: SourceAuto, Rule: nv.Source, Login: nv.Login, At: fetch.At}
+				changed = true
+			case v == "" && owned && f.Value != "":
+				*f = ProfileField{}
+				changed = true
+			}
+		}
+		if c := p.Profile.Country; c.Source == SourceHub && hubYieldsToForge(c) &&
+			IsForgeProfileRule(p.Profile.Location.Rule) && DeriveCountry(p.Profile.Location.Value) != "" {
+			p.Profile.Country = ProfileField{}
+		}
+		if deriveAutoCountry(p, s.now()) {
+			changed = true
+		}
+		rec := fetch
+		rec.Sources = append([]string(nil), fetch.Sources...)
+		if changed && rec.Outcome == FetchUnchanged {
+			rec.Outcome = FetchFilled
+		}
+		p.Profile.Fetched = &rec
+		return nil
+	})
+	return p, changed, err
+}
+
+// ClearProfileFetched forgets the last profile-fill lookup of every customer,
+// so the next passes refresh everyone ("Refresh from profiles" for all). It
+// returns how many records it cleared.
+func (s *Store) ClearProfileFetched() (int, error) {
+	n := 0
+	err := s.change(func() error {
+		for id, p := range s.people {
+			if p.Profile.Fetched == nil {
+				continue
+			}
+			p.Profile.Fetched = nil
+			s.people[id] = p
+			n++
+		}
+		return nil
+	})
+	return n, err
 }
 
 // Forget deletes a customer and leaves a salted-hash tombstone for each of

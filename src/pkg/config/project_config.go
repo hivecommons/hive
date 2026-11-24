@@ -189,8 +189,10 @@ const (
 	ForgeGitHub = "github"
 	// ForgeGitLab selects the GitLab forge (gitlab.com or self-managed).
 	ForgeGitLab = "gitlab"
-	// ForgeGitea selects the Gitea/Forgejo forge (self-managed or Codeberg).
+	// ForgeGitea selects the Gitea forge (self-managed).
 	ForgeGitea = "gitea"
+	// ForgeForgejo selects the Forgejo forge (self-managed or Codeberg).
+	ForgeForgejo = "forgejo"
 )
 
 // ForgeKind returns the configured forge kind, defaulting to ForgeGitHub when

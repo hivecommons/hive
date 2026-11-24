@@ -150,6 +150,14 @@ type IssueStageResult struct {
 	// (hivecommons/hive#12857).
 	ParentsClosed           int
 	ParentsAwaitingChildren int
+	// TrackersClosed counts tracker/umbrella issues closed because every
+	// issue and PR they reference is finished (trackers_too,
+	// hivecommons/hive#19071).
+	TrackersClosed int
+	// VerifiedClosed counts issues closed because the scanner's
+	// verification marker said complete and every guard held
+	// (closeVerifiedComplete).
+	VerifiedClosed int
 }
 
 // issueStageRESTCaller tags the writes for /api/gh-rate-limits.
@@ -197,6 +205,10 @@ type IssueStageInput struct {
 	// DelegatesWork mirrors the watcher's unchecked issue-task predicate.
 	// Unlike Children, it includes body-only delegation without ledger entries.
 	DelegatesWork bool
+	// TrackerSignal is set when the issue announces itself as a tracker or
+	// umbrella (label, title, task list or close_when checklist), the only
+	// issues the trackers_too auto-close policy reads (hivecommons/hive#19071).
+	TrackerSignal bool
 	// SpekUmbrella is set when the body carries the Spek publish marker with
 	// no `task=`: the issue is a Spek-published RFC (spektacular#114), an
 	// umbrella like `epic`, so a claim on it is never staged.
@@ -440,8 +452,16 @@ func issueDiscussionLabel(labels []string) string {
 
 // issueDiscussionSignal is what IssueFacts.DiscussionLabel carries: the
 // discussion label the issue wears, or rfcTitleDiscussionReason when it
-// wears none but its title opens with an RFC marker, or "".
+// wears none but its title opens with an RFC marker, or "". An issue that
+// carries `approved-direction` has a recorded owner decision and is past
+// discussion, so it carries no signal whatever its labels or title say: an
+// approved RFC epic in rollout keeps the stage the doc gives it (010 for a
+// decomposed parent waiting on children) instead of being forced back to
+// 018 on every sweep.
 func issueDiscussionSignal(labels []string, title string) string {
+	if issueHasLabel(labels, HumanAckLabel) {
+		return ""
+	}
 	if label := issueDiscussionLabel(labels); label != "" {
 		return label
 	}
@@ -498,7 +518,7 @@ func forgeIssueLabels(labels []string, claim *IssueClaimContext) []string {
 
 // issueStageInputFrom is the stage input for one actionable issue.
 func issueStageInputFrom(issue Issue) IssueStageInput {
-	return IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), Title: issue.Title, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), AuthorTrusted: issue.AuthorTrusted, DelegatesWork: hasUnfinishedDelegatedWork(issue.Body), SpekUmbrella: spekmarker.IsUmbrella(issue.Body), UpdatedAt: issue.UpdatedAt, Assignees: issue.Assignees}
+	return IssueStageInput{Repo: issue.Repo, Number: issue.Number, Labels: forgeIssueLabels(issue.Labels, issue.ClaimContext), Title: issue.Title, ClaimKind: issue.ClaimKind, ClaimedBy: issue.ClaimedBy, PRStarted: issue.ClaimPRStarted, Claim: issue.ClaimContext, Children: issue.Children, AuthorKind: issueAuthorKind(issue), AuthorTrusted: issue.AuthorTrusted, DelegatesWork: hasUnfinishedDelegatedWork(issue.Body), TrackerSignal: trackerSignal(issue.Title, issue.Labels, issue.Body), SpekUmbrella: spekmarker.IsUmbrella(issue.Body), UpdatedAt: issue.UpdatedAt, Assignees: issue.Assignees}
 }
 
 // IssueStageInputs flattens an enumeration result into one row per open
@@ -509,6 +529,11 @@ func IssueStageInputs(result *ActionableResult) []IssueStageInput {
 	}
 	var out []IssueStageInput
 	for _, issue := range result.Issues.Items {
+		// A Jira or Linear item has no GitHub issue (Number 0): there is no
+		// label to write, and every such item would collapse onto "repo#0".
+		if issue.Number <= 0 {
+			continue
+		}
 		out = append(out, issueStageInputFrom(issue))
 	}
 	// Held issues leave the pipeline at enumeration (Hold list, no
@@ -655,6 +680,17 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			}
 			awaitingChildren = true
 			res.ParentsAwaitingChildren++
+		} else if in.Children == nil && client.closeDoneTracker(ctx, in, store, key, now, logger) {
+			res.TrackersClosed++
+			res.Writes++
+			res.Comments++
+			continue
+		}
+		if !awaitingChildren && client.closeVerifiedComplete(ctx, in, store, key, now, logger) {
+			res.VerifiedClosed++
+			res.Writes++
+			res.Comments++
+			continue
 		}
 		if closed, commented := handleMergedPRIssueStage(ctx, client, in, logger); closed {
 			res.MergedPRIssuesClosed++
@@ -967,6 +1003,17 @@ func handleMergedPRIssueStage(ctx context.Context, client *Client, in IssueStage
 		commented = true
 	}
 	if err := client.CloseIssue(ctx, in.Repo, in.Number, IssueCloseOptions{OverrideReason: fmt.Sprintf("merged Hive-authored PR #%d is the full fix", in.Claim.PRNumber), SuppressOverrideComment: true, StateReason: IssueStateReasonCompleted}); err != nil {
+		if errors.Is(err, ErrItemNotOpen) {
+			// The confirming re-read found the issue already closed — most
+			// often GitHub's own closing keyword beat this sweep to it. The
+			// close this lane wanted has happened; report it as done so the
+			// sweep stops retrying and warning every pass
+			// (hivecommons/hive#19369).
+			if logger != nil {
+				logger.Debug("issue stage labels: merged full-fix PR issue already closed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber)
+			}
+			return true, commented
+		}
 		if logger != nil {
 			logger.Warn("issue stage labels: merged full-fix PR issue close failed", "repo", in.Repo, "issue", in.Number, "pr", in.Claim.PRNumber, "error", err)
 		}

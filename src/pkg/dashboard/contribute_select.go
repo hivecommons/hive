@@ -95,6 +95,10 @@ const (
 	// all filters (cooldown, disabled repos, allow/deny, skip-assigned, own-work),
 	// the candidate set is empty. There is simply nothing admissible to do now.
 	taskUnavailableNoMatchingWork = "no_matching_work"
+	// taskUnavailableQueueEmpty (#19052): the hub is running and unsuspended and
+	// no actionable item was seen at all, so there is nothing to wait out or
+	// ask the hive owner about. Relays that do not know it print the raw reason.
+	taskUnavailableQueueEmpty = "queue_empty"
 	// taskUnavailableCapabilityMismatch: work exists, but every otherwise
 	// admissible candidate had explicit task requirements contradicted by this
 	// client's self-declared capabilities. Undeclared/unknown clients do not hit
@@ -283,6 +287,23 @@ func (h *ContributeWSHub) rollbackAssignment(c *ContributorConnection, taskID st
 	h.revokeLease(identityOf(c), taskID)
 	h.unrecordAssignment(identityOf(c), assignedAt)
 }
+
+// Filter names carried in task_unavailable.filtered (#19052). Additive; relays
+// that do not know a key can print it as is.
+const (
+	filterDisabledRepo     = "disabled_repo"
+	filterOperatorHold     = "operator_hold"
+	filterCooldown         = "cooldown"
+	filterNoWorkVerdict    = "no_work_verdict"
+	filterFailureCooldown  = "failure_cooldown"
+	filterReclaimCooldown  = "reclaim_cooldown"
+	filterInFlight         = "in_flight"
+	filterAdmission        = "claimed_by_pr"
+	filterExcluded         = "excluded"
+	filterRoleMismatch     = "role_mismatch"
+	filterConfigFilter     = "denied_by_filter"
+	filterAssignedToOthers = "assigned_to_others"
+)
 
 // taskUnavailable builds the explicit negative-ack the ready handler sends in
 // place of silence. It carries a machine-readable reason so the failure is
@@ -829,6 +850,10 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	var candidates []candidate
 	capabilityMismatchSeen := false
 	unmintableRepoSeen := false
+	// #19052: candidates seen vs dropped per filter, so an empty candidate set
+	// can say whether the queue is empty or every item was filtered out.
+	issuesSeen := 0
+	filtered := map[string]int{}
 	// #12805: the connection's acknowledged repository scope. Nil / mode "all"
 	// leaves selection exactly as before; "selected" skips every repo outside
 	// it here, before any lease or mint, so out-of-scope work stays available
@@ -850,6 +875,8 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			continue
 		}
 		if config.RepoMatchesAny(repo.Full, repo.Name, disabledRepos) {
+			issuesSeen += len(repo.ActionableIssues)
+			filtered[filterDisabledRepo] += len(repo.ActionableIssues)
 			continue
 		}
 		if !repoScope.allows(repoScopeID(repoScopeDefaultForge, scopeHost, repo.Full)) {
@@ -867,14 +894,17 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		forEachActionableIssue(h.logger, "[contribute-ws]", repo.Full, repo.ActionableIssues, func(issue map[string]any, ref worksource.Ref) {
 			itemKey := ref.Key()
 			number := ref.Number
+			issuesSeen++
 			// Operator HOLD (#queue-hold): skip a manually-parked issue outright. This
 			// is a persistent operator decision, DISTINCT from the time-based cooldown
 			// below — a held issue never becomes a candidate until the operator Resumes
 			// it. Keyed on the same canonical "%s#%d" as every other exclusion.
 			if _, isHeld := heldIssues[itemKey]; isHeld {
+				filtered[filterOperatorHold]++
 				return
 			}
 			if h.isTaskInCooldownKey(itemKey) {
+				filtered[filterCooldown]++
 				return
 			}
 			// #3987: skip an issue with a live no_work_needed completion verdict
@@ -883,26 +913,31 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			// is voided the moment the issue shows activity newer than it, so a
 			// genuinely reopened issue comes straight back into the pool.
 			if h.isSuppressedByNoWorkVerdictKey(itemKey, issueUpdatedAtFromMap(issue)) {
+				filtered[filterNoWorkVerdict]++
 				return
 			}
 			// #2435: skip an issue still inside its short post-failure cooldown or
 			// its longer quarantine. This is the primary livelock fix — a failing
 			// issue at the head of the scan is no longer instantly re-admissible.
 			if h.isTaskInFailureCooldownKey(itemKey) {
+				filtered[filterFailureCooldown]++
 				return
 			}
 			// hivecommons/hive#13093: this contributor released the item
 			// without shipping recently; others may take it, not them.
 			if h.inReclaimCooldown(identityOf(c), itemKey) {
+				filtered[filterReclaimCooldown]++
 				return
 			}
 			// hivecommons/hive#13579: an item contributors keep dropping is
 			// withheld from the contributor that dropped it for the cool-off
 			// (#13763); other contributors and the hive's agents still take it.
 			if _, ok := h.inContributorCoolOff(contributorFlapKey(contributorFlapIdentity(c), itemKey)); ok {
+				filtered[filterCooldown]++
 				return
 			}
 			if activeIssues[itemKey] {
+				filtered[filterInFlight]++
 				return
 			}
 			labels := stringSliceFromAny(issue["labels"])
@@ -1045,6 +1080,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 						"generation", decision.convergence.ObservedGeneration,
 						"blockers", strings.Join(decision.convergence.Blockers, ","))
 				}
+				filtered[filterAdmission]++
 				return
 			}
 			h.admissionSkipCleared(itemKey)
@@ -1058,6 +1094,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				selfExcluded := h.isYankSelfExcludedKeyLocked(c.profile.ContributorID, itemKey)
 				h.mu.Unlock()
 				if selfExcluded {
+					filtered[filterCooldown]++
 					return
 				}
 			}
@@ -1086,12 +1123,27 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			//
 			// Logged rather than skipped silently: an issue that is never offered
 			// should not be a mystery to the operator watching the queue.
+			//
+			// hivecommons/hive#19078 widens the gate beyond the enumerator flag:
+			// an umbrella by the hub.contribute_umbrella rules (label, body
+			// marker, title prefix, task list, sub-issues) and an owner-only issue
+			// are refused the same way. They stay actionable for the owner and the
+			// hive; only this offer is withheld. A tracker goes through the
+			// tracker rule below, which also holds a parent with open sub-issues.
+			if reason, why := h.contributorExclusion(repo.Full, issue); reason != "" && reason != withheldReasonTracker {
+				h.logger.Info("[contribute-ws] skipping umbrella/tracker or owner-only issue",
+					"repo", repo.Full, "number", number, "title", title, "reason", reason, "rule", why)
+				filtered[filterExcluded]++
+				return
+			}
 			if hold := contributeTrackerHoldFor(issue); hold.held {
 				h.logger.Info("[contribute-ws] skipping tracker/umbrella issue",
 					"repo", repo.Full, "number", number, "title", title, "open_sub_issues", hold.openSubIssues)
+				filtered[filterExcluded]++
 				return
 			}
 			if requestedRole != "" && !h.issueMatchesAgentRole(requestedRole, title, labels, lane) {
+				filtered[filterRoleMismatch]++
 				return
 			}
 
@@ -1100,6 +1152,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			if h.server.deps != nil && h.server.deps.Config != nil {
 				hub := h.server.deps.Config.Hub
 				if !hub.EvaluateContributeFiltersFor(repo.Full, title, author, labels, issueAuthorTrustedFromMap(issue)).Admitted() {
+					filtered[filterConfigFilter]++
 					return
 				}
 				// #2357: optionally skip issues already assigned to someone else.
@@ -1108,6 +1161,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				// skipped when the toggle is on.
 				if hub.ContributeSkipAssignedToOthers &&
 					assignedToOthers(assignees, c.profile.GitHubUsername) {
+					filtered[filterAssignedToOthers]++
 					return
 				}
 			}
@@ -1166,7 +1220,12 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		if repoScope.restricts() {
 			return h.taskUnavailable(taskUnavailableNoSelectedWork)
 		}
-		return h.taskUnavailable(taskUnavailableNoMatchingWork)
+		if issuesSeen == 0 {
+			return h.taskUnavailable(taskUnavailableQueueEmpty)
+		}
+		msg := h.taskUnavailable(taskUnavailableNoMatchingWork)
+		msg.Filtered = filtered
+		return msg
 	}
 
 	// Operator priority override (#queue-reorder): the ordered list of issue keys

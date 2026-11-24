@@ -88,6 +88,9 @@ func ListPRChangedFiles(ctx context.Context, client *gh.Client, owner, repo stri
 				Additions: f.GetAdditions(),
 				Deletions: f.GetDeletions(),
 				Patch:     f.GetPatch(),
+				// A rename keeps its old path so a fence on the old
+				// directory still sees the file leave it.
+				PreviousFilename: f.GetPreviousFilename(),
 			})
 		}
 		if resp == nil || resp.NextPage == 0 {

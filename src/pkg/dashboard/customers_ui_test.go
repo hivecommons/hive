@@ -97,7 +97,9 @@ func TestCustomersViewGates(t *testing.T) {
 		"customersFocusSuggestion", "customersAfterSuggestion", "customersAccept", "customersDismiss", "customersShowMore",
 		"customersPickerOpen", "customersProfilePickerOpen", "customersPickerClose", "customersAttach", "customersHintAnswer",
 		"customersAvatarsOn", "customersGithubLogin", "customersAvatarHtml", "customersMorePill", "customersSourcePills",
-		"rowChevronHtml", "customersOriginPill", "customersTagPill", "customersTagPills", "customersIsOpenTarget", "customersOrgPill", "customersProfileValue", "customersDetailsHtml",
+		"rowChevronHtml", "customersOriginPill", "customersTagPill", "customersTagPills", "customersIsOpenTarget", "customersOrgPill", "customersProfileValue", "customersDetailsHtml", "customersPublicContributionsHtml",
+		"customersFieldSourceLabel", "customersFieldProvenance",
+		"customersFlagEmoji", "customersCountryName", "customersCountryPill", "customersAffiliationHtml",
 		"graphcanvasRound", "graphcanvasLabel", "graphcanvasLayout", "graphcanvasSvg",
 	} {
 		fns = append(fns, jsFunc(t, html, name))
@@ -105,7 +107,7 @@ func TestCustomersViewGates(t *testing.T) {
 	consts := ""
 	for _, name := range []string{"CUSTOMERS_KIND_LABELS", "CUSTOMERS_ADDABLE_KINDS", "CUSTOMERS_LEVEL_LABELS", "CUSTOMERS_LEVEL_PILL", "CUSTOMERS_ORIGIN_LABELS", "CUSTOMERS_REF_KIND_LABELS",
 		"CUSTOMERS_REF_GH", "CUSTOMERS_REF_WORDS", "CUSTOMERS_GROUP_SHOWN", "CUSTOMERS_SUGGESTED_GROUPS", "CUSTOMERS_OTHER_GROUP", "CUSTOMERS_KIND_ICONS",
-		"CUSTOMERS_ORIGIN_SHORT", "CUSTOMERS_PROFILE_FIELDS", "CUSTOMERS_SOURCE_PILLS_SHOWN", "CUSTOMERS_TAG_PILLS_SHOWN", "CUSTOMERS_GITHUB_LOGIN", "CUSTOMERS_AVATAR_PX", "CUSTOMERS_AVATAR_FETCH_PX",
+		"CUSTOMERS_ORIGIN_SHORT", "CUSTOMERS_PROFILE_FIELDS", "CUSTOMERS_PROFILE_SOURCES", "CUSTOMERS_SOURCE_PILLS_SHOWN", "CUSTOMERS_TAG_PILLS_SHOWN", "CUSTOMERS_GITHUB_LOGIN", "CUSTOMERS_AVATAR_PX", "CUSTOMERS_AVATAR_FETCH_PX",
 		"GRAPHCANVAS_W", "GRAPHCANVAS_H", "GRAPHCANVAS_RING_ARTEFACT", "GRAPHCANVAS_RING_PEOPLE", "GRAPHCANVAS_MAX_ARTEFACTS", "GRAPHCANVAS_LABEL_MAX"} {
 		consts += jsConstBlock(t, html, name) + "\n"
 	}
@@ -124,6 +126,8 @@ const person = {
   identities: [{ kind: 'hive_user', value: 'ada' }, { kind: 'email', value: 'ada@example.com', claimed: true }, { kind: 'github', value: 'ada', manual: true, by: 'olivia' }],
   tags: [{ name: 'maintainer', state: 'on', source: 'auto', rule: 'role:owner' }, { name: 'vip', state: 'on', source: 'manual', by: 'olivia' }, { name: 'end-user', state: 'off', source: 'auto' }],
   goals: [{ id: 'g_1', text: 'Ship exports', state: 'confirmed', source: 'manual', by: 'ada' }, { id: 'g_2', text: 'Wants SSO', state: 'suggested', source: 'auto', evidence: ['gh:issue:o/r#1'] }],
+  profile: { organization: { value: 'acme', source: 'auto', rule: 'github_profile' }, location: { value: 'Berlin', source: 'auto', rule: 'github_profile' }, country: { value: 'DE', source: 'auto', rule: 'location' } },
+  affiliation_suggestion: { value: 'Acme', rule: 'github_company', evidence: 'from GitHub company field "acme"' },
   satisfaction: { level: 'at_risk', source: 'manual', by: 'olivia', suggestion: { level: 'neutral', evidence: ['gh:pr:o/r#2'] } },
   merged_from: [{ person: { id: 'p_old', name: 'Old <Ada>' }, by: 'olivia', at: '2026-10-01T00:00:00Z' }],
   counts: { authored: 3 }, hints: [{ id: 'h_1', other_kind: 'email', other_value: 'ada@<x>.org', reason: 'the address and the login start the same' }, { id: 'h_2', other_kind: 'customer', other_value: 'Ada B' }]
@@ -138,6 +142,16 @@ must(list.includes('data-action="customersAccept"') && list.includes('data-actio
 must(list.includes('data-arg0="me"') && list.includes('data-arg0="p_abc"'), 'list rows do not open me and the customer');
 must(!list.includes('<b>Ada</b>') && list.includes('&lt;b&gt;Ada&lt;/b&gt;'), 'a name reached the page unescaped');
 must(prof.includes('data-action="customersForget"'), 'owner profile lacks Forget');
+must(prof.includes('<table class="customers-ident-table"') && prof.includes('<th scope="col">Identity</th>') && prof.includes('<th scope="row" class="customers-ident-value">') && prof.includes('data-action="customersIdentityRemove"') && prof.includes('<th scope="col">Source</th>'), 'identities are not a table with headers, a row header and row actions');
+must(customersFlagEmoji('DE') === '\u{1F1E9}\u{1F1EA}' && customersFlagEmoji('de') === '' && customersFlagEmoji('<b>') === '' && customersFlagEmoji(null) === '', 'flag emoji');
+must(list.includes('class="kc-pill customers-pill customers-country" role="img" aria-label="Country: ') && list.includes(' DE</span>'), 'the row lacks the country pill with its text code and accessible name');
+must(customersCountryPill({ profile: { country: { value: '<b>' } } }) === '' && customersCountryPill({}) === '', 'a malformed or missing country must render nothing');
+must(prof.includes('data-customers-field="country-line"') && prof.includes('data-customers-field="profile-country"') && prof.includes('(from location)'), 'Details lack the country line, its field or its provenance');
+must(prof.includes('(from GitHub)') && prof.includes('title="From the public GitHub profile (source=github_profile)"') && prof.includes('data-action="customersRefreshProfile"') && list.includes('data-action="customersRefreshAllProfiles"'), 'Details lack the profile source or the Refresh from profiles actions');
+must(customersOrgPill({ profile: { organization: { value: 'Acme', source: 'auto', rule: 'gitlab_profile', login: 'ada', at: '2026-11-19T00:00:00Z' } } }).includes('title="Organization - From the public GitLab profile of ada (source=gitlab_profile), fetched 2026-11-19"'), 'the organization pill tooltip lacks the source, login or fetch date');
+must(customersFieldSourceLabel({ rule: 'ghe_profile' }) === 'GitHub Enterprise' && customersFieldSourceLabel({ rule: 'toString' }) === '' && customersFieldSourceLabel(null) === '', 'profile source labels');
+must(prof.includes('Likely: <strong>Acme</strong>') && prof.includes('from GitHub company field &quot;acme&quot;') && prof.includes('data-action="customersAffiliationAccept" data-arg0="Acme"') && prof.includes('data-action="customersAffiliationDismiss" data-arg0="Acme"'), 'the likely affiliation lacks its evidence, Accept or Dismiss');
+must(customersAffiliationHtml({}) === '' && customersAffiliationHtml({ affiliation_suggestion: { value: '' } }) === '', 'no suggestion must render nothing');
 must(prof.includes('data-action="customersSatisfactionSet"') && prof.includes('data-action="customersSatisfactionConfirm"') && prof.includes('private note'), 'owner profile lacks satisfaction or notes');
 must(prof.includes('data-action="customersIdentityConfirm"'), 'owner cannot confirm a claimed identity');
 must(prof.includes('data-action="customersHintAnswer" data-arg0="h_1" data-arg1="yes"') && prof.includes('data-arg0="h_1" data-arg1="no"') && prof.includes('ada@&lt;x&gt;.org'), 'a suggested-identity hint lacks Yes, No or an escaped identity');
@@ -182,8 +196,8 @@ const mine = { id: 'p_me', name: 'Reed', me: true, origin: 'hive_user', identiti
 _customersData = { enabled: true, full: false, owner: false, me: mine, people: [], suggestions: [], default_tags: base.default_tags, levels: base.levels };
 list = customersListHtml(_customersData);
 prof = customersProfileHtml(mine);
-for (const banned of ['customersAccept', 'customersDismiss', 'customersAdd', 'Suggested (']) must(!list.includes(banned), 'read-only list shows ' + banned);
-for (const banned of ['customersForget', 'customersSatisfaction', 'customersNotesSave', 'customersIdentityConfirm', 'Activity', 'customersMerge', 'customersUnmerge', 'customersSplit', 'customersExport']) must(!prof.includes(banned), 'read-only profile shows ' + banned);
+for (const banned of ['customersAccept', 'customersDismiss', 'customersAdd', 'Suggested (', 'customersRefreshAllProfiles']) must(!list.includes(banned), 'read-only list shows ' + banned);
+for (const banned of ['customersRefreshProfile', 'customersForget', 'customersSatisfaction', 'customersNotesSave', 'customersIdentityConfirm', 'Activity', 'customersMerge', 'customersUnmerge', 'customersSplit', 'customersExport']) must(!prof.includes(banned), 'read-only profile shows ' + banned);
 must(prof.includes('data-action="customersGraphToggle"'), 'a read-only user may open the graph of their own profile');
 must(prof.includes('data-action="customersGoalConfirm" data-arg0="g_9"') && prof.includes('data-action="customersGoalAdd"') && prof.includes('data-action="customersTagSet"') && prof.includes('data-action="customersIdentityAdd"'), 'read-only profile lacks its own goal, tag or identity controls');
 must(prof.includes('unconfirmed'), 'a claimed identity is not marked unconfirmed');
@@ -553,9 +567,12 @@ func TestCustomersProfileDetailsWiring(t *testing.T) {
 	for _, want := range []string{
 		`function customersDetailsHtml(p)`,
 		`function customersOrgPill(p)`,
-		`customersOrgPill(p) + customersTagPills(p)`,
 		`data-action="customersProfileSave"`,
 		`data-action="customersProfileReset"`,
+		`function customersCountryPill(p)`,
+		`customersOrgPill(p) + customersCountryPill(p) + customersTagPills(p)`,
+		`{ op: 'affiliation_dismiss', value: value }`,
+		`{ op: 'profile', field: 'organization', value: value }`,
 		`{ op: 'profile', field: f.key, value: next }`,
 		`op: 'profile', field: key, state: 'auto'`,
 	} {
@@ -565,5 +582,145 @@ func TestCustomersProfileDetailsWiring(t *testing.T) {
 	}
 	if !strings.Contains(html, `customersDetailsHtml(p) + customersGoalsHtml(p)`) {
 		t.Error("the Details block is not part of the profile")
+	}
+}
+
+// The Features tab renders the hub import switch (#19163) beside Customer
+// avatars, wired to the key the API reads, with the env override line.
+func TestFeaturesTab_CustomersHubImportToggleMarkup(t *testing.T) {
+	html := featuresMarkup(t)
+	for _, want := range []string{
+		`data-section="features" data-key="customersHubImportEnabled"`,
+		`yamlHint('customers.hub_import.enabled')`,
+		`f.customersHubImportEffective !== f.customersHubImport`,
+		`HIVE_CUSTOMERS_HUB_IMPORT_ENABLED`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing %q", want)
+		}
+	}
+	avatars := strings.Index(html, `data-key="customersAvatarsEnabled"`)
+	hub := strings.Index(html, `data-key="customersHubImportEnabled"`)
+	search := strings.Index(html, `data-key="customersSearchEnabled"`)
+	if avatars < 0 || hub < avatars || search < hub {
+		t.Error("the hub import switch must sit right after Customer avatars")
+	}
+}
+
+// customers.hub_import.enabled: default off, owner-only, persisted, reported
+// with the effective value and overridden by env.
+func TestGovernorFeatures_CustomersHubImportToggleRoundTrip(t *testing.T) {
+	t.Setenv(config.EnvCustomersEnabled, "")
+	t.Setenv(config.EnvCustomersHubImportEnabled, "")
+	s := covApiServer(t)
+	type payload struct {
+		Features struct {
+			On        bool `json:"customersHubImport"`
+			Effective bool `json:"customersHubImportEffective"`
+		} `json:"features"`
+	}
+	read := func() payload {
+		var p payload
+		if err := json.Unmarshal(doOwnerGet(s, "/api/config/governor").Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	if got := read(); got.Features.On || got.Features.Effective {
+		t.Fatalf("default payload = %+v, want off", got.Features)
+	}
+	if rec := putFeatures(s, map[string]any{"customersHubImportEnabled": true}, func(r *http.Request) {
+		r.Header.Set("X-Hive-Role", "read-write")
+	}); rec.Code != http.StatusForbidden || s.deps.Config.Customers.HubImport.IsEnabled() {
+		t.Fatalf("non-owner PUT = %d", rec.Code)
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"customersHubImportEnabled": true}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT on: %d - %s", rec.Code, rec.Body.String())
+	}
+	if got := read(); !got.Features.On || !got.Features.Effective {
+		t.Fatalf("after enable = %+v", got.Features)
+	}
+	t.Setenv(config.EnvCustomersHubImportEnabled, "false")
+	if got := read(); !got.Features.On || got.Features.Effective {
+		t.Fatalf("env override = %+v", got.Features)
+	}
+}
+
+// A hub-provenance field shows its hub label ("from hub: ...") on the
+// profile and the organization pill (#19163, #19306).
+func TestCustomersProfileShowsHubProvenance(t *testing.T) {
+	html := indexHTML(t)
+	for _, want := range []string{
+		`cur.source === 'hub' ? customersHubLabel(cur)`,
+		`f.source === 'hub' ? customersHubLabel(f)`,
+		`hub_email_domain: 'from hub: derived from an organization email domain'`,
+		`hub_admin: 'from hub: set by a hub admin'`,
+		`hub_person: 'from hub: entered by the person'`,
+		`hub_browser_language: 'from hub: inferred from browser language'`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("Customers UI lacks %q", want)
+		}
+	}
+}
+
+// The Features tab renders the profile fill switch (#19302) right after the
+// GitHub search on accept, wired to the key the API reads, with the env
+// override line.
+func TestFeaturesTab_CustomersProfileFillToggleMarkup(t *testing.T) {
+	html := featuresMarkup(t)
+	for _, want := range []string{
+		`data-section="features" data-key="customersProfileFillEnabled"`,
+		`yamlHint('customers.profile_fill.enabled')`,
+		`f.customersProfileFillEffective !== f.customersProfileFill`,
+		`HIVE_CUSTOMERS_PROFILE_FILL_ENABLED`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing %q", want)
+		}
+	}
+	search := strings.Index(html, `data-key="customersSearchEnabled"`)
+	fill := strings.Index(html, `data-key="customersProfileFillEnabled"`)
+	if search < 0 || fill < search {
+		t.Error("the profile fill switch must sit after the GitHub search on accept")
+	}
+}
+
+// customers.profile_fill.enabled: default off, owner-only, persisted,
+// reported with the effective value and overridden by env.
+func TestGovernorFeatures_CustomersProfileFillToggleRoundTrip(t *testing.T) {
+	t.Setenv(config.EnvCustomersEnabled, "")
+	t.Setenv(config.EnvCustomersProfileFillEnabled, "")
+	s := covApiServer(t)
+	type payload struct {
+		Features struct {
+			On        bool `json:"customersProfileFill"`
+			Effective bool `json:"customersProfileFillEffective"`
+		} `json:"features"`
+	}
+	read := func() payload {
+		var p payload
+		if err := json.Unmarshal(doOwnerGet(s, "/api/config/governor").Body.Bytes(), &p); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	if got := read(); got.Features.On || got.Features.Effective {
+		t.Fatalf("default payload = %+v, want off", got.Features)
+	}
+	if rec := putFeatures(s, map[string]any{"customersProfileFillEnabled": true}, func(r *http.Request) {
+		r.Header.Set("X-Hive-Role", "read-write")
+	}); rec.Code != http.StatusForbidden || s.deps.Config.Customers.ProfileFill.IsEnabled() {
+		t.Fatalf("non-owner PUT = %d", rec.Code)
+	}
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"customersProfileFillEnabled": true}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT on: %d - %s", rec.Code, rec.Body.String())
+	}
+	if got := read(); !got.Features.On || !got.Features.Effective {
+		t.Fatalf("after enable = %+v", got.Features)
+	}
+	t.Setenv(config.EnvCustomersProfileFillEnabled, "false")
+	if got := read(); !got.Features.On || got.Features.Effective {
+		t.Fatalf("env override = %+v", got.Features)
 	}
 }

@@ -182,32 +182,24 @@ type SaaSUser struct {
 
 	// DisplayName is the PROVIDER-ASSERTED human name from the OIDC name claim
 	// (or userinfo), refreshed on every completed login. Distinct from FullName,
-	// which is ADMIN-entered CRM text and must never be clobbered by a login.
+	// which is contact text that must never be clobbered by a login.
 	// Display only — the identity key stays provider:sub. omitempty so existing
 	// records round-trip byte-identical until the user's next login enriches
 	// them (backfill-by-login, no migration).
 	DisplayName string `json:"display_name,omitempty"`
 
-	// Contact/CRM fields. Admin-maintained free text used to reach a hub user
-	// outside GitHub (and to remember what was said last time). All three are
-	// omitempty so the thousands of existing user records already on the PVC
-	// stay byte-identical until an admin actually fills one in — a record
-	// without them round-trips through load/save unchanged.
-	//
-	// These are operator-entered free text rendered into the dashboard, so
-	// every render path must escape them and every write path must cap them
-	// (see maxContactNameLen / maxContactSlackIDLen / maxContactNotesLen).
+	// Contact/CRM fields are free text, never asserted by a login. Renderers
+	// must escape them, and writers must cap them (maxContact*Len).
 	FullName string `json:"full_name,omitempty"`
 	SlackID  string `json:"slack_id,omitempty"`
 	Notes    string `json:"notes,omitempty"`
-	// Company is ADMIN-entered CRM free text — the user's company/organization.
-	// Like FullName/SlackID/Notes it is operator-maintained (never asserted by a
-	// login) and is deliberately NOT collected in the hive request/provision
-	// form; the operator fills it in manually from the admin Users table. Same
-	// escaping + length-cap discipline as the other contact fields
-	// (maxContactCompanyLen); omitempty so existing records round-trip
-	// byte-identical until an admin sets it.
+	// Company is the user's company or organization, not the repository owner
+	// selected in the hive request form.
 	Company string `json:"company,omitempty"`
+	// Provenance records who supplied each value, including explicit clears:
+	// "admin" or "user". Legacy contact values have no source; do not backfill.
+	FullNameSource string `json:"full_name_source,omitempty"`
+	CompanySource  string `json:"company_source,omitempty"`
 
 	// Country is an OPTIONAL ISO 3166-1 alpha-2 code (uppercase, e.g. "GB"),
 	// rendered as a small flag beside the user's avatar. Two sources, in
@@ -270,7 +262,7 @@ type SaaSUser struct {
 	//     opened to fix.
 	//
 	// Precedence, strongest first: user > admin > inferred > unset. See
-	// countryProvenanceRank and mayOverwriteCountry in user_country.go, which
+	// profileProvenanceRank and mayOverwriteCountry in user_country.go, which
 	// are the single arbiters — no caller compares these strings by hand.
 	//
 	// BACKWARD COMPATIBILITY. Records written before this field exists carry
@@ -379,12 +371,9 @@ func (s *HubServer) registerSaaSRoutes() {
 	// non-admin legitimately sees their OWN hives' usage; the handler scopes
 	// fleet-wide data to admins itself.
 	s.mux.HandleFunc("GET /api/saas/usage", s.requireAuth(s.handleUsage))
-	// Self-service country: the ONE field a non-admin may write on their own
-	// user record. requireAuth, not requireAdmin — that is the entire point,
-	// since every other SaaSUser write is admin-gated and the wizard is a
-	// one-time surface. The handler resolves the acting user from the SESSION
-	// and the body carries no identity, so this cannot reach anyone else's
-	// record. See handleMyCountry in user_country.go.
+	// Self-service country for the acting session user. The body carries no
+	// identity, so it cannot select another user's record. See handleMyCountry
+	// in user_country.go.
 	//
 	// PUT with a JSON body rather than a code in the path: country is personal
 	// data and a URL would put it in access logs, Referer headers and history.
@@ -548,6 +537,8 @@ func (s *HubServer) registerSaaSRoutes() {
 	s.mux.HandleFunc("POST /api/saas/admin/journey-snooze", s.requireAdmin(s.handleJourneySnooze))
 	s.mux.HandleFunc("GET /api/saas/admin/journey-status", s.requireAdmin(s.handleJourneyStatus))
 	s.registerBuildContainsRoutes()
+	s.registerCustomerSharingRoutes()
+	s.registerAskRoutes()
 }
 
 func pendingAgentRestartResetsForHeartbeat(hiveID string) []string {

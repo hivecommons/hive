@@ -125,7 +125,9 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	s.observeNativeQueueEvent(event, body, receivedAt)
 	if err := s.observeIntegrationWebhook(event, r.Header.Get("X-GitHub-Delivery"), body, receivedAt); err != nil {
-		s.webhookLogger().Error("integration observation not durable", "event", event, "error", err)
+		if s.allowDurableErr(event, time.Now()) {
+			s.webhookLogger().Error("integration observation not durable", "event", event, "error", err)
+		}
 	}
 	// HandleWebhookEvent is the legacy writer: it invalidated the PR cache
 	// and dirtied issues for the next cycle. The forgestate writer records

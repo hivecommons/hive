@@ -10,10 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/crux/cline"
+	"github.com/hivecommons/hive/crux/posture"
 )
 
 const (
@@ -41,7 +43,9 @@ type LaunchSpec struct {
 	NetworkMode    string
 	NetworkNone    bool
 	ReadOnly       bool
-	ClineProvider  *cline.ProviderFile
+	// PidsLimit caps processes in the container; zero means DefaultPidsLimit.
+	PidsLimit     int
+	ClineProvider *cline.ProviderFile
 	// OnStarted reports that the launcher accepted the run, not merely that
 	// the manager queued it. Called at most once.
 	OnStarted func()
@@ -61,9 +65,10 @@ type Result struct {
 	// Node is the node the run's pod was scheduled on, when the launcher can
 	// tell (the Job runtime); empty otherwise.
 	Node string
-	// FailReason is set when the run failed for a reason that is the
-	// infrastructure's, not the agent's: FailReasonNodeUnhealthy or
-	// FailReasonWaitingForNode. Empty for every other outcome.
+	// FailReason is set when the run failed before the agent ran:
+	// FailReasonNodeUnhealthy or FailReasonWaitingForNode (the
+	// infrastructure's reason), or FailReasonSetupFailed (sandbox.setup).
+	// Empty for every other outcome.
 	FailReason string
 }
 
@@ -172,6 +177,9 @@ func (l PodmanLauncher) Run(ctx context.Context, spec LaunchSpec) (res Result, r
 	return res, nil
 }
 
+// DefaultPidsLimit bounds forks inside a Podman sandbox (#19457).
+const DefaultPidsLimit = 4096
+
 func PodmanArgs(spec LaunchSpec) ([]string, error) {
 	if strings.TrimSpace(spec.Image) == "" {
 		return nil, errors.New("sandbox: image is required")
@@ -201,7 +209,17 @@ func PodmanArgs(spec LaunchSpec) ([]string, error) {
 	if spec.ReadOnly {
 		args = append(args, "--read-only")
 	}
-	args = append(args, "--userns=keep-id")
+	args = append(args, "--userns=keep-id", "--cap-drop=all", "--security-opt=no-new-privileges")
+	pids := spec.PidsLimit
+	if pids <= 0 {
+		pids = DefaultPidsLimit
+	}
+	args = append(args, "--pids-limit="+strconv.Itoa(pids))
+	if posture.RequireHardened(os.Getenv) {
+		// Not a secret, so the value may sit on the command line; the
+		// sandbox entry point fails the kick on any containment gap.
+		args = append(args, "--env", posture.RequireHardenedEnv+"=1")
+	}
 	args = append(args, "-v", filepath.Clean(spec.Workspace)+":"+mount+":Z")
 	if spec.ClineProvider != nil {
 		extra, err := clineProviderArgs(spec, mount, workdir)

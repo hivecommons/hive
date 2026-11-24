@@ -779,6 +779,9 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	in.Author = author
 	in.HiveAuthored = client.IsHiveAuthorLogin(author)
 	in.TrustedAuthor = in.HiveAuthored
+	if !issue.IsPullRequest() && itemType != "pr" {
+		in.HumanOnly = issueHumanOnlyAsk(s.deps.Config, repoFull, in.Labels, in.Body)
+	}
 	if issue.IsPullRequest() || itemType == "pr" {
 		in.Kind = delegatedecision.KindPR
 		pr, _, err := api.PullRequests.Get(ctx, owner, repoName, number)
@@ -1126,6 +1129,7 @@ func (s *Server) gatherDelegatedRecordedPark(repoFull string, number int, head s
 	}
 	in.ReviewerFinding = strings.TrimSpace(agg.DecisionFinding)
 	in.SecurityFinding = delegatedSecurityFinding(agg)
+	in.SecurityRequiresPerson = agg.SecurityRequiresPerson()
 }
 
 // delegatedSecurityFinding: the reviewer's finding is the security
@@ -1167,6 +1171,10 @@ func delegatedLowRiskPath(path string) bool {
 }
 
 const delegatedApprovalReportingTimeout = 15 * time.Second
+
+// delegatedParkLiftTimeout bounds the park-label lift, which runs on a
+// context detached from the decision's own (hivecommons/hive#19256).
+const delegatedParkLiftTimeout = 15 * time.Second
 
 // executeDelegatedDecision runs the allowed actions through the existing
 // GitHub helpers. It stops at the first failure and reports what landed.
@@ -1439,10 +1447,18 @@ func delegatedDecisionResolves(v delegatedecision.Verdict) bool {
 // the row in 085 and the popover re-asked). Returns the labels removed; a
 // failed removal is logged, not returned — the decision record stands and
 // the tracker projection ranks it above the stale label.
+//
+// The lift runs last, after the decision's own writes, so the caller's
+// context (the request, or the bounded post-approval reporting window) is
+// often spent by then; hivecommons/hive#19256 saw every lift fail with
+// `context deadline exceeded` and the row re-park in 085. It therefore runs
+// on its own bounded context detached from the caller's cancellation.
 func (s *Server) liftDelegatedParkLabels(ctx context.Context, in delegatedecision.Input, d delegatedecision.Decision) []string {
 	if in.Kind != delegatedecision.KindPR || !delegatedDecisionResolves(d.Verdict) {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), delegatedParkLiftTimeout)
+	defer cancel()
 	var lifted []string
 	for _, label := range delegatedParkLabels {
 		if !slices.ContainsFunc(in.Labels, func(l string) bool { return strings.EqualFold(l, label) }) {

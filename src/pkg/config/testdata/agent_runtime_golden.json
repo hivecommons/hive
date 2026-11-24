@@ -469,6 +469,10 @@
     "URL": "",
     "TokenEnv": ""
   },
+  "Forgejo": {
+    "URL": "",
+    "TokenEnv": ""
+  },
   "Notifications": {
     "Ntfy": null,
     "Slack": null,
@@ -589,7 +593,8 @@
       "BudgetOverride": false,
       "HoldoutPercent": 0,
       "OnError": ""
-    }
+    },
+    "SidecarAdvise": false
   },
   "inbox": {
     "spek": {},
@@ -661,6 +666,7 @@
     "StandbyModelTiers": null,
     "StandbyItemTiers": null,
     "StandbyAllowPrivateRepos": false,
+    "contribute_umbrella": {},
     "contribute_announcement": {},
     "DisabledRepos": null,
     "DisabledTiers": null,
@@ -746,6 +752,7 @@
   },
   "intent": {},
   "sentinel": {},
+  "session_taint": {},
   "security": {},
   "evidence": {
     "complexity": {}
@@ -806,7 +813,8 @@
     "analysis_factcheck": {},
     "contributor_prs": {},
     "recommendations": {},
-    "plan_match": {}
+    "plan_match": {},
+    "preflight": {}
   },
   "auto_merge": {
     "bot_takeover": {},
@@ -831,7 +839,18 @@
   "customers": {
     "inference": {},
     "avatars": {},
+    "hub_import": {},
+    "profile_fill": {},
+    "enrichment": {
+      "gitdm": {},
+      "devstats": {},
+      "crowddev": {}
+    },
     "mention_search": {}
+  },
+  "ask": {
+    "kapa": {},
+    "limits": {}
   },
   "duplicate_sweep": {},
   "good_first_issue": {},

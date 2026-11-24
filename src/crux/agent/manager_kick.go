@@ -647,6 +647,17 @@ const inferenceKickActionSuffix = "IMPORTANT — EXECUTE, DO NOT NARRATE: " +
 	"a plan and stop. Begin immediately by running your first command. " +
 	"Every response that contains no tool execution is a failure."
 
+// inferenceIdleBootstrapPrompt is the first message a fresh inference-backend
+// session receives when its launch carries no task. It used to be "Await
+// further instructions." followed by inferenceKickActionSuffix ("Begin
+// immediately by running your first command"): with no task and an order to
+// act, the agent went looking for work in its workspace, found a stale
+// agent-written .kick note, and spent every session acting on it (#19559).
+// The idle bootstrap therefore says plainly that there is nothing to do, and
+// kickMessageWithSuffixes never appends the action suffix to it.
+const inferenceIdleBootstrapPrompt = "You are an AI agent. No task yet: reply READY and wait for your next message. " +
+	"Do not run commands or read workspace files until a task arrives."
+
 // explainKickSuffixBrief and explainKickSuffixFull are appended to a kick when
 // the agent's resolved explain mode is brief/full (#3887).
 //
@@ -696,7 +707,14 @@ const explainKickSuffixFull = explainKickSuffixBrief +
 // backend both apply, and the action-forcing block must be read first: the
 // explain block then reads as a qualification of "execute, do not narrate"
 // rather than as a later instruction overriding it.
+//
+// The idle bootstrap (inferenceIdleBootstrapPrompt) is returned unchanged: it
+// carries no task, so neither "execute now" nor "explain each tool call"
+// applies to it (#19559).
 func kickMessageWithSuffixes(message string, isInference bool, explainMode string) string {
+	if message == inferenceIdleBootstrapPrompt {
+		return message
+	}
 	if isInference {
 		message += "\n\n" + inferenceKickActionSuffix
 	}

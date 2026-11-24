@@ -183,3 +183,34 @@ func ModeForTokenTier(tier string) (AgentMode, bool) {
 		return ModeAdvisory, false
 	}
 }
+
+// KnownTokenTiers is the closed set of scoped-token tier names. Every value
+// TokenTierForRole returns is in it. "shared-uid-read" is reserved for
+// read-only access by agents that share a UID.
+var KnownTokenTiers = []string{
+	"advisor",
+	"reviewer",
+	"newcomer",
+	"contributor",
+	"trusted",
+	SecCheckTier,
+	SecCheckTrustedTier,
+	"shared-uid-read",
+}
+
+// LessPrivilegedTokenTier returns the tier to try when tier has no credential
+// of its own. Each step moves toward less privilege, never up. It reports
+// false at the end of a chain (advisor, newcomer, contributor) and for an
+// unknown tier, so a caller that gets false must refuse the request.
+func LessPrivilegedTokenTier(tier string) (string, bool) {
+	switch tier {
+	case "reviewer", "shared-uid-read":
+		return "advisor", true
+	case SecCheckTier, "trusted":
+		return "contributor", true
+	case SecCheckTrustedTier:
+		return "trusted", true
+	default:
+		return "", false
+	}
+}

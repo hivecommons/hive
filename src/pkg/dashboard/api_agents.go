@@ -70,14 +70,18 @@ func (s *Server) handleAgentsList(w http.ResponseWriter, r *http.Request) {
 
 // handleAgentCreate serves POST /api/agents. OWNER-ONLY, matching
 // handleAgentDelete below: creating an agent writes an agent file, lifts any
-// deletion tombstone, and starts a live process. Audit F16 (2026-08-13).
+// deletion tombstone, and can start a live process. Audit F16 (2026-08-13).
 func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
 	}
 	var body struct {
-		Name  string             `json:"name"`
-		Agent config.AgentConfig `json:"agent"`
+		Name  string `json:"name"`
+		Agent struct {
+			config.AgentConfig
+			Enabled  *bool `json:"enabled"`
+			OnDemand *bool `json:"on_demand"`
+		} `json:"agent"`
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body: "+err.Error(), http.StatusBadRequest)
@@ -96,10 +100,11 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	agent := body.Agent.AgentConfig
 	// Reject an explain_mode the config loader would reject. Without this, a bad
 	// value is written to the agent file here and only surfaces at the NEXT
 	// config load, as a load failure far from the request that caused it.
-	if !config.ValidateExplainMode(body.Agent.ExplainMode) {
+	if !config.ValidateExplainMode(agent.ExplainMode) {
 		jsonError(w, "explain_mode must be one of: off, brief, full (or empty to inherit the hive default)", http.StatusBadRequest)
 		return
 	}
@@ -107,11 +112,11 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 	// Same reasoning for caveman_mode: reject at the request rather than
 	// persisting a value the config loader would fail on later (#4531,
 	// flagged as a follow-up in #3897).
-	if !config.ValidateCavemanMode(body.Agent.CavemanMode) {
+	if !config.ValidateCavemanMode(agent.CavemanMode) {
 		jsonError(w, "caveman_mode must be one of: lite, full, ultra, wenyan (or empty to disable)", http.StatusBadRequest)
 		return
 	}
-	if !config.ValidateJevMode(body.Agent.JevMode) {
+	if !config.ValidateJevMode(agent.JevMode) {
 		jsonError(w, "jev_mode must be one of: off, assist (or empty to disable)", http.StatusBadRequest)
 		return
 	}
@@ -127,26 +132,34 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body.Agent.Managed = true
+	agent.Enabled = body.Agent.Enabled == nil || *body.Agent.Enabled
+	agent.MarkExplicit(body.Agent.Enabled != nil, false)
+	if onDemand := body.Agent.OnDemand; onDemand != nil {
+		agent.OnDemand = *onDemand
+		if agent.OnDemandOwner == "" {
+			agent.OnDemandOwner = config.FieldOwnerOperator
+		}
+	}
+	agent.Managed = true
 	// An agent the operator creates by hand is never a member of any pack's
 	// roster, so the operator owns its pause/run state from birth: without
 	// this claim, the ACMM pack visibility sweep — which runs on every
 	// restart — paused it as "agent not in pack level N" on every pod roll
 	// (#5706, same ownership contract as ModelOwner/#5632).
-	body.Agent.PauseOwner = config.FieldOwnerOperator
+	agent.PauseOwner = config.FieldOwnerOperator
 
 	// If a GitHub prompt source is declared, validate it against the seed-only
 	// allowlist and bake an initial copy so the very first kick has content even
 	// if GitHub is momentarily unreachable. A bad/denied source is a hard error
 	// here so the operator sees it at create time rather than silently at kick.
-	if body.Agent.PromptSource.IsSet() {
-		if err := s.bakePromptSource(r.Context(), body.Name, &body.Agent); err != nil {
+	if agent.PromptSource.IsSet() {
+		if err := s.bakePromptSource(r.Context(), body.Name, &agent); err != nil {
 			jsonError(w, "prompt source: "+err.Error(), http.StatusBadRequest)
 			return
 		}
 	}
 
-	if err := config.SaveAgentFile(agentsDir, body.Name, body.Agent); err != nil {
+	if err := config.SaveAgentFile(agentsDir, body.Name, agent); err != nil {
 		s.logger.Error("failed to save agent file", "agent", body.Name, "error", err)
 		jsonError(w, "failed to save agent: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -157,7 +170,7 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Config.ClearAgentRemoved(body.Name) {
 		s.logger.Info("agent deletion tombstone lifted by explicit create", "agent", body.Name)
 	}
-	s.deps.Config.Agents[body.Name] = body.Agent
+	s.deps.Config.Agents[body.Name] = agent
 	s.deps.Config.ApplyAgentDefaults(body.Name)
 
 	if err := s.deps.Config.ExpandAgentReplicas(); err != nil {

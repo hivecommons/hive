@@ -223,7 +223,7 @@
     function onboardingGuideTipHtml(stepId, extra) {
       var step = ONBOARDING_GUIDE_STEP_TITLES[stepId] ? stepId : 'github-app';
       var what = step === 'github-app' ? ' for the install URL and permissions checklist' : '';
-      return 'New hive? <a class="onboarding-guide-link" role="button" tabindex="0" data-action="openWelcomeDialog" data-arg0="' + esc(step) + '" data-keydown-action="openWelcomeDialog" data-keys="Enter, ">Open the 🧭 Guide</a> (top navbar) → step ‘' + esc(ONBOARDING_GUIDE_STEP_TITLES[step]) + '’' + what + '.'
+      return 'New hive? <a class="onboarding-guide-link" role="button" tabindex="0" data-action="openWelcomeDialog" data-arg0="' + esc(step) + '" data-keydown-action="openWelcomeDialog" data-keys="Enter, ">Open 🚀 Getting started</a> (top bar ? Help menu) → step ‘' + esc(ONBOARDING_GUIDE_STEP_TITLES[step]) + '’' + what + '.'
         + (extra ? ' ' + extra : '');
     }
     function onboardingGuideTipFill(id, stepId, extra) {
@@ -245,6 +245,8 @@
       if (topBtn && topBtn.style.display === 'none') topBtn.style.display = '';
       var navItem = document.getElementById('welcome-nav-item');
       if (navItem && navItem.style.display === 'none') navItem.style.display = '';
+      var helpItem = document.getElementById('welcome-help-menu-item');
+      if (helpItem && helpItem.style.display === 'none') helpItem.style.display = '';
     }
 
     function renderGitHubAppBanner(data) {
@@ -439,6 +441,45 @@
         banner.setAttribute('hidden', '');
         banner.style.display = 'none';
       }
+    }
+
+    /* PR-contents gate (#19038): shown only while auto_merge.pr_gate is
+       configured AND the gate cannot be posted. Says what is missing, where an
+       owner accepts it and, before the cutoff, how many days remain. Every
+       server-supplied string goes through textContent. */
+    function prGateBannerText(gate) {
+      var parts = [];
+      var granted = gate.granted || 'none';
+      if (gate.cause === 'grant-missing') {
+        parts.push((gate.installation ? 'The GitHub App installation on ' + gate.installation : 'The GitHub App installation')
+          + ' has no Commit statuses read and write grant (granted: ' + granted + '), so the hive has switched the PR-contents gate off.');
+      } else {
+        var repos = Array.isArray(gate.forbiddenRepos) ? gate.forbiddenRepos.join(', ') : '';
+        parts.push('GitHub refused the gate\u2019s commit status write' + (repos ? ' on ' + repos : '') + '.');
+      }
+      parts.push('An organization owner accepts the permission in Organization settings \u2192 GitHub Apps \u2192 the App \u2192 pending permission request.');
+      if (gate.daysUntilCutoff > 0) {
+        parts.push(gate.daysUntilCutoff + ' day(s) remain before GitHub blocks pull_request_target workflows by default (' + gate.cutoff + ').');
+      } else {
+        parts.push('GitHub blocks pull_request_target workflows by default since ' + gate.cutoff + '.');
+      }
+      if (gate.dependsOnGate) parts.push('A required check depends on it: merges stall until this is fixed.');
+      return parts.join(' ');
+    }
+
+    function renderPRGateBanner(data) {
+      var banner = document.getElementById('pr-gate-banner');
+      if (!banner) return;
+      var gate = data && data.prGate;
+      if (!gate || !gate.cause) {
+        banner.setAttribute('hidden', '');
+        banner.style.display = 'none';
+        return;
+      }
+      var desc = document.getElementById('pr-gate-banner-desc');
+      if (desc) desc.textContent = prGateBannerText(gate);
+      banner.removeAttribute('hidden');
+      banner.style.cssText = 'display:flex !important';
     }
 
     // #9972: watched repos with has_issues=false. Agents cannot file issues

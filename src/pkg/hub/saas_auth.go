@@ -3,11 +3,13 @@ package hub
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -410,6 +412,11 @@ func legacyHubCookieDomain() string {
 	return "." + strings.TrimPrefix(strings.TrimSuffix(strings.ToLower(v), "."), ".")
 }
 
+// legacySessionCookieDomains lists the scopes whose stale hive_hub_user copy is
+// expired next to the live one. When HIVE_HUB_SESSION_COOKIE_DOMAIN narrows the
+// scope, the registrable-domain copy minted before the override is one of them:
+// it is a separate jar entry that would otherwise keep reaching every service on
+// that domain until it expired.
 func legacySessionCookieDomains(liveDomain string) []string {
 	var domains []string
 	if liveDomain != "" && liveDomain != defaultLegacyHubCookieDomain {
@@ -417,6 +424,9 @@ func legacySessionCookieDomains(liveDomain string) []string {
 	}
 	if legacy := legacyHubCookieDomain(); legacy != "" && legacy != liveDomain && legacy != defaultLegacyHubCookieDomain {
 		domains = append(domains, legacy)
+	}
+	if wide := "." + registrableSessionCookieDomain(hubCanonicalHost()); liveDomain != "" && wide != liveDomain && !slices.Contains(domains, wide) {
+		domains = append(domains, wide)
 	}
 	return domains
 }
@@ -436,14 +446,90 @@ func legacySessionCookieDomains(liveDomain string) []string {
 // host has to REDIRECT to the new one; dual-serving both cannot work (#5925).
 // Pinned by sibling_host_migration_test.go, explained in
 // src/docs/hivecommons-migration.md.
+//
+// HIVE_HUB_SESSION_COOKIE_DOMAIN narrows the scope for an operator whose
+// registrable domain also hosts services that must not receive the cookie. A
+// sibling outside the narrowed scope is signed out, exactly as one on another
+// registrable domain is.
 func sessionCookieParentDomain() string {
-	if parent, err := publicsuffix.EffectiveTLDPlusOne(hubCanonicalHost()); err == nil {
+	host := hubCanonicalHost()
+	raw := os.Getenv("HIVE_HUB_SESSION_COOKIE_DOMAIN")
+	domain, err := resolveSessionCookieParentDomain(raw, host)
+	if err != nil {
+		if _, logged := invalidSessionCookieDomainLogged.LoadOrStore(raw, true); !logged {
+			slog.Error("HIVE_HUB_SESSION_COOKIE_DOMAIN ignored; scoping the hub session cookie to the hub host",
+				"value", raw, "hub_host", host, "error", err)
+		}
+	} else if spoke := hubSpokeDomain(); strings.TrimSpace(raw) != "" && sessionCookieExcludesSpokes(domain, spoke) {
+		key := domain + "|" + spoke
+		if _, logged := spokeExclusionLogged.LoadOrStore(key, true); !logged {
+			slog.Warn("HIVE_HUB_SESSION_COOKIE_DOMAIN excludes the spoke domain; hosted spokes will not receive the hub session cookie",
+				"value", domain, "spoke_domain", spoke, "spoke_hosts", "<id>."+spoke,
+				"fix", "set HIVE_HUB_SESSION_COOKIE_DOMAIN to "+spoke+" or a parent of it, or set HIVE_HUB_SPOKE_DOMAIN under "+domain)
+		}
+	}
+	return domain
+}
+
+// spokeExclusionLogged keeps the spoke-exclusion warning to one log line per
+// (override, spoke domain) pair instead of one per request.
+var spokeExclusionLogged sync.Map
+
+// sessionCookieExcludesSpokes reports whether a cookie scoped to override
+// would not reach hosted spokes at <id>.spokeDomain. An empty override means
+// the default scope, which is never checked here. Case and surrounding dots
+// are ignored.
+func sessionCookieExcludesSpokes(override, spokeDomain string) bool {
+	trim := func(s string) string {
+		return strings.Trim(strings.ToLower(strings.TrimSpace(s)), ".")
+	}
+	override, spokeDomain = trim(override), trim(spokeDomain)
+	if override == "" || spokeDomain == "" {
+		return false
+	}
+	return spokeDomain != override && !strings.HasSuffix(spokeDomain, "."+override)
+}
+
+// invalidSessionCookieDomainLogged keeps an invalid override to one log line
+// per value instead of one per request.
+var invalidSessionCookieDomainLogged sync.Map
+
+// resolveSessionCookieParentDomain returns the session cookie scope for the hub
+// host. An empty or blank raw keeps the registrable-domain default. Any other
+// value must name host or a parent of it no wider than the registrable domain.
+// An invalid value returns host with an error: the cookie fails narrow, never
+// back to the wide default and never to the unchecked value.
+func resolveSessionCookieParentDomain(raw, host string) (string, error) {
+	v := strings.TrimSpace(raw)
+	if v == "" {
+		return registrableSessionCookieDomain(host), nil
+	}
+	v = strings.TrimPrefix(strings.TrimSuffix(strings.ToLower(v), "."), ".")
+	registrable, err := publicsuffix.EffectiveTLDPlusOne(host)
+	switch {
+	case err != nil:
+		return host, fmt.Errorf("hub host %q has no registrable domain: %w", host, err)
+	case v != host && !strings.HasSuffix(host, "."+v):
+		return host, fmt.Errorf("%q does not cover the hub host", v)
+	case v != registrable && !strings.HasSuffix(v, "."+registrable):
+		return host, fmt.Errorf("%q is wider than the registrable domain %q", v, registrable)
+	}
+	if suffix, _ := publicsuffix.PublicSuffix(v); suffix == v {
+		return host, fmt.Errorf("%q is a public suffix", v)
+	}
+	return v, nil
+}
+
+// registrableSessionCookieDomain is the default scope: the registrable domain of
+// host, or its parent when it has none.
+func registrableSessionCookieDomain(host string) string {
+	if parent, err := publicsuffix.EffectiveTLDPlusOne(host); err == nil {
 		return parent
 	}
-	if _, parent, ok := strings.Cut(hubCanonicalHost(), "."); ok {
+	if _, parent, ok := strings.Cut(host, "."); ok {
 		return parent
 	}
-	return hubCanonicalHost()
+	return host
 }
 
 // sessionCookieDomain returns the Domain attribute the hub session cookie
@@ -452,7 +538,8 @@ func sessionCookieParentDomain() string {
 //
 // Production (any host under the hub's own registrable domain, including the
 // hub itself) gets Domain=.<that domain> — .kubestellar.io by default, or
-// .hivecommons.dev once HIVE_HUB_PUBLIC_URL moves the hub there — so that BOTH
+// .hivecommons.dev once HIVE_HUB_PUBLIC_URL moves the hub there, or the
+// narrower scope HIVE_HUB_SESSION_COOKIE_DOMAIN names — so that BOTH
 // consumers of the cookie receive it:
 //   - every hosted spoke's Node proxy on <id>.hive.<domain>, which independently
 //     verifies it for the tenant dashboard and terminal (the original reason the
@@ -1059,11 +1146,24 @@ const publicPathGuestRole = "read"
 // while still picking up a re-provisioned token within a bounded window.
 const spokeProxyAuthCacheTTL = 5 * time.Minute
 
+// spokeProxyAuthStaleGrace is how long past its expiry a cached token is still
+// served when the refresh fails (kubectl slow, hung or pool-starved), so a
+// transient kubectl problem does not fail every signed-in request.
+const spokeProxyAuthStaleGrace = 30 * time.Minute
+
 // spokeProxyAuthEntry is a cached dashboard token with its expiry.
 type spokeProxyAuthEntry struct {
 	token   string
 	expires time.Time
+	// graceUntil is the last moment the token may still be served when
+	// refreshes keep failing. Zero means no grace (test fixtures).
+	graceUntil time.Time
 }
+
+// spokeProxyAuthRetryBackoff is how long a failed refresh is not retried while
+// the stale token is being served, so a hung kubectl costs one timeout per
+// window rather than one per request.
+const spokeProxyAuthRetryBackoff = 15 * time.Second
 
 // spokeProxyAuthToken returns the given hive's dashboard token — the shared
 // secret the spoke holds as its authToken (DASHBOARD_AUTH_TOKEN / the
@@ -1076,8 +1176,9 @@ func (s *HubServer) spokeProxyAuthToken(hiveID string) string {
 	now := time.Now()
 
 	s.spokeProxyAuthMu.Lock()
-	if entry, ok := s.spokeProxyAuthCache[hiveID]; ok && now.Before(entry.expires) {
-		tok := entry.token
+	stale, hadEntry := s.spokeProxyAuthCache[hiveID]
+	if hadEntry && now.Before(stale.expires) {
+		tok := stale.token
 		s.spokeProxyAuthMu.Unlock()
 		return tok
 	}
@@ -1100,11 +1201,23 @@ func (s *HubServer) spokeProxyAuthToken(hiveID string) string {
 
 	token := s.loadSpokeAuthToken(hive)
 	if token == "" {
+		// Refresh failed: keep serving the last good token for a bounded grace.
+		if hadEntry && stale.token != "" && now.Before(stale.graceUntil) {
+			s.logger.Warn("spoke auth token refresh failed; serving last good token", "hive", hiveID)
+			stale.expires = now.Add(spokeProxyAuthRetryBackoff)
+			s.spokeProxyAuthMu.Lock()
+			s.spokeProxyAuthCache[hiveID] = stale
+			s.spokeProxyAuthMu.Unlock()
+			return stale.token
+		}
 		return ""
 	}
 
 	s.spokeProxyAuthMu.Lock()
-	s.spokeProxyAuthCache[hiveID] = spokeProxyAuthEntry{token: token, expires: now.Add(spokeProxyAuthCacheTTL)}
+	s.spokeProxyAuthCache[hiveID] = spokeProxyAuthEntry{
+		token: token, expires: now.Add(spokeProxyAuthCacheTTL),
+		graceUntil: now.Add(spokeProxyAuthCacheTTL + spokeProxyAuthStaleGrace),
+	}
 	s.spokeProxyAuthMu.Unlock()
 
 	return token

@@ -72,7 +72,9 @@ func (c *Engine) PRApproveReply(ctx context.Context, displayRepo string, number 
 	// Read paths only for a command that could matter to a hold. These are
 	// the same manual-only rules as the lanes, without their label/comment
 	// writes.
-	if carriedFenceReason(pr.GetBody()) != "" {
+	// The same per-head re-check the lanes apply, so the reply never names
+	// a carried fence the current diff no longer trips.
+	if fence := carriedFenceReason(pr.GetBody()); fence != "" && !c.carriedFenceDropped(ctx, displayRepo, owner, repo, pr, fence) {
 		return "`/hive approve` acknowledged, but this PR carries a diff fence from the contributor PR it supersedes, which its lane requires a person to merge manually. The command cannot override that rule; a maintainer must review and merge it.", nil
 	}
 	patterns := c.currentHumanMergePaths(owner + "/" + repo)

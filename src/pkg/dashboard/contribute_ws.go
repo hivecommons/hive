@@ -578,6 +578,7 @@ type WSMessage struct {
 	TrustTier                    string                      `json:"trust_tier,omitempty"`
 	Permissions                  []string                    `json:"permissions,omitempty"`
 	Reason                       string                      `json:"reason,omitempty"`
+	Filtered                     map[string]int              `json:"filtered,omitempty"`
 	State                        string                      `json:"state,omitempty"`
 	Since                        string                      `json:"since,omitempty"`
 	ContributeNeedsDecisionLabel *string                     `json:"contribute_needs_decision_label,omitempty"`
@@ -2808,7 +2809,11 @@ func (s *wsSession) releaseOnDisconnect() {
 		}
 
 		if abandonedTask != nil {
-			h.logger.Warn("[contribute-ws] task released on disconnect",
+			// #19357: Info, not Warn. This fires on every socket drop, before
+			// the #7838 grace window, and most drops resume within it. The
+			// Warn for a release that really stands is emitted from
+			// bookAbandonmentAfterGrace once the grace has passed.
+			h.logger.Info("[contribute-ws] task pending release on disconnect (grace window)",
 				"id", s.connID,
 				"username", s.contributor.profile.GitHubUsername,
 				"task", abandonedTask.TaskID,
@@ -2935,6 +2940,8 @@ func (h *ContributeWSHub) bookAbandonmentAfterGrace(c *ContributorConnection, ta
 				"username", c.profile.GitHubUsername, "task", task.TaskID, "repo", task.Repo, "number", task.Number)
 			return
 		}
+		h.logger.Warn("[contribute-ws] task released on disconnect",
+			"username", c.profile.GitHubUsername, "task", task.TaskID, "repo", task.Repo, "number", task.Number)
 		h.addActivity(c.profile.GitHubUsername, "released: connection lost",
 			c.role, c.cliBackend, c.model, c.reasoningEffort, taskDescOf(task))
 		h.auditRelay(c, agentaudit.AuditRelayTaskAbandoned, task)

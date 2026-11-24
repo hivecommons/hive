@@ -5,13 +5,13 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/gh-auth` | Dashboard auth/session | GitHub Auth | `pkg/dashboard/api.go:176` |
-| `GET` | `/api/gh-rate-limits` | Dashboard auth/session | GitHub Rate Limits | `pkg/dashboard/api.go:177` |
-| `GET` | `/api/gh-user-auth/status` | Public | GitHub User Auth Status | `pkg/dashboard/api.go:178` |
-| `POST` | `/api/gh-user-auth/start` | Public | GitHub User Auth Start | `pkg/dashboard/api.go:179` |
-| `POST` | `/api/gh-user-auth/poll` | Public | GitHub User Auth Poll | `pkg/dashboard/api.go:180` |
-| `POST` | `/api/gh-user-auth/logout` | Public | GitHub User Auth Logout | `pkg/dashboard/api.go:181` |
-| `GET` | `/api/gh-user-auth/session` | Public | GitHub User Auth Session | `pkg/dashboard/api.go:182` |
+| `GET` | `/api/gh-auth` | Dashboard auth/session | GitHub Auth | `pkg/dashboard/api.go:185` |
+| `GET` | `/api/gh-rate-limits` | Dashboard auth/session | GitHub Rate Limits | `pkg/dashboard/api.go:186` |
+| `GET` | `/api/gh-user-auth/status` | Public | GitHub User Auth Status | `pkg/dashboard/api.go:187` |
+| `POST` | `/api/gh-user-auth/start` | Public | GitHub User Auth Start | `pkg/dashboard/api.go:188` |
+| `POST` | `/api/gh-user-auth/poll` | Public | GitHub User Auth Poll | `pkg/dashboard/api.go:189` |
+| `POST` | `/api/gh-user-auth/logout` | Public | GitHub User Auth Logout | `pkg/dashboard/api.go:190` |
+| `GET` | `/api/gh-user-auth/session` | Public | GitHub User Auth Session | `pkg/dashboard/api.go:191` |
 | `GET` | `/api/claude-auth/status` | Dashboard auth/session | Claude Auth Status: `logged_in` and `mode` (`long-lived token` or `dashboard sign-in`), never token material. Wrapped by the admin MCP `claude_auth_status` tool | `pkg/dashboard/claude_auth.go:54` |
 | `POST` | `/api/claude-auth/start` | Dashboard auth/session | Claude Auth Start | `pkg/dashboard/claude_auth.go:55` |
 | `POST` | `/api/claude-auth/exchange` | Dashboard auth/session | Claude Auth Exchange | `pkg/dashboard/claude_auth.go:56` |
@@ -24,10 +24,10 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/openrouter/models` | Dashboard auth/session | Open Router Models | `pkg/dashboard/openrouter.go:47` |
 | `GET` | `/api/openrouter/credit` | Dashboard auth/session | Open Router Credit | `pkg/dashboard/openrouter.go:48` |
 | `GET` | `/openrouter/callback` | Public | Open Router Callback | `pkg/dashboard/openrouter.go:49` |
-| `POST` | `/api/github-app/recheck` | Dashboard auth/session | GitHub App Recheck | `pkg/dashboard/server.go:1996` |
-| `POST` | `/api/github-app/install-clicked` | Dashboard auth/session | GitHub App Install Clicked | `pkg/dashboard/server.go:1997` |
-| `GET` | `/gh-setup` | Public | GitHub App Setup Callback | `pkg/dashboard/server.go:1998` |
-| `GET` | `/api/github-owner-identity` | Owner only | The hive owner's GitHub identity for remote repos ([#18197](https://github.com/hivecommons/hive/issues/18197)): `connected`, `login`, `scope`, `connected_at`, `usable`, `reason`, `verified_at`, `scope_required` (`public_repo`), `private_repos_supported` (false) and `file` (the token file path on the spoke). Never the token | `pkg/dashboard/api.go:605` |
-| `POST` | `/api/github-owner-identity/start` | Owner only | Start the consent: a GitHub device flow with the spoke's `oauth_client_id` asking for `public_repo`, separate from the scope-free login flow. Returns `user_code`, `verification_uri`, `expires_in`, `interval`, `scope` and the `flow_id` the poll must present. 502 when GitHub refused the device-code request | `pkg/dashboard/api.go:606` |
-| `POST` | `/api/github-owner-identity/poll` | Owner only | Poll the consent with `{"flow_id"}`: `status` `pending` / `slow_down` (poll again), `complete` (with `login` and the identity) or `error`. On completion the granted scope must cover `public_repo`, the token must validate and the account must be the logged-in owner's; the identity is then stored on the spoke (`/data/secrets/github-owner-token`, `HIVE_GITHUB_OWNER_TOKEN_FILE` overrides) and the reference-repo policies re-resolve. 400 without a live flow or with the wrong `flow_id`; audited as `github_owner_identity_connected` / `_rejected` | `pkg/dashboard/api.go:607` |
-| `DELETE` | `/api/github-owner-identity` | Owner only | Disconnect: removes the token file, drops every write-tier reference repo to read-only on the next pass, returns the previous `login` and a `note` that GitHub-side revocation is done under Settings → Applications on github.com; audited as `github_owner_identity_disconnected` | `pkg/dashboard/api.go:608` |
+| `POST` | `/api/github-app/recheck` | Dashboard auth/session | GitHub App Recheck | `pkg/dashboard/server.go:2000` |
+| `POST` | `/api/github-app/install-clicked` | Dashboard auth/session | GitHub App Install Clicked | `pkg/dashboard/server.go:2001` |
+| `GET` | `/gh-setup` | Public | GitHub App Setup Callback | `pkg/dashboard/server.go:2002` |
+| `GET` | `/api/github-owner-identity` | Owner only | The hive owner's GitHub identity for remote repos ([#18197](https://github.com/hivecommons/hive/issues/18197)): `connected`, `login`, `scope`, `connected_at`, `usable`, `reason`, `verified_at`, `scope_required` (`public_repo`), `private_repos_supported` (false) and `file` (the token file path on the spoke). Never the token | `pkg/dashboard/api.go:623` |
+| `POST` | `/api/github-owner-identity/start` | Owner only | Start the consent: a GitHub device flow with the spoke's `oauth_client_id` asking for `public_repo`, separate from the scope-free login flow. Returns `user_code`, `verification_uri`, `expires_in`, `interval`, `scope` and the `flow_id` the poll must present. 502 when GitHub refused the device-code request | `pkg/dashboard/api.go:624` |
+| `POST` | `/api/github-owner-identity/poll` | Owner only | Poll the consent with `{"flow_id"}`: `status` `pending` / `slow_down` (poll again), `complete` (with `login` and the identity) or `error`. On completion the granted scope must cover `public_repo`, the token must validate and the account must be the logged-in owner's; the identity is then stored on the spoke (`/data/secrets/github-owner-token`, `HIVE_GITHUB_OWNER_TOKEN_FILE` overrides) and the reference-repo policies re-resolve. 400 without a live flow or with the wrong `flow_id`; audited as `github_owner_identity_connected` / `_rejected` | `pkg/dashboard/api.go:625` |
+| `DELETE` | `/api/github-owner-identity` | Owner only | Disconnect: removes the token file, drops every write-tier reference repo to read-only on the next pass, returns the previous `login` and a `note` that GitHub-side revocation is done under Settings → Applications on github.com; audited as `github_owner_identity_disconnected` | `pkg/dashboard/api.go:626` |

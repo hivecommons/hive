@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -164,9 +165,15 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		// customers.avatars.enabled: GitHub profile pictures on the
 		// Customers list. Default on.
 		CustomersAvatarsEnabled *bool `json:"customersAvatarsEnabled"`
+		// #19163: customers.hub_import.enabled, the import of fields a
+		// person consented on the hub to share with this hive. Default off.
+		CustomersHubImportEnabled *bool `json:"customersHubImportEnabled"`
 		// #18884: customers.mention_search.enabled, the budgeted GitHub
 		// search made when a suggested person is accepted. Default off.
 		CustomersSearchEnabled *bool `json:"customersSearchEnabled"`
+		// #19302: customers.profile_fill.enabled, filling profile fields
+		// from public forge profiles. Default off.
+		CustomersProfileFillEnabled *bool `json:"customersProfileFillEnabled"`
 
 		AutonomyAutoPromote  *bool   `json:"autonomyAutoPromote"`
 		AutonomyAutoDemote   *bool   `json:"autonomyAutoDemote"`
@@ -196,7 +203,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		featuresOpsBody
 		featuresPlatformBody
+		featuresWritebackBody
 		featuresRunsBody
+		featuresAskBody
+		featuresEnrichmentBody
 	}
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
@@ -395,7 +405,22 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	editWriteback, err := body.featuresWritebackBody.prepare()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	applyRuns, err := body.featuresRunsBody.prepare(s.deps.Config)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	applyAsk, err := body.featuresAskBody.prepare()
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	applyEnrichment, err := body.featuresEnrichmentBody.prepare()
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -412,7 +437,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	cfgBefore := *cfg
 	applyOps(cfg)
 	applyPlatform(cfg)
+	applyAsk(cfg)
 	applyRuns(cfg)
+	applyEnrichment(cfg)
 	if body.IoscanEnabled != nil {
 		v := *body.IoscanEnabled
 		cfg.Ioscan.Enabled = &v
@@ -512,6 +539,14 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.CustomersAvatarsEnabled != nil {
 		on := *body.CustomersAvatarsEnabled
 		cfg.Customers.Avatars.Enabled = &on
+	}
+	if body.CustomersHubImportEnabled != nil {
+		on := *body.CustomersHubImportEnabled
+		cfg.Customers.HubImport.Enabled = &on
+	}
+	if body.CustomersProfileFillEnabled != nil {
+		on := *body.CustomersProfileFillEnabled
+		cfg.Customers.ProfileFill.Enabled = &on
 	}
 	if body.CustomersSearchEnabled != nil {
 		on := *body.CustomersSearchEnabled
@@ -650,7 +685,18 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		cfg.Governor.Rotation.AgentTiers = *body.RotationAgents
 	}
 
-	if err := s.saveConfig(); err != nil {
+	if editWriteback != nil {
+		err := s.saveConfigWith(func() error { return cfg.SaveWritebackEdit(editWriteback) })
+		if err != nil {
+			s.logger.Error("failed to persist write-back settings", "error", err)
+			if errors.Is(err, config.ErrConfigChangedOnDisk) {
+				jsonError(w, "Configuration changed on disk. Refresh and try again.", http.StatusConflict)
+			} else {
+				jsonError(w, "Could not persist write-back settings.", http.StatusInternalServerError)
+			}
+			return
+		}
+	} else if err := s.saveConfig(); err != nil {
 		// A 200 here told the operator a read-only config volume had saved
 		// their change (#9172).
 		*cfg = cfgBefore
@@ -659,8 +705,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.auditFromRequest(r, "config_governor_features", auditDetail("section", "features"), "")
-	s.refreshAndPersist()
+	floor := s.refreshAndPersistSeq()
 	out := s.featuresSectionWithLinked(cfg)
+	out["minStatusSeq"] = floor
 	if !reflect.DeepEqual(runsBefore, cfg.Runs) {
 		// Tell the UI whether the new settings are live, instead of
 		// implying they are.
@@ -828,6 +875,10 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"customersInferenceEffective":         cfg.CustomersInferenceEnabled(),
 		"customersAvatars":                    cfg.Customers.Avatars.IsEnabled(),
 		"customersAvatarsEffective":           cfg.CustomersAvatarsEnabled(),
+		"customersHubImport":                  cfg.Customers.HubImport.IsEnabled(),
+		"customersHubImportEffective":         cfg.CustomersHubImportEnabled(),
+		"customersProfileFill":                cfg.Customers.ProfileFill.IsEnabled(),
+		"customersProfileFillEffective":       cfg.CustomersProfileFillEnabled(),
 		"customersSearch":                     cfg.Customers.MentionSearch.IsEnabled(),
 		"customersSearchEffective":            cfg.CustomersMentionSearchEnabled(),
 		"publicationEnabled":                  cfg.Publication.Enabled,
@@ -904,6 +955,12 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		out[k] = v
 	}
 	for k, v := range featuresRunsResponse(cfg) {
+		out[k] = v
+	}
+	for k, v := range featuresAskResponse(cfg) {
+		out[k] = v
+	}
+	for k, v := range featuresEnrichmentResponse(cfg) {
 		out[k] = v
 	}
 	return out

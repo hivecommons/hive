@@ -477,10 +477,12 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.claimAgentFieldOwnership(name, "", backend)
+		modelWarning := s.healCarriedModel(name, backend)
+		s.noteModelIDNormalization(name, modelWarning)
 		s.deps.Logger.Info("audit: backend saved for agent not running", "agent", name, "backend", backend, "trigger", "dashboard-api")
 		s.auditFromRequest(r, "switch_backend", auditDetail("backend", backend), name)
 		minStatusSeq := s.refreshAndPersistSeq()
-		jsonResponse(w, savedNotRunningResponse("backend_saved", name, "backend", backend, minStatusSeq))
+		jsonResponse(w, withModelWarning(savedNotRunningResponse("backend_saved", name, "backend", backend, minStatusSeq), modelWarning))
 		return
 	}
 
@@ -492,6 +494,11 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	// Persist to hive.yaml and mark the field operator-owned so the next pack
 	// apply (which runs on every restart) does not reconcile it away.
 	s.claimAgentFieldOwnership(name, "", backend)
+	// The switch changes only the backend: an agent moving between copilot
+	// and claude carries the other CLI's spelling of its Claude model, which
+	// the new CLI rejects. Rewrite it before the restart below.
+	modelWarning := s.healCarriedModel(name, backend)
+	s.noteModelIDNormalization(name, modelWarning)
 
 	s.deps.Logger.Info("audit: backend switched", "agent", name, "backend", backend, "trigger", "dashboard-api")
 	s.auditFromRequest(r, "switch_backend", auditDetail("backend", backend), name)
@@ -501,7 +508,7 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	// the saved choice applies when it next starts.
 	if agentHoldsNoSession(proc) && proc.PausedTrigger != crux.ModelRejectedTrigger {
 		minStatusSeq := s.refreshAndPersistSeq()
-		jsonResponse(w, savedNotRunningResponse("backend_saved", name, "backend", backend, minStatusSeq))
+		jsonResponse(w, withModelWarning(savedNotRunningResponse("backend_saved", name, "backend", backend, minStatusSeq), modelWarning))
 		return
 	}
 	// A pause the CLI's model rejection caused is the exception: the change
@@ -512,7 +519,7 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	minStatusSeq := s.refreshAndPersistSeq()
-	jsonResponse(w, map[string]any{"ok": true, "status": "switched", "agent": name, "backend": backend, "minStatusSeq": minStatusSeq})
+	jsonResponse(w, withModelWarning(map[string]any{"ok": true, "status": "switched", "agent": name, "backend": backend, "minStatusSeq": minStatusSeq}, modelWarning))
 }
 
 func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
@@ -532,6 +539,18 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A dotted claude- id sent for a claude agent is refused as typed, before
+	// any rewrite (malformedModelIDError). Otherwise a Claude id in the other
+	// CLI's convention is stored in this backend's spelling
+	// (claude-sonnet-5.5 on copilot), with a warning, instead of being saved
+	// as an id the CLI rejects.
+	backend, _ := s.agentEffectiveBackendAndModel(name)
+	if err := malformedModelIDError(backend, model); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	model, modelWarning := canonicalizeModelForBackend(name, backend, model)
+
 	// Reject a model the effective backend cannot serve BEFORE storing it.
 	// Silently accepting an unusable value and then falling back at launch is
 	// what made this class of bug invisible: the grid showed the choice, the
@@ -546,10 +565,11 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 		// held back by the ACMM gate): persist the choice to both config
 		// layers so it applies when the agent starts (#18905).
 		s.claimAgentFieldOwnership(name, model, "")
+		s.noteModelIDNormalization(name, modelWarning)
 		s.deps.Logger.Info("audit: model saved for agent not running", "agent", name, "model", model, "trigger", "dashboard-api")
 		s.auditFromRequest(r, "set_model", auditDetail("model", model), name)
 		minStatusSeq := s.refreshAndPersistSeq()
-		jsonResponse(w, savedNotRunningResponse("model_saved", name, "model", model, minStatusSeq))
+		jsonResponse(w, withModelWarning(savedNotRunningResponse("model_saved", name, "model", model, minStatusSeq), modelWarning))
 		return
 	}
 
@@ -561,6 +581,7 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 	// Persist to hive.yaml and mark the field operator-owned so the next pack
 	// apply (which runs on every restart) does not reconcile it away.
 	s.claimAgentFieldOwnership(name, model, "")
+	s.noteModelIDNormalization(name, modelWarning)
 
 	s.deps.Logger.Info("audit: model set", "agent", name, "model", model, "trigger", "dashboard-api")
 	s.auditFromRequest(r, "set_model", auditDetail("model", model), name)
@@ -570,7 +591,7 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 	// next starts, and a restart must not wake it.
 	if agentHoldsNoSession(proc) && proc.PausedTrigger != crux.ModelRejectedTrigger {
 		minStatusSeq := s.refreshAndPersistSeq()
-		jsonResponse(w, savedNotRunningResponse("model_saved", name, "model", model, minStatusSeq))
+		jsonResponse(w, withModelWarning(savedNotRunningResponse("model_saved", name, "model", model, minStatusSeq), modelWarning))
 		return
 	}
 	// A pause the CLI's model rejection caused is the exception: the change
@@ -581,7 +602,7 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	minStatusSeq := s.refreshAndPersistSeq()
-	jsonResponse(w, map[string]any{"ok": true, "status": "model_set", "agent": name, "model": model, "minStatusSeq": minStatusSeq})
+	jsonResponse(w, withModelWarning(map[string]any{"ok": true, "status": "model_set", "agent": name, "model": model, "minStatusSeq": minStatusSeq}, modelWarning))
 }
 
 // handleEffortSet sets an agent's reasoning effort from the grid dropdown and

@@ -35,6 +35,9 @@ type sentinelFixture struct {
 	// comments[num][i]; absent entries render a comment with no user, which
 	// is how the fixture started and what the any-author fallback tests use.
 	commentUsers map[int][]string
+	// commentUpdated[num][i] is the RFC3339 updated_at the fixture reports
+	// for comments[num][i]; absent entries render no timestamps.
+	commentUpdated map[int][]string
 	// timeline[num] is the PR's issue timeline as GitHub would render it
 	// (label events with actor and created_at, committed events with a
 	// committer date, head_ref_force_pushed events); absent means empty.
@@ -109,6 +112,10 @@ func newSentinelServer(t *testing.T, f *sentinelFixture) *httptest.Server {
 					entry := map[string]any{"id": num*1000 + i + 1, "body": body}
 					if users := f.commentUsers[num]; i < len(users) && users[i] != "" {
 						entry["user"] = map[string]string{"login": users[i]}
+					}
+					if times := f.commentUpdated[num]; i < len(times) && times[i] != "" {
+						entry["created_at"] = times[i]
+						entry["updated_at"] = times[i]
 					}
 					out = append(out, entry)
 				}

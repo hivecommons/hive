@@ -149,10 +149,10 @@ func TestGitHubActivityPollerDiffsFormatsAndDedupes(t *testing.T) {
 	mu.Lock()
 	got := append([]string(nil), posted...)
 	mu.Unlock()
-	assertContainsLine(t, got, "🐝 [hive] Issue #2 opened — factory floor · @someone <https://github.test/hive/2>")
-	assertContainsLine(t, got, "🐝 [docs] PR #7 merged into v6 — doc fix · @docwriter <https://github.test/docs/7>")
-	assertContainsLine(t, got, "🐝 [docs] PR #8 merged into v5 — fast fix · @fastdev <https://github.test/docs/8>")
-	assertContainsLine(t, got, "🐝 [infra] PR #3 merged into v6 — 🌱 Forward-merge v5 into v6 · @forward-bot[bot] <https://github.test/infra/3>")
+	assertContainsLine(t, got, "🐝 [hive] Issue #2 opened - factory floor · @someone <https://github.test/hive/2>")
+	assertContainsLine(t, got, "🐝 [docs] PR #7 merged into v6 - doc fix · @docwriter <https://github.test/docs/7>")
+	assertContainsLine(t, got, "🐝 [docs] PR #8 merged into v5 - fast fix · @fastdev <https://github.test/docs/8>")
+	assertContainsLine(t, got, "🐝 [infra] PR #3 merged into v6 - 🌱 Forward-merge v5 into v6 · @forward-bot[bot] <https://github.test/infra/3>")
 	for _, line := range got {
 		if strings.Contains(line, "dependabot") {
 			t.Fatalf("dependabot noise was not filtered: %q", line)

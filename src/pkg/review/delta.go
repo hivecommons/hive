@@ -155,6 +155,60 @@ type DeltaContext struct {
 	// (hivecommons/hive#15499); the delta is trivial whatever the compare
 	// from the previous head shows.
 	BaseDiffEmpty bool `json:"base_diff_empty,omitempty"`
+	// DocsOnly is set when the known delta touches documentation and
+	// changelog files only: the prompt points the reviewer at the
+	// perspectives such a change can move (DeltaDocsOnlyFocusPerspectives).
+	DocsOnly bool `json:"docs_only,omitempty"`
+}
+
+// DeltaDocsOnlyFocusPerspectives are the perspectives a docs-only delta can
+// change: whether the docs are current, and whether the PR still does what
+// it says. The others re-check only that the delta touches no code, so a
+// docs-only answer to review feedback costs one short delta read, not a
+// fresh review of the PR.
+var DeltaDocsOnlyFocusPerspectives = []Perspective{PerspectiveDocsCurrency, PerspectiveIntentAlignment}
+
+// Path signals for a docs-only delta: a documentation extension, or a
+// documentation or changelog-fragment directory anywhere in the path.
+var (
+	deltaDocsExtensions = []string{".md", ".mdx", ".rst", ".adoc"}
+	deltaDocsDirs       = []string{"docs", "doc", "changelog.d"}
+)
+
+// deltaDocsOnly reports a non-empty file list in which every path is
+// documentation or a changelog fragment.
+func deltaDocsOnly(files []DeltaFile) bool {
+	if len(files) == 0 {
+		return false
+	}
+	for _, f := range files {
+		if !deltaDocsPath(f.Path) {
+			return false
+		}
+	}
+	return true
+}
+
+func deltaDocsPath(path string) bool {
+	p := strings.ToLower(strings.TrimSpace(path))
+	if p == "" {
+		return false
+	}
+	segments := strings.Split(p, "/")
+	base := segments[len(segments)-1]
+	for _, ext := range deltaDocsExtensions {
+		if strings.HasSuffix(base, ext) {
+			return true
+		}
+	}
+	for _, dir := range segments[:len(segments)-1] {
+		for _, want := range deltaDocsDirs {
+			if dir == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // DeltaReviewInfo is recorded on an aggregate produced by a delta re-review,
@@ -316,6 +370,7 @@ func planDelta(pr PullRequest, artifact Artifact, opts DispatchOptions, now time
 		ctx.Files = append(ctx.Files, f.Path)
 	}
 	sort.Strings(ctx.Files)
+	ctx.DocsOnly = deltaDocsOnly(diff.Files)
 	if prior.Verdict == VerdictApprove && opts.DeltaTrivialLines >= 0 && diff.BaseSyncOnly() {
 		ctx.BaseSync = true
 		return deltaModeTrivial, ctx, prior
@@ -498,6 +553,13 @@ func deltaSection(pr PullRequest, ctx *DeltaContext) string {
 		b.WriteString(".\n")
 	}
 	b.WriteString("Read the new code in those hunks and enough of their surroundings to judge them. Code outside the delta was judged at the previous head and stands unless the delta changes what it does.\n")
+	if ctx.DocsOnly {
+		focus := make([]string, 0, len(DeltaDocsOnlyFocusPerspectives))
+		for _, p := range DeltaDocsOnlyFocusPerspectives {
+			focus = append(focus, string(p))
+		}
+		fmt.Fprintf(&b, "The delta touches documentation and changelog files only. Judge it for %s; for any other perspective confirm the delta changes no code and re-check that perspective's previous findings against the new text, without re-reading the rest of the PR.\n", strings.Join(focus, " and "))
+	}
 	if len(ctx.PreviousFindings) > 0 {
 		b.WriteString("Re-check each finding from the previous review at the new head and say whether it is fixed, still present, or no longer applies:\n")
 		for _, f := range ctx.PreviousFindings {

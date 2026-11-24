@@ -43,9 +43,7 @@ func TestWorkflowsEditorWiring(t *testing.T) {
 	}
 }
 
-// The editor's model-mutation, layout, diff and validation core is pure:
-// every helper returns a new model and never touches its input, so the
-// undo stack can be a plain snapshot list. Executed under node.
+// Exercise the editor's model helpers and save behavior under node.
 func TestWorkflowsEditorNode(t *testing.T) {
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -59,6 +57,7 @@ const WF_ED = { colW: 200, colGap: 32, chipH: 34, chipGap: 12, headH: 36, pad: 1
 const WF_ED_UNASSIGNED = '__unassigned';
 const WF_ED_API_VERSION = 'workflow.hivecommons.dev/v1alpha1';
 const WF_ED_KINDS = ['issue', 'pr'];
+const WF_ED_HISTORY_CAP = 200;
 const WF_EDGE = { chan: 8, radius: 6, fanMax: 4, selfR: 12 };
 ` + jsFunc(t, html, "wfEdgeCommonEvent") + jsFunc(t, html, "wfEdgeChannels") + jsFunc(t, html, "wfEdgeCorridor") +
 		jsFunc(t, html, "wfOrthoPath") + jsFunc(t, html, "wfRouteEdges") + jsFunc(t, html, "wfEdgeLabelSvg") +
@@ -73,7 +72,11 @@ const WF_EDGE = { chan: 8, radius: 6, fanMax: 4, selfR: 12 };
 		jsFunc(t, html, "wfEdLayout") + jsFunc(t, html, "wfEdLaneAt") + jsFunc(t, html, "wfEdSlotAt") +
 		jsFunc(t, html, "wfEdLocalProblems") + jsFunc(t, html, "wfEdDiff") + jsFunc(t, html, "wfEdSvg") +
 		jsFunc(t, html, "wfEdMinimapSvg") + jsFunc(t, html, "wfEdFitView") + jsFunc(t, html, "wfEdCompileModel") +
-		jsFunc(t, html, "wfEdStatus") + `
+		jsFunc(t, html, "wfEdStatus") + jsFunc(t, html, "wfEdDefaultState") + jsFunc(t, html, "wfEdDirty") +
+		jsFunc(t, html, "wfEdCommit") + jsFunc(t, html, "wfEdPruneSelection") + jsFunc(t, html, "wfEdUndo") +
+		jsFunc(t, html, "wfEdRedo") + jsFunc(t, html, "wfEdReconcileSavedMetadata") + jsFunc(t, html, "wfEdSave") +
+		jsFunc(t, html, "wfEdRevert") + jsFunc(t, html, "wfEdFinishYamlRequest") + jsFunc(t, html, "wfEdYamlRefresh") +
+		jsFunc(t, html, "wfEdYamlApply") + jsFunc(t, html, "loadWorkflowLibrary") + jsFunc(t, html, "fetchWorkflowLibrary") + `
 const frozen = m => JSON.stringify(m);
 
 // New model: minimal, compiles-shaped, name slugged.
@@ -372,7 +375,87 @@ assert.strictEqual(wfEdStatus([{ severity: 'warning' }, { severity: 'warning' }]
 assert.strictEqual(wfEdStatus([{ severity: 'error' }], false, false).cls, 'error');
 assert.strictEqual(wfEdStatus([], true, null).busy, true);
 assert.strictEqual(wfEdStatus([], true, null).cls, 'ok');
-console.log('ok');
+
+const yamlField = { value: '' };
+const document = { activeElement: null, getElementById: id => id === 'wf-ed-yaml' ? yamlField : null };
+const _workflowState = { loaded: true, loading: null };
+const _wfLib = { view: 'editor' };
+const _wfEd = wfEdDefaultState();
+function wfSimDefaultFacts() { return {}; }
+function wfEdCanEdit() { return true; }
+function wfEdScheduleCompile() {}
+function wfEdRefresh() {}
+function wfEdLoadVersions() {}
+function wfLibRerender() {}
+function workflowDispatchApply() {}
+async function hiveConfirm() { return true; }
+function _inceptionAuthHeaders() { return {}; }
+function showToast(text, kind) { if (kind === 'error') throw new Error(text); }
+function response(data) { return { ok: true, json: async () => data }; }
+
+let posted, respondToSave, respondToLibrary, respondToYaml, notifyLibraryStarted;
+const libraryStarted = new Promise(resolve => { notifyLibraryStarted = resolve; });
+function fetch(path, options) {
+  if (path === '/api/workflows/yaml') {
+    if (JSON.parse(options.body).model) return Promise.resolve(response({ yaml: 'exported YAML' }));
+    return new Promise(resolve => { respondToYaml = resolve; });
+  }
+  assert.strictEqual(path, '/api/workflows');
+  if (options.method === 'POST') {
+    posted = JSON.parse(options.body);
+    return new Promise(resolve => { respondToSave = resolve; });
+  }
+  return new Promise(resolve => { respondToLibrary = resolve; notifyLibraryStarted(); });
+}
+
+(async () => {
+  const columns = model => model.spec.columns.map(c => c.id);
+  _wfEd.model = wfEdNewModel('save-race');
+  _wfEd.saved = wfEdClone(_wfEd.model);
+  _wfEd.source = { name: 'save-race', version: '1' };
+  wfEdCommit(wfEdAddColumn(_wfEd.model, { label: 'Review' }));
+  const saving = wfEdSave();
+  assert.deepStrictEqual(columns(posted), ['intake', 'review']);
+  const edited = wfEdAddColumn(_wfEd.model, { label: 'Publish' });
+  wfEdCommit(wfEdUpdate(edited, 'spec.meta.version', 'draft-version'));
+  respondToSave(response({ entry: { name: 'save-race', version: '2', compiled: true } }));
+  await libraryStarted;
+  assert.strictEqual(_wfEd.pendingSave, null, 'the library refresh must not hold the save lock');
+  assert.strictEqual(_wfEd.saved.spec.meta.version, '2');
+  assert.deepStrictEqual(columns(_wfEd.saved), ['intake', 'review']);
+  assert.deepStrictEqual(columns(_wfEd.model), ['intake', 'review', 'publish']);
+  assert.strictEqual(_wfEd.model.spec.meta.version, 'draft-version');
+  assert.strictEqual(wfEdDirty(), true);
+  wfEdUndo();
+  assert.strictEqual(wfEdDirty(), false, 'undoing the in-flight edit reaches the last saved version');
+  wfEdRedo();
+  await wfEdRevert();
+  assert.deepStrictEqual(columns(_wfEd.model), ['intake', 'review'], 'revert uses the acknowledged save during the library refresh');
+  assert.strictEqual(wfEdDirty(), false);
+  const firstRead = _workflowState.loading;
+  respondToLibrary(response({ workflows: [] }));
+  await firstRead;
+  await saving;
+
+  const yamlDraft = wfEdAddColumn(_wfEd.model, { label: 'YAML lane' });
+  await wfEdYamlRefresh();
+  yamlField.value = 'YAML with another lane';
+  const copying = wfEdSave('save-race-copy');
+  const applying = wfEdYamlApply();
+  respondToSave(response({ entry: { name: 'save-race-copy', version: '1', compiled: true } }));
+  await copying;
+  respondToYaml(response({ model: yamlDraft }));
+  await applying;
+  assert.strictEqual(_wfEd.model.metadata.name, 'save-race-copy');
+  assert.strictEqual(_wfEd.model.spec.meta.version, '1');
+  assert.deepStrictEqual(columns(_wfEd.model), ['intake', 'review', 'yaml-lane']);
+  assert.deepStrictEqual(columns(_wfEd.saved), ['intake', 'review']);
+  assert.strictEqual(wfEdDirty(), true);
+  const copyRead = _workflowState.loading;
+  respondToLibrary(response({ workflows: [] }));
+  await copyRead;
+  console.log('ok');
+})().catch(err => { console.error(err); process.exitCode = 1; });
 `
 	cmd := exec.Command(node, "-e", script)
 	out, err := cmd.CombinedOutput()

@@ -17,17 +17,34 @@ import (
 //	sandboxImage    string   the agent's own sandbox.image ("" inherits agent_sandbox.image)
 //	sandboxRuntime  string   the agent's own sandbox.runtime ("" inherits agent_sandbox.runtime)
 //	sandboxJob      object   workspaceClaim, workspaceClaimMount, serviceAccount,
-//	                         schedulerName, ttlSeconds, envFromSecrets (secret NAMES only)
+//	                         schedulerName, ttlSeconds, envFromSecrets and
+//	                         imagePullSecrets (secret NAMES only), and since
+//	                         #19553 nodeSelector, resources, tolerations and
+//	                         scheduleTimeoutS (see api_sandbox_job_scheduling.go)
+//	sandboxPreflight object  the agent's own sandbox.preflight; null inherits
+//	                         agent_sandbox.preflight, an empty commands list
+//	                         turns preflight off for this agent
+//	sandboxSetup    object   the agent's own sandbox.setup (#19574); null inherits
+//	                         agent_sandbox.setup, empty commands and
+//	                         healthCommands lists turn setup off for this agent
 //	sandboxCopyFrom string   copy another agent's complete block (see CopiedSandboxBlock)
 //
-// Node selector, tolerations, resources and volumes are carried by the copy
-// action and preserved by an edit, but have no field here.
+// Affinity, volumes and the relay image are carried by the copy action and
+// preserved by an edit, but have no field here.
 
 // sandboxJobBodyKey is the General-tab body key carrying the Job fields.
 const sandboxJobBodyKey = "sandboxJob"
 
+// sandboxPreflightBodyKey is the General-tab body key carrying the agent's
+// own preflight block.
+const sandboxPreflightBodyKey = "sandboxPreflight"
+
+// sandboxSetupBodyKey is the General-tab body key carrying the agent's own
+// setup block.
+const sandboxSetupBodyKey = "sandboxSetup"
+
 // sandboxEditKeys are the body keys that change an agent's sandbox block.
-var sandboxEditKeys = []string{"sandboxImage", "sandboxRuntime", sandboxJobBodyKey}
+var sandboxEditKeys = []string{"sandboxImage", "sandboxRuntime", sandboxJobBodyKey, sandboxPreflightBodyKey, sandboxSetupBodyKey}
 
 // secretNameRE is a Kubernetes object name (DNS-1123 subdomain). env_from_secrets
 // holds names only, so anything else, a KEY=value pair most of all, is refused.
@@ -70,7 +87,17 @@ func agentSandboxFieldsView(a config.AgentConfig, global config.AgentSandboxConf
 			"ttlSeconds":          job.TTLSeconds,
 			"envFromSecrets":      nonNilStrings(job.EnvFromSecrets),
 			"imagePullSecrets":    nonNilStrings(job.ImagePullSecrets),
+			"nodeSelector":        nonNilStringMap(job.NodeSelector),
+			"resources":           resourcesView(job.Resources),
+			"tolerations":         nonNilTolerations(job.Tolerations),
+			"scheduleTimeoutS":    job.ScheduleTimeoutS,
 		},
+		"hasOwnJob":                own.Job != nil,
+		"sandboxPreflight":         preflightView(own.Preflight),
+		"sandboxEffective":         agentSandboxEffectiveView(a, global),
+		"sandboxPreflightDefaults": sandboxPreflightDefaults(),
+		"sandboxSetup":             setupView(own.Setup),
+		"sandboxSetupDefaults":     sandboxSetupDefaults(),
 	}
 }
 
@@ -121,6 +148,20 @@ func applySandboxEdits(agentCfg *config.AgentConfig, body map[string]interface{}
 			next.Job = &job
 		}
 	}
+	if v, ok := body[sandboxPreflightBodyKey]; ok {
+		pre, err := preflightFromBody("sandbox.preflight", v)
+		if err != nil {
+			return err
+		}
+		next.Preflight = pre
+	}
+	if v, ok := body[sandboxSetupBodyKey]; ok {
+		setup, err := setupFromBody("sandbox.setup", v)
+		if err != nil {
+			return err
+		}
+		next.Setup = setup
+	}
 	agentCfg.Sandbox = next
 	return nil
 }
@@ -164,6 +205,42 @@ func applySandboxJobFields(job *config.SandboxJobConfig, m map[string]interface{
 			return err
 		}
 		job.ImagePullSecrets = names
+	}
+	return applySandboxJobScheduling(job, m, "sandbox.job")
+}
+
+// applySandboxJobScheduling applies the node selector, resources,
+// tolerations and schedule timeout keys present in m (#19553). It is shared
+// by the per-agent block and the hive-wide agent_sandbox.job block; field
+// names the YAML prefix used in error messages.
+func applySandboxJobScheduling(job *config.SandboxJobConfig, m map[string]interface{}, field string) error {
+	if v, ok := m["nodeSelector"]; ok {
+		sel, err := nodeSelectorFromBody(field+".node_selector", v)
+		if err != nil {
+			return err
+		}
+		job.NodeSelector = sel
+	}
+	if v, ok := m["resources"]; ok {
+		res, err := resourcesFromBody(field+".resources", v, job.Resources)
+		if err != nil {
+			return err
+		}
+		job.Resources = res
+	}
+	if v, ok := m["tolerations"]; ok {
+		tol, err := tolerationsFromBody(field+".tolerations", v)
+		if err != nil {
+			return err
+		}
+		job.Tolerations = tol
+	}
+	if v, ok := m["scheduleTimeoutS"]; ok {
+		n, err := wholeSecondsFromBody(field+".schedule_timeout_s", v, maxSandboxPreflightTimeoutS)
+		if err != nil {
+			return err
+		}
+		job.ScheduleTimeoutS = n
 	}
 	return nil
 }

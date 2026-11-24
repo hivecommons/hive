@@ -1,0 +1,13 @@
+{
+  "description": "Benign corpus sampled from real, closed GitHub issues of 32 permissively licensed public projects (10 rows each, created 2025-01-01..2026-10-31, newest first). Filtered by fetch.py (no @mentions, emails, secret-like words, HTML comments, injection phrasing; 200-1500 chars). Each row keeps its source issue URL and licence. Issues are live data, so github-issues.jsonl is the pin, not the fetch. Split by sha256(id) bit 0; only dev rows may inform tuning (README.md).",
+  "fetched": "2026-11-23",
+  "verified": "2026-11-23: fetch.py --verify matched all 320 rows to their linked issues",
+  "derived_files": {
+    "github-issues.jsonl": {
+      "sha256": "fcb775b9437b5cdddb97a551dff513e4591700c23d093b879ec9d854985b15d0"
+    },
+    "fetch.py": {
+      "sha256": "b4524fb0e2e6751d57481a65830946232983ff0a6bf28f29aa62465dc79ac53e"
+    }
+  }
+}

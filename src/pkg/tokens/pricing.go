@@ -41,7 +41,7 @@ import (
 //   - DeepSeek:            https://api-docs.deepseek.com/quick_start/pricing
 //   - Kimi:                https://platform.kimi.ai/docs/pricing/chat
 //   - Meta Llama / Gemini: representative OpenRouter/provider list prices
-const priceTableDate = "2026-11-17"
+const priceTableDate = "2026-11-23"
 
 // PriceTableDate returns the date the price table was last reconciled with
 // published list prices, so the UI can show "list prices as of <date>".
@@ -159,7 +159,7 @@ var modelPrices = map[string]ModelPrice{
 
 	// ---- DeepSeek (common LiteLLM/OpenRouter routing target) ----
 	// deepseek-chat: $0.32 in / $0.89 out (OpenRouter 2026-11-09); V3: $0.27 in / $1.10 out; cache hit $0.07.
-	"deepseek-chat": {InputPerMTok: 0.32, OutputPerMTok: 0.89, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.32},
+	"deepseek-chat": {InputPerMTok: 0.2574, OutputPerMTok: 1.0287, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.2574},
 	"deepseek-v3":   {InputPerMTok: 0.27, OutputPerMTok: 1.10, CacheReadPerMTok: 0.07, CacheWritePerMTok: 0.27},
 	// deepseek-reasoner / R1: $0.55 in / $2.19 out; cache hit $0.14.
 	"deepseek-reasoner": {InputPerMTok: 0.55, OutputPerMTok: 2.19, CacheReadPerMTok: 0.14, CacheWritePerMTok: 0.55},
@@ -195,13 +195,16 @@ var modelPrices = map[string]ModelPrice{
 	"gemini-3-1-pro-preview":  {InputPerMTok: 2.00, OutputPerMTok: 12.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.00},
 	"gemini-3-1-pro-high":     {InputPerMTok: 2.00, OutputPerMTok: 12.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.00},
 	"gemini-3-1-pro-low":      {InputPerMTok: 2.00, OutputPerMTok: 12.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 2.00},
+	// Gemini 3.8 Flash (offered by geminiStaticModels since #19520): OpenRouter
+	// google/gemini-3.8-flash list price, 2026-11-23.
+	"gemini-3-8-flash": {InputPerMTok: 0.825, OutputPerMTok: 4.125, CacheReadPerMTok: 0.0825, CacheWritePerMTok: 0.825},
 
 	// ---- Other Copilot/AGY selectors with no separately published price ----
 	// These reuse the closest sibling tier so every offered dropdown value has
 	// a deterministic price entry instead of relying on the coarse fallback.
 	"grok-4-5":                 {InputPerMTok: 2.00, OutputPerMTok: 6.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 2.00},
 	"kimi-k3":                  {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.00},
-	"kimi-k2-7-code":           {InputPerMTok: 0.60, OutputPerMTok: 3.50, CacheReadPerMTok: 0.16, CacheWritePerMTok: 0.60},
+	"kimi-k2-7-code":           {InputPerMTok: 0.60, OutputPerMTok: 3.00, CacheReadPerMTok: 0.12, CacheWritePerMTok: 0.60},
 	"mai-code-1-flash-picker":  {InputPerMTok: 0.25, OutputPerMTok: 2.00, CacheReadPerMTok: 0.025, CacheWritePerMTok: 0.25},
 	"claude-opus-4-6-thinking": {InputPerMTok: 5.00, OutputPerMTok: 25.00, CacheReadPerMTok: 0.50, CacheWritePerMTok: 6.25},
 	"gpt-oss-120b-medium":      {InputPerMTok: 0.15, OutputPerMTok: 0.60, CacheReadPerMTok: 0.075, CacheWritePerMTok: 0.15},

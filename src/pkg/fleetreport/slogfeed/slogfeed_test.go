@@ -181,6 +181,24 @@ func TestClaudeCredentialRebridgeStaysInLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestUnauthorizedLoginRejectedStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "device-flow login rejected: user not authorized for this hive"
+	for range 6 {
+		logger.Warn(msg, "username", "mallory")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("unauthorized logins produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "not authorized"); n != 6 {
+		t.Fatalf("local logs lost the rejection: got %d, want 6: %s", n, out.String())
+	}
+	logger.Error(msg, "username", "mallory")
+	if len(*seen) != 1 {
+		t.Fatalf("error-level records must remain reportable: %+v", *seen)
+	}
+}
+
 func TestCanceledStageDigestStaysLocal(t *testing.T) {
 	logger, seen, out := newFeed(t)
 	const msg = "stage labels: check digest failed"
@@ -1371,5 +1389,30 @@ func TestGHCRTokenTimeoutStaysInLog(t *testing.T) {
 	logger.Warn("channel resolve: GHCR token request failed", "repo", "hivecommons/hive", "error", `Get "https://ghcr.io/token?scope=repository:hivecommons/hive:pull": dial tcp: lookup ghcr.io: no such host`)
 	if len(*seen) != 1 {
 		t.Fatalf("non-timeout GHCR failure must stay reportable, observed %+v", *seen)
+	}
+}
+
+// #19407: an unresolved-conversation refusal of the native enqueue is a normal not-ready state.
+func TestUnresolvedConversationsSkipLogsWithoutFleetReport(t *testing.T) {
+	const refusal = "effect outcome uncertain, reconciliation required: graphql: UNPROCESSABLE: Pull request All comments must be resolved."
+	cases := []struct {
+		name string
+		args []any
+		want int
+	}{
+		{"unresolved comments", []any{"repo", "ps-printer-app", "pr", 221, "reason", "native-merge-queue-enqueue", "error", refusal}, 0},
+		{"other enqueue error", []any{"repo", "ps-printer-app", "pr", 221, "reason", "native-merge-queue-enqueue", "error", "graphql: boom"}, 8},
+		{"other reason", []any{"repo", "ps-printer-app", "pr", 221, "reason", "status-check", "error", refusal}, 8},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logger, seen, _ := newFeed(t)
+			for i := 0; i < 8; i++ {
+				logger.Warn("contributor-lane automerge sweep skipped PR", tc.args...)
+			}
+			if len(*seen) != tc.want {
+				t.Fatalf("observations = %d, want %d: %+v", len(*seen), tc.want, *seen)
+			}
+		})
 	}
 }

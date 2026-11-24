@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // defaultLinearBaseURL is Linear's single GraphQL endpoint.
@@ -743,6 +744,9 @@ func (s *LinearSource) doQuery(ctx context.Context, query string, vars map[strin
 	return &resp, nil
 }
 
+// linearProseKeys are the Linear variables people read.
+var linearProseKeys = prosefilter.Keys{"title": prosefilter.Title, "description": prosefilter.Prose, "body": prosefilter.Prose}
+
 // linearGraphQL posts one GraphQL request to Linear with the bare API-key
 // Authorization header Linear expects and returns the raw response body once
 // it has passed the HTTP-status and top-level `errors` checks. Shared by the
@@ -759,6 +763,9 @@ func linearGraphQL(ctx context.Context, client *http.Client, baseURL, apiKey, qu
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
+	// Issue titles, descriptions and comments (#19103); the query text
+	// itself is under no prose key and is never touched.
+	body, _ = prosefilter.SanitizeJSON(body, linearProseKeys)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, baseURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)

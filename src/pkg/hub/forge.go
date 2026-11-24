@@ -32,7 +32,8 @@ const (
 	ForgeGitLab ForgeKind = "gitlab"
 	// ForgeGitea is a Gitea/Forgejo instance (self-managed or Codeberg). Same
 	// story as GitLab: display-only, matching pkg/forge.KindGitea by value only.
-	ForgeGitea ForgeKind = "gitea"
+	ForgeGitea   ForgeKind = "gitea"
+	ForgeForgejo ForgeKind = "forgejo"
 )
 
 // publicForgeHost is the canonical host of public GitHub. A hive on this host
@@ -114,7 +115,7 @@ func parseForgeTarget(raw string) (ForgeTarget, error) {
 // contract exists to prevent. The gap is the missing consumer, not this field.
 func parseForgeTargetWithKind(kind, raw string) (ForgeTarget, error) {
 	switch ForgeKind(strings.ToLower(strings.TrimSpace(kind))) {
-	case ForgeGitLab, ForgeGitea:
+	case ForgeGitLab, ForgeGitea, ForgeForgejo:
 		fk := ForgeKind(strings.ToLower(strings.TrimSpace(kind)))
 		host := normalizeForgeHostInput(raw)
 		if host == "" {
@@ -158,6 +159,8 @@ func defaultTokenEnvForKind(k ForgeKind) string {
 		return "GITLAB_TOKEN"
 	case ForgeGitea:
 		return "GITEA_TOKEN"
+	case ForgeForgejo:
+		return "FORGEJO_TOKEN"
 	default:
 		return "GH_TOKEN"
 	}
@@ -169,7 +172,7 @@ func defaultHostForKind(k ForgeKind) string {
 	switch k {
 	case ForgeGitLab:
 		return "gitlab.com"
-	case ForgeGitea:
+	case ForgeGitea, ForgeForgejo:
 		return "codeberg.org"
 	default:
 		return publicForgeHost
@@ -393,7 +396,7 @@ func (s *HubServer) handleSwitchForge(w http.ResponseWriter, r *http.Request) {
 	// requested/delivered handshake used for GitHub, then return. GitHub App
 	// fields are cleared so a stale app_id/installation from a prior GitHub
 	// forge can't be sent to a spoke that no longer talks to GitHub.
-	if target.Kind == ForgeGitLab || target.Kind == ForgeGitea {
+	if target.Kind == ForgeGitLab || target.Kind == ForgeGitea || target.Kind == ForgeForgejo {
 		h.Forge = string(target.Kind)
 		h.GitHubHost = target.Host
 		h.GitHubBaseURL = target.BaseURL

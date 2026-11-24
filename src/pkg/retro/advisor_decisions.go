@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -49,6 +48,17 @@ type AdvisorDecisionRecord struct {
 	LatencyMS        int64 `json:"latency_ms,omitempty"`
 	PromptTokens     int   `json:"prompt_tokens,omitempty"`
 	CompletionTokens int   `json:"completion_tokens,omitempty"`
+	// Verdict is the model call's verdict (pick, null, error, over-budget,
+	// ...), which a held-out decision's outcome hides. Budget names the
+	// exhausted budget on an over-budget verdict. ErrorClass and ErrorReason
+	// say why an error verdict got no answer: a coarse class and a redacted,
+	// bounded reason (HTTP status, provider error code, scrubbed message).
+	// None of them carries key material or prompt text; older records carry
+	// none (hivecommons/hive#17054 evidence pass 2).
+	Verdict     string `json:"verdict,omitempty"`
+	Budget      string `json:"budget,omitempty"`
+	ErrorClass  string `json:"error_class,omitempty"`
+	ErrorReason string `json:"error_reason,omitempty"`
 }
 
 // AdvisorDecisionArm is the arm a decision belongs to: holdout when the kick
@@ -144,33 +154,11 @@ func (s *AdvisorDecisionStore) Record(rec AdvisorDecisionRecord) {
 	}
 }
 
-// AdvisorDecisions returns the decisions whose kick primed issueRef. A stored
-// ref without an owner ("repo#N") matches the issue ref's repo name.
+// AdvisorDecisions returns the decisions whose kick primed issueRef. Refs are
+// normalized and matched symmetrically: an owner-less ref ("repo#N") on
+// either side matches the qualified one (see AdvisorDecisionsForRefs).
 func (s *AdvisorDecisionStore) AdvisorDecisions(issueRef string) []AdvisorDecision {
-	if s == nil {
-		return nil
-	}
-	want := strings.ToLower(strings.TrimSpace(issueRef))
-	if want == "" {
-		return nil
-	}
-	short := want
-	if i := strings.Index(want, "/"); i >= 0 {
-		short = want[i+1:]
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var out []AdvisorDecision
-	for _, rec := range s.ring {
-		for _, ref := range rec.Refs {
-			ref = strings.ToLower(ref)
-			if ref == want || ref == short {
-				out = append(out, AdvisorDecision{Kick: rec.Kick, Mode: rec.Mode, Outcome: rec.Outcome})
-				break
-			}
-		}
-	}
-	return out
+	return s.AdvisorDecisionsForRefs(issueRef)
 }
 
 // Close flushes and closes the backing file.

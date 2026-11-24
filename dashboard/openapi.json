@@ -9120,7 +9120,7 @@
           "Contributors"
         ],
         "summary": "Contributor hub status",
-        "description": "Returns contributor hub registration state and work counts. actionable_items is the uncapped number of issues currently offerable after contributor admission; candidate_items is the raw pre-admission scanner population.",
+        "description": "Returns contributor hub registration state and work counts. actionable_items is the uncapped number of issues currently offerable after contributor admission; candidate_items is the contributor-workable scanner population (the raw population minus umbrella and owner-only issues); candidate_items_raw is the raw pre-admission scanner population; umbrella_items and human_only_items count the umbrella/tracker and owner-only issues that are never offered to a contributor.",
         "responses": {
           "200": {
             "description": "Hub status",
@@ -9144,7 +9144,19 @@
                     },
                     "candidate_items": {
                       "type": "integer",
-                      "description": "Raw scanner candidate count before contributor admission"
+                      "description": "Scanner candidate count before contributor admission, excluding umbrella and owner-only issues (contributor-workable candidates)"
+                    },
+                    "candidate_items_raw": {
+                      "type": "integer",
+                      "description": "Raw scanner candidate count before contributor admission and before the umbrella and owner-only exclusion (the previous meaning of candidate_items)"
+                    },
+                    "umbrella_items": {
+                      "type": "integer",
+                      "description": "Umbrella, epic, tracker and decomposed-parent issues. They stay actionable for the owner and the hive and are never offered to a contributor"
+                    },
+                    "human_only_items": {
+                      "type": "integer",
+                      "description": "Owner-only issues (needs-human, human-only, human-only marker). They are never offered to a contributor"
                     },
                     "surface": {
                       "type": "string"
@@ -11438,6 +11450,149 @@
                   },
                   "sandboxEnabled": {
                     "type": "boolean"
+                  },
+                  "sandboxJob": {
+                    "type": "object",
+                    "description": "The agent's own sandbox.job fields; keys left out are unchanged",
+                    "properties": {
+                      "workspaceClaim": {
+                        "type": "string"
+                      },
+                      "workspaceClaimMount": {
+                        "type": "string"
+                      },
+                      "serviceAccount": {
+                        "type": "string"
+                      },
+                      "schedulerName": {
+                        "type": "string"
+                      },
+                      "ttlSeconds": {
+                        "type": "integer"
+                      },
+                      "envFromSecrets": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Kubernetes Secret names only, never values"
+                      },
+                      "imagePullSecrets": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Kubernetes Secret names only, never values"
+                      },
+                      "nodeSelector": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "resources": {
+                        "type": "object",
+                        "description": "limits and requests maps of resource name to Kubernetes quantity; a key left out is unchanged, null clears both",
+                        "properties": {
+                          "limits": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "requests": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "tolerations": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "operator": {
+                              "type": "string",
+                              "enum": [
+                                "",
+                                "Equal",
+                                "Exists"
+                              ]
+                            },
+                            "value": {
+                              "type": "string"
+                            },
+                            "effect": {
+                              "type": "string",
+                              "enum": [
+                                "",
+                                "NoSchedule",
+                                "PreferNoSchedule",
+                                "NoExecute"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "scheduleTimeoutS": {
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "sandboxPreflight": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run in the Job before the agent; at most 32"
+                      },
+                      "timeoutS": {
+                        "type": "integer"
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer"
+                      },
+                      "retryDelayS": {
+                        "type": "integer"
+                      }
+                    },
+                    "description": "The agent's own sandbox.preflight; null inherits agent_sandbox.preflight, an empty commands list turns it off for this agent"
+                  },
+                  "sandboxSetup": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run in the Job after the node preflight and before the agent, in the workspace; a failure fails the kick as setup_failed; at most 32"
+                      },
+                      "healthCommands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run after commands; a failure marks the node node_unhealthy and retries once on another node; at most 32"
+                      },
+                      "timeoutS": {
+                        "type": "integer"
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer"
+                      }
+                    },
+                    "description": "The agent's own sandbox.setup; null inherits agent_sandbox.setup, empty commands and healthCommands lists turn it off for this agent"
                   },
                   "cavemanMode": {
                     "type": "string",
@@ -16557,6 +16712,145 @@
                   },
                   "agentSandboxEnabled": {
                     "type": "boolean"
+                  },
+                  "agentSandboxJobNodeSelector": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "agent_sandbox.job.node_selector: Kubernetes node labels"
+                  },
+                  "agentSandboxJobResources": {
+                    "type": "object",
+                    "description": "limits and requests maps of resource name to Kubernetes quantity; a key left out is unchanged, null clears both",
+                    "properties": {
+                      "limits": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "requests": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "agentSandboxJobTolerations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "operator": {
+                          "type": "string",
+                          "enum": [
+                            "",
+                            "Equal",
+                            "Exists"
+                          ]
+                        },
+                        "value": {
+                          "type": "string"
+                        },
+                        "effect": {
+                          "type": "string",
+                          "enum": [
+                            "",
+                            "NoSchedule",
+                            "PreferNoSchedule",
+                            "NoExecute"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "agentSandboxJobImagePullSecrets": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Kubernetes Secret names only, never values"
+                  },
+                  "agentSandboxJobScheduleTimeoutS": {
+                    "type": "integer",
+                    "description": "agent_sandbox.job.schedule_timeout_s; 0 uses the default"
+                  },
+                  "agentSandboxPreflight": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run in the Job before the agent; at most 32"
+                      },
+                      "timeoutS": {
+                        "type": "integer"
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer"
+                      },
+                      "retryDelayS": {
+                        "type": "integer"
+                      }
+                    },
+                    "description": "agent_sandbox.preflight; an empty commands list or null removes it"
+                  },
+                  "agentSandboxSetup": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run in the Job after the node preflight and before the agent, in the workspace; a failure fails the kick as setup_failed; at most 32"
+                      },
+                      "healthCommands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run after commands; a failure marks the node node_unhealthy and retries once on another node; at most 32"
+                      },
+                      "timeoutS": {
+                        "type": "integer"
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer"
+                      }
+                    },
+                    "description": "agent_sandbox.setup; empty lists or null remove it"
+                  },
+                  "agentSandboxJobGithubReadProxy": {
+                    "type": "object",
+                    "description": "agent_sandbox.job.github_read_proxy; takes effect when hive restarts",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "listenAddr": {
+                        "type": "string"
+                      },
+                      "endpoint": {
+                        "type": "string",
+                        "description": "https://host:port with no credentials"
+                      },
+                      "noProxy": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -19050,7 +19344,7 @@
           "Knowledge"
         ],
         "summary": "Knowledge pipeline settings",
-        "description": "Returns the scalar knowledge.bead_synthesizer, knowledge.curator, knowledge.code_maps and knowledge.primer settings, plus the read-only engine, vault paths and primer merge strategy. Requires owner role.",
+        "description": "Returns the scalar knowledge.bead_synthesizer, knowledge.curator, knowledge.code_maps and knowledge.primer settings and knowledge.sidecar_advise, plus the read-only engine, advisor flag, vault paths and primer merge strategy. Requires owner role.",
         "responses": {
           "200": {
             "description": "Knowledge pipeline settings",
@@ -19062,6 +19356,14 @@
                     "engine": {
                       "type": "string",
                       "description": "Read-only: knowledge.engine"
+                    },
+                    "sidecar_advise": {
+                      "type": "boolean",
+                      "description": "knowledge.sidecar_advise: serve the mid-task knowledge advisor to a sidecar-mode runtime (default false)"
+                    },
+                    "advisor": {
+                      "type": "boolean",
+                      "description": "Read-only: knowledge.advisor, which sidecar_advise needs"
                     },
                     "bead_synthesizer": {
                       "type": "object",
@@ -19215,7 +19517,7 @@
           "Knowledge"
         ],
         "summary": "Update knowledge pipeline settings",
-        "description": "Updates the scalar bead synthesizer, curator, code map and primer settings. Fields are pointer-typed; absent fields are left unchanged and 0 or empty restores the default. Validated with config.ValidateKnowledgePipeline before anything is applied, then persisted and audited as config_knowledge_pipeline. bead_synthesizer.enabled starts or stops the synthesizer at once; every other field applies after a restart. Requires owner role.",
+        "description": "Updates the scalar bead synthesizer, curator, code map and primer settings and knowledge.sidecar_advise. Fields are pointer-typed; absent fields are left unchanged and 0 or empty restores the default. Validated with config.ValidateKnowledgePipeline before anything is applied, then persisted and audited as config_knowledge_pipeline. bead_synthesizer.enabled and sidecar_advise apply at once; every other field applies after a restart. Requires owner role.",
         "requestBody": {
           "required": true,
           "content": {
@@ -19223,6 +19525,10 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "sidecar_advise": {
+                    "type": "boolean",
+                    "description": "knowledge.sidecar_advise: serve the mid-task knowledge advisor to a sidecar-mode runtime (default false). Applies without a restart."
+                  },
                   "bead_synthesizer": {
                     "type": "object",
                     "properties": {
@@ -19348,6 +19654,14 @@
                     "engine": {
                       "type": "string",
                       "description": "Read-only: knowledge.engine"
+                    },
+                    "sidecar_advise": {
+                      "type": "boolean",
+                      "description": "knowledge.sidecar_advise: serve the mid-task knowledge advisor to a sidecar-mode runtime (default false)"
+                    },
+                    "advisor": {
+                      "type": "boolean",
+                      "description": "Read-only: knowledge.advisor, which sidecar_advise needs"
                     },
                     "bead_synthesizer": {
                       "type": "object",
@@ -50079,7 +50393,7 @@
           "Customers"
         ],
         "summary": "Edit a customer profile",
-        "description": "Applies one change, named by op: name, notes, profile (field real_name, organization or location, with value; state auto hands it back to GitHub), identity_add, identity_remove, tag (state on, off or auto), goal_add, goal_edit, goal_confirm, goal_reject, satisfaction_set, satisfaction_confirm, satisfaction_reject. Owner and read-write users may edit anyone. A read-only user may post only to /api/customers/me/edit, and only name, profile, identity, tag and goal changes; an identity they add is an unconfirmed claim that resolves nobody until someone with the full view confirms it. Audited as customer_edit with the person and the op, never the value.",
+        "description": "Applies one change, named by op: name, notes, profile (field real_name, organization, location or country, with value; a country is an ISO 3166 alpha-2 code or a country name; state auto hands it back to the automatic source, which derives a country from the location), affiliation_dismiss (value: a suggested organization the person refused), identity_add, identity_remove, tag (state on, off or auto), goal_add, goal_edit, goal_confirm, goal_reject, satisfaction_set, satisfaction_confirm, satisfaction_reject. Owner and read-write users may edit anyone. A read-only user may post only to /api/customers/me/edit, and only name, profile, affiliation_dismiss, identity, tag and goal changes; an identity they add is an unconfirmed claim that resolves nobody until someone with the full view confirms it. Audited as customer_edit with the person and the op, never the value.",
         "parameters": [
           {
             "name": "id",
@@ -50107,6 +50421,7 @@
                       "name",
                       "notes",
                       "profile",
+                      "affiliation_dismiss",
                       "identity_add",
                       "identity_remove",
                       "tag",
@@ -50151,7 +50466,8 @@
                     "enum": [
                       "real_name",
                       "organization",
-                      "location"
+                      "location",
+                      "country"
                     ]
                   },
                   "goal_id": {
@@ -50844,6 +51160,11 @@
                         },
                         "on_error": {
                           "type": "string"
+                        },
+                        "problem": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Why shadow or rank cannot make a model call (no model, endpoint or key, or an unreadable key file); config keys and paths only"
                         }
                       }
                     },
@@ -50866,6 +51187,47 @@
                           "type": "object",
                           "additionalProperties": {
                             "type": "integer"
+                          }
+                        },
+                        "by_verdict": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "by_budget": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "errors": {
+                      "type": "object",
+                      "description": "Error decisions by class (auth, rejected, upstream, transport, config, decode) and the five most frequent redacted reasons",
+                      "properties": {
+                        "by_class": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "top_reasons": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "class": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "count": {
+                                "type": "integer"
+                              }
+                            }
                           }
                         }
                       }
@@ -50937,6 +51299,23 @@
                     },
                     "arms_scope": {
                       "type": "string"
+                    },
+                    "coverage": {
+                      "type": "object",
+                      "properties": {
+                        "closed_beads": {
+                          "type": "integer"
+                        },
+                        "with_closed_pr": {
+                          "type": "integer"
+                        },
+                        "no_ref": {
+                          "type": "integer"
+                        },
+                        "no_decision": {
+                          "type": "integer"
+                        }
+                      }
                     },
                     "cost": {
                       "type": "object",
@@ -51304,6 +51683,846 @@
                     }
                   }
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/customers/enrichment/settings": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Get customers enrichment secret settings",
+        "description": "Whether the crowd.dev API token used by customers enrichment is set (never its value). The enrichment switches and limits are on GET /api/config/governor (Features). Owner only.",
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "crowddev_token_set": {
+                      "type": "boolean",
+                      "description": "Whether a crowd.dev API token resolves (never its value)"
+                    },
+                    "crowddev_token_env_override": {
+                      "type": "boolean",
+                      "description": "HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN supplies the token"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config is not available"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Set the customers enrichment crowd.dev token",
+        "description": "Seals the crowd.dev API token into customers.enrichment.crowddev.token_file through the keystore; an empty string clears it and an absent field leaves it alone. Audited as customers_enrichment_settings with whether the token changed, never its value. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "crowddev_token": {
+                    "type": "string",
+                    "description": "crowd.dev API token (write-only); empty clears it"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "crowddev_token_set": {
+                      "type": "boolean",
+                      "description": "Whether a crowd.dev API token resolves (never its value)"
+                    },
+                    "crowddev_token_env_override": {
+                      "type": "boolean",
+                      "description": "HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN supplies the token"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config is not available"
+          },
+          "400": {
+            "description": "Invalid request body"
+          },
+          "500": {
+            "description": "The token could not be saved"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/refresh-profile": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Refresh one customer from public profiles",
+        "description": "Runs the profile fill for one customer now: reads the person's own public profile on the hive's forge (GitHub, GitHub Enterprise, GitLab or Gitea/Forgejo) by login, and the connected Linear workspace's member name by a confirmed email, ignoring the weekly refresh age but within the hourly budget. Fills only empty fields or fields an earlier fill wrote; never a value set by hand or one the person entered on the hub. Owner or read-write. Audited as customer_profile_refresh.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The customer after the lookup and the pass counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "customer": {
+                      "type": "object",
+                      "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                    },
+                    "fill": {
+                      "type": "object",
+                      "description": "Pass counts only: skipped (a fixed word), due, people, requests, filled, not_found, failed, stood_down, truncated"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers or the profile fill (customers.profile_fill.enabled) is off"
+          }
+        }
+      }
+    },
+    "/api/customers/refresh-profiles": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Refresh every customer from public profiles",
+        "description": "Makes every customer due for the profile fill and starts a pass in the background; later passes continue, at most 20 people a pass, within the hourly budget. Owner or read-write. Audited as customer_profile_refresh_all.",
+        "responses": {
+          "200": {
+            "description": "The refresh was queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "queued": {
+                      "type": "boolean"
+                    },
+                    "reset": {
+                      "type": "integer",
+                      "description": "Customers whose last lookup was forgotten"
+                    },
+                    "max_per_pass": {
+                      "type": "integer"
+                    },
+                    "interval_minutes": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "503": {
+            "description": "Customers or the profile fill (customers.profile_fill.enabled) is off"
+          }
+        }
+      }
+    },
+    "/api/config/repos/parent-autoclose": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Parent auto-close policy per repo",
+        "description": "Returns repos.<repo>.parent_autoclose for every monitored repo (effective value and whether the repo carries its own), the default, and the four options the Settings editor offers. Owner only.",
+        "responses": {
+          "200": {
+            "description": "Current policy per monitored repo",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "default": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set a repo's parent auto-close policy",
+        "description": "Sets repos.<repo>.parent_autoclose for one monitored repo: true (close finished parents, the default and clears the override), epics_too (also close epic and hold parents), trackers_too (as epics_too, and also close tracker or umbrella issues with no sub-issues once every PR and issue they reference is finished) or false (never auto-close parents). Applies without a restart. Parents a person reopened and tracking issues are never auto-closed under any value. Audited as config_repo_parent_autoclose. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "value"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string",
+                    "enum": [
+                      "true",
+                      "epics_too",
+                      "trackers_too",
+                      "false"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current policy per monitored repo (same body as GET)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "default": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing repo or invalid value; nothing was stored"
+          },
+          "404": {
+            "description": "The repo is not a monitored repo"
+          },
+          "500": {
+            "description": "The config file could not be written; the previous value is restored"
+          }
+        }
+      }
+    },
+    "/api/config/review-feedback/retry": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Stranded review-feedback retry settings",
+        "description": "Returns review_feedback.retry.* (max_retries, backoff): for each, the saved value, the effective value, its source (settings, env or default), the default, its env var and YAML key; plus max_max_retries and min_backoff. Feedback routed to an agent whose run ends with no push and no reply on the PR is routed again after the backoff (doubling each retry), up to max_retries, then handed to a person. Owner only.",
+        "responses": {
+          "200": {
+            "description": "Current stranded-feedback retry settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "max_retries": {
+                      "type": "object"
+                    },
+                    "backoff": {
+                      "type": "object"
+                    },
+                    "max_max_retries": {
+                      "type": "integer"
+                    },
+                    "min_backoff": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set stranded review-feedback retry settings",
+        "description": "Replaces the saved review_feedback.retry.* values. An absent or null field clears that saved value, falling back to its env var, then the default. 400 with nothing changed for max_retries outside 0..10 or a backoff that is not a duration of at least 10m. Applies on the review-feedback sweep's next pass. Audited as config_review_feedback_retry. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "max_retries": {
+                    "type": "integer"
+                  },
+                  "backoff": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved; the GET body"
+          },
+          "400": {
+            "description": "Invalid value; nothing changed"
+          },
+          "403": {
+            "description": "Not the hive owner"
+          },
+          "500": {
+            "description": "Config could not be written; previous values restored"
+          }
+        }
+      }
+    },
+    "/api/config/review-feedback/rules": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Reviewer-stated rule capture settings",
+        "description": "Returns review_feedback.rules.* (enabled, trusted_associations, extra_phrases, disabled_signals): for each, the saved value, the effective value, its source (settings, env or default), the default, its env var and YAML key; plus the associations an owner may trust, the built-in signals with examples, and the phrase limit. Owner only.",
+        "responses": {
+          "200": {
+            "description": "Current reviewer-rule capture settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "object"
+                    },
+                    "trusted_associations": {
+                      "type": "object"
+                    },
+                    "extra_phrases": {
+                      "type": "object"
+                    },
+                    "disabled_signals": {
+                      "type": "object"
+                    },
+                    "associations": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "signals": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "max_phrases": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set reviewer-stated rule capture settings",
+        "description": "Replaces the saved review_feedback.rules.* values. An absent or null field clears that saved value, falling back to its env var, then the default. Validated before anything changes; applies on the review-feedback sweep's next pass without a restart. Audited as config_review_feedback_rules. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "trusted_associations": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "extra_phrases": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "disabled_signals": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current settings (same body as GET)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "object"
+                    },
+                    "trusted_associations": {
+                      "type": "object"
+                    },
+                    "extra_phrases": {
+                      "type": "object"
+                    },
+                    "disabled_signals": {
+                      "type": "object"
+                    },
+                    "associations": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "signals": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "max_phrases": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown association or signal, or an invalid phrase; nothing was stored"
+          },
+          "500": {
+            "description": "The config file could not be written; the previous values are restored"
+          }
+        }
+      }
+    },
+    "/api/ask/status": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Ask AI help status",
+        "description": "Whether the optional Ask AI help panel is on for the signed-in person, the disclosure they must confirm and whether they have. Answers 404 unless ask.enabled is on and fully configured (see src/docs/design/dashboard-ask-ai-help.md, #19183). Never returns the vendor key, project id or integration id.",
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "text_version": {
+                      "type": "string"
+                    },
+                    "disclosure": {
+                      "type": "string"
+                    },
+                    "consented": {
+                      "type": "boolean"
+                    },
+                    "docs_url": {
+                      "type": "string"
+                    },
+                    "ai_label": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "404": {
+            "description": "Ask is off"
+          }
+        }
+      }
+    },
+    "/api/ask/consent": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Confirm the Ask disclosure",
+        "description": "Records the signed-in person's consent to the disclosure version the page showed. One audit line, no text. Answers 404 unless ask.enabled is on and fully configured (see src/docs/design/dashboard-ask-ai-help.md, #19183).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text_version": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text_version"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Recorded"
+          },
+          "400": {
+            "description": "Invalid JSON"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "404": {
+            "description": "Ask is off"
+          },
+          "409": {
+            "description": "The disclosure text changed; reload and confirm again"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Withdraw Ask consent",
+        "description": "Withdraws the signed-in person's consent; takes effect on the next question. Answers 404 unless ask.enabled is on and fully configured (see src/docs/design/dashboard-ask-ai-help.md, #19183).",
+        "responses": {
+          "204": {
+            "description": "Withdrawn (or nothing to withdraw)"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "404": {
+            "description": "Ask is off"
+          }
+        }
+      }
+    },
+    "/api/ask": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Ask a docs-help question",
+        "description": "Validates the question (length cap; credential-shaped input is refused and nothing is sent), checks consent and limits, then asks Kapa.ai directly (ask.mode direct) or through the hub relay (ask.mode hub, hosted hives). Only the question and, when on, the label of the dashboard section from a closed list of ids leave the hive. Answers without an allowlisted source come back as no_cited_answer. Always 200 with an outcome. Answers 404 unless ask.enabled is on and fully configured (see src/docs/design/dashboard-ask-ai-help.md, #19183).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "section": {
+                    "type": "string"
+                  },
+                  "conversation": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "question"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "no_cited_answer",
+                        "refused_secret_shape",
+                        "rate_limited",
+                        "breaker_open",
+                        "upstream_error",
+                        "not_consented",
+                        "invalid_question",
+                        "relay_disabled"
+                      ]
+                    },
+                    "answer": {
+                      "type": "string",
+                      "description": "Plain text; render as text, never as HTML."
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "uncertain": {
+                      "type": "boolean"
+                    },
+                    "conversation": {
+                      "type": "string",
+                      "description": "Opaque follow-up handle bound to this person; the vendor thread id never leaves the server."
+                    },
+                    "retry_after_seconds": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "ai_generated": {
+                      "type": "boolean"
+                    },
+                    "docs_url": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "404": {
+            "description": "Ask is off"
+          }
+        }
+      }
+    },
+    "/api/repos/{owner}/{repo}/items/{number}/sha-waiver": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Waive or restore the SHA-hold requirement on one issue",
+        "description": "Backs the activity monitor's row menu Waive SHA requirement / Restore SHA requirement entries on an issue held by the SHA-hold gate (needs-sha). Waiving adds the persistent sha-waived label (created if missing), removes needs-sha at once and posts one App-authored comment with a hive:sha-waived marker naming the dashboard user; the SHA sweep never re-adds needs-sha while sha-waived is on. Restoring removes sha-waived and the next sweep holds the issue again if it still has no SHA and no exemption. A repeat is a no-op; pull requests have no SHA requirement (404). Same authorisation as the hold toggle; every write is audited as repo_item_sha_waiver under the dashboard user.",
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Waived or restored (or already so)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "number": {
+                      "type": "integer"
+                    },
+                    "waived": {
+                      "type": "boolean"
+                    },
+                    "added": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "removed": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "minStatusSeq": {
+                      "type": "integer",
+                      "description": "Status sequence the caller should wait for before trusting /api/status again"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid repository item"
+          },
+          "401": {
+            "description": "GitHub user session required"
+          },
+          "403": {
+            "description": "Write permission required"
+          },
+          "404": {
+            "description": "Not an issue (pull request) or unknown item"
+          },
+          "502": {
+            "description": "GitHub API error"
+          },
+          "503": {
+            "description": "GitHub client not configured"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "waived": {
+                    "type": "boolean",
+                    "description": "true waives the requirement, false restores it"
+                  }
+                },
+                "required": [
+                  "waived"
+                ]
               }
             }
           }

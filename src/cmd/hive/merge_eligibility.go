@@ -1332,6 +1332,12 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		RebaseAttemptsMax int    `json:"rebase_attempts_max,omitempty"`
 		BaseRef           string `json:"base_ref,omitempty"`
 		TrustedAuthor     bool   `json:"trusted_author,omitempty"`
+		// PersonAuthored marks a PR whose GitHub author is a person: not
+		// hive-authored, not adopted, not a bot account. The squash lands
+		// every commit under that person, so the kick tells the fixer not
+		// to push its own commits there (hivecommons/hive#19110, #19102,
+		// #19063; the attribution check counts no Co-authored-by).
+		PersonAuthored bool `json:"person_authored,omitempty"`
 		// DeferredIncident is the open [shared-ci] incident issue this red
 		// PR was already deferred to (github.PullRequest.SharedCIIncident,
 		// hivecommons/hive#10528); only red PRs carry one. It applies to a
@@ -1511,6 +1517,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			BaseRedChecks:   pr.BaseRedChecks,
 			BaseRed:         pr.AllFailuresBaseRed(),
 			AppAuthored:     scheduler.PRAppAuthored(pr),
+			PersonAuthored:  !adopted && !hiveAuthoredPR(pr) && !pr.AuthorNonHuman,
 			HeadPushedAt:    scheduler.PRHeadPushedAt(pr),
 			Issues:          scheduler.PRIssueNumbers(pr),
 		}

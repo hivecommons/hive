@@ -8,20 +8,8 @@ agent_sandbox.job.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringEx
 agent_sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].key # TODO #18809
 agent_sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].operator # TODO #18809
 agent_sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].values[] # TODO #18809
-agent_sandbox.job.github_read_proxy.enabled # TODO #18865
-agent_sandbox.job.github_read_proxy.endpoint # TODO #18865
-agent_sandbox.job.github_read_proxy.listen_addr # TODO #18865
-agent_sandbox.job.github_read_proxy.no_proxy[] # TODO #18865
-agent_sandbox.job.image_pull_secrets[] # TODO #11854
-agent_sandbox.job.node_selector.<key> # TODO #11854
 agent_sandbox.job.relay_image # TODO #11854
 agent_sandbox.job.relay_run_as_user # TODO #11854
-agent_sandbox.job.resources.limits.<key> # TODO #11854
-agent_sandbox.job.resources.requests.<key> # TODO #11854
-agent_sandbox.job.tolerations[].effect # TODO #11854
-agent_sandbox.job.tolerations[].key # TODO #11854
-agent_sandbox.job.tolerations[].operator # TODO #11854
-agent_sandbox.job.tolerations[].value # TODO #11854
 agent_sandbox.job.volumes[].claim # TODO #11854
 agent_sandbox.job.volumes[].mount_path # TODO #11854
 agent_sandbox.job.volumes[].name # TODO #11854
@@ -42,13 +30,9 @@ agent_sandbox.openshell.tolerations[].operator # TODO #17645 (OpenShell runtime;
 agent_sandbox.openshell.tolerations[].value # TODO #17645 (OpenShell runtime; Settings control pending)
 agent_sandbox.openshell.workspace_claim # TODO #17645 (OpenShell runtime; Settings control pending)
 agent_sandbox.openshell.workspace_claim_mount # TODO #17645 (OpenShell runtime; Settings control pending)
+agent_sandbox.pids_limit # TODO #11854 (#19479 added the key; Settings control pending)
 agent_sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)
 agent_sandbox.publish.verify_timeout_s # TODO #14999 (policy-file knob; Settings control pending)
-agent_sandbox.preflight.commands[] # TODO #18811 (policy-file knob; Settings control pending)
-agent_sandbox.preflight.retry_delay_s # TODO #18811 (policy-file knob; Settings control pending)
-agent_sandbox.preflight.timeout_s # TODO #18811 (policy-file knob; Settings control pending)
-agent_sandbox.preflight.total_timeout_s # TODO #18811 (policy-file knob; Settings control pending)
-agent_sandbox.job.schedule_timeout_s # TODO #18811 (policy-file knob; Settings control pending)
 agents.<key>.acmm_levels[] # TODO #11854
 agents.<key>.agent_spec # TODO #11854
 agents.<key>.aliases[] # TODO #11854
@@ -143,18 +127,10 @@ agents.<key>.sandbox.job.github_read_proxy.enabled # TODO #18865
 agents.<key>.sandbox.job.github_read_proxy.endpoint # TODO #18865
 agents.<key>.sandbox.job.github_read_proxy.listen_addr # TODO #18865
 agents.<key>.sandbox.job.github_read_proxy.no_proxy[] # TODO #18865
-agents.<key>.sandbox.job.image_pull_secrets[] # TODO #11854
-agents.<key>.sandbox.job.node_selector.<key> # TODO #11854
 agents.<key>.sandbox.job.relay_image # TODO #11854
 agents.<key>.sandbox.job.relay_run_as_user # TODO #11854
-agents.<key>.sandbox.job.resources.limits.<key> # TODO #11854
-agents.<key>.sandbox.job.resources.requests.<key> # TODO #11854
 agents.<key>.sandbox.job.scheduler_name # TODO #11854
 agents.<key>.sandbox.job.service_account # TODO #11854
-agents.<key>.sandbox.job.tolerations[].effect # TODO #11854
-agents.<key>.sandbox.job.tolerations[].key # TODO #11854
-agents.<key>.sandbox.job.tolerations[].operator # TODO #11854
-agents.<key>.sandbox.job.tolerations[].value # TODO #11854
 agents.<key>.sandbox.job.ttl_seconds # TODO #11854
 agents.<key>.sandbox.job.volumes[].claim # TODO #11854
 agents.<key>.sandbox.job.volumes[].mount_path # TODO #11854
@@ -183,11 +159,6 @@ agents.<key>.sandbox.runtime # TODO #11854
 agents.<key>.sandbox.timeout_s # TODO #11854
 agents.<key>.sandbox.publish.verify[] # TODO #14999 (policy-file knob; Settings control pending)
 agents.<key>.sandbox.publish.verify_timeout_s # TODO #14999 (policy-file knob; Settings control pending)
-agents.<key>.sandbox.preflight.commands[] # TODO #18811 (policy-file knob; Settings control pending)
-agents.<key>.sandbox.preflight.retry_delay_s # TODO #18811 (policy-file knob; Settings control pending)
-agents.<key>.sandbox.preflight.timeout_s # TODO #18811 (policy-file knob; Settings control pending)
-agents.<key>.sandbox.preflight.total_timeout_s # TODO #18811 (policy-file knob; Settings control pending)
-agents.<key>.sandbox.job.schedule_timeout_s # TODO #18811 (policy-file knob; Settings control pending)
 agents.<key>.cli_memory.auto_memory # TODO #11854
 agents.<key>.cli_memory.clear_on_kick # TODO #11854
 agents.<key>.cli_memory.drain_on_write # TODO #11854
@@ -296,6 +267,13 @@ governor.budget.coins.<key>.usd_per_coin # TODO #11854
 governor.ci_failure_kick_cooldown_s # webhook CI-failure kick cooldown (#15291); yaml-only
 governor.ci_failure_webhook_kick # webhook CI-failure kick flag (#15291); yaml-only
 governor.dependency_bot_rebase_after_s # stranded dependency-bot PR window (bot_rebase_request); yaml-only
+governor.inference_resilience.connect_timeout_s # inference translator timeouts and retry (#19057); yaml and HIVE_INFERENCE_* env only
+governor.inference_resilience.idle_stream_timeout_s # inference translator timeouts and retry (#19057); yaml and HIVE_INFERENCE_* env only
+governor.inference_resilience.response_header_timeout_s # inference translator timeouts and retry (#19057); yaml and HIVE_INFERENCE_* env only
+governor.inference_resilience.retry_base_delay_ms # inference translator timeouts and retry (#19057); yaml and HIVE_INFERENCE_* env only
+governor.inference_resilience.retry_enabled # inference translator timeouts and retry (#19057); yaml and HIVE_INFERENCE_* env only
+governor.inference_resilience.retry_max_delay_s # inference translator timeouts and retry (#19057); yaml and HIVE_INFERENCE_* env only
+governor.inference_resilience.retry_max_retries # inference translator timeouts and retry (#19057); yaml and HIVE_INFERENCE_* env only
 governor.release_feeds.agents.<key>.cooldown_s # release-feed watcher (#18494); yaml-only
 governor.release_feeds.agents.<key>.sources[].auth_var # release-feed watcher (#18494); yaml-only
 governor.release_feeds.agents.<key>.sources[].kind # release-feed watcher (#18494); yaml-only
@@ -423,6 +401,18 @@ hub.contribute_repo_filters.<key>.deny_titles[] # TODO #11854
 hub.contribute_repo_filters.<key>.labels_mode # TODO #11854
 hub.contribute_repo_filters.<key>.titles_mode # TODO #11854
 hub.contribute_skip_labels[] # TODO #11854
+hub.contribute_umbrella.enabled # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.human_only_labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.task_list_min # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.title_prefixes[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.withdraw_advertisement # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.enabled # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.human_only_labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.task_list_min # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.title_prefixes[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.withdraw_advertisement # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
 hub.disabled_repos[] # TODO #11854
 hub.disabled_tiers[] # TODO #11854
 hub.heartbeat_omit[] # TODO #11854
@@ -430,6 +420,7 @@ hub.tier_limits.<key>.max_concurrent # TODO #11854
 hub.tier_limits.<key>.max_per_day # TODO #11854
 hub.tier_limits.<key>.max_per_hour # TODO #11854
 ioscan.block_at.<key> # per-surface block thresholds; yaml-only (#6685)
+ioscan.source_memory_days # flagged-source memory window; yaml-only (#19440)
 issues.hard_suppress_reconcile_interval # TODO #11854
 issues.lift_hive_hard_suppress # TODO #11854
 issues.rfc_existing_check.enabled # triage existing-coverage check; yaml-only (#13575)
@@ -563,6 +554,29 @@ repeat_failure.threshold # yaml-only until the check reaches the dashboard (#145
 repeat_failure.window_s # yaml-only until the check reaches the dashboard (#14550)
 repos.<key>.agents_md_max_bytes # TODO #18495 (per-repo AGENTS.md cap; Settings control pending)
 repos.<key>.parent_autoclose # TODO #18869 (per-repo decomposed-parent auto-close policy; Settings control pending)
+repos.<key>.review_preflight.block_severity # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.cache_ttl # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.dependencies # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.ignore[].expires # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.ignore[].id # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.ignore[].package # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.ignore[].reason # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.max_dependencies # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.min_release_age_days # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.offline # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.osv_url # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.registry_urls.<key> # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.release_age # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.request_timeout # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rule_doc_budget_bytes # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rule_doc_exclude[] # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rule_doc_paths[] # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rule_docs # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rules[].id # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rules[].severity # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.rules[].text # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.severity_floor # TODO #19069 (review preflight; Settings control pending)
+repos.<key>.review_preflight.vulnerabilities # TODO #19069 (review preflight; Settings control pending)
 retro.lesson_confidence_cap # TODO #11854
 retro.lesson_confidence_step # TODO #11854
 review.analysis_factcheck.author_agents[] # TODO #19074 (yaml-only at first; Settings control pending)
@@ -583,6 +597,29 @@ review.bot_authors[] # TODO #14625
 review.delta_max_age # TODO #14621
 review.delta_rereview # TODO #14621
 review.delta_trivial_lines # TODO #14621
+review.preflight.block_severity # TODO #19069 (review preflight; Settings control pending)
+review.preflight.cache_ttl # TODO #19069 (review preflight; Settings control pending)
+review.preflight.dependencies # TODO #19069 (review preflight; Settings control pending)
+review.preflight.ignore[].expires # TODO #19069 (review preflight; Settings control pending)
+review.preflight.ignore[].id # TODO #19069 (review preflight; Settings control pending)
+review.preflight.ignore[].package # TODO #19069 (review preflight; Settings control pending)
+review.preflight.ignore[].reason # TODO #19069 (review preflight; Settings control pending)
+review.preflight.max_dependencies # TODO #19069 (review preflight; Settings control pending)
+review.preflight.min_release_age_days # TODO #19069 (review preflight; Settings control pending)
+review.preflight.offline # TODO #19069 (review preflight; Settings control pending)
+review.preflight.osv_url # TODO #19069 (review preflight; Settings control pending)
+review.preflight.registry_urls.<key> # TODO #19069 (review preflight; Settings control pending)
+review.preflight.release_age # TODO #19069 (review preflight; Settings control pending)
+review.preflight.request_timeout # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rule_doc_budget_bytes # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rule_doc_exclude[] # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rule_doc_paths[] # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rule_docs # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rules[].id # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rules[].severity # TODO #19069 (review preflight; Settings control pending)
+review.preflight.rules[].text # TODO #19069 (review preflight; Settings control pending)
+review.preflight.severity_floor # TODO #19069 (review preflight; Settings control pending)
+review.preflight.vulnerabilities # TODO #19069 (review preflight; Settings control pending)
 review.pending_fix_ttl # TODO #14643
 review.perspective_models.<key>.backend # TODO #13243
 review.perspective_models.<key>.model # TODO #13243
@@ -646,11 +683,16 @@ security.sensitive_paths[] # TODO #15640
 self_experiments.scheduler.enabled # TODO #11854
 self_experiments.scheduler.interval_s # TODO #11854
 self_experiments.scheduler.mode # TODO #11854
+session_taint.enabled # observe-only recorder, yaml-only until its read-only view lands (#18987)
+session_taint.max_decisions # bound on the in-memory decision ring; yaml-only (#18987)
+session_taint.max_labels_per_session # bound on labels per session; yaml-only (#18987)
+session_taint.max_sessions # bound on tracked sessions; yaml-only (#18987)
 shared_ci_issues.enabled # shared-CI tracking issue sweep; yaml-only
 shared_ci_issues.min_prs # shared-CI tracking issue sweep; yaml-only
 swarm.themes.<key>.call_to_arms # TODO #11854
 swarm.themes.<key>.event_name # TODO #11854
 swarm.themes.<key>.leaderboard_title # TODO #11854
+tool_approval.pending_ttl_s # TODO #19446 (pending approval TTL; Settings control pending)
 tool_approval.rules[].action # TODO #11854
 tool_approval.rules[].expr # TODO #11854
 tool_approval.rules[].min_acmm_level # TODO #11854

@@ -112,6 +112,7 @@ const staleDropStarvationThreshold = 5
 
 type Server struct {
 	nativeQueueTracker  nativeQueueTrackerRuntime
+	ask                 askRuntime // Ask AI help asker, built on first use (#19183)
 	integration         integrationRuntime
 	webhookNoSecretOnce sync.Once               // warn once per process about a missing webhook secret (#13666)
 	prGateOnce          sync.Once               // builds the PR gate on first use (#19038)
@@ -857,6 +858,9 @@ type StatusPayload struct {
 	Capabilities       *FrontendCapabilities `json:"capabilities,omitempty"`
 	GitHubAppPermIssue string                `json:"githubAppPermIssue,omitempty"`
 	GitHubAppState     string                `json:"githubAppState,omitempty"`
+	// PRGate is the PR-contents gate's state while auto_merge.pr_gate is
+	// configured for any repository (hivecommons/hive#19038); absent otherwise.
+	PRGate *github.PRGateHealth `json:"prGate,omitempty"`
 	// GitHubAppInstallMissing is CONFIG TRUTH, independent of any auth probe
 	// or classification: a real App is named (app_id set, not the placeholder)
 	// but installation_id is 0. That state alone means every token is a
@@ -975,7 +979,7 @@ type FrontendPlatform struct {
 }
 
 // FrontendForge describes the configured source forge. Kind is one of
-// "github" | "gitlab" | "gitea". InstanceURL is set only for a non-default
+// "github" | "gitlab" | "gitea" | "forgejo". InstanceURL is set only for a non-default
 // self-managed instance (empty for github.com / gitlab.com defaults).
 type FrontendForge struct {
 	Kind        string   `json:"kind"`
@@ -2111,6 +2115,9 @@ func (s *Server) Start() error {
 	s.StartBenchmarksPublisher(followCtx)
 	// Sessions: reconcile after a restart, then close idle sessions.
 	s.StartSessionSweeper(followCtx)
+	// PR-contents gate backstop (#19285): re-post the gate on open PR heads
+	// the webhook path missed. A no-op while auto_merge.pr_gate is off.
+	s.StartPRGateBackstop(followCtx)
 	return srv.Serve(ln)
 }
 
@@ -3187,6 +3194,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	status.GitHubAppPermIssue = s.githubAppPermIssue
 	status.GitHubAppState = s.githubAppState
 	s.githubAppMu.RUnlock()
+	status.PRGate = s.PRGateHealth()
 
 	// CONFIG-TRUTH OVERRIDE, applied last so no probe-derived field can veto
 	// it: a real App with installation_id 0 must light the install banner the
@@ -3335,7 +3343,7 @@ func (s *Server) UpdateStatusIfFresh(status *StatusPayload, buildEpoch uint64) b
 	// read a file, so it is refreshed first, outside the lock.
 	s.cardFixDispatch(time.Now().UTC())
 	s.statusMu.RLock()
-	data, err := json.Marshal(s.statusWithOverviewBands(status, time.Now().UTC()))
+	data, err := json.Marshal(s.statusForDashboard(status, time.Now().UTC()))
 	s.statusMu.RUnlock()
 	if err != nil {
 		s.logger.Warn("failed to marshal status for SSE", "error", err)
@@ -4335,15 +4343,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	status := s.status
-	snapshot := s.statusWithOverviewBands(status, now)
+	snapshot := s.statusForDashboard(status, now)
 	s.statusMu.RUnlock()
-	payload := statusWithWebhooks{StatusPayload: snapshot, Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot(), MatrixEnabled: s.currentMatrixConfig().Active(), ReviewQuestionsAutodecided1h: s.reviewQuestionsAutodecided1h(now)}
+	payload := statusWithWebhooks{statusWithWriteback: snapshot, Webhooks: github.WebhookHealthSnapshot(), CIFailureSignals: github.CIFailureSignals().Snapshot(), MatrixEnabled: s.currentMatrixConfig().Active(), ReviewQuestionsAutodecided1h: s.reviewQuestionsAutodecided1h(now)}
 	if s.deps != nil && s.deps.EvalLoop != nil {
 		loop := s.deps.EvalLoop()
 		payload.EvalLoopStatus = &loop
 	}
 	payload.UpgradeProgress = s.upgradeProgress(status, now)
-	payload.Writeback = s.WritebackStatus()
 	payload.Hotspots = s.HotspotStatusBlock()
 	payload.Benchmarks = s.BenchmarksStatusBlock()
 	payload.Config = s.configHealthStatus()
@@ -4378,7 +4385,7 @@ func (s *Server) configHealthStatus() *ConfigHealthStatus {
 // governor loop's pacing (evalMode, lastWakeReason) to the cached status
 // payload at serve time, so neither is a whole eval cycle stale.
 type statusWithWebhooks struct {
-	*StatusPayload
+	statusWithWriteback
 	Webhooks github.WebhookHealth `json:"webhooks"`
 	// CIFailureSignals is the webhook CI-failure signal store: retained
 	// signals, the last one, webhook-triggered kicks and unmatched heads.
@@ -4404,10 +4411,6 @@ type statusWithWebhooks struct {
 	// countdown, derived at serve time (#14856). Absent on a hive the hub
 	// does not manage and that has no upgrade in flight.
 	UpgradeProgress *spoke.UpgradeProgress `json:"upgradeProgress,omitempty"`
-	// Writeback is the unsolicited write-back gate's live state: suppressed
-	// writes in the last 24h, per-repo first_seen / writable / mode, and the
-	// banners for repos the hive can now write to but left untouched.
-	Writeback *writeback.Status `json:"writeback,omitempty"`
 	// Hotspots is the merge-hotspot advisor's one-line summary: files hit by
 	// concurrent PRs in the window, how many warrant a split, how many have
 	// a modularize issue filed. Absent when the advisor is not wired.
@@ -4587,7 +4590,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	s.cardFixDispatch(time.Now().UTC())
 	s.statusMu.RLock()
 	if s.status != nil {
-		data, _ := json.Marshal(s.statusWithOverviewBands(s.status, time.Now().UTC()))
+		data, _ := json.Marshal(s.statusForDashboard(s.status, time.Now().UTC()))
 		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
 			s.statusMu.RUnlock()
 			return

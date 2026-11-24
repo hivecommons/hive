@@ -405,6 +405,12 @@ type Engine struct {
 	// heads (head_sightings.go); nil shares it.
 	headSightings *HeadSightings
 
+	// carriedFenceDropLogged remembers the PR heads whose carried diff
+	// fence was dropped, so the drop is logged once per head
+	// (automerge_adoption_fence.go).
+	carriedFenceDropMu     sync.Mutex
+	carriedFenceDropLogged map[string]bool
+
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
 

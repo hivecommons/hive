@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -72,7 +73,7 @@ type CustomerAddRequest struct {
 }
 
 // CustomerEditRequest is the body of POST /api/customers/{id}/edit: one
-// change, named by Op (name, notes, profile, identity_add, identity_remove, tag,
+// change, named by Op (name, notes, profile, affiliation_dismiss, identity_add, identity_remove, tag,
 // goal_add, goal_edit, goal_confirm, goal_reject, satisfaction_set,
 // satisfaction_confirm, satisfaction_reject).
 type CustomerEditRequest struct {
@@ -88,7 +89,7 @@ type CustomerEditRequest struct {
 	Text   string `json:"text,omitempty"`
 	Level  string `json:"level,omitempty"`
 	// Field names the profile field an "profile" op sets (real_name,
-	// organization, location); Value is its text and State "auto" hands it
+	// organization, location, country); Value is its text and State "auto" hands it
 	// back to the automatic source.
 	Field string `json:"field,omitempty"`
 }
@@ -132,6 +133,18 @@ type CustomersService interface {
 	// Export returns everything held about one customer (owner only),
 	// JSON-encoded as returned.
 	Export(v CustomersViewer, id string) (any, error)
+}
+
+// CustomersProfileRefresher is the optional "Refresh from profiles" part of
+// the service (#19302): the profile fill run on demand. A service without
+// it, or with the fill switched off, answers 503.
+type CustomersProfileRefresher interface {
+	// RefreshProfile looks one customer (an id or "me") up now and returns
+	// the profile after the lookup and the pass counts.
+	RefreshProfile(ctx context.Context, v CustomersViewer, id string) (CustomerResult, any, error)
+	// RefreshAllProfiles makes every customer due and starts a pass in the
+	// background.
+	RefreshAllProfiles(v CustomersViewer) (any, error)
 }
 
 // CustomerMergeRequest is the body of POST /api/customers/{id}/merge and
@@ -187,7 +200,10 @@ func (s *Server) registerCustomersRoutes() {
 	s.mux.HandleFunc("POST /api/customers/{id}/unmerge", s.handleCustomersUnmerge)
 	s.mux.HandleFunc("POST /api/customers/{id}/split", s.handleCustomersSplit)
 	s.mux.HandleFunc("GET /api/customers/{id}/export", s.handleCustomersExport)
+	s.mux.HandleFunc("POST /api/customers/{id}/refresh-profile", s.handleCustomersRefreshProfile)
+	s.mux.HandleFunc("POST /api/customers/refresh-profiles", s.handleCustomersRefreshProfiles)
 	s.registerCustomersGraphRoutes()
+	s.registerCustomersEnrichmentRoutes()
 }
 
 // readOnlySelfService reports whether a write from a read-only user is one
@@ -591,5 +607,59 @@ func (s *Server) handleCustomersExport(w http.ResponseWriter, r *http.Request) {
 	s.auditFromRequest(r, "customer_export", auditDetail("person", auditPersonID(id)), "")
 	w.Header().Set("Content-Disposition", `attachment; filename="customer-export.json"`)
 	w.Header().Set("Cache-Control", "no-store")
+	jsonResponse(w, out)
+}
+
+// customersRefresher returns the profile refresher, or answers 503.
+func (s *Server) customersRefresher(w http.ResponseWriter) (CustomersProfileRefresher, bool) {
+	svc, ok := s.customersService(w)
+	if !ok {
+		return nil, false
+	}
+	r, ok := svc.(CustomersProfileRefresher)
+	if !ok {
+		jsonError(w, ErrCustomerUnavailable.Error(), http.StatusServiceUnavailable)
+		return nil, false
+	}
+	return r, true
+}
+
+// handleCustomersRefreshProfile is "Refresh from profiles" on one customer:
+// the profile fill looks them up now (full view only).
+func (s *Server) handleCustomersRefreshProfile(w http.ResponseWriter, r *http.Request) {
+	v, ok := customersFullViewer(w, r)
+	if !ok {
+		return
+	}
+	ref, ok := s.customersRefresher(w)
+	if !ok {
+		return
+	}
+	res, fill, err := ref.RefreshProfile(r.Context(), v, r.PathValue("id"))
+	if err != nil {
+		s.customersError(w, r, err)
+		return
+	}
+	s.auditFromRequest(r, "customer_profile_refresh", auditDetail("person", res.ID), "")
+	jsonResponse(w, map[string]any{"customer": res.View, "fill": fill})
+}
+
+// handleCustomersRefreshProfiles is "Refresh from profiles" for everyone:
+// every customer becomes due and a bounded pass starts (full view only).
+func (s *Server) handleCustomersRefreshProfiles(w http.ResponseWriter, r *http.Request) {
+	v, ok := customersFullViewer(w, r)
+	if !ok {
+		return
+	}
+	ref, ok := s.customersRefresher(w)
+	if !ok {
+		return
+	}
+	out, err := ref.RefreshAllProfiles(v)
+	if err != nil {
+		s.customersError(w, r, err)
+		return
+	}
+	s.auditFromRequest(r, "customer_profile_refresh_all", "", "")
 	jsonResponse(w, out)
 }

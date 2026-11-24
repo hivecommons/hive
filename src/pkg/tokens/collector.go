@@ -218,11 +218,15 @@ type Collector struct {
 	mu                        sync.RWMutex
 	latest                    *AggregateSummary
 	errorStreaks              map[string]int
-	diagnostics               Diagnostics
-	scanInterval              time.Duration
-	prevSessionCount          int
-	prevTotalTokens           int64
-	prevByAgent               map[string]int64
+	// claudeTreeErrs is the last error logged per Claude session tree, so a
+	// persistent failure (an unreadable per-UID tree, #19307) is logged once
+	// when it starts and once when it clears, not on every 30s scan.
+	claudeTreeErrs   map[string]string
+	diagnostics      Diagnostics
+	scanInterval     time.Duration
+	prevSessionCount int
+	prevTotalTokens  int64
+	prevByAgent      map[string]int64
 	// launchLog, when attached, records which issue/PR/head SHA each delivered
 	// kick was launched for (see launch.go). Attribution only — never a gate.
 	launchLog *LaunchLog
@@ -360,8 +364,8 @@ func (c *Collector) scan() {
 		// HOME, so the shared path alone would miss every new session.
 		for _, tree := range ClaudeSessionTrees(c.claudeSessionsDir) {
 			claudeAgg, err := ScanClaudeSessionTree(tree.Dir, tree.Agent)
+			c.noteClaudeTreeErr(tree.Dir, err)
 			if err != nil {
-				c.logger.Warn("claude session scan failed", "dir", tree.Dir, "error", err)
 				diag.LastClaudeScanError = err.Error()
 			} else if claudeAgg != nil && claudeAgg.SessionCount > 0 {
 				MergeAggregates(agg, claudeAgg)
@@ -476,6 +480,27 @@ func (c *Collector) scan() {
 	c.mu.Unlock()
 
 	c.saveSnapshot(agg)
+}
+
+// noteClaudeTreeErr logs a Claude session tree's scan error when it differs
+// from the last one logged for that tree, and logs recovery once. Only the
+// scan goroutine calls it.
+func (c *Collector) noteClaudeTreeErr(dir string, err error) {
+	if c.claudeTreeErrs == nil {
+		c.claudeTreeErrs = make(map[string]string)
+	}
+	prev, had := c.claudeTreeErrs[dir]
+	if err == nil {
+		if had {
+			delete(c.claudeTreeErrs, dir)
+			c.logger.Info("claude session scan recovered", "dir", dir)
+		}
+		return
+	}
+	if msg := err.Error(); !had || msg != prev {
+		c.claudeTreeErrs[dir] = msg
+		c.logger.Warn("claude session scan failed", "dir", dir, "error", err)
+	}
 }
 
 func (c *Collector) Diagnostics() Diagnostics {

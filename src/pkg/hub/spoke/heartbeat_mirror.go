@@ -171,6 +171,8 @@ var heartbeatMirrorFieldPolicy = map[string]mirrorFieldPolicy{
 	"GitHubAppErrorClass":      mirrorFieldMirrored,
 	"GitHubAppHTTPStatus":      mirrorFieldMirrored,
 	"GitHubAppState":           mirrorFieldMirrored,
+	"PRGateCause":              mirrorFieldMirrored,
+	"PRGateDependsOn":          mirrorFieldMirrored,
 	"GitHubAppID":              mirrorFieldMirrored,
 	"GitHubAppSlug":            mirrorFieldMirrored,
 	"GitHubInstallationID":     mirrorFieldMirrored,
@@ -215,6 +217,11 @@ var heartbeatMirrorFieldPolicy = map[string]mirrorFieldPolicy{
 	"ComponentReach":               mirrorFieldMirrored,
 	"Compliance":                   mirrorFieldMirrored,
 	"Evidence":                     mirrorFieldMirrored,
+	// Audit-log hash chain head (#19439): a seq and a public SHA-256, no
+	// secret. A mirror holding it is one more copy a spoke-side writer cannot
+	// rewrite.
+	"AuditChainSeq":  mirrorFieldMirrored,
+	"AuditChainHead": mirrorFieldMirrored,
 
 	// Dropped: credential-adjacent identifiers. The primary hub matches these
 	// against records it holds; a report-only hub has no such records and must

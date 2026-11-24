@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/authz"
+	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/gitidentity"
 	"github.com/hivecommons/hive/crux/logscrub"
@@ -49,7 +51,7 @@ const pushTokenEnvVar = "HIVE_PUSH_TOKEN"
 const pushCredentialHelper = `!f() { echo username=x-access-token; echo "password=$` + pushTokenEnvVar + `"; }; f`
 
 var credentialEnvPrefixes = []string{
-	"GITHUB_TOKEN=", "GH_TOKEN=", "HIVE_GITHUB_TOKEN=", "COPILOT_GITHUB_TOKEN=",
+	"GITHUB_TOKEN=", "GH_TOKEN=", "HIVE_GITHUB_TOKEN=", "COPILOT_GITHUB_TOKEN=", "GITLAB_TOKEN=", "GITEA_TOKEN=", "FORGEJO_TOKEN=",
 	"GIT_ASKPASS=", "SSH_ASKPASS=",
 }
 
@@ -132,6 +134,11 @@ type Broker struct {
 	Logger         *slog.Logger
 	Now            func() time.Time
 	Mutation       effects.Boundary
+	// Shadow, when set, observes the changed-files guard in shadow mode
+	// (RFC #18988 phase 0/1): the authz evaluator is compared with this
+	// guard's own verdict and an event is recorded. It enforces nothing. Nil
+	// uses authz.DefaultShadow(), which is off unless HIVE_AUTHZ_SHADOW is true.
+	Shadow *authz.Shadow
 	// LeaseSHA, when set, makes the push an update of an EXISTING branch: a
 	// hive-opened PR's head that a sandboxed kick checked out
 	// (hivecommons/hive#18574). The outgoing commits must descend from it,
@@ -216,9 +223,17 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 	// the final newline (kubestellar/hive#5116). Fixing it here, once, covers
 	// every backend and every target-repo language instead of teaching each
 	// coding CLI's own formatter to run first.
-	if amended, err := b.stripTrailingBlankLines(ctx, res.ChangedFiles); err != nil {
+	amended, err := b.stripTrailingBlankLines(ctx, res.ChangedFiles)
+	if err != nil {
 		return b.fail(res, fmt.Errorf("normalising trailing newlines: %w", err))
-	} else if amended {
+	}
+	// The commit message travels inside the pushed objects, out of the
+	// egress proxy's reach, so the broker applies the outbound dash rule to
+	// it here (hivecommons/hive#19103).
+	if b.sanitizeHeadCommitMessage(ctx) {
+		amended = true
+	}
+	if amended {
 		commit, err = b.git(ctx, "rev-parse", "HEAD")
 		if err != nil {
 			return b.fail(res, fmt.Errorf("reading HEAD after newline normalisation: %w", err))
@@ -430,6 +445,18 @@ var signedOffByRE = regexp.MustCompile(`(?mi)^Signed-off-by:\s*(.*?)\s*<([^<>]+)
 // "Name <email> <timestamp> <tzoffset>". Only the name/email prefix is used.
 var gitIdentRE = regexp.MustCompile(`^(.*?)\s*<([^<>]*)>`)
 
+// foreignSignoffAdvice closes the refusal of a lane Signed-off-by on a
+// commit the lane did not write. A sign-off certifies the signer wrote the
+// change (DCO), so a lane may only sign its own commits; `git rebase
+// --signoff` over a branch with someone else's commits appends the lane's
+// trailer to theirs too and breaks the "Sign-off survives the squash" check
+// (seen on hivecommons/hive#19102).
+const foreignSignoffAdvice = "a lane signs off only commits it authored. Do not run git rebase --signoff over someone else's commits; keep their commits as they wrote them and leave DCO remediation to the author (ask them on the PR to sign off)"
+
+// rejectForgedLaneSignoffs judges every outgoing non-merge commit against
+// the pushing lane's identity: a commit the lane authored and committed must
+// carry the lane's Signed-off-by, and a commit someone else authored (or
+// committed) must not.
 func (b *Broker) rejectForgedLaneSignoffs(ctx context.Context, base string, baseExists bool) error {
 	laneName, laneEmail, err := b.laneGitIdentity(ctx)
 	if err != nil {
@@ -487,7 +514,7 @@ func (b *Broker) rejectForgedLaneSignoffs(ctx context.Context, base string, base
 				"lane", fmt.Sprintf("%s <%s>", laneName, laneEmail))
 		}
 		if laneSigned {
-			return fmt.Errorf("pushbroker: refusing to push commit %s authored by %s <%s> and committed by %s <%s> with %s's Signed-off-by trailer; leave DCO remediation to the author", shortSHA(sha), authorName, authorEmail, committerName, committerEmail, laneName)
+			return fmt.Errorf("pushbroker: refusing to push commit %s authored by %s <%s> and committed by %s <%s> with %s's Signed-off-by trailer: %s", shortSHA(sha), authorName, authorEmail, committerName, committerEmail, laneName, foreignSignoffAdvice)
 		}
 	}
 	return nil
@@ -630,6 +657,12 @@ func PushEnv(env []string) []string {
 		blocked := false
 		for _, prefix := range credentialEnvPrefixes {
 			if strings.HasPrefix(entry, prefix) {
+				blocked = true
+				break
+			}
+		}
+		for _, name := range config.ExtraCredentialEnvVars() {
+			if strings.HasPrefix(entry, name+"=") {
 				blocked = true
 				break
 			}

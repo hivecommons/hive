@@ -51,11 +51,13 @@ supported choice — see the
 git clone https://github.com/hivecommons/hive.git
 cd hive
 
-cp src/hive.yaml.example src/hive.yaml
+# Compose requires the Go API on 3002; generate this config before editing it.
+sed 's/^  port: 3001$/  port: 3002/' src/hive.yaml.example > src/hive.yaml
 ```
 
 Edit `src/hive.yaml` and set at least `project.org`, `project.repos`, and
 `project.ai_author` for the org and repositories the hive should manage.
+Set `project.primary_repo` to one of those repos or remove the field.
 
 Now write the environment file. **It must be `src/.env`, not a `.env` at the
 repository root.** Because `-f src/docker-compose.yaml` makes `src/` the
@@ -75,7 +77,7 @@ echo "HIVE_GITHUB_TOKEN=ghp_REPLACE_ME" >> src/.env
 # listening on.
 printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> src/.env
 
-docker compose -f src/docker-compose.yaml up -d
+docker compose -f src/docker-compose.yaml up -d --wait
 ```
 
 A classic PAT needs `repo` scope; see
@@ -93,8 +95,7 @@ for the full resolution order.
 
 ## Verify Your Hive Is Healthy
 
-The gateway publishes port 3001 whether or not the proxy behind it came up, so
-confirm the endpoint answers rather than assuming the port is enough:
+Verify that the dashboard responds through the gateway on port 3001.
 
 ```bash
 curl -sf http://127.0.0.1:3001/api/health     # -> {"status":"ok"}

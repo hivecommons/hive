@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -166,6 +167,42 @@ func TestCadenceDialogCarriesThePowerSwitch(t *testing.T) {
 	// unlike the card's immediate action — same markup, dialog semantics.
 	if !strings.Contains(body, `data-action="toggleConfigSwitch" data-section="general" data-key="enabled"`) {
 		t.Error("the dialog switch must save through the config dirty bag, not fire immediately")
+	}
+}
+
+func TestCreateAgentSendsStartupSelections(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable")
+	}
+	script := `const assert = require('node:assert/strict');
+const _configState = {
+  type: 'agent', isCreate: true,
+  dirty: { _create: { name: 'new-worker' }, general: { enabled: false, onDemand: true } },
+};
+const ensureGatewayMethodConfigured = () => true;
+const capturePromptTemplate = () => {};
+const collectPromptSource = () => null;
+const _inceptionAuthHeaders = () => ({});
+const showToast = () => {};
+const closeConfigDialog = () => {};
+const render = () => {};
+let createRequest;
+const fetch = async (url, options) => {
+  if (url === '/api/agents') createRequest = options;
+  return { ok: true, json: async () => ({}) };
+};
+` + jsFunc(t, indexHTML(t), "saveConfig") + `
+saveConfig().then(() => {
+  assert.ok(createRequest, 'Create Agent must submit its request');
+  assert.equal(createRequest.method, 'POST');
+  const { agent } = JSON.parse(createRequest.body);
+  assert.equal(agent.enabled, false);
+  assert.equal(agent.on_demand, true);
+}).catch(err => { console.error(err); process.exitCode = 1; });
+`
+	if out, err := runNodeStdin(node, script); err != nil {
+		t.Fatalf("Create Agent request check failed: %v\n%s", err, out)
 	}
 }
 

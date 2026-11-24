@@ -212,6 +212,7 @@ agents down, advisory stale, …) deliberately get none rather than a guess.
 | Error streak | "agent NAME model calls failing (N consecutive) — pin a working model" | red | Pin a working model on the agent card | spoke dashboard agent card |
 | Consent wedge | "agent(s) NAME stuck at Copilot consent — restarting in a loop" | amber | Complete the Copilot consent flow on the live pod dashboard | spoke dashboard |
 | No cadence | "agent(s) NAME enabled but never kicked — set cadences" | amber | Set cadences on the agent card | spoke dashboard agent card |
+| PR gate cannot be posted | "PR-contents gate cannot be posted: the Hive App has no Commit statuses write grant" (or "GitHub refused the gate's commit status write") | red when a required context depends on the gate, else amber | Accept the Hive App's pending Commit statuses (read and write) permission request in the organization settings, then press Re-check | GitHub App settings (organization owner) |
 | Hold stale | "awaiting human review — N held for approval" | amber | Review the needs-human queue | the repo's PR list (direct link) |
 | Channel lag | "spoke lags its channel — N commits behind stable" | amber | Check auto-upgrade / force rollout | hub fleet version controls |
 | Run waiting on human | "run waiting on human since \<time\>" | amber | A run has waited on a human decision since \<time\>. Approve or reject it from the dashboard Runs section or `!runs`. | spoke dashboard Runs |
@@ -272,6 +273,10 @@ consent-screen restart **within the last hour**. A live loop refreshes the
 stamp on every kick attempt; once you complete the consent flow on the
 spoke dashboard, no new restarts occur and the agent ages out of the list
 by itself.
+
+### PR gate cannot be posted
+
+When `auto_merge.pr_gate` is set for a repository (see [GitHub App setup](github-app-setup.md#pr-contents-gate-posted-by-the-hive)) the spoke reads the installation's granted Commit statuses permission at startup and every 15 minutes, and records any 403 on a status write per repository. A missing grant forces the gate off and never promotes it; a refused write is not retried for 15 minutes. The spoke reports the cause (`grant-missing` or `write-refused`) and whether a required context depends on the gate in its heartbeat. The hub turns the verdict **red** when the gate cannot be posted and a required check of a scoped repository is one the gate posts (or the repository's required set is not declared, which counts as dependent), because merges would stall behind a check nobody can post. Otherwise the verdict is **amber**. Before the 2026-12-02 cutoff a repository in `shadow` mode is judged amber at worst, since the workflow still supplies the required check; from the cutoff, or in `enforce`, a dependency makes it red. A harder red keeps its own headline. A hive without the setting reports nothing and is judged exactly as before. The cause clears with the next beat once the grant is accepted.
 
 ### No cadence
 

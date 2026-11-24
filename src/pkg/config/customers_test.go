@@ -167,3 +167,87 @@ func TestCustomersMentionSearchRequestsPerHour(t *testing.T) {
 		})
 	}
 }
+
+func TestCustomersHubImportEnabled(t *testing.T) {
+	t.Setenv(EnvCustomersEnabled, "")
+	t.Setenv(EnvCustomersHubImportEnabled, "")
+	cfg := &Config{}
+	if cfg.CustomersHubImportEnabled() {
+		t.Fatal("hub import must default off")
+	}
+	off, on := false, true
+	cfg.Customers.HubImport.Enabled = &on
+	if !cfg.CustomersHubImportEnabled() {
+		t.Fatal("explicit true")
+	}
+	t.Setenv(EnvCustomersHubImportEnabled, "false")
+	if cfg.CustomersHubImportEnabled() {
+		t.Fatal("env false must win over config true")
+	}
+	cfg.Customers.HubImport.Enabled = &off
+	t.Setenv(EnvCustomersHubImportEnabled, "true")
+	if !cfg.CustomersHubImportEnabled() {
+		t.Fatal("env true must win over config false")
+	}
+	cfg.Customers.Enabled = &off
+	if cfg.CustomersHubImportEnabled() {
+		t.Fatal("hub import needs Customers on")
+	}
+	var none *Config
+	t.Setenv(EnvCustomersHubImportEnabled, "")
+	if none.CustomersHubImportEnabled() {
+		t.Fatal("a nil config has hub import off")
+	}
+}
+
+func TestCustomersProfileFillEnabled(t *testing.T) {
+	t.Setenv(EnvCustomersEnabled, "")
+	t.Setenv(EnvCustomersProfileFillEnabled, "")
+	t.Setenv(EnvCustomersMentionSearchEnabled, "")
+	cfg := &Config{}
+	if cfg.CustomersProfileFillEnabled() {
+		t.Fatal("profile fill must default off")
+	}
+	off, on := false, true
+	// Independent of the accept-time mention search.
+	cfg.Customers.MentionSearch.Enabled = &on
+	if cfg.CustomersProfileFillEnabled() {
+		t.Fatal("mention_search must not turn the profile fill on")
+	}
+	cfg.Customers.MentionSearch.Enabled = &off
+	cfg.Customers.ProfileFill.Enabled = &on
+	if !cfg.CustomersProfileFillEnabled() || cfg.CustomersMentionSearchEnabled() {
+		t.Fatal("profile_fill must turn on alone")
+	}
+	t.Setenv(EnvCustomersProfileFillEnabled, "false")
+	if cfg.CustomersProfileFillEnabled() {
+		t.Fatal("env false must win over config true")
+	}
+	cfg.Customers.ProfileFill.Enabled = &off
+	t.Setenv(EnvCustomersProfileFillEnabled, "true")
+	if !cfg.CustomersProfileFillEnabled() {
+		t.Fatal("env true must win over config false")
+	}
+	cfg.Customers.Enabled = &off
+	if cfg.CustomersProfileFillEnabled() {
+		t.Fatal("profile fill needs Customers on")
+	}
+	var none *Config
+	t.Setenv(EnvCustomersProfileFillEnabled, "")
+	if none.CustomersProfileFillEnabled() {
+		t.Fatal("a nil config has the profile fill off")
+	}
+}
+
+func TestCustomersProfileFillRequestsPerHour(t *testing.T) {
+	for in, want := range map[int]int{
+		0:                                     DefaultCustomersProfileFillMaxPerHour,
+		-3:                                    DefaultCustomersProfileFillMaxPerHour,
+		25:                                    25,
+		MaxCustomersProfileFillMaxPerHour + 1: MaxCustomersProfileFillMaxPerHour,
+	} {
+		if got := (CustomersProfileFillConfig{MaxRequestsPerHour: in}).RequestsPerHour(); got != want {
+			t.Errorf("RequestsPerHour(%d) = %d, want %d", in, got, want)
+		}
+	}
+}

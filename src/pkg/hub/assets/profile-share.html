@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Profile sharing — Hive Hub</title>
+  <link rel="stylesheet" href="/tokens.css">
+  <link rel="stylesheet" href="/components.css">
+  <link rel="stylesheet" href="/static/profile-share.css">
+  <script src="/static/profile-share.js" defer></script>
+</head>
+<body data-text-version="{{CONSENT_TEXT_VERSION}}">
+  <header class="site-header">
+    <a href="/" class="brand">🐝 Hive</a>
+    <nav aria-label="Hub navigation">
+      <a href="/dashboard">My Hives</a>
+      <a href="/fleet">Fleet</a>
+    </nav>
+  </header>
+  <main>
+    <h1>Profile sharing</h1>
+    <p class="muted">Manage your own Hub details and choose what may be shared with each hive’s Customers area.</p>
+    <noscript><p>Enable JavaScript to manage your details and consent.</p></noscript>
+
+    <section aria-labelledby="details-heading">
+      <h2 id="details-heading">Your details</h2>
+      <p class="muted">Each field is saved separately. A value you didn’t enter yourself isn’t eligible for sharing unless you type and save it here. Clearing a value leaves that field empty; it does not change your selections for any hive.</p>
+      <p id="profile-status" class="status" role="status">Loading your details…</p>
+      <div id="profile-fields" class="profile-fields"></div>
+    </section>
+
+    <section aria-labelledby="hives-heading">
+      <h2 id="hives-heading">Hives</h2>
+      <div class="panel disclosure" id="sharing-disclosure">
+        <h3>What you’re agreeing to</h3>
+        <p><strong>What is sent.</strong> Your real name is sent only to the hives you switch on, and only if you entered it yourself on this page or on the hive request form. Your country and organization are treated as public: each hive you hold a grant on can show them on its Customers page without asking you, labeled with where they came from (entered by you, set by a hub administrator, inferred from your browser language, or, for organization only, derived from a known organization email domain such as ibm.com). A personal or free-mail email domain is never used, and your email address is never sent. To remove a country or organization from every hive, clear it here; hives drop it within three days.</p>
+        <p><strong>To whom.</strong> Only to that hive, and only when it has already confirmed you as one of its customers by your GitHub login. That hive’s owner and anyone with Customers access there can view and export the values. The hive asks by sending salted hashes of its customers’ GitHub logins, so when it matches you, the Hub learns that this hive has you as a customer.</p>
+        <p><strong>What is never sent.</strong> Notes, email addresses, Slack IDs, and profile details from GitHub or your sign-in provider. Your real name is never sent without your consent, even if an administrator entered one. Information already visible to hive owners through existing access lists is unaffected by these choices.</p>
+        <p><strong>Withdrawing.</strong> Withdrawal, or turning a field off, stops sharing on the Hub immediately. The hive removes the values it received at its next sync, normally within an hour, and in any case within three days if it cannot reach the Hub. A value someone on the hive changed by hand is theirs and is not removed.</p>
+        <p><strong>What withdrawal cannot undo.</strong> The Hub cannot recall a copy the hive already exported, and cannot undo what someone already saw or copied.</p>
+        <p>Boxes always start unchecked; any previous selection is shown separately. Confirming replaces the entire selection for that hive. Leave nothing selected and use <strong>Withdraw consent</strong> to remove the entire selection. When this text changes materially, sharing pauses until you confirm again.</p>
+      </div>
+      <p id="consents-status" class="status" role="status">Loading your hives…</p>
+      <div id="consent-hives" class="consent-hives"></div>
+    </section>
+  </main>
+  <footer class="muted">
+    &copy; Copyright Hive Commons Series of LF Projects, LLC<br>
+    For website terms of use, trademark policy and other project policies please see <a href="https://lfprojects.org/policies/">https://lfprojects.org/policies/</a>.
+  </footer>
+
+  <template id="profile-field-template">
+    <form class="panel detail" method="post" autocomplete="off">
+      <h3></h3>
+      <p class="current"></p>
+      <p class="muted source"></p>
+      <fieldset>
+        <label><span></span><input type="text" required></label>
+        <div class="actions">
+          <button class="hv-btn btn-primary" type="submit">Save</button>
+          <button class="hv-btn btn-outline clear" type="button">Clear saved value</button>
+        </div>
+      </fieldset>
+      <p class="status" role="status"></p>
+    </form>
+  </template>
+  <template id="consent-hive-template">
+    <form class="panel consent" method="post" autocomplete="off" aria-describedby="sharing-disclosure">
+      <h3 tabindex="-1"></h3>
+      <p class="muted saved-selection"></p>
+      <p class="muted delivery"></p>
+      <fieldset>
+        <legend>Choose fields for this hive</legend>
+        <div class="choices"></div>
+      </fieldset>
+      <div class="actions">
+        <button class="hv-btn btn-primary" type="submit">Confirm selection</button>
+        <button class="hv-btn btn-outline withdraw" type="button">Withdraw consent</button>
+      </div>
+      <p class="status" role="status"></p>
+    </form>
+  </template>
+</body>
+</html>

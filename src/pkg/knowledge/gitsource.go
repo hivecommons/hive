@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/upstreamproxy"
+	"github.com/hivecommons/hive/pkg/netguard"
 )
 
 const (
@@ -227,7 +228,7 @@ func (g *GitSource) Sync(ctx context.Context) error {
 		return fmt.Errorf("clone dir %s is not a git repo", g.cloneDir)
 	}
 
-	if err := gitSourcePull(ctx, g.cloneDir); err != nil {
+	if err := gitSourcePull(ctx, g.cloneDir, g.config.URL); err != nil {
 		return fmt.Errorf("git source %s: pull failed: %w", g.config.Name, err)
 	}
 
@@ -316,7 +317,7 @@ func (g *GitSource) ensureCloned(ctx context.Context) error {
 			"name", g.config.Name,
 			"dir", g.cloneDir,
 		)
-		return gitSourcePull(ctx, g.cloneDir)
+		return gitSourcePull(ctx, g.cloneDir, g.config.URL)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(g.cloneDir), 0o755); err != nil {
@@ -334,7 +335,11 @@ func (g *GitSource) ensureCloned(ctx context.Context) error {
 
 	args = append(args, "--", g.config.URL, g.cloneDir)
 
-	cmd := exec.CommandContext(cloneCtx, "git", gitCmdArgs(args...)...)
+	pin, err := gitSourcePinArgs(cloneCtx, g.config.URL)
+	if err != nil {
+		return fmt.Errorf("git clone: %w", err)
+	}
+	cmd := exec.CommandContext(cloneCtx, "git", gitCmdArgs(append(pin, args...)...)...)
 	cmd.Env = gitSourceEnv()
 
 	output, err := cmd.CombinedOutput()
@@ -362,7 +367,11 @@ func (g *GitSource) ensureCloned(ctx context.Context) error {
 var gitSourceLsRemote = func(ctx context.Context, url string) ([]byte, error) {
 	lsCtx, cancel := context.WithTimeout(ctx, gitSourceLookupTimeout*2)
 	defer cancel()
-	cmd := exec.CommandContext(lsCtx, "git", gitCmdArgs("ls-remote", "--symref", "--", url, "HEAD")...)
+	pin, err := gitSourcePinArgs(lsCtx, url)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(lsCtx, "git", gitCmdArgs(append(pin, "ls-remote", "--symref", "--", url, "HEAD")...)...)
 	cmd.Env = gitSourceEnv()
 	return cmd.CombinedOutput()
 }
@@ -615,7 +624,7 @@ func parseGitSourceIPv4Literal(host string) (net.IP, bool) {
 		return nil, false
 	}
 
-	return net.IPv4(byte(value>>24), byte(value>>16), byte(value>>8), byte(value)), true
+	return net.IPv4(byte(value>>24), byte(value>>16), byte(value>>8), byte(value)), true // #nosec G115 -- value <= 0xffffffff is checked above; each shift-and-truncate extracts one octet by design
 }
 
 func gitURLContainsTransportHelperSeparator(raw string) bool {
@@ -665,6 +674,105 @@ var gitNoRedirectArgs = []string{"-c", "http.followRedirects=false"}
 // Every git invocation that talks to a REMOTE must go through this.
 func gitCmdArgs(args ...string) []string {
 	return append(append([]string{}, gitNoRedirectArgs...), args...)
+}
+
+const (
+	// gitHTTPSPort and gitHTTPPort are the ports git dials for a remote URL
+	// that names none.
+	gitHTTPSPort = "443"
+	gitHTTPPort  = "80"
+
+	// gitCurlResolveConfig is the git config key (git 2.37+) that hands
+	// libcurl a CURLOPT_RESOLVE entry, so curl connects to the listed
+	// addresses for host:port instead of looking the name up itself.
+	gitCurlResolveConfig = "http.curloptResolve"
+)
+
+// gitSourceOptInRefusedReasons are the address classes refused even when the
+// operator set HIVE_ALLOW_PRIVATE_GIT_SOURCE. The opt-in exists for an
+// internal Git server on a private, loopback or carrier-grade NAT address; no
+// Git server lives on link-local (cloud instance metadata), multicast or an
+// unspecified address, so those stay refused.
+var gitSourceOptInRefusedReasons = map[string]bool{
+	netguard.ReasonLinkLocal:   true,
+	netguard.ReasonMulticast:   true,
+	netguard.ReasonUnspecified: true,
+	netguard.ReasonThisNetwork: true,
+	netguard.ReasonBroadcast:   true,
+}
+
+// gitSourceRefuse is the dial-time check for a resolved "ip:port" target.
+// By default every class netguard names is refused; with the operator opt-in
+// only gitSourceOptInRefusedReasons are.
+func gitSourceRefuse(_ context.Context, target string) bool {
+	host, _, err := net.SplitHostPort(target)
+	if err != nil {
+		return true
+	}
+	addr, ok := netguard.ParseHostLiteral(host)
+	if !ok {
+		return true
+	}
+	reason := netguard.DenyReason(addr)
+	if allowPrivateGitSource() {
+		return gitSourceOptInRefusedReasons[reason]
+	}
+	return reason != ""
+}
+
+// gitSourcePinArgs closes the rebinding window between validating a git
+// source URL and git connecting to it (#19221, part of #18986).
+// ValidateGitSourceURLContext resolves the host, and git (libcurl) used to
+// resolve it again on every clone, ls-remote and pull, so a name whose
+// answer changed between the two lookups was checked as public and fetched
+// as private. This resolves the host once through gitSourceResolver, refuses
+// the fetch when any answer is barred or the lookup fails or comes back empty
+// (fail closed), and returns the leading `-c http.curloptResolve=...` override
+// that makes curl connect only to the addresses it checked. Redirects are
+// already refused by gitNoRedirectArgs, so the pinned host is the only host
+// the command talks to.
+//
+// An IP-literal host needs no pin (curl does not resolve it); it is still
+// classified here. Behind an upstream forward proxy (gitSourceEnv) curl
+// connects to the proxy and the proxy resolves the target, the same documented
+// limit as netguard.PinnedDialer.Transport.
+func gitSourcePinArgs(ctx context.Context, rawURL string) ([]string, error) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed.Hostname() == "" {
+		return nil, fmt.Errorf("%w: git URL host is required", netguard.ErrRefused)
+	}
+	host := strings.ToLower(parsed.Hostname())
+	port := parsed.Port()
+	if port == "" {
+		port = gitHTTPSPort
+		if strings.EqualFold(parsed.Scheme, "http") {
+			port = gitHTTPPort
+		}
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, gitSourceLookupTimeout)
+	defer cancel()
+	targets, err := netguard.PinnedDialer{
+		Resolve: func(ctx context.Context, h string) ([]string, error) { return gitSourceResolver(ctx, h) },
+		Refuse:  gitSourceRefuse,
+	}.Targets(lookupCtx, net.JoinHostPort(host, port))
+	if err != nil {
+		return nil, err
+	}
+	if _, literal := netguard.ParseHostLiteral(host); literal {
+		return nil, nil
+	}
+	addrs := make([]string, 0, len(targets))
+	for _, t := range targets {
+		ip, _, err := net.SplitHostPort(t)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", netguard.ErrRefused, err)
+		}
+		if strings.Contains(ip, ":") {
+			ip = "[" + ip + "]"
+		}
+		addrs = append(addrs, ip)
+	}
+	return []string{"-c", gitCurlResolveConfig + "=" + host + ":" + port + ":" + strings.Join(addrs, ",")}, nil
 }
 
 func gitSourceEnv() []string {

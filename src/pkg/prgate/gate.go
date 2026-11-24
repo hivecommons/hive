@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -36,12 +37,15 @@ func ParseMode(s string) (Mode, bool) {
 	return ModeOff, false
 }
 
-// EnforceAvailable is false until the grant check and the visible failure
-// paths land. While false, a configured `enforce` runs as `shadow`: it never
-// posts the real required names.
-const EnforceAvailable = false
+// EnforceAvailable reports that `enforce` is built: a configured `enforce`
+// posts the real required names, but only while the installation's grant
+// check has positively confirmed Commit statuses write (see Gate.mode). Any
+// other answer runs it as `shadow` or, with the grant known missing, posts
+// nothing at all.
+const EnforceAvailable = true
 
-// Effective returns the mode the gate actually runs in for a configured one.
+// Effective returns the mode the gate runs in for a configured one, before the
+// grant check is applied.
 func Effective(m Mode) Mode {
 	if m == ModeEnforce && !EnforceAvailable {
 		return ModeShadow
@@ -93,9 +97,11 @@ type Status struct {
 // Plan returns the statuses a mode posts for a title. Off posts nothing.
 // Shadow posts only the shadow-named context, whose description carries both
 // verdicts so the operator can read them without a second status. Enforce
-// posts the real required names: the wrapper is green by design (it fails
-// only when a verdict cannot be recorded) and PR Type / PR Issue carry the
-// verdicts.
+// posts the real required names in the order pr-verifier.yml settles them:
+// PR Type and PR Issue carry the verdicts, then the wrapper `verify PR
+// contents`, which is green by design. HandleEvent turns the wrapper red only
+// when a verdict could not be recorded, exactly as the workflow job fails
+// only then.
 func Plan(mode Mode, title string) []Status {
 	typeV, issueV := PRTypeVerdict(title), PRIssueVerdict(title)
 	switch mode {
@@ -103,12 +109,20 @@ func Plan(mode Mode, title string) []Status {
 		return []Status{{ContextVerifyShadow, StateSuccess, clip(fmt.Sprintf("PR Type: %s; PR Issue: %s", typeV.Conclusion, issueV.Conclusion))}}
 	case ModeEnforce:
 		return []Status{
-			{ContextVerify, StateSuccess, clip("PR contents verified by the hive: " + typeV.Conclusion + " / " + issueV.Conclusion)},
 			{ContextPRType, stateOf(typeV), clip(typeV.Summary)},
 			{ContextPRIssue, stateOf(issueV), clip(issueV.Summary)},
+			{ContextVerify, StateSuccess, clip("PR contents verified by the hive: " + typeV.Conclusion + " / " + issueV.Conclusion)},
 		}
 	}
 	return nil
+}
+
+// unrecordedWrapper is the wrapper status posted in place of the green one
+// when a verdict could not be recorded on the head: a recording failure, not
+// a verdict on the PR. Any later event or the backstop retries it.
+func unrecordedWrapper(names []string) Status {
+	return Status{ContextVerify, StateFailure, clip("The hive could not record " + strings.Join(names, " and ") +
+		" on this head; add or remove a label to retry. Not a verdict on the PR.")}
 }
 
 func stateOf(v Verdict) string {
@@ -165,6 +179,8 @@ type RepoStats struct {
 	Agreements     int
 	Disagreements  int
 	LastComparison string
+
+	forbiddenUntil time.Time
 }
 
 type expectation struct {
@@ -180,6 +196,9 @@ type Gate struct {
 	ModeOf func(repo string) Mode
 	Log    *slog.Logger
 	Now    func() time.Time
+	// Grant reads the installation's Commit statuses grant. Nil means no grant
+	// check (a credential with no App installation).
+	Grant GrantProvider
 
 	mu       sync.Mutex
 	sent     map[string]posted
@@ -187,6 +206,7 @@ type Gate struct {
 	stats    map[string]*RepoStats
 	prLocks  map[string]*prLock
 	inflight int
+	grant    grantState
 }
 
 type prLock struct {
@@ -203,15 +223,34 @@ func New(api API, modeOf func(string) Mode, log *slog.Logger) *Gate {
 		sent: map[string]posted{}, expect: map[string]expectation{}, stats: map[string]*RepoStats{}, prLocks: map[string]*prLock{}}
 }
 
+// mode is the mode the gate actually runs in for repo: the configured one,
+// forced off while the last grant check found the Commit statuses write grant
+// missing (no status of any name can be written then), and with enforce run as
+// shadow until a grant check has positively confirmed the write grant. It
+// never promotes.
 func (g *Gate) mode(repo string) Mode {
 	if g == nil || g.ModeOf == nil {
 		return ModeOff
 	}
-	return Effective(g.ModeOf(repo))
+	m := Effective(g.ModeOf(repo))
+	if m == ModeOff {
+		return ModeOff
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	switch {
+	case g.grant.info.Missing():
+		return ModeOff
+	case m == ModeEnforce && !g.enforceGrantedLocked():
+		return ModeShadow
+	}
+	return m
 }
 
-// Active reports whether the gate does anything for repo.
-func (g *Gate) Active(repo string) bool { return g.mode(repo) != ModeOff }
+// Active reports whether repo is configured for the gate (a mode other than
+// off). A forced-off gate is still active: its events must reach the grant
+// check, which is how it notices the grant arriving.
+func (g *Gate) Active(repo string) bool { return Effective(g.ConfiguredMode(repo)) != ModeOff }
 
 // TryAcquire reserves one of a bounded number of concurrent event slots; the
 // caller releases it with Release. A burst beyond the bound is dropped and
@@ -268,9 +307,16 @@ func (g *Gate) repoStats(repo string) *RepoStats {
 // read of the PR still shows that head. Nothing is posted for a draft or
 // closed PR. Already-posted identical statuses are not posted again.
 func (g *Gate) HandleEvent(ctx context.Context, repo string, number int, eventHead string) Outcome {
+	if Effective(g.ConfiguredMode(repo)) == ModeOff {
+		return Outcome{Skipped: SkipModeOff}
+	}
+	if g.RepoForbidden(repo) {
+		return Outcome{Skipped: SkipForbiddenCooldown}
+	}
+	g.RefreshGrant(ctx)
 	mode := g.mode(repo)
 	if mode == ModeOff {
-		return Outcome{Skipped: SkipModeOff}
+		return Outcome{Skipped: SkipGrantMissing}
 	}
 	if !headSHARe.MatchString(eventHead) {
 		return Outcome{Skipped: SkipBadHead}
@@ -295,7 +341,11 @@ func (g *Gate) HandleEvent(ctx context.Context, repo string, number int, eventHe
 	// this head can arrive at any moment and is compared against it.
 	g.noteExpectation(repo, eventHead, subject.Title)
 	out := Outcome{Skipped: SkipUnchanged}
+	var unrecorded []string
 	for _, st := range Plan(mode, subject.Title) {
+		if st.Context == ContextVerify && len(unrecorded) > 0 {
+			st = unrecordedWrapper(unrecorded)
+		}
 		key := strings.ToLower(repo) + "@" + eventHead + "|" + st.Context
 		g.mu.Lock()
 		prev, seen := g.sent[key]
@@ -306,7 +356,14 @@ func (g *Gate) HandleEvent(ctx context.Context, repo string, number int, eventHe
 		if err := g.post(ctx, repo, number, eventHead, st); err != nil {
 			out.Err = err
 			out.Skipped = ""
-			break
+			// A 403 means nothing more can be written. Any other failure
+			// leaves this verdict unrecorded and the wrapper says so, as the
+			// workflow job does.
+			if errors.Is(err, ErrForbidden) || errors.Is(err, ErrContextNotAllowed) || st.Context == ContextVerify {
+				break
+			}
+			unrecorded = append(unrecorded, st.Context)
+			continue
 		}
 		g.mu.Lock()
 		if len(g.sent) >= maxSentEntries {
@@ -327,10 +384,11 @@ func (g *Gate) post(ctx context.Context, repo string, number int, sha string, st
 		return err
 	}
 	err := g.API.PostStatus(ctx, repo, number, sha, st.Context, st.State, st.Description)
+	mode := g.mode(repo)
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	s := g.repoStats(repo)
-	s.Mode = g.mode(repo)
+	s.Mode = mode
 	s.LastPostAt, s.LastPostHead = g.Now(), sha
 	switch {
 	case err == nil:
@@ -340,6 +398,8 @@ func (g *Gate) post(ctx context.Context, repo string, number int, sha string, st
 	case errors.Is(err, ErrForbidden):
 		s.Forbidden++
 		s.LastPost = ResultForbidden
+		s.forbiddenUntil = g.Now().Add(ForbiddenCooldown)
+		g.invalidateGrantLocked()
 		g.Log.Warn("pr-gate: status refused with 403, the installation has no Commit statuses write grant", "repo", repo, "head", sha, "context", st.Context, "error", err)
 	default:
 		s.Errors++
@@ -431,4 +491,15 @@ func (g *Gate) Snapshot() map[string]RepoStats {
 		out[r] = *g.stats[r]
 	}
 	return out
+}
+
+var defaultGate atomic.Pointer[Gate]
+
+// SetDefault registers the process's gate for readers that cannot be handed
+// one (the merge lanes' held reason). Nil clears it.
+func SetDefault(g *Gate) { defaultGate.Store(g) }
+
+// DefaultHoldReason is HoldReason on the registered gate ("" when none).
+func DefaultHoldReason(repo, statusContext string) string {
+	return defaultGate.Load().HoldReason(repo, statusContext)
 }

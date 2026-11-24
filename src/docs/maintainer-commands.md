@@ -203,6 +203,14 @@ the park label, and whether that counted as the hive's. The line is logged
 at info level once per issue and reason, and at debug level on the passes
 that repeat it.
 
+On an issue, a first line of `Decision: <text>` (or `Decision (owner): <text>`)
+is read as `/hive decision <text>`, under the same permission, freshness and
+unedited rules; the lines after it are kept as part of the decision. A first
+line that names a decision without recording one (`Decision:` with no text,
+`decide ...`, `option 1`, or a bare option letter such as `B`) un-parks nothing
+and gets a reply telling the commenter to use `/hive decision <text>`. PRs keep
+the strict `/hive decision` shape.
+
 The on-demand `/hive help` workflow uses the same first-line command shape, is
 ignored for bot comments, and allows `triage`, `write`, `maintain`, or `admin`
 because it only posts reference text and changes no labels.
@@ -213,7 +221,12 @@ On a PR the approval is a trusted merger's: a normal GitHub **Approve**
 review on the current head SHA, or a `/hive approve` reply posted after the
 swarm's `requires_human` verdict (the reply is how an owner releases a PR
 they opened themselves, since GitHub refuses the self-review). Either clears
-`stage/085-needs-decision` for any author kind/lane on the next pass. No
+`stage/085-needs-decision` for any author kind/lane on the next pass.
+Approving the head from the Hive dashboard does the same: the App's
+`/approve` comment carries a `hive:pr-approval head=<sha> by=<login>` marker,
+which the gate consumes only when the comment is App-authored and unedited,
+the marker names the current head, and the named login is a trusted merger
+([#19536](https://github.com/hivecommons/hive/issues/19536)). No
 special review body is required; the queued human-merge lane's
 `Approved by @... for Hive auto-merge on green CI.` body remains specific to
 that queue flow. A swarm `changes_requested` or `reject` verdict is not

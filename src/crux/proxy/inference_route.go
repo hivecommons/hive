@@ -303,20 +303,33 @@ func inferenceTransport(caBundle string) (http.RoundTripper, error) {
 // inferenceHTTPClient returns the client for forwarding translated requests
 // to the route's endpoint. Like http.DefaultClient it has no overall
 // timeout — streaming completions can legitimately run for minutes.
+// Redirects follow egressCheckRedirect (at most egressMaxRedirects hops,
+// credentials and route headers stripped off-host).
+// The connect and response-header timeouts are opt-in
+// (governor.inference_resilience) and the idle-stream timeout wraps the
+// response body, not the client.
 func inferenceHTTPClient(route *InferenceRoute) (*http.Client, error) {
 	rt, err := inferenceTransport(route.CABundle)
 	if err != nil {
 		return nil, err
 	}
-	if rt == http.DefaultTransport {
-		return http.DefaultClient, nil
+	// Opt-in connect and response-header timeouts (hivecommons/hive#19057).
+	// Off by default: the branch below is skipped and the client is exactly
+	// the one returned before.
+	if res := currentInferenceResilience(); res.ConnectTimeout > 0 || res.ResponseHeaderTimeout > 0 {
+		if tuned := tunedInferenceTransport(route.CABundle, rt, res); tuned != nil {
+			return &http.Client{Transport: tuned, CheckRedirect: egressCheckRedirect(routeSensitiveHeaders(route)...)}, nil
+		}
 	}
-	return &http.Client{Transport: rt}, nil
+	// Never http.DefaultClient: its redirect policy follows 10 hops and keeps
+	// the route's credentials on a same-domain or downgraded hop
+	// (hivecommons/hive#19222). The transport is unchanged.
+	return &http.Client{Transport: rt, CheckRedirect: egressCheckRedirect(routeSensitiveHeaders(route)...)}, nil
 }
 
 // newModelsRequest builds an authenticated GET {endpoint}/v1/models request.
 func newModelsRequest(endpoint, apiKey string) (*http.Request, error) {
-	req, err := http.NewRequest("GET", strings.TrimRight(endpoint, "/")+"/v1/models", nil)
+	req, err := http.NewRequest("GET", config.OpenAIURL(endpoint, "/models"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +348,7 @@ func FindEndpointForModel(endpoints []string, model, apiKey, caBundle string) st
 	if err != nil {
 		return ""
 	}
-	client := &http.Client{Timeout: endpointQueryTimeout, Transport: rt}
+	client := &http.Client{Timeout: endpointQueryTimeout, Transport: rt, CheckRedirect: egressCheckRedirect()}
 	for _, ep := range endpoints {
 		req, err := newModelsRequest(ep, apiKey)
 		if err != nil {
@@ -379,7 +392,7 @@ func queryMaxModelLen(endpoint, model, apiKey, caBundle string) int {
 	if rtErr != nil {
 		return 0
 	}
-	client := &http.Client{Timeout: maxModelLenQueryTimeout, Transport: rt}
+	client := &http.Client{Timeout: maxModelLenQueryTimeout, Transport: rt, CheckRedirect: egressCheckRedirect()}
 	req, err := newModelsRequest(endpoint, apiKey)
 	if err != nil {
 		return 0

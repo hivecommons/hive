@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/logscrub"
+
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 const (
@@ -679,6 +681,7 @@ func (f *GitHubActivityFeed) authorSuppressed(author string, forwardMerge bool, 
 const discordSuppressEmbeds = 1 << 2
 
 func (f *GitHubActivityFeed) postDiscord(ctx context.Context, content string) error {
+	content = prosefilter.Sanitize(content)
 	payload, err := json.Marshal(map[string]any{"content": content, "flags": discordSuppressEmbeds})
 	if err != nil {
 		return err

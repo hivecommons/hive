@@ -55,6 +55,26 @@ classifier is the control for that. Details and numbers:
 agent from merging code is the network proxy, which denies pull-request
 creation and merge calls for every agent, not `ioscan`.
 
+## Scan coverage
+
+| Where text comes from | What happens |
+|---|---|
+| Issue titles and bodies | Scanned |
+| Issue and PR comments | Scanned, one by one and as a joined thread |
+| PR bodies | Scanned |
+| PR reviews | Scanned |
+| Inbox items | Fenced in a nonce-tagged envelope |
+| Agent output | Checked for canaries |
+| Web fetches the agent makes | Not scanned |
+| MCP tool results | Not scanned |
+| Files in cloned repositories | Not scanned |
+| MCP tool definitions | Not scanned or pinned |
+
+The agent CLI reads the last four itself, so `ioscan` never sees them. The
+proxy and token tiers are the controls there. See
+[prompt-injection-trentina-comparison.md](prompt-injection-trentina-comparison.md)
+for the gaps this leaves.
+
 ## Configuration
 
 ```yaml
@@ -76,6 +96,7 @@ ioscan:
     cli_daily_quota: 500     # CLI backend only: calls per UTC day
     warn_threshold: 0.55
     block_threshold: 0.85
+  source_memory_days: 30 # default 30; 0 turns the source memory off
 ```
 
 * `fail_mode: open` withholds matched text and lets the task proceed.
@@ -165,8 +186,9 @@ L4↔L5 level change, applies immediately; a model endpoint change or a direct
 **What still passes.** The classifier has a budget of 64 calls per scheduler
 pass (8 with a CLI backend, see below). Text beyond that budget is passed on with a `budget_exhausted` skip in
 the audit log, in either fail mode; with a CLI backend, so is text beyond
-the daily quota. Review-bot threads are not sent to the classifier; the
-rules alone cover them.
+the daily quota. Text from a flagged source (see **Source memory** below) is
+the exception: it is always classified. Review-bot threads are not sent to
+the classifier; the rules alone cover them.
 
 **CLI backend.** A hive with no model endpoint, for example one whose agents
 all run on subscription CLIs, can run the classifier through a CLI instead
@@ -245,6 +267,29 @@ a few thousand input tokens per call; a hive that sees 200 new or edited
 untrusted texts a day spends well under a dollar a day. Pick a cheaper model
 with `classifier.model` or turn it off with `classifier.enabled: false` if
 that is too much.
+
+## Source memory
+
+The classifier cache is keyed by content, so on its own an attacker whose
+text was withheld could edit it slightly and be scored afresh, retrying
+until one variant passes. ioscan therefore remembers the source (#19440).
+When untrusted text is withheld for a high or critical injection finding,
+by a rule or by the classifier, its author and its issue or pull request
+are flagged for `source_memory_days` (default 30). Until the flag expires,
+untrusted text from that author, or on that issue or pull request:
+
+* is always sent to the classifier, even past the per-pass budget;
+* is withheld with an `injection.source_flagged` marker if the classifier
+  cannot answer or its daily quota is spent, whatever `classifier.fail_mode`
+  says;
+* is withheld with that marker when no classifier is installed, so it waits
+  for a maintainer.
+
+A text the classifier clears still passes. Withholding one text from a
+flagged source does not block the rest of the task. Trusted authors are
+never flagged, and labels neither flag a source nor are withheld for one,
+since triagers set them. The memory lives in the scheduler process, so a
+restart clears it. Set `source_memory_days: 0` to turn it off.
 
 ## Related checks that do not depend on ioscan
 

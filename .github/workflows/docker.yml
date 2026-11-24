@@ -74,9 +74,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'push' && github.run_id || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Read-only by default; the jobs that push to GHCR declare packages: write.
 permissions:
   contents: read
-  packages: write
 
 jobs:
   # Decide once whether this run pushes images to GHCR, and expose it as an
@@ -137,6 +137,12 @@ jobs:
       ref_name: ${{ steps.decide.outputs.ref_name }}
       cross_org: ${{ steps.registries.outputs.cross_org }}
       cross_secret: ${{ steps.registries.outputs.cross_secret }}
+      refresh_only: ${{ steps.refresh.outputs.refresh_only }}
+    # Job-level permissions replace the workflow's: gate pushes nothing, and
+    # the refresh-only check below reads commits and this workflow's runs.
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Decide push policy
         id: decide
@@ -245,6 +251,44 @@ jobs:
           echo "cross_secret=${cross_secret}" >> "$GITHUB_OUTPUT"
           echo "Native org: ${OWNER}; mirroring publishes to ghcr.io/${cross_org} using secret ${cross_secret}."
 
+      # Refresh-only heads (src/docs/ci-refresh-only-heads.md): when the new
+      # PR head is nothing but a verified hive App merge of the base whose
+      # three-dot diff is unchanged, this workflow already passed on the
+      # previous head, and every file the base delta brings in is docs or
+      # changelog only, the multi-arch build-* jobs below skip it. `gate`
+      # itself still runs and reports success, so the required context
+      # attaches as before. continue-on-error on both steps: a failure here
+      # leaves refresh_only empty, which means "build everything", and can
+      # never fail the required `gate`.
+      - name: Checkout refresh-only helper
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .refresh-check
+          persist-credentials: false
+          sparse-checkout: .github/scripts/refresh-only-head.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Detect refresh-only head
+        id: refresh
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_PATH: .github/workflows/docker.yml
+          # Allowlist: skip only when every pulled-in base file is docs or
+          # changelog; any other file in the base delta builds the images.
+          DELTA_POLICY: docs-only
+          GH_TOKEN: ${{ github.token }}
+        run: bash .refresh-check/.github/scripts/refresh-only-head.sh
+
   build:
     needs: gate
     # Runs when `gate` decided push=true, i.e. a long-lived branch or a
@@ -272,7 +316,8 @@ jobs:
     if: >-
       (needs.gate.outputs.push == 'true' ||
        (github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository)) &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        needs.gate.outputs.refresh_only != 'true')) &&
       !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:
@@ -287,6 +332,9 @@ jobs:
             timeout_minutes: 75
     # Public PRs use the same free native ARM64 VM as the Podman arm64 lane.
     # Explicit ARM64 overrides and all release/push runner selection stay intact.
+    permissions:
+      contents: read
+      packages: write
     runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false && '["ubuntu-24.04-arm"]' || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]')) || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
@@ -583,6 +631,10 @@ jobs:
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 20
     needs: [gate, build]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing
     steps:
       - name: Checkout tag publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -713,6 +765,98 @@ jobs:
             docker buildx imagetools create -t "${CROSS_IMAGE}:${tag}" "${NATIVE_IMAGE}@${digest}"
           done
 
+      # Keyless signature of the manifest-list digest behind every tag we just
+      # published, so `cosign verify` works on the tags users actually pull
+      # (not just the per-arch digests). Runs AFTER the cross-org mirror so a
+      # Sigstore outage can never skip the mirror. cosign stores the signature
+      # as a separate sha256-<digest>.sig object, leaving the image manifest
+      # untouched (#3760). Verify: src/docs/releases.md.
+      # Direct pinned install instead of sigstore/cosign-installer: the
+      # installer's first command shells out to `envsubst` (gettext-base),
+      # which the self-hosted ARC runner image does not ship, so every merge
+      # job failed with exit 127 (#19590). Same convention as the pinned
+      # `just` installs: fixed version + per-arch SHA256 from the release's
+      # cosign_checksums.txt. Installs into RUNNER_TEMP (no sudo needed).
+      - name: Install cosign
+        run: |
+          set -euo pipefail
+          COSIGN_VERSION=v3.1.4
+          case "$(uname -m)" in
+            x86_64)
+              COSIGN_ARCH=amd64
+              COSIGN_SHA256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+              ;;
+            aarch64|arm64)
+              COSIGN_ARCH=arm64
+              COSIGN_SHA256=ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2
+              ;;
+            *)
+              echo "::error::unsupported runner arch for cosign: $(uname -m)"
+              exit 1
+              ;;
+          esac
+          bin_dir="${RUNNER_TEMP}/cosign-bin"
+          mkdir -p "$bin_dir"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o "${bin_dir}/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${COSIGN_ARCH}"
+          echo "${COSIGN_SHA256}  ${bin_dir}/cosign" | sha256sum -c -
+          chmod 0755 "${bin_dir}/cosign"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          "${bin_dir}/cosign" version
+
+      # The mirror step may have replaced the GHCR login with the cross-org
+      # PAT (one credential per host); cosign needs native-org write access.
+      - name: Log in to GHCR (native org, for signing)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign published tags with cosign
+        env:
+          NATIVE_IMAGE: ghcr.io/${{ github.repository_owner }}/hive
+          BRANCH: ${{ needs.gate.outputs.ref_name }}
+          GIT_SHA: ${{ needs.gate.outputs.sha }}
+          # Mirror publish-image-tags.sh's positional args in the publish step
+          # above — keep in lockstep with that call.
+          SIGN_LATEST_TAG: "true"
+          RELEASE_BRANCH: "v5"
+          CHANNELS: "candidate"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          pushed=(/tmp/digests/*)
+          if [ "${#pushed[@]}" -eq 0 ]; then
+            echo "no per-arch digests were pushed — nothing to sign"
+            exit 0
+          fi
+          branch_tag="${BRANCH//\//-}"
+          tags=("${GIT_SHA:0:7}" "${branch_tag}-latest")
+          if [ "$SIGN_LATEST_TAG" = "true" ]; then tags+=("latest"); fi
+          if [ "$BRANCH" = "$RELEASE_BRANCH" ] && [ -n "$CHANNELS" ]; then
+            IFS=, read -ra channel_tags <<<"$CHANNELS"
+            for ch in "${channel_tags[@]}"; do [ -n "$ch" ] && tags+=("$ch"); done
+          fi
+          declare -A signed=()
+          for tag in "${tags[@]}"; do
+            if ! digest=$(docker buildx imagetools inspect \
+                "${NATIVE_IMAGE}:${tag}" --format '{{.Manifest.Digest}}' 2>&1); then
+              if grep -Eqi 'manifest unknown|manifest.*not found|not found.*manifest|no such manifest|(^|[[:space:]:])not found$' <<<"$digest"; then
+                echo "native tag ${NATIVE_IMAGE}:${tag} does not exist — nothing to sign for it"
+                continue
+              fi
+              echo "::error::could not inspect ${NATIVE_IMAGE}:${tag}" >&2
+              echo "$digest" >&2
+              exit 1
+            fi
+            # Tags can share a digest; one signature covers them all.
+            [ -n "${signed[$digest]:-}" ] && continue
+            signed[$digest]=1
+            echo "Signing ${NATIVE_IMAGE}@${digest} (${tag})"
+            cosign sign --yes "${NATIVE_IMAGE}@${digest}"
+          done
+
   build-contributor:
     needs: gate
     # Only when gate says push=true, same as `build` above (#4965).
@@ -729,7 +873,8 @@ jobs:
     if: >-
       (needs.gate.outputs.push == 'true' ||
        (github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository)) &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        needs.gate.outputs.refresh_only != 'true')) &&
       !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:
@@ -742,6 +887,9 @@ jobs:
             self_hosted: true
             qemu: true
             timeout_minutes: 75
+    permissions:
+      contents: read
+      packages: write
     runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false && '["ubuntu-24.04-arm"]' || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]')) || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
@@ -823,6 +971,10 @@ jobs:
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 20
     needs: [gate, build-contributor]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing
     steps:
       - name: Checkout tag publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -925,6 +1077,98 @@ jobs:
             docker buildx imagetools create -t "${CROSS_IMAGE}:${tag}" "${NATIVE_IMAGE}@${digest}"
           done
 
+      # Keyless signature of the manifest-list digest behind every tag we just
+      # published, so `cosign verify` works on the tags users actually pull
+      # (not just the per-arch digests). Runs AFTER the cross-org mirror so a
+      # Sigstore outage can never skip the mirror. cosign stores the signature
+      # as a separate sha256-<digest>.sig object, leaving the image manifest
+      # untouched (#3760). Verify: src/docs/releases.md.
+      # Direct pinned install instead of sigstore/cosign-installer: the
+      # installer's first command shells out to `envsubst` (gettext-base),
+      # which the self-hosted ARC runner image does not ship, so every merge
+      # job failed with exit 127 (#19590). Same convention as the pinned
+      # `just` installs: fixed version + per-arch SHA256 from the release's
+      # cosign_checksums.txt. Installs into RUNNER_TEMP (no sudo needed).
+      - name: Install cosign
+        run: |
+          set -euo pipefail
+          COSIGN_VERSION=v3.1.4
+          case "$(uname -m)" in
+            x86_64)
+              COSIGN_ARCH=amd64
+              COSIGN_SHA256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+              ;;
+            aarch64|arm64)
+              COSIGN_ARCH=arm64
+              COSIGN_SHA256=ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2
+              ;;
+            *)
+              echo "::error::unsupported runner arch for cosign: $(uname -m)"
+              exit 1
+              ;;
+          esac
+          bin_dir="${RUNNER_TEMP}/cosign-bin"
+          mkdir -p "$bin_dir"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o "${bin_dir}/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${COSIGN_ARCH}"
+          echo "${COSIGN_SHA256}  ${bin_dir}/cosign" | sha256sum -c -
+          chmod 0755 "${bin_dir}/cosign"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          "${bin_dir}/cosign" version
+
+      # The mirror step may have replaced the GHCR login with the cross-org
+      # PAT (one credential per host); cosign needs native-org write access.
+      - name: Log in to GHCR (native org, for signing)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign published tags with cosign
+        env:
+          NATIVE_IMAGE: ghcr.io/${{ github.repository_owner }}/hive-contributor
+          BRANCH: ${{ needs.gate.outputs.ref_name }}
+          GIT_SHA: ${{ needs.gate.outputs.sha }}
+          # Mirror publish-image-tags.sh's positional args in the publish step
+          # above — keep in lockstep with that call.
+          SIGN_LATEST_TAG: "true"
+          RELEASE_BRANCH: "v5"
+          CHANNELS: "candidate"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          pushed=(/tmp/contrib-digests/*)
+          if [ "${#pushed[@]}" -eq 0 ]; then
+            echo "no per-arch digests were pushed — nothing to sign"
+            exit 0
+          fi
+          branch_tag="${BRANCH//\//-}"
+          tags=("${GIT_SHA:0:7}" "${branch_tag}-latest")
+          if [ "$SIGN_LATEST_TAG" = "true" ]; then tags+=("latest"); fi
+          if [ "$BRANCH" = "$RELEASE_BRANCH" ] && [ -n "$CHANNELS" ]; then
+            IFS=, read -ra channel_tags <<<"$CHANNELS"
+            for ch in "${channel_tags[@]}"; do [ -n "$ch" ] && tags+=("$ch"); done
+          fi
+          declare -A signed=()
+          for tag in "${tags[@]}"; do
+            if ! digest=$(docker buildx imagetools inspect \
+                "${NATIVE_IMAGE}:${tag}" --format '{{.Manifest.Digest}}' 2>&1); then
+              if grep -Eqi 'manifest unknown|manifest.*not found|not found.*manifest|no such manifest|(^|[[:space:]:])not found$' <<<"$digest"; then
+                echo "native tag ${NATIVE_IMAGE}:${tag} does not exist — nothing to sign for it"
+                continue
+              fi
+              echo "::error::could not inspect ${NATIVE_IMAGE}:${tag}" >&2
+              echo "$digest" >&2
+              exit 1
+            fi
+            # Tags can share a digest; one signature covers them all.
+            [ -n "${signed[$digest]:-}" ] && continue
+            signed[$digest]=1
+            echo "Signing ${NATIVE_IMAGE}@${digest} (${tag})"
+            cosign sign --yes "${NATIVE_IMAGE}@${digest}"
+          done
+
   build-hub:
     needs: gate
     # Only when gate says push=true, same as `build` above (#4965).
@@ -941,7 +1185,8 @@ jobs:
     if: >-
       (needs.gate.outputs.push == 'true' ||
        (github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository)) &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        needs.gate.outputs.refresh_only != 'true')) &&
       !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:
@@ -954,6 +1199,9 @@ jobs:
             self_hosted: true
             qemu: true
             timeout_minutes: 75
+    permissions:
+      contents: read
+      packages: write
     runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false && '["ubuntu-24.04-arm"]' || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]')) || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
@@ -1049,6 +1297,10 @@ jobs:
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 20
     needs: [gate, build-hub]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing
     steps:
       - name: Checkout tag publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1151,6 +1403,98 @@ jobs:
             docker buildx imagetools create -t "${CROSS_IMAGE}:${tag}" "${NATIVE_IMAGE}@${digest}"
           done
 
+      # Keyless signature of the manifest-list digest behind every tag we just
+      # published, so `cosign verify` works on the tags users actually pull
+      # (not just the per-arch digests). Runs AFTER the cross-org mirror so a
+      # Sigstore outage can never skip the mirror. cosign stores the signature
+      # as a separate sha256-<digest>.sig object, leaving the image manifest
+      # untouched (#3760). Verify: src/docs/releases.md.
+      # Direct pinned install instead of sigstore/cosign-installer: the
+      # installer's first command shells out to `envsubst` (gettext-base),
+      # which the self-hosted ARC runner image does not ship, so every merge
+      # job failed with exit 127 (#19590). Same convention as the pinned
+      # `just` installs: fixed version + per-arch SHA256 from the release's
+      # cosign_checksums.txt. Installs into RUNNER_TEMP (no sudo needed).
+      - name: Install cosign
+        run: |
+          set -euo pipefail
+          COSIGN_VERSION=v3.1.4
+          case "$(uname -m)" in
+            x86_64)
+              COSIGN_ARCH=amd64
+              COSIGN_SHA256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+              ;;
+            aarch64|arm64)
+              COSIGN_ARCH=arm64
+              COSIGN_SHA256=ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2
+              ;;
+            *)
+              echo "::error::unsupported runner arch for cosign: $(uname -m)"
+              exit 1
+              ;;
+          esac
+          bin_dir="${RUNNER_TEMP}/cosign-bin"
+          mkdir -p "$bin_dir"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o "${bin_dir}/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${COSIGN_ARCH}"
+          echo "${COSIGN_SHA256}  ${bin_dir}/cosign" | sha256sum -c -
+          chmod 0755 "${bin_dir}/cosign"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          "${bin_dir}/cosign" version
+
+      # The mirror step may have replaced the GHCR login with the cross-org
+      # PAT (one credential per host); cosign needs native-org write access.
+      - name: Log in to GHCR (native org, for signing)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign published tags with cosign
+        env:
+          NATIVE_IMAGE: ghcr.io/${{ github.repository_owner }}/hive-hub
+          BRANCH: ${{ needs.gate.outputs.ref_name }}
+          GIT_SHA: ${{ needs.gate.outputs.sha }}
+          # Mirror publish-image-tags.sh's positional args in the publish step
+          # above — keep in lockstep with that call.
+          SIGN_LATEST_TAG: "true"
+          RELEASE_BRANCH: "v5"
+          CHANNELS: "candidate"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          pushed=(/tmp/hub-digests/*)
+          if [ "${#pushed[@]}" -eq 0 ]; then
+            echo "no per-arch digests were pushed — nothing to sign"
+            exit 0
+          fi
+          branch_tag="${BRANCH//\//-}"
+          tags=("${GIT_SHA:0:7}" "${branch_tag}-latest")
+          if [ "$SIGN_LATEST_TAG" = "true" ]; then tags+=("latest"); fi
+          if [ "$BRANCH" = "$RELEASE_BRANCH" ] && [ -n "$CHANNELS" ]; then
+            IFS=, read -ra channel_tags <<<"$CHANNELS"
+            for ch in "${channel_tags[@]}"; do [ -n "$ch" ] && tags+=("$ch"); done
+          fi
+          declare -A signed=()
+          for tag in "${tags[@]}"; do
+            if ! digest=$(docker buildx imagetools inspect \
+                "${NATIVE_IMAGE}:${tag}" --format '{{.Manifest.Digest}}' 2>&1); then
+              if grep -Eqi 'manifest unknown|manifest.*not found|not found.*manifest|no such manifest|(^|[[:space:]:])not found$' <<<"$digest"; then
+                echo "native tag ${NATIVE_IMAGE}:${tag} does not exist — nothing to sign for it"
+                continue
+              fi
+              echo "::error::could not inspect ${NATIVE_IMAGE}:${tag}" >&2
+              echo "$digest" >&2
+              exit 1
+            fi
+            # Tags can share a digest; one signature covers them all.
+            [ -n "${signed[$digest]:-}" ] && continue
+            signed[$digest]=1
+            echo "Signing ${NATIVE_IMAGE}@${digest} (${tag})"
+            cosign sign --yes "${NATIVE_IMAGE}@${digest}"
+          done
+
   # hive-mx, the receive-only mail receiver (src/Dockerfile.mx, #18395):
   # the same per-arch build-by-digest + manifest-list publish as the hub
   # image above, dual-published through publish-image-tags.sh. The comments
@@ -1172,7 +1516,8 @@ jobs:
     if: >-
       (needs.gate.outputs.push == 'true' ||
        (github.event_name == 'pull_request' &&
-        github.event.pull_request.head.repo.full_name == github.repository)) &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        needs.gate.outputs.refresh_only != 'true')) &&
       !startsWith(github.ref, 'refs/heads/release-gate/')
     strategy:
       matrix:
@@ -1185,6 +1530,9 @@ jobs:
             self_hosted: true
             qemu: true
             timeout_minutes: 75
+    permissions:
+      contents: read
+      packages: write
     runs-on: ${{ matrix.qemu && fromJSON(vars.HIVE_ARM64_RUNNER || (github.event_name == 'pull_request' && github.event.repository.private == false && '["ubuntu-24.04-arm"]' || vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]')) || ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest') }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     steps:
@@ -1277,6 +1625,10 @@ jobs:
     runs-on: ${{ fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') }}
     timeout-minutes: 20
     needs: [gate, build-mx]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # keyless cosign signing
     steps:
       - name: Checkout tag publisher
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1377,4 +1729,96 @@ jobs:
             fi
             echo "Mirroring ${CROSS_IMAGE}:${tag} <- ${NATIVE_IMAGE}@${digest}"
             docker buildx imagetools create -t "${CROSS_IMAGE}:${tag}" "${NATIVE_IMAGE}@${digest}"
+          done
+
+      # Keyless signature of the manifest-list digest behind every tag we just
+      # published, so `cosign verify` works on the tags users actually pull
+      # (not just the per-arch digests). Runs AFTER the cross-org mirror so a
+      # Sigstore outage can never skip the mirror. cosign stores the signature
+      # as a separate sha256-<digest>.sig object, leaving the image manifest
+      # untouched (#3760). Verify: src/docs/releases.md.
+      # Direct pinned install instead of sigstore/cosign-installer: the
+      # installer's first command shells out to `envsubst` (gettext-base),
+      # which the self-hosted ARC runner image does not ship, so every merge
+      # job failed with exit 127 (#19590). Same convention as the pinned
+      # `just` installs: fixed version + per-arch SHA256 from the release's
+      # cosign_checksums.txt. Installs into RUNNER_TEMP (no sudo needed).
+      - name: Install cosign
+        run: |
+          set -euo pipefail
+          COSIGN_VERSION=v3.1.4
+          case "$(uname -m)" in
+            x86_64)
+              COSIGN_ARCH=amd64
+              COSIGN_SHA256=424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+              ;;
+            aarch64|arm64)
+              COSIGN_ARCH=arm64
+              COSIGN_SHA256=ade83b7aac62e131cacfe96d958948b2150cc9efec46a570a2649b8e27dedad2
+              ;;
+            *)
+              echo "::error::unsupported runner arch for cosign: $(uname -m)"
+              exit 1
+              ;;
+          esac
+          bin_dir="${RUNNER_TEMP}/cosign-bin"
+          mkdir -p "$bin_dir"
+          curl -fsSL --retry 5 --retry-delay 10 --retry-all-errors -o "${bin_dir}/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-${COSIGN_ARCH}"
+          echo "${COSIGN_SHA256}  ${bin_dir}/cosign" | sha256sum -c -
+          chmod 0755 "${bin_dir}/cosign"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+          "${bin_dir}/cosign" version
+
+      # The mirror step may have replaced the GHCR login with the cross-org
+      # PAT (one credential per host); cosign needs native-org write access.
+      - name: Log in to GHCR (native org, for signing)
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign published tags with cosign
+        env:
+          NATIVE_IMAGE: ghcr.io/${{ github.repository_owner }}/hive-mx
+          BRANCH: ${{ needs.gate.outputs.ref_name }}
+          GIT_SHA: ${{ needs.gate.outputs.sha }}
+          # Mirror publish-image-tags.sh's positional args in the publish step
+          # above — keep in lockstep with that call.
+          SIGN_LATEST_TAG: "true"
+          RELEASE_BRANCH: "v5"
+          CHANNELS: "candidate"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          pushed=(/tmp/mx-digests/*)
+          if [ "${#pushed[@]}" -eq 0 ]; then
+            echo "no per-arch digests were pushed — nothing to sign"
+            exit 0
+          fi
+          branch_tag="${BRANCH//\//-}"
+          tags=("${GIT_SHA:0:7}" "${branch_tag}-latest")
+          if [ "$SIGN_LATEST_TAG" = "true" ]; then tags+=("latest"); fi
+          if [ "$BRANCH" = "$RELEASE_BRANCH" ] && [ -n "$CHANNELS" ]; then
+            IFS=, read -ra channel_tags <<<"$CHANNELS"
+            for ch in "${channel_tags[@]}"; do [ -n "$ch" ] && tags+=("$ch"); done
+          fi
+          declare -A signed=()
+          for tag in "${tags[@]}"; do
+            if ! digest=$(docker buildx imagetools inspect \
+                "${NATIVE_IMAGE}:${tag}" --format '{{.Manifest.Digest}}' 2>&1); then
+              if grep -Eqi 'manifest unknown|manifest.*not found|not found.*manifest|no such manifest|(^|[[:space:]:])not found$' <<<"$digest"; then
+                echo "native tag ${NATIVE_IMAGE}:${tag} does not exist — nothing to sign for it"
+                continue
+              fi
+              echo "::error::could not inspect ${NATIVE_IMAGE}:${tag}" >&2
+              echo "$digest" >&2
+              exit 1
+            fi
+            # Tags can share a digest; one signature covers them all.
+            [ -n "${signed[$digest]:-}" ] && continue
+            signed[$digest]=1
+            echo "Signing ${NATIVE_IMAGE}@${digest} (${tag})"
+            cosign sign --yes "${NATIVE_IMAGE}@${digest}"
           done

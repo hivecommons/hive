@@ -110,6 +110,7 @@ export function sectionsForFile(file, knownIds, readFile) {
 
 export function planSections(changedFiles, knownIds, readFile) {
   const picked = [];
+  if ((changedFiles || []).some(f => /static-src\/(js|css)\/(agent-detail|kick-outcomes)\./.test(f))) picked.push('kick-outcomes');
   for (const f of changedFiles || []) {
     for (const id of sectionsForFile(f, knownIds, readFile)) if (!picked.includes(id)) picked.push(id);
   }

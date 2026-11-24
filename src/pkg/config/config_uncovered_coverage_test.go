@@ -1004,33 +1004,31 @@ func TestWatcher_ScheduleReloadNoopAfterStopped(t *testing.T) {
 	}
 }
 
-// TestWatcher_ReloadSkipsWhenSkipNextSet verifies SkipNext causes exactly one
-// reload to be swallowed without invoking onChange.
-func TestWatcher_ReloadSkipsWhenSkipNextSet(t *testing.T) {
+// TestWatcher_ReloadSkipsOwnWrite verifies a reload is skipped when the file
+// holds exactly what this process last wrote, and runs otherwise, even right
+// after SkipNext (hivecommons/hive#19561).
+func TestWatcher_ReloadSkipsOwnWrite(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hive.yaml")
-	if err := os.WriteFile(path, []byte(minimalValidYAML("o", "ghp_tok")), 0o600); err != nil {
+	content := []byte(minimalValidYAML("o", "ghp_tok"))
+	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	var called bool
+	var called int
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	w := NewWatcher(path, func(cfg *Config) { called = true }, logger)
+	w := NewWatcher(path, func(cfg *Config) { called++ }, logger)
 
 	w.SkipNext()
 	w.reload() // direct call, bypasses fsnotify plumbing entirely
-
-	if called {
-		t.Error("onChange should not be invoked when SkipNext was set")
+	if called != 1 {
+		t.Fatalf("onChange calls = %d, want 1: a file this process never wrote must reload", called)
 	}
 
-	// skipNext should now be cleared, so the fields are back to the initial
-	// zero-ish state ready for a real reload.
-	w.mu.Lock()
-	skip := w.skipNext
-	w.mu.Unlock()
-	if skip {
-		t.Error("expected skipNext to be cleared after one skipped reload")
+	recordProcessWrite(path, sumBytes(content))
+	w.reload()
+	if called != 1 {
+		t.Fatalf("onChange calls = %d, want 1: the process's own write must not reload", called)
 	}
 }
 

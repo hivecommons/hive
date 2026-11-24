@@ -1,11 +1,14 @@
 package hub
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -222,8 +225,21 @@ func (s *HubServer) rolloutHubToSHA(sha string) error {
 	if !hubImageExists(sha, s.logger) {
 		return fmt.Errorf("hub image %s:%s not published yet", ghcrRepoHub, sha)
 	}
+	// A paused Deployment never completes a rollout: patching it would only
+	// stage a change nobody applies, and watching it would hang. Suspend.
+	paused, err := s.hubDeploymentPaused()
+	if err != nil {
+		return fmt.Errorf("could not read hub deployment paused state: %w", err)
+	}
+	if paused {
+		s.noteHubUpgradePaused()
+		return errHubDeploymentPaused
+	}
+	s.warnUnexpectedHubContainers()
 	image := fmt.Sprintf("ghcr.io/%s:%s", ghcrRepoHub, sha)
-	cmd := kubectlForCluster(s.hubCluster(), "set", "image",
+	ctx, cancel := context.WithTimeout(context.Background(), hubKubectlTimeout)
+	defer cancel()
+	cmd := kubectlForClusterContext(ctx, s.hubCluster(), "set", "image",
 		"deployment/"+hubDeploymentName, hubContainerName+"="+image, "-n", hubNamespace)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("kubectl set image failed: %s", strings.TrimSpace(string(out)))
@@ -237,8 +253,112 @@ func (s *HubServer) rolloutHubToSHA(sha string) error {
 	// race the upgrade poller (which re-triggers the same target every cycle),
 	// so a rollback could fight the upgrade loop and flap the deployment. See
 	// watchHubRollout.
-	go s.watchHubRollout(sha, image)
+	// Only one watcher at a time: the poller re-triggers the same target every
+	// cycle and each extra watcher would add its own kubectl probes.
+	s.hubUpgradeMu.Lock()
+	startWatcher := !s.hubWatcherRunning
+	s.hubWatcherRunning = true
+	s.hubUpgradeMu.Unlock()
+	if startWatcher {
+		go func() {
+			defer func() {
+				s.hubUpgradeMu.Lock()
+				s.hubWatcherRunning = false
+				s.hubUpgradeMu.Unlock()
+			}()
+			s.watchHubRollout(sha, image)
+		}()
+	}
 	return nil
+}
+
+// hubKubectlTimeout bounds each short self-upgrade kubectl call (set image,
+// readiness probe, paused-state read, pod-status read).
+const hubKubectlTimeout = 30 * time.Second
+
+// hubPausedFaultMessage is the dashboard warning shown while the hub
+// Deployment is paused.
+const hubPausedFaultMessage = "hub deployment is paused; self-upgrade suspended"
+
+var errHubDeploymentPaused = errors.New(hubPausedFaultMessage)
+
+// hubDeploymentPaused reads .spec.paused of the hub Deployment.
+func (s *HubServer) hubDeploymentPaused() (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), hubKubectlTimeout)
+	defer cancel()
+	out, err := kubectlForClusterContext(ctx, s.hubCluster(), "get",
+		"deployment/"+hubDeploymentName, "-n", hubNamespace,
+		"-o", "jsonpath={.spec.paused}").Output()
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(string(out)) == "true", nil
+}
+
+// expectedHubContainers is the full set of containers the hub Deployment's pod
+// template may run. Anything else is a stray: #19344 found a second container
+// named "hive-hub" (an old image, no /data mount, no HIVE_MODE) running beside
+// "hub" with the GitHub App credentials and logging like a fresh hub, which
+// misled an outage investigation. Keep in sync with EXPECTED_CONTAINERS in
+// src/deploy/check-hub-manifest.py.
+var expectedHubContainers = []string{hubContainerName}
+
+// unexpectedHubContainers returns the names in containers that are not in
+// expectedHubContainers, in their original order.
+func unexpectedHubContainers(containers []string) []string {
+	var stray []string
+	for _, name := range containers {
+		if !slices.Contains(expectedHubContainers, name) {
+			stray = append(stray, name)
+		}
+	}
+	return stray
+}
+
+// hubDeploymentContainers reads the container names of the hub Deployment's
+// pod template.
+func (s *HubServer) hubDeploymentContainers() ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), hubKubectlTimeout)
+	defer cancel()
+	out, err := kubectlForClusterContext(ctx, s.hubCluster(), "get",
+		"deployment/"+hubDeploymentName, "-n", hubNamespace,
+		"-o", "jsonpath={.spec.template.spec.containers[*].name}").Output()
+	if err != nil {
+		return nil, err
+	}
+	return strings.Fields(string(out)), nil
+}
+
+// warnUnexpectedHubContainers is the self-diagnostic for #19344: it logs a
+// warning when the hub Deployment runs any container besides "hub". It never
+// blocks the upgrade (set image already pins only hubContainerName), and a
+// failed or empty read is skipped because the paused-state read above already
+// reports an unreachable Deployment.
+func (s *HubServer) warnUnexpectedHubContainers() {
+	containers, err := s.hubDeploymentContainers()
+	if err != nil || len(containers) == 0 {
+		return
+	}
+	if stray := unexpectedHubContainers(containers); len(stray) > 0 {
+		s.logger.Warn("hub deployment has unexpected containers; remove them (see src/docs/hub-deployment.md)",
+			"deployment", hubDeploymentName,
+			"namespace", hubNamespace,
+			"unexpected", strings.Join(stray, ","),
+			"expected", strings.Join(expectedHubContainers, ","))
+	}
+}
+
+// noteHubUpgradePaused logs the suspension once and surfaces it as the
+// upgrade fault; later polls while still paused stay quiet.
+func (s *HubServer) noteHubUpgradePaused() {
+	s.hubUpgradeMu.Lock()
+	already := s.hubUpgradeFault == hubPausedFaultMessage
+	s.hubUpgradeFault = hubPausedFaultMessage
+	s.hubUpgradeMu.Unlock()
+	if !already {
+		s.logger.Warn("hub self-upgrade suspended: deployment is paused",
+			"deployment", hubDeploymentName, "namespace", hubNamespace)
+	}
 }
 
 // hubRolloutWatchTimeout bounds how long we wait for a self-upgrade we just
@@ -265,11 +385,15 @@ func (s *HubServer) watchHubRollout(sha, image string) {
 
 // hubRolloutReady reports whether the rollout we triggered has fully succeeded.
 //
-// `rollout status --timeout=0s` returns non-zero while a rollout is still
-// progressing and zero once it has fully succeeded.
+// `rollout status --watch=false` returns non-zero while a rollout is still
+// progressing and zero once it has fully succeeded. (--timeout=0s is NOT a
+// non-blocking probe: 0 means no timeout, so a paused deployment hung it.)
+// The call is also context-bound so it can never outlive hubKubectlTimeout.
 func (s *HubServer) hubRolloutReady() bool {
-	cmd := kubectlForCluster(s.hubCluster(), "rollout", "status",
-		"deployment/"+hubDeploymentName, "-n", hubNamespace, "--timeout=0s")
+	ctx, cancel := context.WithTimeout(context.Background(), hubKubectlTimeout)
+	defer cancel()
+	cmd := kubectlForClusterContext(ctx, s.hubCluster(), "rollout", "status",
+		"deployment/"+hubDeploymentName, "-n", hubNamespace, "--watch=false")
 	return cmd.Run() == nil
 }
 
@@ -318,7 +442,9 @@ func (s *HubServer) watchHubRolloutWithInterval(sha, image string, timeout, poll
 // Ready, so the stuck-rollout log/status names the real cause.
 func (s *HubServer) hubRolloutFailureReason() string {
 	const reasonJSONPath = `{range .items[*].status.containerStatuses[*]}{.state.waiting.reason}{" "}{.state.waiting.message}{"\n"}{end}`
-	cmd := kubectlForCluster(s.hubCluster(), "get", "pods",
+	ctx, cancel := context.WithTimeout(context.Background(), hubKubectlTimeout)
+	defer cancel()
+	cmd := kubectlForClusterContext(ctx, s.hubCluster(), "get", "pods",
 		"-n", hubNamespace, "-l", "app="+hubDeploymentName,
 		"-o", "jsonpath="+reasonJSONPath)
 	out, err := cmd.CombinedOutput()

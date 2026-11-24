@@ -215,6 +215,8 @@
   /* Header summary + controls. */
   .summary { font-size: 13px; }
   .allclear { color: var(--status-ok); font-weight: 600; }
+  .profile-share-link { color: var(--brand); text-decoration: underline; }
+  .spoke .profile-share-link { margin-left: var(--sp-3); white-space: nowrap; font-size: var(--fs-sm); }
   .controls { margin-left: auto; display: flex; gap: 14px; font-size: var(--fs-sm); color: var(--text-muted); }
   .controls label { cursor: pointer; user-select: none; }
   @media (max-width: 900px) {
@@ -266,6 +268,7 @@
 </header>
 <header class="fleet-header">
   <h1>Fleet health</h1>
+  <a href="/profile-share" id="profile-share-link" class="profile-share-link" hidden>Profile sharing</a>
   <span class="sub">a hive is a <b>problem</b> when it has no recent output for its ACMM level (L2 advisory · L3–L5 authored writes: issues/PRs created, comments, reviews · L6 merged) with work still queued, or a precondition is broken (agents cannot work / GitHub App auth / budget exhausted / repo Issues tab disabled). Absence of output a level does not produce is never a fault. The <b>⎘ attach</b> chip copies the kubectl+tmux command to jump into the hive's spoke pod for root-causing.</span>
   <span id="summary" class="summary"></span>
   <span class="controls">
@@ -411,10 +414,10 @@ function avatarProfileLink(username, label, avatarHTML) {
     'title="' + escAttr(title) + '" aria-label="' + escAttr(label || uname) + '" ' +
     'style="display:inline-block;line-height:0;text-decoration:none">' + avatarHTML + "</a>";
 }
-function avatarImg(username, px, extraStyle) {
-  var img = '<img src="' + escAttr(ghProfileURL(username)) + '.png?size=' + (px * AVATAR_HIDPI_SCALE) + '" alt="" ' +
+function avatarImg(username, px, extraStyle, src, label) {
+  var img = '<img src="' + escAttr(src || ghProfileURL(username) + '.png?size=' + (px * AVATAR_HIDPI_SCALE)) + '" alt="" ' +
     'style="width:' + px + 'px;height:' + px + 'px;border-radius:50%;vertical-align:middle;' + (extraStyle || "") + '" ' +
-    'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(username, px)) + '">';
+    'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(label || username, px)) + '">';
   if (isUserLive(username)) {
     var RING_GAP = 2, RING_W = 3, box = px + 2 * (RING_GAP + RING_W);
     return '<span style="display:inline-block;box-sizing:border-box;width:' + box + 'px;height:' + box + 'px;' +
@@ -425,6 +428,9 @@ function avatarImg(username, px, extraStyle) {
 }
 function linkedAvatar(username, px, label, extraStyle) {
   return avatarProfileLink(username, label, avatarImg(username, px, extraStyle));
+}
+function navProfileURL(d) {
+  return d.provider === "github" && d.login ? ghProfileURL(d.login) : "";
 }
 function fmtHours(secs) {
   secs = Number(secs) || 0;
@@ -449,10 +455,16 @@ function accessAvatarTitle(a) {
   return lines.join("\n");
 }
 function inlineAccessAvatar(a) {
-  var uname = String((a || {}).username || "");
-  var role = String((a || {}).role || "");
-  return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a),
-    "border:1px solid " + accessRoleColor(role) + ";background:var(--surface-2);flex:0 0 auto");
+  a = a || {};
+  var uname = String(a.username || "");
+  var role = String(a.role || "");
+  var px = INLINE_ACCESS_AVATAR_PX;
+  var faceStyle = "border:1px solid " + accessRoleColor(role) + ";background:var(--surface-2);flex:0 0 auto";
+  if (a.provider === "github") {
+    return linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), faceStyle);
+  }
+  var face = avatarImg(uname, px, faceStyle, a.avatar_url || avatarInitialsSVG(a.display_label || uname, px), a.display_label);
+  return '<span title="' + escAttr(accessAvatarTitle(a)) + '">' + face + "</span>";
 }
 function hiveAccessAvatars(h) {
   var members = (h && h.access) || [];
@@ -948,9 +960,12 @@ function renderHives(hives) {
 
     var tr = document.createElement("tr");
     tr.className = "spoke health-" + health + (open ? " open" : "");
+    var profileLink = personalProfileLinksAllowed && profileShareHiveIDs.has(h.id)
+      ? '<a href="/profile-share?hive=' + encodeURIComponent(h.id) + '" class="profile-share-link" aria-label="Profile sharing for ' + esc(h.name || h.id) + '">Profile sharing</a>'
+      : "";
     tr.innerHTML =
       '<td><span class="chev">▶</span></td>' +
-      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + hiveAccessAvatars(h) + (health === "parked" ? '<span class="parked-chip" title="every agent is paused or off-schedule — hive not in use">parked</span>' : "") + whyChipHTML(h, health) + rosterMismatchChipHTML(h) + attachChipHTML(h) + remediationHTML(h, health) + '</td>' +
+      '<td><span class="hdot ' + health + '" title="' + health + '"></span>' + hiveNameHTML(h) + hiveAccessAvatars(h) + (health === "parked" ? '<span class="parked-chip" title="every agent is paused or off-schedule — hive not in use">parked</span>' : "") + whyChipHTML(h, health) + rosterMismatchChipHTML(h) + attachChipHTML(h) + remediationHTML(h, health) + profileLink + '</td>' +
       '<td>' + acmmBadge(h.acmmLevel) + '</td>' +
       '<td>' + modeBadge(h.governorMode) + '</td>' +
       '<td>' + versionHTML(h) + '</td>' +
@@ -958,8 +973,9 @@ function renderHives(hives) {
       '<td>' + runsHTML(h) + '</td>' +
       '<td>' + outputHTML(h) + '<br>' + budgetHealthHTML(h.budgetHealth) + '<br>' + githubAppHealthHTML(h.githubAppHealth, h) + '</td>';
     tb.appendChild(tr);
-    var link = tr.querySelector(".hive-link");
-    if (link) link.addEventListener("click", function (e) { e.stopPropagation(); });
+    tr.querySelectorAll(".hive-link, .profile-share-link").forEach(function (link) {
+      link.addEventListener("click", function (e) { e.stopPropagation(); });
+    });
     // The remediation "open" link must navigate, not toggle the row expand.
     var remLink = tr.querySelector(".rem-link");
     if (remLink) remLink.addEventListener("click", function (e) { e.stopPropagation(); });
@@ -1065,6 +1081,12 @@ function wireControls() {
 }
 
 var lastHives = [];
+var personalProfileLinksAllowed = false;
+var profileShareEnabled = false;
+var profileShareHiveIDs = new Set();
+function updateProfileShareLink() {
+  document.getElementById("profile-share-link").hidden = !personalProfileLinksAllowed || !profileShareEnabled;
+}
 function load() {
   fetch("/api/saas/my-hives", { credentials: "same-origin", headers: { "Accept": "application/json" } })
     .then(function (r) {
@@ -1075,7 +1097,13 @@ function load() {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     })
-    .then(function (d) { lastHives = d.hives || []; renderHives(lastHives); })
+    .then(function (d) {
+      lastHives = d.hives || [];
+      profileShareEnabled = d.customersShareEnabled === true;
+      profileShareHiveIDs = new Set(profileShareEnabled ? (d.profileShareHiveIDs || []) : []);
+      updateProfileShareLink();
+      renderHives(lastHives);
+    })
     .catch(function (e) {
       if (e && e.message === "redirecting to login") return;
       var c = document.getElementById("statusCell");
@@ -1127,6 +1155,9 @@ setInterval(load, 30000);
     .then(function (r) { return r.json(); })
     .then(function (d) {
       if (!d || !d.authenticated) return;
+      personalProfileLinksAllowed = !d.impersonating;
+      updateProfileShareLink();
+      if (personalProfileLinksAllowed && profileShareHiveIDs.size) renderHives(lastHives);
       var wrap = document.getElementById("nav-avatar-wrap");
       var img = document.getElementById("nav-avatar");
       if (!wrap || !img) return;
@@ -1144,7 +1175,8 @@ setInterval(load, 30000);
       var role = document.getElementById("nav-menu-role");
       if (role) { role.textContent = d.hub_admin ? "hub admin" : "member"; role.style.display = ""; }
       var prof = document.getElementById("nav-menu-profile");
-      if (prof && d.login) { prof.href = "https://github.com/" + encodeURIComponent(d.login); prof.style.display = ""; }
+      var profURL = navProfileURL(d);
+      if (prof && profURL) { prof.href = profURL; prof.style.display = ""; }
       var out = document.getElementById("nav-menu-signout");
       if (out) out.addEventListener("click", function () {
         fetch("/api/auth/logout", { method: "POST" }).then(function () { location.href = "/"; });

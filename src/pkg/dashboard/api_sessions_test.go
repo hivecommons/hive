@@ -549,7 +549,35 @@ func TestSessionsListShapeVendorsAndLimits(t *testing.T) {
 }
 
 func TestSessionsRoleMatrix(t *testing.T) {
+	// Authorization, not CLI onboarding, is under test. An idle pane lets
+	// accepted inputs drain; cleanup joins the workers before TempDir removal.
+	t.Setenv(config.EnvSessionsAutostart, "false")
 	e := newSessionTestEnv(t, true)
+	fastSessionQueue(t, e)
+	e.rt.setCapture(claudeIdlePane)
+	// Open the store now so its directory is fixed to this test's TempDir
+	// before any background worker can resolve it from the environment.
+	e.s.sessionStoreOrNil()
+	drain := func() {
+		waitSessionsFor(t, "session starts to finish", func() bool {
+			e.s.sessionsMu.Lock()
+			defer e.s.sessionsMu.Unlock()
+			return len(e.s.sessionsPreparing) == 0
+		})
+		waitSessionsFor(t, "session input workers to stop", func() bool {
+			e.s.sessionQueuesMu.Lock()
+			defer e.s.sessionQueuesMu.Unlock()
+			for _, q := range e.s.sessionQueues {
+				if q.running {
+					return false
+				}
+			}
+			return true
+		})
+	}
+	// Also runs on t.Fatal paths; the body calls it too, so no worker is
+	// still writing the store while the last assertions run.
+	t.Cleanup(drain)
 	id := e.createShared(t, callerOwner, "owner session")
 	post := map[string]string{"name": "n", "group": "g", "vendor": "claude"}
 
@@ -577,6 +605,7 @@ func TestSessionsRoleMatrix(t *testing.T) {
 			t.Errorf("%s patch = %d, want %d", r.who.role, rec.Code, r.patch)
 		}
 	}
+	drain()
 	// A SHARED session is readable by every role, including read.
 	for _, who := range []sessionCaller{callerOwner, callerRW, callerMerger, callerRead} {
 		if rec := e.do(t, who, "GET", "/api/sessions", nil); rec.Code != http.StatusOK {

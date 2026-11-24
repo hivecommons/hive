@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/pkg/jsonextract"
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
@@ -362,7 +363,7 @@ func isTimeoutErr(err error) bool {
 func (c *openAIChatClient) completeOnce(ctx context.Context, body []byte) (string, error) {
 	reqCtx, cancel := context.WithTimeout(ctx, classifierTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint+"/v1/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, config.LiteLLMChatCompletionsURL(c.endpoint), bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}

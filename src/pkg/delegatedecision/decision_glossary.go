@@ -113,6 +113,8 @@ var glossary = []GlossaryEntry{
 		Detail: "A contributor PR parked waiting on its author (071) or on an adoption the hive could not push (085) has had no push, comment or review from anyone but the hive for longer than governor.labels.stage.abandon_after. Nothing the hive can do moves it. The hive recommends closing it as stale, with a note on how to reopen, or a person taking it over; it never closes or takes it over on its own."},
 	{Slug: RuleReturnToAuthor, Kind: GlossaryRule, Plain: "a person pushed this PR; the hive asked them, not adopted it",
 		Detail: "The PR was pushed by a person (author/human or one of this hive's owners), so the hive never adopts it. It told the author by name what to fix (rebase, sign-off, CI) and relayed the reviewer's question."},
+	{Slug: RuleHumanOnly, Kind: GlossaryRule, Plain: "only a person can answer this; the hive keeps it parked for the owner",
+		Detail: "The ask is a person's alone: a security review routed the change to a person, or the issue carries the human-only marker or label. A default approve would hand it to an agent that cannot act on it, so the hive labels it needs-owner and leaves it parked until a person decides or closes it."},
 	{Slug: "owner-only", Kind: GlossaryRule, Plain: "only the hive owner can do this",
 		Detail: "This needs a secret, token or organization permission that only the hive owner holds; the hive cannot do it for you.", Aliases: []string{"owner_only"}},
 	{Slug: RuleOnePRPerIssue, Kind: GlossaryRule, Plain: "two PRs fix the same issue; the merge queue keeps one",

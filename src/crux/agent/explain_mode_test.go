@@ -427,3 +427,23 @@ func TestManagerExplainModeDefault_ReadsLiveValue(t *testing.T) {
 		t.Errorf("explainModeDefault() after config change = %q, want %q", got, config.ExplainModeBrief)
 	}
 }
+
+// #19559: the idle bootstrap a fresh inference session receives carries no
+// task. Appending "Begin immediately by running your first command" sent the
+// agent hunting through its workspace for work, where it found and obeyed a
+// stale agent-written .kick note. The bootstrap must reach the CLI unchanged.
+func TestKickMessageWithSuffixes_IdleBootstrapGetsNoSuffix(t *testing.T) {
+	for _, mode := range []string{config.ExplainModeOff, config.ExplainModeBrief, config.ExplainModeFull} {
+		got := kickMessageWithSuffixes(inferenceIdleBootstrapPrompt, true, mode)
+		if got != inferenceIdleBootstrapPrompt {
+			t.Errorf("explain=%q: idle bootstrap was altered: %q", mode, got)
+		}
+	}
+	if !strings.Contains(inferenceIdleBootstrapPrompt, "No task yet") {
+		t.Error("idle bootstrap must say there is no task yet")
+	}
+	// A real kick on an inference backend still gets the action suffix.
+	if got := kickMessageWithSuffixes("Do the thing.", true, config.ExplainModeOff); !strings.Contains(got, inferenceKickActionSuffix) {
+		t.Error("a real inference kick lost the action suffix")
+	}
+}

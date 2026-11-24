@@ -242,7 +242,10 @@ identity it ended up with. Audit the rest of the fleet the same way:
    regenerates its `*-listener-config` from the new secret. App traffic lands
    in the installation's own 15,000 req/h bucket.
 3. **Remove the PAT from the hub.** With the three App variables set, unset
-   `HIVE_HUB_GITHUB_TOKEN` on `deploy/hive-hub`; the startup log then reads
+   `HIVE_HUB_GITHUB_TOKEN` on `deploy/hive-hub` (scope it to the hub
+   container: `kubectl -n hive-hub set env deploy/hive-hub -c hub
+   HIVE_HUB_GITHUB_TOKEN-`; without `-c hub` it writes to every container in
+   the pod); the startup log then reads
    `hub GitHub API identity selected mode=app` instead of the `WARN`, and
    `GET /api/gh-rate-limits` reports the App installation's `core.limit`.
 4. **Rotate.** Once no cluster holds it, revoke the leaked user token
@@ -1056,9 +1059,10 @@ workflows blockers require a separate hand-off to a capable lane. `GET /api/stat
 
 #### Onboarding errors point to the Getting Started guide
 
-Every setup problem the dashboard's **🧭 Guide** (top navbar; also *Getting
-Started* in the sidebar) has a step for is classified server-side and rendered
-with a tip — *New hive? Open the 🧭 Guide → step ‘Install the Forge App
+Every setup problem the dashboard's **🚀 Getting started** checklist (top bar
+**? Help** menu; also *Getting started* in the sidebar Help group) has a step
+for is classified server-side and rendered with a tip — *New hive? Open 🚀
+Getting started → step ‘Install the Forge App
 (GitHub App)’ for the install URL and permissions checklist* — whose link opens
 the guide at that step. The classification rides the status payload as
 `onboardingIssues: [{kind, guideStep, message}]`, on system alerts as
@@ -1068,7 +1072,7 @@ the guide at that step. The classification rides the status payload as
 `github-app-permissions`, `github-app-credentials`, `github-base-url`
 (→ step `github-app`), `repo-target`, `no-repos` (→ `repos`), `no-agents`
 (→ `add-agent`), `proxy-token` (→ `welcome`). Error text is unchanged; the tip
-is appended. While any onboarding issue is active the Guide chip stays visible
+is appended. While any onboarding issue is active the Getting started entries stay visible
 even if the checklist was dismissed earlier. The guide's GitHub App step shows
 the concrete install URL for the configured forge host (`githubAppInstallURL`,
 GHES-aware; on an enterprise host with no `github_app_slug` it says what to

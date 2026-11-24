@@ -750,9 +750,9 @@ knowledge:
   negative `candidates`, `pane_lines` or `timeout_s` are load errors.
 
 Without `knowledge.advisor_llm` (or with `mode: off`) the advisor is the
-pure phase-1 matcher with no model in the loop. The advisor is
-wired only when the agent runtime runs in-process; the `crux serve` sidecar
-has no adviser in this phase.
+pure phase-1 matcher with no model in the loop. A `crux serve` sidecar gets no
+adviser unless `knowledge.sidecar_advise` is on (default off); see
+[Sidecar runtimes](agent-knowledge-and-memory.md#sidecar-runtimes-knowledgesidecar_advise).
 
 ## Open questions
 

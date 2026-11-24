@@ -103,7 +103,7 @@ func TestScoreSkipsOpsTrackingAndTimeGated(t *testing.T) {
 
 func TestWithdrawable(t *testing.T) {
 	yes := []string{"hard-suppress:needs-human", "excluded-label:blocked", "excluded-label:Hold", "ops-tracking:marker", "ops-tracking:soak-checklist", SkipTimeGated}
-	no := []string{"", "too-fresh", "score-1-below-2", "excluded-label:epic", "excluded-label:kind/epic", "title:rfc", "claimed", "assigned", "pull-request"}
+	no := []string{"", "too-fresh", "score-1-below-2", "excluded-label:wontfix", "title:rfc", "claimed", "assigned", "pull-request"}
 	for _, s := range yes {
 		if !Withdrawable(s) {
 			t.Errorf("%q should withdraw", s)
@@ -242,14 +242,25 @@ func TestSweepWithdrawPostsCorrectionWhenNoWelcomeComment(t *testing.T) {
 	}
 }
 
-func TestSweepLeavesHandLabelledSoftRejectsAlone(t *testing.T) {
+// hivecommons/hive#19078: an epic is an umbrella, and an umbrella wearing a
+// public invitation loses it on the next sweep. The per-repo switch keeps the
+// old hands-off behaviour for a hive that wants it.
+func TestSweepWithdrawsUmbrellaUnlessKept(t *testing.T) {
 	forge := newFakeForge()
 	s := NewSweeper()
 	c := good()
 	c.Labels = []string{Label, "kind/epic"}
 	res := s.Sweep(context.Background(), forge, []Candidate{c}, quietOpts())
-	if len(res.Withdrawn) != 0 || len(forge.removed[c.Key()]) != 0 || res.Skipped["excluded-label:kind/epic"] != 1 {
-		t.Fatalf("epic must not be withdrawn: %+v removed=%v", res, forge.removed[c.Key()])
+	if len(res.Withdrawn) != 1 || len(forge.removed[c.Key()]) != 1 || res.Skipped["umbrella:label:kind/epic"] != 1 {
+		t.Fatalf("epic must be withdrawn: %+v removed=%v", res, forge.removed[c.Key()])
+	}
+
+	kept := newFakeForge()
+	opts := quietOpts()
+	opts.Policy.UmbrellaFor = func(string) UmbrellaPolicy { return UmbrellaPolicy{KeepAdvertisement: true} }
+	res = NewSweeper().Sweep(context.Background(), kept, []Candidate{c}, opts)
+	if len(res.Withdrawn) != 0 || len(kept.removed[c.Key()]) != 0 || res.Skipped["umbrella:label:kind/epic"] != 1 {
+		t.Fatalf("withdraw_advertisement=false must leave the labels: %+v removed=%v", res, kept.removed[c.Key()])
 	}
 }
 

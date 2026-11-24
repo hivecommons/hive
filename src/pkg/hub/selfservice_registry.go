@@ -103,6 +103,9 @@ type SelfServiceHive struct {
 	// removes. Records from before the field have no entries; their repos
 	// were all proven at OwnershipCheckedAt.
 	RepoProofs map[string]time.Time `json:"repo_proofs,omitempty"`
+	// PendingProof is the spoke's requested but unproven repos. Only Repos
+	// grants registry visibility; pending entries are kept for owner review.
+	PendingProof []string `json:"pending_proof,omitempty"`
 	// LastAcceptedHeartbeatAt is the last heartbeat that passed the bearer
 	// check. Zero until the first one; the expiry sweep (selfservice_expiry.go)
 	// counts the window from here, or from CreatedAt while it is zero.
@@ -335,7 +338,9 @@ func (st *selfServiceStore) registerCapped(h SelfServiceHive, maxPerOwner int) (
 }
 
 // rotate mints a new key for id and returns it ONCE. The previous key keeps
-// authenticating until selfServiceKeyRotationOverlap has passed.
+// authenticating until selfServiceKeyRotationOverlap has passed. The HTTP
+// routes use rotateWithPolicy (selfservice_key_grace.go) so the grace flag
+// applies; rotate and rotateIfMatch keep the fixed overlap.
 func (st *selfServiceStore) rotate(id string) (string, error) {
 	return st.rotateIfMatch(id, "")
 }
@@ -343,32 +348,8 @@ func (st *selfServiceStore) rotate(id string) (string, error) {
 // rotateIfMatch is rotate guarded by an ETag precondition (see update for
 // the ifMatch rules); a mismatch returns errSelfServiceStale.
 func (st *selfServiceStore) rotateIfMatch(id, ifMatch string) (string, error) {
-	if st == nil {
-		return "", errSelfServiceNilStore
-	}
-	raw, hash, err := mintSelfServiceKey()
-	if err != nil {
-		return "", err
-	}
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	h, ok := st.hives[id]
-	if !ok {
-		return "", errSelfServiceNotFound
-	}
-	if !selfServiceETagMatches(*h, ifMatch) {
-		return "", errSelfServiceStale
-	}
-	before := *h
-	h.PrevKeyHash = h.KeyHash
-	h.PrevKeyExpiresAt = st.clock().UTC().Add(selfServiceKeyRotationOverlap)
-	h.KeyHash = hash
-	h.Revision++
-	if err := st.saveLocked(); err != nil {
-		*h = before
-		return "", err
-	}
-	return raw, nil
+	raw, _, err := st.rotateWithPolicy(id, ifMatch, selfServiceKeyRotationPolicy{window: selfServiceKeyRotationOverlap})
+	return raw, err
 }
 
 // update applies mutate to the record for id when ifMatch is empty, "*", or
@@ -393,6 +374,7 @@ func (st *selfServiceStore) update(id, ifMatch string, mutate func(*SelfServiceH
 	before := *h
 	next := *h
 	next.Repos = append([]string(nil), h.Repos...)
+	next.PendingProof = append([]string(nil), h.PendingProof...)
 	next.RepoProofs = make(map[string]time.Time, len(h.RepoProofs))
 	for k, v := range h.RepoProofs {
 		next.RepoProofs[k] = v
@@ -456,7 +438,12 @@ func (st *selfServiceStore) verify(id, presented string) bool {
 	if !ok {
 		return false
 	}
-	hash := hashSelfServiceKey(presented)
+	return st.matchesKey(*h, hashSelfServiceKey(presented))
+}
+
+// matchesKey applies the heartbeat key policy to a record already loaded
+// under the store lock. Mutations must check the credential under that lock.
+func (st *selfServiceStore) matchesKey(h SelfServiceHive, hash string) bool {
 	if h.KeyHash != "" && secureCompareHub(hash, h.KeyHash) {
 		return true
 	}

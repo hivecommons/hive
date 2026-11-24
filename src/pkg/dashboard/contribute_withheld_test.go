@@ -100,6 +100,41 @@ func withheldCases() []withheldCase {
 			decorate: func(issue map[string]any) { issue["is_tracker"] = true },
 		},
 		{
+			name:   "umbrella label",
+			reason: withheldReasonUmbrella,
+			decorate: func(issue map[string]any) {
+				issue["labels"] = []any{"epic"}
+			},
+		},
+		{
+			name:   "umbrella body marker",
+			reason: withheldReasonUmbrella,
+			decorate: func(issue map[string]any) {
+				issue["body"] = "plan\n<!-- hive:umbrella -->\n"
+			},
+		},
+		{
+			name:   "umbrella task list of two",
+			reason: withheldReasonUmbrella,
+			decorate: func(issue map[string]any) {
+				issue["body"] = "- [ ] #11\n- [ ] #12\n"
+			},
+		},
+		{
+			name:   "umbrella sub-issues",
+			reason: withheldReasonUmbrella,
+			decorate: func(issue map[string]any) {
+				issue["children"] = map[string]any{"total": float64(3), "completed": float64(1)}
+			},
+		},
+		{
+			name:   "human-only label",
+			reason: withheldReasonHumanOnly,
+			decorate: func(issue map[string]any) {
+				issue["labels"] = []any{"human-only"}
+			},
+		},
+		{
 			name:   "completion cooldown",
 			reason: withheldReasonCooldown,
 			arrange: func(t *testing.T, hub *ContributeWSHub, s *Server) {
@@ -599,6 +634,8 @@ func TestWithheld_EveryReasonHasALabel(t *testing.T) {
 		withheldReasonDisabledRepo,
 		withheldReasonRepoUnmintable,
 		withheldReasonTracker,
+		withheldReasonUmbrella,
+		withheldReasonHumanOnly,
 		withheldReasonCooldown,
 		withheldReasonNoWorkNeeded,
 		withheldReasonFailureCooldown,

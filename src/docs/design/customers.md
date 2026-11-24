@@ -32,7 +32,9 @@ Goals:
 Non-goals (this series):
 
 - Any outbound path. Nothing is published, written to GitHub, sent to a hub or
-  added to a heartbeat.
+  added to a heartbeat. The one later exception is the opt-in, consent-first
+  hub import in [customers-hub-consent.md](customers-hub-consent.md), off by
+  default.
 - An agent-callable query tool. Agents cannot query Hive's stores
   ([security-model.md](../security-model.md) section 4,
   [ADR-0011](../adr/0011-knowledge-system.md)); a query tool is a later RFC.
@@ -92,7 +94,8 @@ contributor is one of several sources of identity for a person.
 | `goals` | See section 8. |
 | `satisfaction` | See section 8. |
 | `notes` | Free text, written by people only. |
-| `profile` | Optional `real_name`, `organization` and `location`, each `{value, source, rule, at, by}`. `source` is `auto` (the person's own public GitHub profile name, company and location, fetched once on accept) or `manual` (a person typed it or cleared it; the fetch never changes it; `auto` hands it back). Nothing here comes from the hub. |
+| `profile` | Optional `real_name`, `organization`, `location` and `country`, each `{value, source, rule, at, by, login}`. `source` is `auto` (the person's own public forge profile name, company and location, read by the profile fill, `rule` naming the source and `login` the login it was read for; the country derived offline from the location, rule `location`) or `manual` (a person typed it or cleared it; neither the fetch nor the location changes it; `auto` hands it back). `country` is an ISO 3166 alpha-2 code. Also `fetched` (the last profile-fill lookup: `at`, `outcome`, `sources`) and `dismissed_affiliations`, the suggested organizations a person refused (at most 20). Nothing here comes from the hub, except a `real_name`, `organization` or `country` the person entered on the hub and consented to share with this hive, when `customers.hub_import.enabled` is on ([customers-hub-consent.md](customers-hub-consent.md)). |
+
 | `merged_from` | Merge history, so a merge can be undone. |
 
 **Identity** `{kind, value, source, confidence, manual, at, by}`. Kinds:
@@ -319,14 +322,34 @@ manual, by whom), answering no pins the pair so it is not asked again. A hint
 between two customers is answered by merging them, which is the merge and split
 UI of a later PR.
 
-Step E also makes ONE request for the accepted login's public profile, before the
-search, and keeps only the name, company and location the person published
-(`profile` in section 4). It shares step E's switch, hourly budget and quota
-stand-down, spends one request of that budget, and is never run by the sweep. A
-suggested person has no profile fields until accepted. Forget deletes the fields
-with the person and export includes them. The hub's own records of the same people
-(name, company, country, notes, inferred affiliation) are not read or copied: that
-is the open question in section 15 and needs a consent decision first.
+Profile fields are filled by the profile fill (below, #19302), which has its own
+switch and budget; step E no longer reads the public profile. A suggested person
+has no profile fields until accepted. Forget deletes the fields with the person
+and export includes them. The hub's own records of the same people
+(name, company, country, notes, inferred affiliation) are not read or copied,
+except, when the hub import is on, the name, organization and country a person
+entered on the hub and consented to share with this hive. Notes and affiliation
+never cross. See [customers-hub-consent.md](customers-hub-consent.md).
+
+Country and likely affiliation add no request of their own. The country is derived
+from the location text by a bundled table (country names and aliases, ISO codes, US
+states and Canadian provinces, major cities; `pkg/customers/country_data.go`), offline
+and deterministically. The last comma-separated piece decides, a bare two-letter code
+after a comma reads as a US state first unless a city of another country precedes it
+("Berlin, DE"), and "remote", "Earth" or an empty location give no country. It is a
+guess about free text: a small city with no state or country, or a location that is
+a joke, can be wrong or empty, so it is an automatic field a person overwrites or
+clears, and a hand-set or hand-cleared country is never touched. A likely
+affiliation is a view-time suggestion, never stored: the GitHub company text tidied
+(legal suffix and "@" dropped, a bare handle capitalized), or, while the organization
+is empty, the domain of an email identity a person confirmed by hand (never a
+free-mail or code-host domain, and the address itself is not shown). It carries its
+evidence ("from GitHub company field"), Accept writes it as a by-hand organization,
+Dismiss remembers the refusal on the profile. Public GitHub organization membership
+is deliberately not used: it is not fetched, and fetching it would be a new request.
+Notes are free text up to 4000 bytes, written by the owner and read-write users, never
+shown to a read-only user (not even on their own profile), part of the owner's export
+and deleted with the person on Forget.
 
 Step E, the budgeted GitHub search on accept, is built and opt-in.
 `customers.mention_search.enabled` defaults to **off** (env
@@ -362,6 +385,63 @@ with history beyond what the hive already holds:
   or comment text is read into the store. The log line carries the person id and
   counts only, never the login, a query or a token. It runs in the background, so
   the accept does not wait for GitHub, and a failure never undoes the accept.
+
+### Profile fill
+
+The profile fill (#19302) fills a confirmed customer's real name, organization and
+location from their own public profile on a forge, and derives the country from the
+location. It is opt-in: `customers.profile_fill.enabled` defaults to **off** (env
+`HIVE_CUSTOMERS_PROFILE_FILL_ENABLED`, or Settings, Features), because it is a
+periodic network lookup about people and the goal above is no new network calls
+on a normal sweep. It needs the Customers section on and is independent of
+`customers.mention_search`.
+
+- **Sources.** One per forge, behind one interface (`customers.ProfileLookup`):
+  the hive's project-wide forge, then Linear. GitHub and GitHub Enterprise go
+  through the shared GitHub client (`GET /users/{login}`, and for a company field
+  of exactly `@handle`, `GET /orgs/{handle}` for the organization's public display
+  name, cached for a day); GitLab through the `pkg/forge` adapter (username search,
+  then `GET /users/{id}`); Gitea and Forgejo through theirs (`GET /users/{login}`,
+  no company field). When a Linear workspace is connected, one GraphQL query reads
+  the workspace member's name by a confirmed email address; Linear has no company
+  or location. A forge that cannot be reached (an enterprise server this hive has
+  no route to, say) is "no data". The website and avatar a profile names are read
+  but never stored or fetched. Organization membership lists are not fetched.
+- **Who.** Confirmed customers only (origin `hive_user`, `manual` or
+  `accepted`), never a suggestion. A forge is asked about the person's first
+  confirmed login identity, else a dashboard user name shaped like a login; Linear
+  only about a confirmed email. A bot login is never asked about.
+- **Fill rules.** Precedence is: a value set here by hand, then a hub value the
+  person entered or consented to share, then the public forge profile, then a hub
+  value the hub derived or an admin set (hub rules other than `hub_consent`,
+  `hub_person` and `hub_unrecorded`). So a manual or person-entered hub field is
+  never touched, and a derived or admin hub value is replaced only by a non-empty
+  forge value (a derived hub country by the country of a forge location). An
+  empty field is filled. A field an earlier fill wrote from a source that answered this time is
+  the fill's own: it is updated, or cleared when the person removed it from their
+  profile. Any other value is kept. The first source with a value wins, forge
+  before Linear. Each field records `source: auto`, `rule` (the profile source:
+  `github_profile`, `ghe_profile`, `gitlab_profile`, `gitea_profile` or
+  `linear_profile`), `login` and `at` (fetched); the dashboard tooltip shows them.
+  The organization is the company field with a leading `@` dropped, or the GitHub
+  organization's public name. The country is `DeriveCountry` over the location:
+  an unplaceable or ambiguous location gives no country.
+- **When.** A pass runs 2 minutes after boot and then every 15 minutes. It looks
+  up at most 20 people, never-fetched first (so existing customers, dashboard
+  users included, are backfilled in the first passes), then the stalest; a
+  success is refreshed after 7 days, a failure retried after 24 hours. Accepting a
+  suggestion fills that person in the background. "Refresh from profiles" on one
+  customer runs it now; for everyone it makes every customer due again.
+  `profile.fetched` records the last lookup (`at`, `outcome`, `sources`).
+- **Budget.** `customers.profile_fill.max_requests_per_hour` (default 60, at most
+  300) bounds every lookup together, reserved per lookup before it is made. The
+  GitHub source stands down while the API budget mode is not normal, the
+  secondary-limit caution window is engaged or the core bucket is low, so agents
+  are never starved; its requests carry the low pacing class and the caller label
+  `customers_profile_lookup`. A rate-limit refusal from any forge stops the pass
+  and backs off 15 minutes, doubling to at most 6 hours, until a lookup answers.
+- **Privacy.** Only text the person published on their own profile. The log
+  line carries counts and a fixed skip word, never a login, an email or a value.
 
 Automatic tags come from role, association and history: `maintainer` from an
 owner or merger role or a GitHub author association of owner, member or
@@ -539,6 +619,14 @@ feature adds no outbound path from the hive, which is what allows it to be on by
 Any later proposal to send customer data to a hub is its own RFC and falls
 under that review.
 
+**Enrichment.** [Customers enrichment](../customers-enrichment.md) is the one
+reviewed outbound path for this section, and it is off by default with a
+switch per source. gitdm downloads public CNCF files and sends nothing about a
+person; devstats and crowd.dev send a confirmed customer's public GitHub login
+only, and are listed in [telemetry.md](../telemetry.md). Suggested people are
+never looked up, an affiliation found this way is only a suggestion, and Forget
+erases enrichment.
+
 **Audit.** Profile open, export, forget, merge, split, accept, suggestion
 confirm and reject, and graph queries each write an audit line.
 
@@ -598,7 +686,8 @@ On a live hive:
 
 - Should a hub send a spoke the email and linked GitHub login it already holds
   for its users? It fills most blanks at once, but it is a hub change and a
-  consent question.
+  consent question. Decided in [customers-hub-consent.md](customers-hub-consent.md):
+  only on the person's per-hive consent, only values they entered, off by default.
 - Does `/data/customers` belong in backups? That moves personal data off the
   hive's volume.
 - Is the four-value satisfaction ordinal enough, or is a value above

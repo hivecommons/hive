@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // slackPostMessageURL is Slack's chat.postMessage endpoint. A bot token
@@ -134,6 +136,7 @@ var slackClient = &http.Client{Timeout: slackHTTPTimeout}
 // body is decoded and ok is checked. The token is never logged; the returned
 // error carries only Slack's error code.
 func sendSlackDM(token, slackID, message string) error {
+	message = prosefilter.Sanitize(message)
 	payload, err := json.Marshal(map[string]string{
 		"channel": slackID,
 		"text":    message,

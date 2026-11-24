@@ -150,10 +150,24 @@ test problem. Check these before diagnosing any single PR:
    say so on the PR once and prefer the order that rebases the smaller diff.
    Use a sticky comment (edit the existing one, marker `<!-- hive-pr-overlap -->`)
    rather than a new comment each run.
-4. **Behind the base.** After the base branch moves, a PR that touches the
-   same files as the merged change should be updated immediately
-   (`gh api -X PUT repos/<owner/repo>/pulls/<N>/update-branch`), not left to
-   turn red later. A `422` means it now conflicts: report it under item 3.
+4. **Behind the base: defer to the preparation owner.** Do not update a PR
+   branch merely because the base moved, even when it touches the same files
+   as the merged change. On repositories that use the current-base gate
+   (`auto_merge.require_current_base`, per repository or through
+   `auto_merge.require_current_base_default`), the hive's merge lane is the
+   one preparation owner: it refreshes a behind PR once its CI and review
+   pass, then waits for CI on the new head. Every extra refresh starts a
+   second full CI run, cancels the one in flight, and sends the owner back to
+   the start. If you cannot tell whether the gate applies, assume it does.
+   Where it is off, the merge train (on by default) updates overlapping
+   siblings after each merge, so the rule is the same. Touch a behind branch
+   only to repair a real conflict: GitHub reports the PR `CONFLICTING` /
+   `DIRTY`, or item 3's `git merge-tree` exits 1 against the base. Never call
+   `gh api -X PUT repos/<owner/repo>/pulls/<N>/update-branch` on a PR that
+   is only behind; on a conflict it returns `422` anyway, so report it under
+   item 3 and follow your lane's conflict rules. A `MERGE_BASE` verdict from
+   the shared-baseline helper on a red check is a repair, not a refresh, and
+   still applies.
 5. **Throughput fixes worth a PR.** When a repository's CI is slow, look for
    and propose, one PR each: a missing `concurrency` group with
    `cancel-in-progress` on pull_request workflows; `actions/setup-go` /

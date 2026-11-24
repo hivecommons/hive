@@ -39,11 +39,13 @@ How many issues and pull requests Hive is tracking right now, and how many of th
 - With the Overview card, both charts plot the card's bands instead. The legend shows **Your turn**, **Waiting on someone else**, **Blocked** and **Hive has it** as bold subtotal rows with their bands indented under them. A band at zero stays in the legend, dimmed, except Queued for agents and Unexplained; a subtotal row never dims; Held is hidden at zero, and so are the Your turn rows Inspect a sentinel flag, Approve, Merge by hand, Triage, Admit and Other. The PR chart also plots the drafts Hive sidelines.
 - Hover any slice or legend row in a chart to see its exact rule (the card's subtitle says "hover a band for its rule"). Each slice's ⬇ link exports the rows it counts; with the card, each band row exports `?card_band=<band>` and each subtotal row `?card_group=<tile>`. Clicking a legend row filters Projects to the tile that counts it.
 - With the card, the tiles' trend lines use their own samples, so the lines start empty after an upgrade and fill as samples arrive; a sample of the older equation never draws into a card tile.
+- Without the card, each chart also has a grey **Outside** slice for the open items in no band: what your filters kept off the work list, and draft pull requests. Its hover shows the same reasons as the Outside tile. With it, each chart adds up to its Total open tile, for all repositories or for the ones you picked. The slice is left out when it would be 0. Click it to filter Projects the way the Outside tile does.
 - The trend lines come from samples the hive takes on each status refresh, roughly every few minutes. Samples are kept for about 30 days and thinned to 96 points.
 - Your browser also keeps its own samples. When you filter by repository, only the browser's samples are used.
 
 **Numbers that look like they should match but do not.**
 
+- The chart's Outside slice can be larger than the Outside tile. Open issues that are labeled `needs-human` or wait on their reporter but sit in no band are in the slice. The tiles count those as Blocked / needs-human.
 - The charts plot more than Actionable now (Hive has it with the card): they include the items that are your turn and the ones waiting on someone else, each in its own slice. So an issue chart can total 8 while the tile shows 1 issue.
 - Without the card, the charts leave out the open items that are neither your turn nor waiting on someone else and that the scanner filtered out; those only count as Outside. With the card, both charts plot every listed open item, Not work and Draft included; only the count-only remainder (items counted but not listed) is in Outside without a slice.
 

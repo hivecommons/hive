@@ -513,6 +513,8 @@ func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeM
 	if err != nil {
 		return MergePRResult{}, fmt.Errorf("merging PR %s/%s#%d (%s): %w", owner, repo, number, mergeMethod, err)
 	}
+	// The landing commit message is outbound text like the PR body (#19103).
+	commitMessage = prosefilter.Sanitize(commitMessage)
 	var res *gh.PullRequestMergeResult
 	boundary := c.mutationBoundary()
 	claim := effects.Claim{

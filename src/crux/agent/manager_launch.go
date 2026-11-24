@@ -169,7 +169,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	launchCmd = m.dropDanglingModelFlag(agent, backend, launchCmd)
 
 	if bootstrapPrompt == "" && isInference {
-		bootstrapPrompt = "You are an AI agent. Await further instructions."
+		bootstrapPrompt = inferenceIdleBootstrapPrompt
 	}
 
 	// See backendDefersStartupKick for why each backend is or is not deferred.

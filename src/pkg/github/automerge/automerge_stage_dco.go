@@ -325,6 +325,6 @@ func signoffAttributionAsk(d stageDetail) string {
 	if n == 1 {
 		plural, pronoun = " is", "it"
 	}
-	return fmt.Sprintf("%d commit%s signed off as the hive App instead of you, so a squash merge would misattribute %s — set `git config user.email` to your own address, then run `%s`",
+	return fmt.Sprintf("%d commit%s signed off by a hive agent, not by you, so a squash merge would misattribute %s: set `git config user.email` to your own address, then run `%s`",
 		n, plural, pronoun, signoffResetCommand(max(d.DCOTotal, n)))
 }

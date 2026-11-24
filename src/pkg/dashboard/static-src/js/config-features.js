@@ -550,6 +550,10 @@
         </select></td></tr>`;
       }).join('');
       setTimeout(() => { if (rotationOn) loadRotationHeadroom(); }, 0);
+      /* Reviewer-stated rules (#19135): painted from their own owner-only endpoint. */
+      setTimeout(() => { if (typeof loadReviewRulesSettings === 'function') loadReviewRulesSettings(); }, 0);
+      /* Stranded review-feedback retry (#19320): its own owner-only endpoint. */
+      setTimeout(() => { if (typeof loadReviewRetrySettings === 'function') loadReviewRetrySettings(); }, 0);
       // Status line: distinguish ON+running from ON+not-configured from OFF.
       let trajStatus, trajStatusColor;
       if (!trajOn) { trajStatus = 'Off'; trajStatusColor = 'var(--muted)'; }
@@ -966,6 +970,14 @@
           </div>
         </div>
         <div class="settings-subsection">
+          <div class="settings-subsection-title">Reviewer-stated rules ${yamlHint('review_feedback.rules')} ${settingHelpMark('settings', 'features', 'Reviewer-stated rules', `When a person reviewing one of the hive's own PRs states a rule or a source of truth, the hive records it in its knowledge (the review-rules channel), replies on the PR with the rule id, and gives it to the authoring agent on its next run. Choose which phrases count and whose rules are recorded at once; others are queued for you.`)}</div>
+          <div id="cfg-review-rules-host"><div class="fs-sm text-muted">Loading…</div></div>
+        </div>
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Stranded review feedback ${yamlHint('review_feedback.retry')} ${settingHelpMark('settings', 'features', 'Stranded review feedback', `When review feedback on one of the hive's own PRs is routed to its agent and the run ends with no push and no reply on the PR, the hive routes the same comments again after a wait that doubles each time. After the last retry it posts a needs-human note on the PR with the reason.`)}</div>
+          <div id="cfg-review-retry-host"><div class="fs-sm text-muted">Loading…</div></div>
+        </div>
+        <div class="settings-subsection">
           <div class="settings-subsection-title">Merge Recommendations ${settingHelpMark('settings', 'features', 'Merge Recommendations', `A digest of what is worth merging next, written into one issue per repository and rewritten in place each cycle. It is separate from the review gate above: the gate decides whether a PR may merge, while this only reports what already can. It never merges, approves, closes or labels anything.`)}</div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${rvRec.enabled ? 'on' : ''}" id="rec-enabled-switch" data-action="gh82"></div>
@@ -1244,10 +1256,60 @@
           </div>
           ${f.customersAvatarsEffective !== f.customersAvatars ? `<p class="config-help">HIVE_CUSTOMERS_AVATARS_ENABLED overrides this setting: avatars are currently <b>${f.customersAvatarsEffective ? 'on' : 'off'}</b>.</p>` : ''}
           <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersHubImport ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersHubImportEnabled"></div>
+            <span class="config-toggle-label">Import details people shared on the hub ${yamlHint('customers.hub_import.enabled')} ${settingHelpMark('settings', 'features', 'Customer hub import', `OFF by default. When on, and this hive is registered with a hub, the hive asks the hub about its confirmed customers about once an hour and when a person is accepted. The request carries salted hashes of their GitHub logins and nothing else: no names, no emails, never a suggested person. The hub answers only for people who chose, on the hub, to share their real name, organization or country with this hive, and only values they typed themselves. Those fields show "from the hub". Editing one here makes it yours and the hub never changes it again; a value set by hand is never overwritten. When a person withdraws, or the hub has not confirmed a value for three days, it is removed and the field goes back to automatic. A forgotten person is never rebuilt. The import never creates a person. This switch is needed but never enough: each person's consent on the hub decides what arrives. Needs Customers on. HIVE_CUSTOMERS_HUB_IMPORT_ENABLED overrides it. See src/docs/design/customers-hub-consent.md.`)}</span>
+          </div>
+          ${f.customersHubImportEffective !== f.customersHubImport ? `<p class="config-help">HIVE_CUSTOMERS_HUB_IMPORT_ENABLED (or turning Customers off) overrides this setting: the hub import is currently <b>${f.customersHubImportEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
             <div class="config-toggle-switch ${f.customersSearch ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersSearchEnabled"></div>
             <span class="config-toggle-label">Search GitHub when accepting a person ${yamlHint('customers.mention_search.enabled')} ${settingHelpMark('settings', 'features', 'Customer GitHub search on accept', `OFF by default. When on, accepting a suggested GitHub login makes one budgeted GitHub search (issues and pull requests that mention the login and ones it commented on, in this hive's own repositories) so the new profile starts with history beyond what the hive already holds. The results are stored as references only, never text. It is never run by the discovery sweep and never for an email address. It sends the login to GitHub, makes at most two search requests per accept, shares an hourly request budget across accepts (customers.mention_search.max_requests_per_hour in the config file, default 10), counts against the shared GitHub quota, and stands down while that quota is low or GitHub's secondary limit is engaged. Needs Customers on. HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
           </div>
           ${f.customersSearchEffective !== f.customersSearch ? `<p class="config-help">HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED (or turning Customers off) overrides this setting: the search is currently <b>${f.customersSearchEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersProfileFill ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersProfileFillEnabled"></div>
+            <span class="config-toggle-label">Fill customer details from public profiles ${yamlHint('customers.profile_fill.enabled')} ${settingHelpMark('settings', 'features', 'Customer profile fill', `OFF by default. When on, the hive reads each confirmed customer's own public profile on this hive's forge (GitHub, GitHub Enterprise, GitLab or Gitea/Forgejo) by their login, and, when a Linear workspace is connected, their workspace member name by an email address the profile already holds. It fills the real name, organization (the company field, a GitHub @org shown by its public name) and location, and the country is derived from the location. Only empty fields are filled, plus fields an earlier fill wrote: a value set by hand or shared from the hub is never changed. Each field shows where it came from. Suggested people are never looked up. Existing customers are filled within a few passes after it is turned on, then refreshed about weekly; "Refresh from profiles" on the Customers section runs it now. It spends at most customers.profile_fill.max_requests_per_hour requests an hour (default 60), stands down while the shared GitHub quota is low and backs off when a forge rate-limits it. Needs Customers on. Independent of the GitHub search on accept. HIVE_CUSTOMERS_PROFILE_FILL_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersProfileFillEffective !== f.customersProfileFill ? `<p class="config-help">HIVE_CUSTOMERS_PROFILE_FILL_ENABLED (or turning Customers off) overrides this setting: the profile fill is currently <b>${f.customersProfileFillEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersEnrichmentEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnrichmentEnabled"></div>
+            <span class="config-toggle-label">Public affiliation and activity (enrichment) ${yamlHint('customers.enrichment.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment', `OFF by default. The master switch for adding public facts about confirmed customers from CNCF sources: who they work for (cncf/gitdm, crowd.dev) and their public contributions (devstats). Each source below has its own switch and stays off until you turn it on too. Suggested people are never looked up, and nothing found ever replaces an organization a person set by hand or shared from the hub: an affiliation only appears as a suggestion you accept or dismiss. Forgetting a person deletes what was found for them. Needs Customers on. HIVE_CUSTOMERS_ENRICHMENT_ENABLED overrides it. See src/docs/customers-enrichment.md.`)}</span>
+          </div>
+          ${f.customersEnrichmentEffective !== f.customersEnrichmentEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENRICHMENT_ENABLED (or turning Customers off) overrides this setting: enrichment is currently <b>${f.customersEnrichmentEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <details class="settings-subsection-details"><summary class="settings-subsection-summary">Enrichment sources</summary>
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${f.customersEnrichmentGitdmEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnrichmentGitdmEnabled"></div>
+              <span class="config-toggle-label">gitdm affiliations ${yamlHint('customers.enrichment.gitdm.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment: gitdm', `OFF by default. Downloads the public CNCF affiliation files from github.com/cncf/gitdm (the same files for every hive) and matches confirmed customers against them on this hive. Nothing about any person is sent anywhere: the only request is for the public files, refreshed on the interval below (default 24h). A match is offered as an affiliation suggestion marked "gitdm" with its dates. Needs enrichment on. HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED overrides it.`)}</span>
+            </div>
+            ${f.customersEnrichmentGitdmEffective !== f.customersEnrichmentGitdmEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED (or a switch above) overrides this setting: gitdm is currently <b>${f.customersEnrichmentGitdmEffective ? 'on' : 'off'}</b>.</p>` : ''}
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${f.customersEnrichmentDevstatsEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnrichmentDevstatsEnabled"></div>
+              <span class="config-toggle-label">devstats contributions ${yamlHint('customers.enrichment.devstats.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment: devstats', `OFF by default. Looks up a confirmed customer's public contribution activity on CNCF devstats and shows it read-only in their details, with links. This sends the person's GitHub login, and nothing else (never an email), to devstats.cncf.io, so it is listed in src/docs/telemetry.md. Lookups are capped per hour (below, default 30). Needs enrichment on. HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_ENABLED overrides it.`)}</span>
+            </div>
+            ${f.customersEnrichmentDevstatsEffective !== f.customersEnrichmentDevstatsEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_ENABLED (or a switch above) overrides this setting: devstats is currently <b>${f.customersEnrichmentDevstatsEffective ? 'on' : 'off'}</b>.</p>` : ''}
+            <div class="config-toggle">
+              <div class="config-toggle-switch ${f.customersEnrichmentCrowdDevEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnrichmentCrowdDevEnabled"></div>
+              <span class="config-toggle-label">crowd.dev (LFX Insights) ${yamlHint('customers.enrichment.crowddev.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment: crowd.dev', `OFF by default, and inert until this hive ships the crowd.dev source and you save an API token below. When active it sends a confirmed customer's GitHub login, and nothing else, to the crowd.dev API with your token. The token is sealed in the keystore and never shown again. Needs enrichment on. HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_ENABLED overrides it.`)}</span>
+            </div>
+            ${f.customersEnrichmentCrowdDevEffective !== f.customersEnrichmentCrowdDevEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_ENABLED (or a switch above) overrides this setting: crowd.dev is currently <b>${f.customersEnrichmentCrowdDevEffective ? 'on' : 'off'}</b>.</p>` : ''}
+            <div class="config-field-row">
+              <div class="config-field"><label>gitdm refresh interval ${yamlHint('customers.enrichment.gitdm.refresh_interval')} ${settingHelpMark('settings', 'features', 'gitdm refresh interval', `How often the public gitdm files are downloaded again, as a Go duration such as 24h or 72h. Empty uses the default (24h); the shortest allowed is 1h. HIVE_CUSTOMERS_ENRICHMENT_GITDM_REFRESH_INTERVAL overrides it.`)}</label><input type="text" value="${esc(f.customersEnrichmentGitdmRefresh || '')}" placeholder="${esc(String((f.customersEnrichmentDefaults || {}).customersEnrichmentGitdmRefresh || '24h0m0s'))}" data-change-action="markDirty" data-arg0="features" data-arg1="customersEnrichmentGitdmRefresh" data-arg-types="s,s,w"></div>
+              <div class="config-field"><label>devstats lookups per hour ${yamlHint('customers.enrichment.devstats.hourly_limit')} ${settingHelpMark('settings', 'features', 'devstats hourly limit', `How many devstats lookups all people together may make in one hour. 0 uses the default (30); the most allowed is 120. HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_HOURLY_LIMIT overrides it.`)}</label><input type="number" min="0" max="120" step="1" value="${esc(String(f.customersEnrichmentDevstatsHourlyLimit || ''))}" placeholder="${esc(String((f.customersEnrichmentDefaults || {}).customersEnrichmentDevstatsHourlyLimit || 30))}" data-change-action="markDirty" data-arg0="features" data-arg1="customersEnrichmentDevstatsHourlyLimit" data-arg-types="s,s,N"></div>
+              <div class="config-field"><label>crowd.dev API token ${yamlHint('customers.enrichment.crowddev.token_file')} ${settingHelpMark('settings', 'features', 'crowd.dev API token', `Saved straight away, owner only, sealed in the keystore at customers.enrichment.crowddev.token_file. It is never shown again; this field only says whether one is set. Clear removes it. HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN, when set, wins over the saved token.`)}</label><input type="password" id="customers-crowddev-token" autocomplete="new-password" placeholder="${f.customersEnrichmentCrowdDevTokenSet ? 'A token is set' : 'No token set'}"><div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-3)"><button type="button" class="hv-btn btn-secondary btn" data-action="saveCustomersCrowdDevToken" data-arg0="save">Save token</button><button type="button" class="hv-btn btn-secondary btn" data-action="saveCustomersCrowdDevToken" data-arg0="clear">Clear</button></div><div class="config-help" id="customers-crowddev-token-status">${f.customersEnrichmentCrowdDevTokenSet ? 'A token is set.' : 'No token set.'}</div></div>
+            </div>
+          </details>
+        </div>
+        <div class="settings-subsection">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.askEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="askEnabled"></div>
+            <span class="config-toggle-label">Ask AI help ${yamlHint('ask.enabled')} ${settingHelpMark('settings', 'features', 'Ask AI help', `OFF by default. Shows an Ask panel that answers questions about using this dashboard from the Hive docs. What is sent: the question a person types, and the label of the dashboard section they are in (from a fixed list, never anything on screen), to Kapa.ai, an AI service; the project's Kapa administrators can read questions in their analytics. Nothing else leaves: no login, email, page content, URL, repo, hive or agent name. Each person confirms a notice before their first question and can withdraw. Questions that look like a password, token or key are refused and not sent. Answers show their sources and an "AI generated, may be wrong" label. Needs a mode: hub (hosted hives, through the hub relay; no key on this hive) or direct (this hive calls Kapa.ai with its own key, set as ask.kapa.project_id, ask.kapa.integration_id and ask.kapa.api_key_file in hive.yaml or HIVE_ASK_* env). Limits: ask.limits.person_per_minute, ask.limits.person_per_hour, ask.limits.hive_per_hour, ask.limits.global_per_minute, ask.limits.in_flight, ask.limits.daily. HIVE_ASK_ENABLED overrides the switch. See src/docs/design/dashboard-ask-ai-help.md.`)}</span>
+          </div>
+          ${f.askEnabled && !f.askEffective ? `<p class="config-help">Ask stays off: ${esc(f.askProblem || 'HIVE_ASK_ENABLED overrides this setting')}.</p>` : ''}
+          ${!f.askEnabled && f.askEffective ? `<p class="config-help">HIVE_ASK_ENABLED overrides this setting: Ask is currently <b>on</b>.</p>` : ''}
+          <div class="config-field"><label>Ask mode ${yamlHint('ask.mode')} ${settingHelpMark('settings', 'features', 'Ask mode', `off does nothing. hub (hosted hives) asks through the hub relay with this hive's existing hub credential, so no Kapa key is kept here. direct calls Kapa.ai with this hive's own key file. HIVE_ASK_MODE overrides it.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="askMode" data-arg-types="s,s,v">${['off', 'hub', 'direct'].map(m => `<option value="${esc(m)}"${(f.askMode || 'off') === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.askSendSectionLabel ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="askSendSectionLabel"></div>
+            <span class="config-toggle-label">Send the section label with questions ${yamlHint('ask.send_section_label')} ${settingHelpMark('settings', 'features', 'Ask section label', `ON by default. Adds the name of the dashboard section the person is in, taken from a fixed list of section names, so "where is this button" finds the right page. Off sends the question alone. HIVE_ASK_SEND_SECTION_LABEL overrides it.`)}</span>
+          </div>
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">
@@ -1475,7 +1537,7 @@
         ${renderGovFleetReportSection((_configState.data || {}).fleet_report || {})}
 
         <div class="settings-subsection">
-          <div class="settings-subsection-title">GitLab and Gitea forges ${settingHelpMark('settings', 'features', 'GitLab and Gitea forges', `Used only when the project forge is set to gitlab or gitea. Tokens are never stored in config: each forge names the environment variable that holds its token.`)}</div>
+          <div class="settings-subsection-title">GitLab, Gitea and Forgejo forges ${settingHelpMark('settings', 'features', 'GitLab, Gitea and Forgejo forges', `Used only when the project forge is set to gitlab, gitea or forgejo. Tokens are never stored in config: each forge names the environment variable that holds its token.`)}</div>
           <div class="config-field-row">
             <div class="config-field"><label>GitLab URL ${yamlHint('gitlab.gitlab_url')} ${settingHelpMark('settings', 'features', 'GitLab URL', `GitLab instance root, e.g. https://gitlab.example.com. Empty uses ${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}.`)}</label><input type="text" value="${esc(f.gitlabUrl || '')}" placeholder="${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabUrl" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>GitLab token env var ${yamlHint('gitlab.token_env')} ${settingHelpMark('settings', 'features', 'GitLab token env var', `The NAME of the environment variable holding the GitLab token, never the token itself.`)}</label><input type="text" value="${esc(f.gitlabTokenEnv || '')}" placeholder="${esc(platformDefaults.gitlabTokenEnv || 'GITLAB_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabTokenEnv" data-arg-types="s,s,w"></div>
@@ -1483,6 +1545,10 @@
           <div class="config-field-row">
             <div class="config-field"><label>Gitea URL ${yamlHint('gitea.gitea_url')} ${settingHelpMark('settings', 'features', 'Gitea URL', `Gitea or Forgejo instance root, e.g. https://codeberg.org. There is no default; it is required for the Gitea forge.`)}</label><input type="text" value="${esc(f.giteaUrl || '')}" placeholder="https://gitea.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="giteaUrl" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>Gitea token env var ${yamlHint('gitea.token_env')} ${settingHelpMark('settings', 'features', 'Gitea token env var', `The NAME of the environment variable holding the Gitea token, never the token itself.`)}</label><input type="text" value="${esc(f.giteaTokenEnv || '')}" placeholder="${esc(platformDefaults.giteaTokenEnv || 'GITEA_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="giteaTokenEnv" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Forgejo URL ${yamlHint('forgejo.forgejo_url')} ${settingHelpMark('settings', 'features', 'Forgejo URL', `Forgejo instance root, e.g. https://codeberg.org. There is no default; it is required for the Forgejo forge.`)}</label><input type="text" value="${esc(f.forgejoUrl || '')}" placeholder="https://forgejo.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="forgejoUrl" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Forgejo token env var ${yamlHint('forgejo.token_env')} ${settingHelpMark('settings', 'features', 'Forgejo token env var', `The NAME of the environment variable holding the Forgejo token, never the token itself.`)}</label><input type="text" value="${esc(f.forgejoTokenEnv || '')}" placeholder="${esc(platformDefaults.forgejoTokenEnv || 'FORGEJO_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="forgejoTokenEnv" data-arg-types="s,s,w"></div>
           </div>
           <div class="config-help">Requires restart: the forge client is built at boot.</div>
         </div>
@@ -1876,4 +1942,27 @@
             ${csRows ? `<table class="am-fence-repo-table"><thead><tr><th>Repository</th><th>Sweep</th><th>Alerts</th></tr></thead><tbody>${csRows}</tbody></table>` : '<p class="am-trusted-authors-note">No repositories in project.repos yet.</p>'}
           </div>
         </div>`;
+    }
+
+    // saveCustomersCrowdDevToken writes or clears the crowd.dev API token used
+    // by customers enrichment through its owner-only endpoint. The token never
+    // goes through the Features save and is never read back.
+    async function saveCustomersCrowdDevToken(mode) {
+      const input = document.getElementById('customers-crowddev-token');
+      const status = document.getElementById('customers-crowddev-token-status');
+      const token = mode === 'clear' ? '' : ((input && input.value) || '').trim();
+      if (mode !== 'clear' && !token) {
+        if (status) status.textContent = 'Type a token first, or use Clear to remove the saved one.';
+        return;
+      }
+      try {
+        const r = await fetch('/api/customers/enrichment/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ crowddev_token: token }) });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        if (input) { input.value = ''; input.placeholder = data.crowddev_token_set ? 'A token is set' : 'No token set'; }
+        if (status) status.textContent = data.crowddev_token_set ? 'A token is set.' : 'No token set.';
+        if (typeof showToast === 'function') showToast(mode === 'clear' ? 'crowd.dev token cleared' : 'crowd.dev token saved', 'success');
+      } catch (e) {
+        if (status) status.textContent = 'Could not save the token: ' + e.message;
+      }
     }

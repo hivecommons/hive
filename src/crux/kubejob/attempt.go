@@ -15,14 +15,16 @@ import (
 // retryJobSuffix names the re-created Job after a node_unhealthy kick.
 const retryJobSuffix = "-r"
 
-// runWithRetry runs the kick as a Job and, when its node preflight fails, runs
-// it once more on a different node (#18811). Only an agent kick (Relays set)
-// gets a preflight: the publish.verify launches share this launcher and must
-// not be gated on the agent's node health.
+// runWithRetry runs the kick as a Job and, when its node preflight or a setup
+// health command fails, runs it once more on a different node (#18811,
+// #19574). Only an agent kick (Relays set) gets a preflight or a setup step:
+// the publish.verify launches share this launcher and must not be gated on
+// the agent's node health or re-run its install.
 func (l *Launcher) runWithRetry(ctx context.Context, spec sandbox.LaunchSpec, ns, subPath string, relays *relayPlan) (sandbox.Result, error) {
-	if !spec.Relays && len(l.Options.Preflight) > 0 {
+	if !spec.Relays && (len(l.Options.Preflight) > 0 || l.Options.setupEnabled()) {
 		cp := *l
 		cp.Options.Preflight = nil
+		cp.Options.Setup, cp.Options.SetupHealth = nil, nil
 		l = &cp
 	}
 	first := jobName(spec.Name, l.now())
@@ -45,7 +47,7 @@ func (l *Launcher) runWithRetry(ctx context.Context, spec sandbox.LaunchSpec, ns
 		if errors.As(err, &fe) {
 			detail = fe.Message
 		}
-		fmt.Fprintf(&earlier, "hive: attempt %d on node %s failed the node preflight; retrying on another node\n%s\n\n", attempt+1, res.Node, res.Stdout)
+		fmt.Fprintf(&earlier, "hive: attempt %d on node %s failed the node preflight or a setup health check; retrying on another node\n%s\n\n", attempt+1, res.Node, res.Stdout)
 		l.emit(Event{Kind: EventNodeRetry, Node: res.Node, Detail: detail})
 		avoid = append(avoid, res.Node)
 		if d := l.Options.PreflightRetryDelay; d > 0 {
@@ -168,6 +170,11 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 		res.Stderr = done.reason
 		if msg, bad := l.Options.preflightFailure(res); bad {
 			res.FailReason = sandbox.FailReasonNodeUnhealthy
+			return res, &sandbox.FailError{Reason: res.FailReason, Node: res.Node, Message: msg}
+		}
+		if msg, bad := l.Options.setupFailure(res); bad {
+			// Not the node's fault: no retry elsewhere (#19574).
+			res.FailReason = sandbox.FailReasonSetupFailed
 			return res, &sandbox.FailError{Reason: res.FailReason, Node: res.Node, Message: msg}
 		}
 		return res, fmt.Errorf("kubejob: job %s failed: %s", name, done.reason)

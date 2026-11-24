@@ -628,6 +628,10 @@
         return;
       }
       dismissToast(toast, data.applied === false && data.message ? `${agent} ${label} → ${backend}: ${data.message}` : `${agent} ${label} → ${backend} (session restarted)`, 'success');
+      // The server rewrote a model id the new backend's CLI would reject
+      // (claude-sonnet-5.5 carried onto claude, claude-sonnet-5-5 onto
+      // copilot): say so.
+      if (data.warning) showToast(data.warning, 'warning');
       // The selection is saved; if its backing config is missing, land the
       // user on the Settings tab that fixes it (never blocks).
       maybeOpenMethodConfig(backend);
@@ -709,7 +713,12 @@
       if (!data.ok) { dismissToast(toast, `Model switch failed: ${data.error || 'unknown'}`, 'error'); return; }
       // A change saved for an agent that is not running restarts nothing: show
       // the server's "saved; applies when <agent> starts" instead (#18905).
+      // The server may store a different spelling than was picked (a Claude
+      // id in the other CLI's convention is saved in this backend's); show
+      // what was saved.
+      if (data.model) model = data.model;
       dismissToast(toast, data.applied === false && data.message ? `${agent} model → ${model}: ${data.message}` : `${agent} model → ${model} (session restarted)`, 'success');
+      if (data.warning) showToast(data.warning, 'warning');
       // #18906: hold scroll position, focus and list order across the re-render.
       withAgentViewportPreserved(agent, () => {
         if (window._lastAgents) {

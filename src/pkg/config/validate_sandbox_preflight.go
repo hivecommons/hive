@@ -7,11 +7,15 @@ import (
 	cruxconfig "github.com/hivecommons/hive/crux/config"
 )
 
-// validateSandboxPreflights checks sandbox.preflight and job.schedule_timeout_s
-// in the global agent_sandbox block and in every agent's sandbox override
+// validateSandboxPreflights checks sandbox.preflight, sandbox.setup
+// (hivecommons/hive#19574) and job.schedule_timeout_s in the global
+// agent_sandbox block and in every agent's sandbox override
 // (hivecommons/hive#18811), so a bad value fails config load rather than a kick.
 func (c *Config) validateSandboxPreflights() error {
 	if err := cruxconfig.ValidateSandboxPreflight(c.AgentSandbox.Preflight); err != nil {
+		return fmt.Errorf("agent_sandbox.%w", err)
+	}
+	if err := cruxconfig.ValidateSandboxSetup(c.AgentSandbox.Setup); err != nil {
 		return fmt.Errorf("agent_sandbox.%w", err)
 	}
 	if err := cruxconfig.ValidateSandboxJobScheduleTimeout(c.AgentSandbox.Job); err != nil {
@@ -28,6 +32,9 @@ func (c *Config) validateSandboxPreflights() error {
 			continue
 		}
 		if err := cruxconfig.ValidateSandboxPreflight(sb.Preflight); err != nil {
+			return fmt.Errorf("agents.%s.sandbox.%w", name, err)
+		}
+		if err := cruxconfig.ValidateSandboxSetup(sb.Setup); err != nil {
 			return fmt.Errorf("agents.%s.sandbox.%w", name, err)
 		}
 		if err := cruxconfig.ValidateSandboxJobScheduleTimeout(sb.Job); err != nil {

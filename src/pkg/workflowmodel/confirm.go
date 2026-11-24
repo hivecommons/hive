@@ -1,6 +1,10 @@
 package workflowmodel
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"sort"
+	"strings"
+)
 
 // AnnotationConfirmedBy records who confirmed an ingested model's inferred
 // elements (Confirm). It lives in metadata.annotations so the spec hash
@@ -94,17 +98,22 @@ type LabelDef struct {
 // LabelDefs is the label vocabulary the profile reconciles: its label
 // entries with defaultColor filled in where an entry names none and the
 // state's label as description where an entry has none. Entries are
-// returned in declaration order; a model with no labels block regenerates
-// nothing and keeps using the built-in family by stage number.
+// returned in declaration order, followed by the stage labels numbered
+// states spell themselves (StateLifecycle.StageLabel, hivecommons/hive#19611)
+// in state-id order, coloured defaultColor and described by the state's
+// label. A model with neither regenerates nothing and keeps using the
+// built-in family by stage number.
 func (p *Profile) LabelDefs(defaultColor string) []LabelDef {
 	if p == nil {
 		return nil
 	}
 	out := make([]LabelDef, 0, len(p.Labels.Entries))
+	seen := map[string]bool{}
 	for _, e := range p.Labels.Entries {
 		if e.Name == "" {
 			continue
 		}
+		seen[strings.ToLower(e.Name)] = true
 		d := LabelDef{Name: e.Name, Color: e.Color, Description: e.Description, State: e.State}
 		if d.Color == "" {
 			d.Color = defaultColor
@@ -116,5 +125,30 @@ func (p *Profile) LabelDefs(defaultColor string) []LabelDef {
 		}
 		out = append(out, d)
 	}
+	for _, id := range p.StageLabelStates() {
+		st := p.States[id]
+		name := strings.ToLower(strings.TrimSpace(st.Lifecycle.StageLabel))
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, LabelDef{Name: name, Color: defaultColor, Description: st.Label, State: id})
+	}
 	return out
+}
+
+// StageLabelStates lists, sorted, the ids of the numbered states that
+// declare their own stage label (StateLifecycle.StageLabel).
+func (p *Profile) StageLabelStates() []string {
+	if p == nil {
+		return nil
+	}
+	var ids []string
+	for id, st := range p.States {
+		if st != nil && st.Lifecycle.Number > 0 && strings.TrimSpace(st.Lifecycle.StageLabel) != "" {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
 }

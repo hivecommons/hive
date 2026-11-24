@@ -150,6 +150,16 @@ Static analysis runs in CI (`go vet`, `golangci-lint`, `gosec`, and
 Fix findings rather than suppressing them; when a suppression is genuinely
 right, comment why at the suppression site.
 
+`gosec` blocks a PR on any new HIGH finding that is not in
+[`.github/gosec-high-baseline.json`](.github/gosec-high-baseline.json). Fix it,
+or add `#nosec <rule> -- <reason>` naming why the input is bounded. Never add
+to the baseline: it is code-owner-reviewed and only shrinks. gosec's G703/G704
+taint results vary between runs, so if one fires on code you did not touch,
+re-run the job once before suppressing. Semgrep rules (`.semgrep/`), the CodeQL
+query (`.github/codeql/`) and zizmor run from
+[`.github/workflows/static-security.yml`](.github/workflows/static-security.yml);
+see [`.semgrep/README.md`](.semgrep/README.md).
+
 ## Optional git hooks
 
 The repository includes `githooks/post-checkout`. Install it only if you want the local checkout guard:

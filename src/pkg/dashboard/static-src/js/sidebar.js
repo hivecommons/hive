@@ -621,6 +621,9 @@
       const tree = document.getElementById('oc-agent-tree');
       if (!tree) return;
       const agents = _sidebarAgents();
+      // "All agents (n)": the live count beside the collapsible agent list.
+      const count = document.getElementById('oc-agent-tree-count');
+      if (count) count.textContent = '(' + agents.length + ')';
       const agentMap = {};
       agents.forEach(a => { agentMap[a.name] = a; });
       const groups = _sidebarBuildGroups(agents);

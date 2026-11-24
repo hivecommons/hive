@@ -56,6 +56,7 @@ import (
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/oktotest"
+	"github.com/hivecommons/hive/pkg/prgate"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
@@ -134,6 +135,9 @@ const (
 	workflowRunsPageSize     = 100
 	// workflowRunStatusQueued is the status of a run GitHub has not started.
 	workflowRunStatusQueued = "queued"
+	// prGateHoldWarnKey keys the once-per-head warning that a required
+	// PR-contents context cannot be posted by the hive.
+	prGateHoldWarnKey = "pr-gate-not-postable:"
 	// orphanedRunWarnKey keys the once-per-head orphaned-run warning in
 	// terminalHoldLogged.
 	orphanedRunWarnKey = "orphaned-queued-runs:"
@@ -147,6 +151,22 @@ const (
 // count as never started (#17775). It never approves a run with the App token,
 // and it never posts a command to Dependabot, which refuses commands from apps.
 func (c *Engine) resolveMissingRequiredCheck(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int, headSHA, reason string, headPushedAt time.Time) string {
+	if c != nil && strings.HasPrefix(reason, requiredCheckMissingPrefix) {
+		// A required context the hive itself posts (auto_merge.pr_gate in
+		// enforce mode) is missing because the hive cannot post it: the
+		// installation lacks the Commit statuses write grant, or GitHub refused
+		// the write. Say so instead of a bare required-check-missing
+		// (hivecommons/hive#19038). The hold is only ever named, never cleared
+		// by polling: the owner accepts the permission.
+		missing := strings.TrimPrefix(reason, requiredCheckMissingPrefix)
+		if held := prgate.DefaultHoldReason(owner+"/"+repo, missing); held != "" {
+			if c.markTerminalHoldLogged(owner, repo, number, headSHA, prGateHoldWarnKey+missing) {
+				c.warn("automerge required PR-contents context cannot be posted by the hive; naming the missing Commit statuses grant",
+					"repo", displayRepo, "pr", number, "sha", headSHA, "context", missing, "reason", held)
+			}
+			return held
+		}
+	}
 	if c == nil || c.gh == nil || !strings.HasPrefix(reason, requiredCheckMissingPrefix) {
 		return reason
 	}

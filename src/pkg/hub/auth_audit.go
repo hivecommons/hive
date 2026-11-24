@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 const (
@@ -179,6 +181,7 @@ func (s *HubServer) reportURLHealth(hives []RegistryEntry, clusterProbed, cluste
 // best-effort: failure to alert is logged but never fatal. The log Warn above
 // is always emitted regardless, so an external log-based alert still fires.
 func (s *HubServer) pushAuthAuditAlert(message string) {
+	message = prosefilter.Sanitize(message)
 	server := strings.TrimRight(os.Getenv("HIVE_NTFY_SERVER"), "/")
 	topic := os.Getenv("HIVE_NTFY_TOPIC")
 	if server == "" || topic == "" {

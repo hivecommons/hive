@@ -42,6 +42,10 @@ func TestCanonicalizeCopilotModel(t *testing.T) {
 		{"unknown id unchanged", "some-future-model.9", "some-future-model.9"},
 		{"unknown dashless unchanged", "gpt-next", "gpt-next"},
 		{"auto sentinel unchanged", "auto", "auto"},
+		// A Claude id the list does not know yet still gets the Copilot
+		// spelling from the shared Claude/Copilot mapping.
+		{"unlisted claude dashed to dotted", "claude-haiku-5-5", "claude-haiku-5.5"},
+		{"unlisted claude dotted unchanged", "claude-haiku-5.5", "claude-haiku-5.5"},
 		{"empty unchanged", "", ""},
 	}
 	for _, tt := range tests {

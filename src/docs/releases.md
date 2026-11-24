@@ -429,6 +429,22 @@ The dispatched build completing does fire a `workflow_run` event back at
 `workflow_dispatch`-triggered builds (see "Idempotency and concurrency"
 below), so the release pipeline never chases its own tail.
 
+## Verifying image signatures (cosign)
+
+The manifest-list digest behind each tag pushed by `docker.yml` and
+`tagged-release.yml` is signed keyless with cosign, so signatures verify against
+the digest a tag resolves to. Tags are mutable pointers and carry no signature
+themselves: resolve the tag to its digest
+(`docker buildx imagetools inspect <tag> --format '{{.Manifest.Digest}}'`) and
+verify that digest. The signature is a separate `sha256-<digest>.sig` object,
+so the image manifest is unchanged. Verify with the workflow identity:
+
+```
+cosign verify ghcr.io/hivecommons/hive@sha256:<digest> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/hivecommons/hive/\.github/workflows/(docker|tagged-release)\.yml@'
+```
+
 ## Software bill of materials (SBOM)
 
 Every tagged release ships a downloadable SBOM per image — `hive`,

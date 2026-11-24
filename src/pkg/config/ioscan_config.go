@@ -54,6 +54,26 @@ type IoscanConfig struct {
 	// that scores text the deterministic rules let through. Its enabled and
 	// fail_mode defaults follow the ACMM level (see IoscanClassifierConfig).
 	Classifier IoscanClassifierConfig `yaml:"classifier,omitempty" json:"classifier,omitempty"`
+	// SourceMemoryDays is how many days an untrusted author and the issue/PR
+	// thread stay flagged after their text tripped a High or Critical
+	// injection block (hivecommons/hive#19440). Text from a flagged source
+	// always goes to the classifier, fail-closed whatever classifier.fail_mode
+	// says, and is withheld when no classifier is installed. Pointer so an
+	// omitted key (nil) takes the default, 30 days, while an explicit 0
+	// turns the memory off. Read via SourceMemoryDaysOrDefault().
+	SourceMemoryDays *int `yaml:"source_memory_days,omitempty" json:"source_memory_days,omitempty"`
+}
+
+// SourceMemoryDaysOrDefault returns the configured source-memory window in
+// days; zero means off.
+func (c IoscanConfig) SourceMemoryDaysOrDefault() int {
+	if c.SourceMemoryDays == nil {
+		return ioscan.DefaultSourceMemoryDays
+	}
+	if *c.SourceMemoryDays < 0 {
+		return 0
+	}
+	return *c.SourceMemoryDays
 }
 
 // IoscanClassifierConfig controls the model-based semantic injection

@@ -17,14 +17,16 @@ import (
 
 // The embedded cncf-techdocs-assessment versions. Curated files are never
 // edited in place, so each version is its own file and the catalogue keeps
-// both (hivecommons/hive#18139 step 4 added 2026.11.2).
+// every one (hivecommons/hive#18139 step 4 added 2026.11.2,
+// hivecommons/hive#19611 added 2026.11.3, hivecommons/hive#19609 added
+// 2026.11.4).
 const (
-	mktTechDocsName       = "cncf-techdocs-assessment"
-	mktTechDocsVersion1   = "curated-2026.11.1"
-	mktTechDocsVersion2   = "curated-2026.11.2"
-	mktTechDocsKey        = mktTechDocsName + "@" + mktTechDocsVersion1
-	mktTechDocsKeyLatest  = mktTechDocsName + "@" + mktTechDocsVersion2
-	mktTechDocsVersionCnt = 2
+	mktTechDocsName          = "cncf-techdocs-assessment"
+	mktTechDocsVersion1      = "curated-2026.11.1"
+	mktTechDocsVersionLatest = "curated-2026.11.4"
+	mktTechDocsKey           = mktTechDocsName + "@" + mktTechDocsVersion1
+	mktTechDocsKeyLatest     = mktTechDocsName + "@" + mktTechDocsVersionLatest
+	mktTechDocsVersionCnt    = 4
 )
 
 // TestMarketplaceCuratedSeedPublishesAndIsIdempotent: the embedded curated
@@ -67,7 +69,7 @@ func TestMarketplaceCuratedSeedPublishesAndIsIdempotent(t *testing.T) {
 	if b.Model.Spec.Intake.DerivesReferenceRepos() {
 		t.Fatalf("%s must not declare intake fields: %+v", mktTechDocsKey, b.Model.Spec.Intake)
 	}
-	raw, err = st.Get(mktTechDocsName, mktTechDocsVersion2)
+	raw, err = st.Get(mktTechDocsName, mktTechDocsVersionLatest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,9 +89,9 @@ func TestMarketplaceCuratedSeedPublishesAndIsIdempotent(t *testing.T) {
 	if err != nil || len(vs) != mktTechDocsVersionCnt {
 		t.Fatalf("versions: %v %d", err, len(vs))
 	}
-	// The listing exposes both versions, oldest first, so the last entry is
+	// The listing exposes every version, oldest first, so the last entry is
 	// the one a fresh import picks up.
-	if vs[0].Version != mktTechDocsVersion1 || vs[len(vs)-1].Version != mktTechDocsVersion2 {
+	if vs[0].Version != mktTechDocsVersion1 || vs[len(vs)-1].Version != mktTechDocsVersionLatest {
 		t.Fatalf("versions order: %+v", vs)
 	}
 	idx, _, _, err := st.Index()

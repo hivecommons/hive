@@ -877,6 +877,7 @@ func installationPermissionMap(p *gh.InstallationPermissions) map[string]string 
 	put("pull_requests", p.GetPullRequests())
 	put(PermissionRepositoryHooks, p.GetRepositoryHooks())
 	put("secrets", p.GetSecrets())
+	put(PermissionStatuses, p.GetStatuses())
 	put("vulnerability_alerts", p.GetVulnerabilityAlerts())
 	put("workflows", p.GetWorkflows())
 	return out

@@ -748,7 +748,7 @@ func issueFromBranchName(branch string) (int, bool) {
 	if len(m) < 4 {
 		return 0, false
 	}
-	if branchIssueMatchOverlapsDate(branch, m[2], m[3]) {
+	if branchIssueMatchOverlapsDate(branch, m[2], m[3]) || branchIssueMatchIsTrackerKey(branch, m[2]) {
 		return 0, false
 	}
 	n, err := strconv.Atoi(branch[m[2]:m[3]])
@@ -756,6 +756,43 @@ func issueFromBranchName(branch string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// trackerKeyPrefixes holds the project keys of the hive's Jira and Linear
+// work sources (lower case), installed by SetTrackerKeyPrefixes.
+var trackerKeyPrefixes = struct {
+	sync.RWMutex
+	keys map[string]bool
+}{}
+
+// SetTrackerKeyPrefixes installs the project keys of the configured Jira and
+// Linear work sources (jira.project_keys, linear.teams[].key). A branch named
+// after one of their items ("ceh-12725-...") then claims no GitHub issue.
+func SetTrackerKeyPrefixes(keys []string) {
+	m := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		if k = strings.ToLower(strings.TrimSpace(k)); k != "" {
+			m[k] = true
+		}
+	}
+	trackerKeyPrefixes.Lock()
+	defer trackerKeyPrefixes.Unlock()
+	trackerKeyPrefixes.keys = m
+}
+
+// branchIssueMatchIsTrackerKey reports whether the number at start is the
+// numeric half of a configured Jira/Linear key, such as "CEH-12725" in
+// "ceh-12725-mcp-client". That number is not a GitHub issue in this
+// repository. Any other word (hotfix-, bug-, feat-) keeps the claim.
+func branchIssueMatchIsTrackerKey(branch string, start int) bool {
+	if start < 2 || branch[start-1] != '-' {
+		return false
+	}
+	head := branch[:start-1]
+	word := strings.ToLower(head[strings.LastIndexAny(head, "/_-")+1:])
+	trackerKeyPrefixes.RLock()
+	defer trackerKeyPrefixes.RUnlock()
+	return trackerKeyPrefixes.keys[word]
 }
 
 func branchIssueMatchOverlapsDate(branch string, start, end int) bool {

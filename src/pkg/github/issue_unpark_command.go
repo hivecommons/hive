@@ -646,7 +646,7 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 			return acted, err
 		}
 	}
-	candidate, command, err := c.eligibleUnparkCommand(ctx, owner, repo, comments, answered, cutoff, labelDriven && la.enabled, verbs)
+	candidate, command, err := c.eligibleUnparkCommand(ctx, owner, repo, comments, answered, cutoff, labelDriven && la.enabled, verbs, true)
 	if err != nil {
 		return false, err
 	}
@@ -873,9 +873,11 @@ func (c *Client) recordLabelApproval(event IssueLabelApprovalEvent, la unparkLab
 
 func (c *Client) postLabelApprovalReply(ctx context.Context, owner, repo string, number int, marker, body string) error {
 	marked := marker + "\n" + body
-	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(marked)}); err != nil {
+	created, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(marked)})
+	if err != nil {
 		return fmt.Errorf("replying to label approval on %s/%s#%d: %w", owner, repo, number, err)
 	}
+	c.learnSelfLogin(created)
 	return nil
 }
 
@@ -1311,7 +1313,11 @@ const unparkCandidateLimit = 5
 //
 // verbs are the bound workflow model's replies for the item's current state
 // (hivecommons/hive#17620); nil admits the built-in commands only.
-func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, comments []*gh.IssueComment, answered map[int64]bool, cutoff time.Time, allowTriage bool, verbs []string) (*gh.IssueComment, unparkCommand, error) {
+//
+// proseDecision admits a first line of `Decision: <text>` (or `Decision
+// (owner): <text>`) as `/hive decision <text>` (hivecommons/hive#19155). Only
+// the issue sweep sets it; PRs keep the strict `/hive` command shape.
+func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, comments []*gh.IssueComment, answered map[int64]bool, cutoff time.Time, allowTriage bool, verbs []string, proseDecision bool) (*gh.IssueComment, unparkCommand, error) {
 	checked := 0
 	for i := len(comments) - 1; i >= 0 && checked < unparkCandidateLimit; i-- {
 		cm := comments[i]
@@ -1319,7 +1325,7 @@ func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, 
 			continue
 		}
 		if answered[cm.GetID()] {
-			if isUnparkWatermarkCommandFor(cm.GetBody(), verbs) {
+			if isUnparkWatermarkCommandFor(cm.GetBody(), verbs) || (proseDecision && isUnparkProseDecision(cm.GetBody())) {
 				break
 			}
 			continue
@@ -1333,7 +1339,13 @@ func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, 
 			continue
 		}
 		cmd, isCommand := parseUnparkCommandFor(cm.GetBody(), verbs)
-		if !isCommand && !isUnparkProseAssent(cm.GetBody()) {
+		if !isCommand && proseDecision {
+			cmd, isCommand = parseUnparkProseDecision(cm.GetBody())
+		}
+		// The decision hint (a bare `B`, `option 1`, `decide ...`) is only for
+		// the issue sweep. On a PR a one-letter reply is common, and as the
+		// newest candidate it would hide an older valid `/hive decision`.
+		if !isCommand && !isUnparkProseAssent(cm.GetBody()) && !(proseDecision && isUnparkProseDecisionHint(cm.GetBody())) {
 			continue
 		}
 		if !c.isHumanAuthor(cm.GetUser()) {
@@ -1443,6 +1455,36 @@ func parseUnparkCommand(body string) (unparkCommand, bool) {
 	return unparkCommand{}, false
 }
 
+// unparkProseDecisionPrefix matches a first line that records a decision the
+// way maintainers habitually write it: `Decision: option 1 ...` or
+// `Decision (owner): option 1 ...`.
+var unparkProseDecisionPrefix = regexp.MustCompile(`(?i)^decision(?:\s*\([^)\n]*\))?\s*:\s*`)
+
+// parseUnparkProseDecision reads a first line of `Decision: <text>` as
+// `/hive decision <text>`. It is held to the same rules as the command: first
+// line only, never inside a quote or fence, and the text must be non-empty. The
+// caller still applies the permission, freshness and unedited checks.
+func parseUnparkProseDecision(body string) (unparkCommand, bool) {
+	line := firstNonEmptyLine(body)
+	if strings.HasPrefix(line, ">") || strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
+		return unparkCommand{}, false
+	}
+	loc := unparkProseDecisionPrefix.FindStringIndex(line)
+	if loc == nil {
+		return unparkCommand{}, false
+	}
+	decision := strings.TrimSpace(line[loc[1]:])
+	if decision == "" {
+		return unparkCommand{}, false
+	}
+	return unparkCommand{Kind: unparkCommandDecision, Decision: decision, Text: decisionText(body, decision)}, true
+}
+
+func isUnparkProseDecision(body string) bool {
+	_, ok := parseUnparkProseDecision(body)
+	return ok
+}
+
 // decisionText joins the first-line decision with every line that follows
 // the command line, so numbered instructions under `/hive decision approve`
 // reach the author agent instead of being dropped (hivecommons/hive#14679).
@@ -1502,7 +1544,25 @@ func isUnparkProseAssent(body string) bool {
 	return false
 }
 
-const unparkProseHintReply = "To start work, reply `/hive approve` (or `/hive decision A`). A plain reply acknowledges the issue but leaves it parked."
+// isUnparkProseDecisionHint reports whether a comment names a decision
+// without the command (unparkProseDecisionHint). Like isUnparkProseAssent it
+// only decides whether to print a hint, and only the issue sweep asks.
+func isUnparkProseDecisionHint(body string) bool {
+	line := firstNonEmptyLine(body)
+	if line == "" || strings.HasPrefix(line, ">") || strings.HasPrefix(line, "/") {
+		return false
+	}
+	return unparkProseDecisionHint.MatchString(line)
+}
+
+// unparkProseDecisionHint matches a first line that names a decision without
+// the command: `Decision ...` / `Decide ...` (a `Decision:` with text is acted
+// on, so only the empty and malformed forms land here), `option 1` / `Option B`
+// and a bare option letter. The reply tells the commenter to use
+// `/hive decision <text>` (hivecommons/hive#19155).
+var unparkProseDecisionHint = regexp.MustCompile(`^(?i:decision\b|decide\b|options?\s+[a-z0-9]\b)|^[A-Z][.!]?$`)
+
+const unparkProseHintReply = "To start work, reply `/hive approve` (or `/hive decision A`, or `/hive decision <your instructions>` to record a decision). A plain reply acknowledges the issue but leaves it parked."
 
 // renderUnparkLabelDrivenReply answers `/hive approve`, `/hive decision`,
 // `/hive done` and `/hive help` on a repo with
@@ -1806,9 +1866,11 @@ func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo stri
 	}
 	if last < 0 {
 		wrote = true
-		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desired)}); err != nil {
+		created, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desired)})
+		if err != nil {
 			return fmt.Errorf("creating unpark notice on %s/%s#%d: %w", owner, repo, number, err)
 		}
+		c.learnSelfLogin(created)
 		return nil
 	}
 	// The move and the clean-up of leftover notices consult the gate; a
@@ -1820,9 +1882,11 @@ func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo stri
 			stale = nil
 		} else if buried {
 			wrote = true
-			if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desired)}); err != nil { // writeback:gated
+			created, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desired)}) // writeback:gated
+			if err != nil {
 				return fmt.Errorf("moving unpark notice to the bottom of %s/%s#%d: %w", owner, repo, number, err)
 			}
+			c.learnSelfLogin(created)
 			stale, moved = notices, true
 		}
 	}
@@ -1865,9 +1929,11 @@ func unparkNoticeBuried(after []*gh.IssueComment) bool {
 // the answered comment's ID so a later cycle recognises its own work.
 func (c *Client) postUnparkReply(ctx context.Context, owner, repo string, number int, commentID int64, body string) error {
 	marked := fmt.Sprintf("%s%d -->\n%s", unparkReplyMarkerPrefix, commentID, body)
-	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(marked)}); err != nil {
+	created, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(marked)})
+	if err != nil {
 		return fmt.Errorf("replying to unpark command on %s/%s#%d: %w", owner, repo, number, err)
 	}
+	c.learnSelfLogin(created)
 	return nil
 }
 

@@ -209,6 +209,8 @@
     .overview-card-group-waiting-elsewhere { --slice-c: var(--card-band-waiting-group); }
     .overview-card-group-blocked { --slice-c: var(--band-blocked); }
     .overview-card-group-actionable-now { --slice-c: var(--band-unclaimed); }
+    /* Outside: open items not in any band; the Outside KPI card's neutral grey. */
+    .overview-issue-outside, .overview-pr-outside { --slice-c: var(--muted); }
 
     /* Plan usage gauge: Overview block, one row per provider, fuel dials. */
     .overview-usage-gauge { display: flex; flex-direction: column; gap: var(--sp-3); margin: var(--sp-0) var(--sp-0) var(--sp-4); padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface-2); }
@@ -222,6 +224,8 @@
     .overview-usage-gauge__provider { font-weight: var(--fw-semibold); }
     .overview-usage-gauge__users { font-size: var(--fs-sm); color: var(--text-muted); overflow-wrap: anywhere; }
     .overview-usage-gauge__spend { font-size: var(--fs-base); font-weight: 600; }
+    .overview-usage-gauge__credits { font-size: var(--fs-sm); color: var(--text-muted); }
+    .overview-usage-gauge__credits[data-status="warn"] { color: var(--status-warn); font-weight: 600; }
     .overview-usage-gauge__dials { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-4); }
     .overview-usage-gauge__dial { display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); text-align: center; }
     .overview-usage-gauge__label { font-weight: var(--fw-semibold); }

@@ -197,7 +197,7 @@ The desktop companion ([hivecommons/quorum-companion](https://github.com/hivecom
 - **Who can use it.** Owner or read-write users. A companion meeting can be used only by the person who started it (owners can use any). Read-only users cannot stream.
 - **Signing in.** Each owner or read-write user opens `/companion/token` on their hive and creates a companion token (shown once; only its SHA-256 is stored, one per user, **Replace** or **Revoke** any time). The companion sends it as `X-Hive-Companion-Token`. It works only on the `/api/companion/info` and `/api/companion/meetings` routes, acts as that user at their current role (a user removed or downgraded below read-write stops working at once), and never in `Authorization`. On hosted hives the hub lets those routes through to the hive, which does the check; the token page stays behind the hub sign-in.
 - **Audio.** Two channels of raw 16 kHz mono s16le PCM: `call` (the meeting app's audio, everyone else) and `mic` (the person). Quorum cuts each at silences and transcribes it with the shared transcription service (`meetings.transcribe_url` is required); `mic` segments are attributed to the person, `call` segments to "Call".
-- **Betty's replies** go to the companion window (and the meeting panel) instead of a meeting chat: the consent notice first, then answers. Betty cannot speak in a companion meeting yet. Saying "betty leave" ends the meeting, as does stopping the capture. The lines still waiting when the meeting ends ("Leaving now." among them) are served by the replies route after the end, until the window's cursor has passed them or two minutes are over.
+- **Betty's replies** go to the companion window (and the meeting panel) instead of a meeting chat: the consent notice first, then answers. Betty cannot speak in a companion meeting yet, but when she heard her name and will answer, the companion plays her soft listening chime on your own computer (never into the call), when `meetings.listening_tone` and `meetings.voice_on_address` are on; the meeting's own voice setting does not apply. Saying "betty leave" ends the meeting, as does stopping the capture. The lines still waiting when the meeting ends ("Leaving now." among them) are served by the replies route after the end, until the window's cursor has passed them or two minutes are over.
 - **After the meeting** it is an ordinary meeting: notes, research and the Inbox hand-off are unchanged.
 
 | Route | |
@@ -205,7 +205,7 @@ The desktop companion ([hivecommons/quorum-companion](https://github.com/hivecom
 | `GET /api/companion/info` | Consent notice and version, sample rate, channels, `max_chunk_bytes`. |
 | `POST /api/companion/meetings` | `{title, app, host_name, consent_version, consent_attested: true}`; 201 with the meeting record. |
 | `POST /api/companion/meetings/{id}/audio?channel=call\|mic&seq=N` | One PCM chunk; per channel in order from 0; 409 with `expected_seq` on a gap; a resend answers `duplicate: true`. |
-| `GET /api/companion/meetings/{id}/replies?after=N` | Betty's lines after the cursor, `next_seq`, and the meeting `state`; after the meeting ended, its last unfetched lines once. |
+| `GET /api/companion/meetings/{id}/replies?after=N` | Betty's lines after the cursor, `next_seq`, the meeting `state`, and `tone` (true once when the window should play the listening chime now; Quorum's `say.tone`); after the meeting ended, its last unfetched lines once. |
 | `POST /api/companion/meetings/{id}/end` | Ends the meeting after transcribing buffered speech. |
 
 The dashboard's ● Record ([Recording into the Inbox](inbox-recording.md)) stays the no-install option: it records a Chromium tab's audio and is transcribed after the recording ends, so Betty cannot answer during the call, and it cannot hear a desktop meeting app.
@@ -240,7 +240,7 @@ What `hive-mx` does with a message:
 - **Sender authentication:** after DATA it checks SPF, DKIM and DMARC and records whether SPF or DKIM passed for a domain aligned with the `From` address (`adkim`/`aspf` honoured). Only an aligned sender can ever be trusted by a hive; the receiver itself decides nothing.
 - **Calendar invites:** only `text/calendar` and `application/ics` parts are read. It keeps UID, SEQUENCE, METHOD (REQUEST or CANCEL), RECURRENCE-ID, the summary (200 characters), organizer and attendees, start and end converted to UTC (Outlook's Windows time zone names such as "Eastern Standard Time" are mapped to IANA zones), RRULE and EXDATE, and the join details: the link from `X-GOOGLE-CONFERENCE`, `X-MICROSOFT-SKYPETEAMSMEETINGURL`, `LOCATION` or a link to `meet.google.com`, `teams.microsoft.com`, `teams.live.com` or `*.zoom.us` found in the description, the platform, and the meeting id and passcode where the platform uses one (Zoom `pwd`, the Teams "Meeting ID" and "Passcode" lines). Nothing else from the description is kept.
 - **Mail-in files:** a message with no invite may carry Markdown (`.md`), office document (`.pdf`, `.docx`, `.pptx`, `.xlsx`), audio (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.webm`), video (`.mp4`, `.mov`, `.mkv`) and image (`.png`, `.jpg`, `.gif`, `.webp`) attachments. The type is decided by the file's content, not its name, and must agree with the extension; a Word, PowerPoint or Excel file must be a readable container of that kind with no macro project. At most 10 files, 25 MB per file and 30 MB in all ([#18564](https://github.com/hivecommons/hive/issues/18564), [#18699](https://github.com/hivecommons/hive/issues/18699)). The subject becomes the title. Nothing in the message is executed or followed, and a document is stored, never opened.
-- **Refusals say why:** a message that leaves nothing to deliver is refused after DATA with a reply the sender's provider returns in its bounce, naming each attachment's extension and what was wrong with it, for example `550 5.6.0 nothing to deliver: a .key attachment is not an accepted type. Accepted types: md, pdf, docx, pptx, xlsx, ...` or `552 5.3.4 nothing to deliver: a .mp4 attachment is over the 25 MB per-file limit (30 MB of attachments per message)`. An attachment left out of a message that is otherwise delivered is listed in the delivery (`files.skipped`: extension and reason) so the hive can show it. Every refusal that is about the message or the address ends with three more lines: how to try again, a link to the reason's entry in [Mailing your hive: what the replies mean](inbox-voice-sources.md#mailing-your-hive-what-the-replies-mean), and where to report a problem ([#18744](https://github.com/hivecommons/hive/issues/18744)). The lines are the same for every sender. This bounce is the only message a sender gets: neither the receiver nor a hive sends mail, so nothing is ever sent to an address that may be forged (a reply to authenticated senders is designed in [#18746](https://github.com/hivecommons/hive/issues/18746)).
+- **Refusals say why:** a message that leaves nothing to deliver is refused after DATA with a reply the sender's provider returns in its bounce, naming each attachment's extension and what was wrong with it, for example `550 5.6.0 nothing to deliver: a .key attachment is not an accepted type. Accepted types: md, pdf, docx, pptx, xlsx, ...` or `552 5.3.4 nothing to deliver: a .mp4 attachment is over the 25 MB per-file limit (30 MB of attachments per message)`. An attachment left out of a message that is otherwise delivered is listed in the delivery (`files.skipped`: extension and reason) so the hive can show it. Every refusal that is about the message or the address ends with three more lines: how to try again, a link to the reason's entry in [Mailing your hive: what the replies mean](inbox-voice-sources.md#mailing-your-hive-what-the-replies-mean), and where to report a problem ([#18744](https://github.com/hivecommons/hive/issues/18744)). The lines are the same for every sender. This bounce is the only message a sender gets unless the hub's confirmation reply is turned on, and the receiver never sends mail: nothing is ever sent to an address that may be forged, and a confirmation reply goes only to a sender whose mail passed DMARC alignment ([Replies to the sender](#replies-to-the-sender-off-by-default), [#18746](https://github.com/hivecommons/hive/issues/18746)).
 - **Text body:** the message's body becomes a Markdown note. `text/plain` is kept as sent; an HTML-only body is reduced to its text, headings, lists and link targets, with no scripts, styles, images or other remote content. A message with no attachment becomes one Markdown item (`message.md`); a message with attachments keeps its body as the note on each of its items. The same allowlist, DMARC and approval rules apply as to attachments, and the body is untrusted data, never instructions. At most 256 KiB of it is kept.
 - **Proof mails:** a message whose subject carries a proof code (`hive-proof-` and 12 letters or digits) is reported as a proof of the sender address.
 
@@ -305,15 +305,16 @@ nothing for the sender.
 [#18746](https://github.com/hivecommons/hive/issues/18746) designs a short
 reply from the hive to whoever mailed it ("received", or "waiting for the
 owner's approval"). Hive has never sent mail, and `hive-mx` still does not:
-the reply is composed and decided by the hub (option A of the design: a
-hub-side sender with DKIM, one fixed `From`, the hive's own address as
-`Reply-To`). This release ships the decision, the ledger and the two
-templates; the SMTP and DKIM sender is a later step. With no sender built
-in, a hub sends nothing whatever it is configured with.
+the reply is composed, decided and sent by the hub (option A of the design:
+a hub-side sender with DKIM, one fixed `From`, the hive's own address as
+`Reply-To`).
 
 It is off unless `HIVE_HUB_MAIL_REPLY_DKIM_KEY_FILE` names a file that
-exists and is not empty (the variables are in
-[env-vars.md](env-vars.md)). Removing the file stops replies at once.
+exists and is not empty, and the `From` address, DKIM selector and HELO name
+are set (the variables are in [env-vars.md](env-vars.md)). Removing the key
+file stops replies at once; a key file that cannot be loaded sends nothing
+and does not use up the mail's one reply. A hub with none of this set builds
+no sender and opens no connection.
 
 What decides a reply, all of it enforced in the hub:
 
@@ -352,6 +353,73 @@ outcome and salted hashes of the message id, sender, sender domain and hive:
 no address, subject or body. The hub logs a sent reply with the delivery id,
 the hive id and the outcome only, never a key or any part of a mail.
 
+#### How a reply is sent
+
+The sender (`src/pkg/hub/mail_reply_smtp.go`) runs only after the decision
+and the ledger above allowed the reply, so the limits are applied before
+anything is sent.
+
+- **Plain text, null envelope sender.** One `text/plain` message, 7-bit,
+  with the headers of the design, and `MAIL FROM:<>`. A failed reply
+  therefore never bounces into a hive.
+- **DKIM.** The message is signed (relaxed/relaxed, `rsa-sha256` or
+  `ed25519-sha256`) as the `From` domain with the configured selector, over
+  `From`, `To`, `Subject`, `Date`, `Message-ID`, `Reply-To`, `In-Reply-To`,
+  `References`, `Auto-Submitted`, `X-Auto-Response-Suppress`, `Precedence`
+  and the MIME headers. The signature expires after 72 hours.
+- **Direct delivery to one MX host.** The hub looks up the sender domain's
+  MX records and uses only the best-preference host: one connection, one
+  message, no second host, no retry, no redirect. A domain with no MX record
+  or a null MX gets no reply. The hub connects to a public IPv4 address of
+  that host (IPv6 only if it has no IPv4 address), on port 25. Addresses in
+  private, loopback, link-local, shared (100.64.0.0/10), documentation
+  (IPv6) and similar ranges are refused, because the sender domain is
+  chosen by whoever sent the mail.
+- **STARTTLS is required**, with a certificate that verifies for the MX host
+  name (TLS 1.2 or later). A server without it, or with a certificate that
+  does not verify, gets nothing.
+- **Optional relay (smarthost).** With `HIVE_HUB_MAIL_REPLY_RELAY` set to
+  `<relay host>` or `<relay host>:<port>` (port 587 when none is given), the
+  one connection goes to that host instead of the sender's MX, so the mail
+  leaves from one stable IP that carries the reverse DNS and SPF records. It
+  is off while the variable is unset, and then everything above is unchanged.
+  Nothing else changes with a relay: the message is DKIM-signed by the hub
+  before the hand-off (the relay must not re-sign it), the envelope sender is
+  still `MAIL FROM:<>`, STARTTLS is still required with a certificate that
+  verifies for the relay's host name (a relay without it, or whose handshake
+  fails, gets nothing, and the hub never falls back to direct delivery), and
+  any failure is still final. The relay is chosen by the operator, so unlike
+  an MX host it may have a private address. If the relay needs SMTP AUTH, set
+  `HIVE_HUB_MAIL_REPLY_RELAY_AUTH_FILE` to a mounted file with the user name
+  on the first line and the password on the second; AUTH PLAIN is sent only
+  after STARTTLS, the credentials are read from the file for each send and
+  never come from an inline setting, and they are never logged. A relay
+  setting that is not a host name with an optional port, or a credentials
+  file named without a relay, builds no sender (the log names the variable,
+  not its value); credentials that cannot be read send nothing and use up
+  nothing, like an unusable key. The hub has no YAML block for this sender,
+  so the relay is configured through these environment variables only. A
+  relay runbook is the owner's side of this option.
+- **Bounded.** 10 seconds for each DNS lookup, 15 for the connection, 45
+  for the whole SMTP conversation, 90 for the whole reply. At most 8 replies
+  are in flight; past that a reply is dropped and counted.
+- **Any failure is final.** A refused recipient, a DNS or TLS failure, a
+  timeout or a server error ends the reply: it is not retried and the
+  ledger keeps the claim, so the same message is never answered twice.
+- **Refused before sending.** A header value with a control character or a
+  line break, an address with a display name or outside ASCII, a
+  `Message-ID` that is not a plain token, a body that is not 7-bit text, or
+  a `From` other than the configured one is refused before any DNS lookup
+  or connection. The sender's subject only reaches the `Subject` header,
+  after the template removed control and invisible characters, and is sent
+  as an RFC 2047 encoded word when it has letters outside ASCII.
+- **Nothing private in the log.** The hub logs a failed reply with the
+  delivery id, the hive id, a reason class (for example `mx_lookup`,
+  `no_mx`, `timeout`, `starttls`, `recipient_refused`, `connect`,
+  `signing_key_unusable`, and with a relay `relay_address_lookup`,
+  `relay_auth_unavailable`, `relay_auth`, `relay_credentials_unusable`) and, when the server refused, its numeric code.
+  Never a key, an address, a domain, a subject, a body or a server's text.
+
 #### DNS records and network the hosted hub needs
 
 For option A with one fixed `From` (shape 1), `<project domain>` being the
@@ -361,7 +429,7 @@ project's organizational domain and `<selector>` the DKIM selector:
 |---|---|---|
 | `<selector>._domainkey.hive.<project domain>` | TXT | `v=DKIM1; k=rsa; p=<base64 public key>` (2048-bit; the private key stays in the hub's Secret) |
 | `hive.<project domain>` | TXT | `v=spf1 ip4:<sending IP> -all` (recommended: DKIM alone satisfies DMARC, since the envelope sender is null) |
-| `<sending host name>` | TXT | `v=spf1 a -all` (recommended: covers the HELO identity used with a null envelope sender) |
+| `<sending host name>` | TXT | `v=spf1 a -all` (recommended: covers the HELO identity used with a null envelope sender); this is the name to set in `HIVE_HUB_MAIL_REPLY_HELO` |
 | reverse DNS of `<sending IP>` | PTR | `<sending host name>`, set at the cloud provider, not in the zone |
 
 No existing record changes: the organizational DMARC policy (`p=reject`,
@@ -369,7 +437,9 @@ strict alignment) already covers `hive.<project domain>`, and the DKIM
 signing domain equals the `From` domain, so it aligns. The hub's network
 also needs outbound TCP 25 (many clouds block it by default); if it cannot
 be opened the fallback is a transactional mail provider (option C of the
-design). Before turning replies on for everyone, send to a test mailbox at
+design), or a relay with a fixed IP (the optional relay above), in which
+case the records name the relay's IP and host name and the hub itself needs
+no outbound port 25. Before turning replies on for everyone, send to a test mailbox at
 two large providers and check `Authentication-Results` shows `dmarc=pass`.
 
 ### Who can invite Betty
@@ -411,7 +481,7 @@ People in the meeting can ask Betty, spoken or typed in the meeting chat, to dra
 | "Betty, start a Spek session on calendar sync" | a Spek session | handed to the Inbox `spek_rfc` destination: a hive agent drafts the spec with spektacular and publishes it to the repo |
 | "Betty, save that as a knowledge note" | a knowledge note | written to the `meetings` knowledge vault, the same write meeting notes use |
 
-- **Recognising a request.** The line must be addressed to her (her name opens or closes it, with or without a comma before a verb such as "open", "file", "make", "start" or "save") and ask to make an item ("issue", "bug", "ticket", "RFC", "Spek session", "knowledge note"). Questions about an item ("what's the issue with the lobby?") and negations ("don't open an issue") are not requests.
+- **Recognising a request.** The line must be addressed to her (her name opens or closes it, with or without a comma before a verb such as "open", "file", "make", "start" or "save") and ask to make an item ("issue", "bug", "ticket", "RFC", "Spek session", "knowledge note"). Plain "spec" and "design" (and their plurals) also count as a Spek session when they are the object of a request: "Betty, start a spec for this", "can you write a spec for the login flow", "draft a design for X" (verbs: start, write, draft, create, kick off, open, make; optionally led by "can you", "could you", "please"). Statements about a spec ("the spec says", "per the design", "the design review happened") are not requests. Questions about an item ("what's the issue with the lobby?") and negations ("don't open an issue") are not requests.
 - **Drafting.** Betty drafts a short title and body from the request and the last three minutes of the meeting, with a link back to the meeting (the dashboard's Meetings section, when `dashboard.public_url` is set) and a transcript excerpt. The repo is a monitored repo the request names ("in spektacular", "hivecommons/spektacular"), else `meetings.persona.actions.default_repo`, else `inbox.spek.repo`, else `project.primary_repo`, else the first repo. A repo the model suggests is used only when it is a monitored repo. With no meetings model she drafts from the request itself.
 - **Confirmation.** She replies in the meeting chat: "Drafted an issue: '<title>'. It's waiting for approval in the hive." If the request does not say what the item is about and nothing was said before it, she asks one clarifying question ("Happy to draft an issue. What should it be about?") and drafts from the asker's next line (or "never mind" drops it). The model may ask that one question too; it never asks twice.
 - **Approval.** Speaker identity in a meeting is only a display name, so nothing is created from the meeting. Every draft lands in **Drafts from meetings** in the Calendar section, with the meeting, who asked (display name), the body and the transcript excerpt. The hive owner or a read-write user can **Edit** (type, title, body, repo), **Approve** or **Reject** it. Approval creates the item; a failed creation stays in the list with its error and can be approved again after a fix.
@@ -494,7 +564,7 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.tts_token_file` | `/data/secrets/meetings_tts_token` | Keystore-sealed TTS service token file. |
 | `meetings.delivery` | `chat` | Where meeting output goes. |
 | `meetings.voice_on_address` | `true` | Allow speaking when addressed in a voice-enabled meeting. |
-| `meetings.listening_tone` | `true` | Betty plays a short, soft two-note chime when she heard her name in a spoken request and is about to answer, so the room knows she is listening (`HIVE_MEETINGS_LISTENING_TONE`). The only setting: no volume or sound options. It plays only when voice is on, never over speech, and is dropped silently if the audio path is busy. |
+| `meetings.listening_tone` | `true` | Betty plays a short, soft two-note chime when she heard her name in a spoken request and is about to answer, so the room knows she is listening (`HIVE_MEETINGS_LISTENING_TONE`). The only setting: no volume or sound options. It plays only when voice is on (a companion meeting plays it in the companion on the host's computer instead), never over speech, and is dropped silently if the audio path is busy. |
 | `meetings.bot_name` | the persona's display name | Bot display name; `hive (notes)` with the persona off. |
 | `meetings.invite_policy` | `owner` | Who may send hive to a meeting. |
 | `meetings.research_pool_size` | `2` | Research agents (`research-1..N`). |

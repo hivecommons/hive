@@ -59,6 +59,7 @@ type Scheduler struct {
 	// eval cycle, for the ${PR_LIST} dispatched mark (pr_annotations.go);
 	// atomic for the same reason as newReleases.
 	reviewDispatch atomic.Pointer[reviewDispatchHolder]
+	prAuthors      PRAuthorLookup
 	// newReleases feeds ${NEW_RELEASES} (new_releases.go); atomic because
 	// template substitution may run with s.mu held.
 	newReleases        atomic.Pointer[newReleasesHolder]
@@ -77,7 +78,11 @@ type Scheduler struct {
 	firstScanDeferred  map[string]bool
 	ioscanWarned       sync.Map
 	lastClassifierErr  atomic.Value // string: latest fail-closed classifier error
-	mu                 sync.RWMutex
+	// sourceMemory flags untrusted authors and threads whose text tripped a
+	// High/Critical injection block (#19440); built lazily from cfg.
+	sourceMemory     *ioscan.SourceMemory
+	sourceMemoryOnce sync.Once
+	mu               sync.RWMutex
 }
 
 // SetRunTriageDeps attaches the narrow surfaces the scheduler needs for the

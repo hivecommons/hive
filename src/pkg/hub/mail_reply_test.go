@@ -293,11 +293,16 @@ func TestMailReplyEnvConfig(t *testing.T) {
 	}
 	t.Setenv(envMailReplyFrom, testReplyFrom)
 	t.Setenv(envMailReplySelector, "s1")
+	t.Setenv(envMailReplyHelo, "")
+	old := mailReplySenderFactory
+	t.Cleanup(func() { mailReplySenderFactory = old })
+	if newMailReplierFromEnv(logger, nil) != nil {
+		t.Fatal("a replier without a HELO name")
+	}
+	mailReplySenderFactory = nil
 	if newMailReplierFromEnv(logger, nil) != nil {
 		t.Fatal("a replier with no sender built in")
 	}
-	old := mailReplySenderFactory
-	t.Cleanup(func() { mailReplySenderFactory = old })
 	mailReplySenderFactory = func(mailReplyConfig) (mailReplySender, error) { return &fakeReplySender{}, nil }
 	r := newMailReplierFromEnv(logger, nil)
 	if r == nil || !r.enabled() || r.cfg.Limits.SenderPerHour != defaultReplySenderPerHour || r.cfg.Limits.HivePerDay != defaultReplyHivePerDay {

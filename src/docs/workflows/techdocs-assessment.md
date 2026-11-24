@@ -1,8 +1,11 @@
 # CNCF TechDocs AI-assisted assessment — curated workflow model
 
-`cncf-techdocs-assessment@curated-2026.11.2` is the current version of the first curated
+`cncf-techdocs-assessment@curated-2026.11.4` is the current version of the first curated
 model in the hub marketplace (https://hive.hivecommons.dev → Settings → Workflows →
-Marketplace on any hive); `curated-2026.11.1` stays in the catalogue unchanged. It encodes the CNCF TechDocs team's AI-assisted documentation assessment process
+Marketplace on any hive); `curated-2026.11.1`, `curated-2026.11.2` and `curated-2026.11.3`
+stay in the catalogue unchanged. 11.3 differs from 11.2 only in the stage labels four states
+write ([Stage labels](#stage-labels)); 11.4 differs from 11.3 only in the
+[whose-turn status labels](#whose-turn-status-labels-on-the-deliverable-pr). It encodes the CNCF TechDocs team's AI-assisted documentation assessment process
 so a hive bound to `cncf/techdocs` runs intake, drafting, verification, stakeholder review
 and approval as a visible lifecycle, with every agent action followed by a human gate.
 
@@ -19,7 +22,9 @@ annotations and in each element's `citations`):
 
 The model's scope is `github.com cncf/techdocs` — the upstream repository where the
 process runs; the fork above is where the spec was written. Model files:
-`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.2.yaml` (current) and
+`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.4.yaml` (current),
+`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.3.yaml` (`curated-2026.11.3`),
+`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.2.yaml` (`curated-2026.11.2`) and
 `pkg/hub/marketplace/curated/cncf-techdocs-assessment.yaml` (`curated-2026.11.1`)
 (`apiVersion: workflow.hivecommons.dev/v1alpha1`, `derivation.mode: rules`,
 `meta.provenance: curated`). Curated files are never edited in place: a change is a new
@@ -59,13 +64,14 @@ Issues (intake and per-phase tracking issues):
 | `closed` | terminal | closed | — |
 | `escalated` | 45 needs-decision | a hold label is present | administrator |
 | `draft-open` | 40 covered-by-PR | `triage/accepted` and a covering PR exists | registered agent |
-| `accepted` | 20 claimed | `triage/accepted` | reviewer (technical writer) |
+| `accepted` | 20 (`stage/020-accepted`) | `triage/accepted` | reviewer (technical writer) |
 | `requested` | 10 actionable | `needs-triage` | reviewer |
 
-The `accepted` state reuses the built-in stage number 20, so an accepted issue wears
-`stage/020-claimed`, but **no agent holds a claim on it**: the state means "waiting on the
-reviewer to start the drafter". The in-progress sweep leaves that label alone on a
-model-bound repository and does not withhold the issue for it
+The `accepted` state reuses the built-in stage number 20, but **no agent holds a claim on
+it**: the state means "waiting on the reviewer to start the drafter". From 11.3 an accepted
+issue wears `stage/020-accepted`; under 11.1 and 11.2 it wears the built-in
+`stage/020-claimed`, which the in-progress sweep leaves alone on a model-bound repository
+and does not withhold the issue for
 ([hivecommons/hive#18434](https://github.com/hivecommons/hive/issues/18434); before the fix
 the label was removed and re-added every enumeration cycle).
 
@@ -75,12 +81,31 @@ Pull requests (deliverables carry the `Docs analysis` label; anything else absta
 |---|---|---|
 | `merged` | terminal | merged |
 | `discarded` | terminal | closed unmerged |
-| `in-review` | 50 review-pending | draft and `verified` |
-| `drafting` | 70 fixing | draft |
+| `in-review` | 50 (`stage/050-reviewer-check`) | draft and `verified` |
+| `drafting` | 70 (`stage/070-drafting`) | draft |
 | `checks-failing` | 71 needs-author | checks red |
 | `awaiting-merge` | 90 ready-for-human-merge | `confirmed` |
-| `stakeholder-review` | 60 reviewed | ready and `verified` |
-| `in-review` | 50 review-pending | ready but not yet `verified` |
+| `stakeholder-review` | 60 (`stage/060-stakeholder-review`) | ready and `verified` |
+| `in-review` | 50 (`stage/050-reviewer-check`) | ready but not yet `verified` |
+
+#### Stage labels
+
+`curated-2026.11.3` gives four states their own stage label in the same number band
+(`lifecycle.stageLabel`, [hivecommons/hive#19611](https://github.com/hivecommons/hive/issues/19611)),
+because the built-in name at that number says something that is not true of the state:
+
+| State | Stage | 11.3 label | Built-in label (11.1, 11.2) |
+|---|---|---|---|
+| `accepted` | 20 | `stage/020-accepted` | `stage/020-claimed` |
+| `drafting` | 70 | `stage/070-drafting` | `stage/070-fixing` |
+| `in-review` | 50 | `stage/050-reviewer-check` | `stage/050-review-pending` |
+| `stakeholder-review` | 60 | `stage/060-stakeholder-review` | `stage/060-reviewed` |
+
+The number is unchanged, so the stage store, the Activity Monitor, anchors and replies see
+the same stage. After a rebind from 11.2 the hive creates the four labels and swaps each
+item's built-in label for the new one on its next pass. The built-in labels stay in the
+repository (the hive never deletes them) until an operator removes them. Searches or
+dashboards outside the hive that match the built-in slug need updating.
 
 ### Transitions
 
@@ -120,11 +145,135 @@ never through one — the compiler's `agent-no-human-gate` refusal enforces this
 | administrator | repository admin | §4, §12 Failure and abort |
 | drafter, verifier | the hive bot (non-human) | §4, §6 |
 
-### Labels
+### Label contract
 
-From `settings.yml`: `Docs analysis`. Proposed for the assessment: `needs-triage`,
-`triage/accepted`, `triage/declined`, `phase/assessment`, `phase/implementation`,
-`phase/backlog`, `verified`, `confirmed`, `skip-implementation`.
+What each label means, who puts it on, and what the hive does with it, as the engine
+behaves for `curated-2026.11.4`, the current version. `curated-2026.11.3` behaves the same
+except that it writes none of the three
+[whose-turn status labels](#whose-turn-status-labels-on-the-deliverable-pr);
+`curated-2026.11.1` and `curated-2026.11.2` also write the built-in stage label spellings in
+four states ([Stage labels](#stage-labels)). The labels and the PR's draft flag are the source of truth:
+the hive derives every state from them and does not care who wrote them, with one
+exception (reference-repo derivation, below).
+
+The hive answers a gate verb only in the form `/hive <verb>` (for example `/hive accept`),
+from a commenter with write, maintain or admin permission on `cncf/techdocs`. A bare
+`/accept`, `/decline`, `/ready`, `/confirm`, `/skip-implementation`, `/discard`, `/approve`
+or `/abort` is not read by the hive at all. The one bare command it reads is `/verify`, which
+starts the verifier (see [Starting the drafter](#starting-the-drafter-accepted--draft)).
+
+#### Model labels: people (or a cncf/techdocs Action) apply them; the hive reads them
+
+| Label | Applied by | Means | Hive does on seeing it | Removed by |
+|---|---|---|---|---|
+| `needs-triage` | intake form; the phase-advance workflow | filed, nobody has taken it | state `requested`; writes `stage/010-actionable` | a person or Action; the hive never removes it, `/hive accept` included |
+| `triage/accepted` | a maintainer by hand, or the hive on `/hive accept` | the request is accepted | state `accepted`; writes `stage/020-accepted`; hands the issue to `techdocs-drafter`; derives reference repos **only when a person with write access applied it** | a person; removing it drops the derived reference repos |
+| `triage/declined` | a maintainer, or the hive on `/hive decline` | the request will not run | state `declined` **once the issue is also closed**; the hive does not close it | n/a |
+| `phase/assessment` `phase/implementation` `phase/backlog` | intake form; the phase-advance workflow | which phase the issue and its PR belong to | the drafter copies the issue's phase label onto the draft PR; no state depends on it | the phase-advance workflow |
+| `verified` | the reviewer by hand (a deliberate skip, with the reason in a comment), or the hive on `/hive verify` | the verification this PR needs is satisfied | state `in-review` (draft) or `stakeholder-review` (ready); `/hive ready` is offered | a person |
+| `confirmed` | a person, or the hive on `/hive confirm` | a stakeholder confirmed factual accuracy | state `awaiting-merge`; writes `stage/090-ready-for-human-merge` | a person |
+| `skip-implementation` | a person | phase B is skipped; the phase A merge opens phase C | nothing; the next-phase bookkeeping is declarative (see [Not representable today](#not-representable-today)) | a person |
+| `Docs analysis` | the drafter on its PR; people on issues | the PR is an assessment deliverable | a PR without it is outside the model (no state) | a person |
+
+The verifier's report never applies `verified`: it is a PR comment the reviewer reads before
+deciding. (The spec's "the workflow applies the `verified` label" is a cncf/techdocs Action's
+job, or the reviewer's via `/hive verify`; the hive's verifier does not do it.) The hive's
+stage writer never adds or removes any of these labels itself, even where a built-in stage
+would clear one (for example `needs-triage` once an issue reaches stage 20). Each is either
+an input label of the model (named by a derivation rule or event: `needs-triage`,
+`triage/accepted`, `triage/declined`, `verified`, `confirmed`, `Docs analysis`), which the
+writer preserves, or has no state binding (`phase/*`, `skip-implementation`), which the
+writer never touches.
+
+#### Gate commands
+
+| Command | Offered in | What the hive does | What it does not do |
+|---|---|---|---|
+| `/hive accept` | `requested` | adds `triage/accepted` and replies | remove `needs-triage`, assign, validate or freeze the contacts; a label the hive's bot applied does not derive reference repos |
+| `/hive decline [reason]` | `requested`; also offered in `accepted` | in `requested`: adds `triage/declined` and replies. In `accepted`: records the reply only (the model has no transition from `accepted` on decline, so no label) | close the issue |
+| `/verify` (bare) | `drafting` | starts `techdocs-verifier` once per comment; its report lands as a PR comment | apply `verified` |
+| `/hive verify` | `drafting` | adds `verified` (records a skip or a delegated verification) | run the verifier |
+| `/hive ready` | `in-review` | records the reply | mark the PR ready, mention the stakeholders |
+| `/hive skip-implementation` | `in-review` | records the reply | apply `skip-implementation` |
+| `/hive confirm` | `stakeholder-review` | adds `confirmed`; the commenter needs write access, not membership of the frozen stakeholder set | check the frozen set |
+| `/hive approve` | `awaiting-merge` | records the reply | merge |
+| `/hive discard [reason]` | every open PR state | records the reply | close the PR |
+| `/hive abort` | `escalated` | clears the hive's park labels (as `/hive approve` does on a parked issue) and records the reply | remove `hold`, close the issue |
+
+"Records the reply" means one answering comment stating that the model maps no label to the
+move; the person (or a cncf/techdocs Action) still flips draft, merges or closes. A
+cncf/techdocs Action that handles the bare commands therefore never sees a competing parse
+from the hive. Both may add the same label, which is harmless: the hive only adds a label
+that is missing and never removes one of these labels, so the two writers cannot flap.
+
+#### Labels the hive writes; people read them
+
+| Label | 11.1, 11.2 spelling | State | Item | Whose turn |
+|---|---|---|---|---|
+| `stage/010-actionable` | same | `requested` | issue | a technical writer: `/hive accept` or `/hive decline` |
+| `stage/020-accepted` | `stage/020-claimed` | `accepted` | issue | the drafter, started by the hive (no agent claim is held, see above) |
+| `stage/040-covered-by-pr` | same | `draft-open` | issue | the drafter, on the linked PR |
+| `stage/045-needs-decision` | same | `escalated` | issue | the administrator: release the hold or `/hive abort` |
+| `stage/070-drafting` | `stage/070-fixing` | `drafting` | PR | the reviewer: `/verify` or `/hive verify` |
+| `stage/050-reviewer-check` | `stage/050-review-pending` | `in-review` | PR | the reviewer: check findings, then mark ready |
+| `stage/071-needs-author` | same | `checks-failing` | PR | the drafter or reviewer: fix the red check |
+| `stage/060-stakeholder-review` | `stage/060-reviewed` | `stakeholder-review` | PR | a stakeholder: `/hive confirm` |
+| `stage/090-ready-for-human-merge` | same | `awaiting-merge` | PR | an independent approver: merge |
+
+The 11.1 and 11.2 spellings are the built-in stage names reused by number, so several read
+wrong for this model (`claimed`, `fixing`, `reviewed`); 11.3 replaces those four, and the
+stage number, state and owner are the same under either spelling.
+`stage/050-reviewer-check` covers both a verified draft and a ready but unverified PR.
+
+Under 11.4 the hive also writes one whose-turn status label on a deliverable PR, adding it
+and removing the other two as the state moves: `ready-for-techdocs-review` (`drafting`,
+`in-review`), `ready-for-stakeholder-review` (`stakeholder-review`) and `ready-for-approver`
+(`awaiting-merge`). See
+[Whose turn](#whose-turn-status-labels-on-the-deliverable-pr).
+
+#### Generic labels that can appear
+
+These come from the hive's own lanes, not from the model: `stage/stalled`, `role/*`,
+`author/*`, `needs-human`, `blocked`, `hive/partially-addressed`, `hive/likely-done`,
+`agent/quality`, `merge-method/merge`, `dco`, `no-dco`. Any of `hold`, `do-not-merge`,
+`needs-decision`, `decision-needed` or `ready-for-review` (or a `<label>/…` variant) counts as
+a hold: on an issue it moves the item to `escalated` until removed.
+
+#### If a repository tool deletes the labels
+
+The hive creates the model's labels and its stage labels once per repository per process
+(and again when the binding or the bound model version changes). It does not re-create a
+label deleted while it runs. `cncf/techdocs` syncs labels from `.github/settings.yml`, which
+deletes undeclared ones, so declare every label above (model, `stage/*`, the three 11.4
+whose-turn labels, and the generic ones the hive writes) in `settings.yml`; otherwise each
+sync strips them until the hive restarts.
+
+#### Whose turn: status labels on the deliverable PR
+
+`curated-2026.11.4` adds three hive-owned status labels
+([hivecommons/hive#19609](https://github.com/hivecommons/hive/issues/19609)). The gate labels
+`verified` and `confirmed` record what has happened; these name the audience that acts next,
+with the action in the GitHub label description:
+
+| Label | On while the PR is in | Description |
+|---|---|---|
+| `ready-for-techdocs-review` | `drafting`, `in-review` | Draft is open. TechDocs reviewer: run /verify, refine, then /ready. |
+| `ready-for-stakeholder-review` | `stakeholder-review` | Ready for the project. Named stakeholders: review for accuracy and comment /confirm. |
+| `ready-for-approver` | `awaiting-merge` | Stakeholder confirmed and checks green. An independent approver merges. |
+
+Each entry in `spec.labels.entries` carries a `state:` and no rule, event or gate reads it, so
+the stage reconciler owns it: on every pass it adds the label for the PR's current state and
+removes the other two, so a PR carries at most one (none in `checks-failing` or once closed).
+They are status only. Removing one by hand changes nothing (the next pass puts it back), and
+`/ready`, `/approve` and merge still check `verified` and `confirmed`. They are deliberately
+not hive's generic `ready-for-review`, which is a merge hold released by removal
+([hivecommons/hive#18468](https://github.com/hivecommons/hive/issues/18468)): a stakeholder
+removing what they took for a status marker must never clear a merge gate. The
+`techdocs-drafter` and `techdocs-verifier` kicks tell the agent not to add or remove them.
+
+A hive picks them up by rebinding `cncf/techdocs` to `curated-2026.11.4`; the labels are
+created on bind, and PRs already in flight get the label for their current state on the
+next pass. `cncf/techdocs` is to mirror the names in its own `.github/settings.yml` and spec §13.
 
 ### Checks
 
@@ -143,7 +292,7 @@ required.
 
 #### Reference repos from the request
 
-`curated-2026.11.2` adds a `spec.intake` block
+`curated-2026.11.2` adds a `spec.intake` block (kept unchanged in 11.3 and 11.4)
 ([hivecommons/hive#18139](https://github.com/hivecommons/hive/issues/18139)):
 
 ```yaml
@@ -171,12 +320,15 @@ The first request through this path is
 [cncf/techdocs#395](https://github.com/cncf/techdocs/issues/395), the Hive Commons assessment.
 What the operator of the TechDocs hive (authorized repo `cncf/techdocs`) does and sees:
 
-1. **Rebind to 11.2.** Settings → Workflows → Marketplace, bind `cncf/techdocs` to
-   `cncf-techdocs-assessment@curated-2026.11.2`. This step is required: a hive still bound to
+1. **Rebind to 11.2 or later.** Settings → Workflows → Marketplace, bind `cncf/techdocs` to
+   `cncf-techdocs-assessment@curated-2026.11.4` (or 11.2 or 11.3, which have the same
+   intake block without the whose-turn labels). This step is required: a hive still bound to
    `curated-2026.11.1` derives nothing, however many requests are accepted. No
    `reference_repos` entry is written by hand.
 2. **A maintainer accepts the request.** Someone with write access to `cncf/techdocs` applies
-   `triage/accepted` to #395. A label applied by a bot grants nothing.
+   `triage/accepted` to #395 by hand. A label applied by a bot grants nothing, and that
+   includes the label the hive adds on `/hive accept`: the drafter still starts, but no
+   reference repos are derived until a person applies the label.
 3. **Three derived entries appear** on the next pass (boot, config reload or every
    `HIVE_REFERENCE_REPOS_DERIVE_INTERVAL`, default `10m`): `hivecommons/docs`,
    `hivecommons/hivecommons.github.io` and `hivecommons/hive`, each at the `issues+prs` tier with
@@ -229,16 +381,20 @@ On each pass the hive:
 4. kicks that agent once with the issue, the state's guidance and the deliverable the model
    requires: a draft PR in `cncf/techdocs` labeled `Docs analysis` plus the issue's phase
    label, named in the PR request (`hive-open-pr --issues N`) and referenced with `Refs #N`,
-   not marked ready and without the `verified` / `confirmed` gate labels;
+   not marked ready and without the `verified` / `confirmed` gate labels or the
+   [whose-turn status labels](#whose-turn-status-labels-on-the-deliverable-pr), which the
+   hive sets itself;
 5. records the hand-off in `workflow-dispatch.json` under the workflow store root when the
    kick lands, as pending, so neither a later pass nor a restart repeats it. A kick that
    could not be delivered (busy, paused, failed) is retried on a later pass;
 6. checks on later passes that the hand-off actually started: see
    [When the agent does not start](#when-the-agent-does-not-start).
 
-The verifier runs once per `/verify` comment: each new `/verify` from the reviewer is a new
-pass, posting its report as a PR comment. A `/hive verify` command is the model-reply path
-instead: it applies `verified` directly, which is how a reviewer records a deliberate skip.
+The verifier runs once per bare `/verify` comment: each new `/verify` from the reviewer is a
+new pass, posting its report as a PR comment, and the report never applies `verified`.
+`/hive verify` is the model-reply path instead: it applies `verified` without running the
+verifier, which is how a reviewer records a deliberate skip (or applies the label by hand,
+with the reason in a comment). See [Label contract](#label-contract).
 
 ### Which agent fills a profile
 
@@ -312,6 +468,54 @@ workflow:
 hand-off, and `workflow.dispatch.enabled: false` stops them all (owned items stay withheld
 from the generic lanes either way). `prompt_template` replaces the built-in prompt; see the
 design doc for its `${VAR}` placeholders.
+
+### Assessment criteria and reviewer rules
+
+The assessment rubric lives in the TechDocs repository's
+[`docs/analysis/criteria.md`](https://github.com/cncf/techdocs/blob/main/docs/analysis/criteria.md)
+and its assessment specification (linked above). The curated workflow model defines
+lifecycle states, human gates and drafter/verifier profiles, not a second scoring
+rubric. Hive selects an eligible agent (which may be `quality`, as described above)
+and builds its instructions with `scheduler.BuildWorkflowDispatchPrompt` or the
+profile's configured `prompt_template`.
+
+Reviewer-stated corrections belong in the shared knowledge store as small,
+source-linked entries, not only in a reply or the agent's private memory. Scope
+assessment rules to the **workflow model name**, independent of its version and
+of which agent fills the profile:
+
+```yaml
+title: cncf-techdocs-assessment reviewer rule for <criterion>
+type: gotcha
+layer: project
+state: approved
+tags: [repo:cncf/techdocs, techdocs, assessment, reviewer-rule]
+source: https://github.com/cncf/techdocs/pull/<pr>#discussion_r<comment-id>
+scope:
+  lanes: [cncf-techdocs-assessment]
+```
+
+This is frontmatter for a [knowledge entry](../knowledge-entries.md); follow it
+with the verified rule and its project-specific limits. Preserve the originating
+comment URL/id when capturing a rule. Draft rules remain excluded until approved.
+Do not use `lanes: [quality]` alone: that would teach unrelated quality work an
+assessment-specific rule and miss a drafter assigned to a different agent.
+
+Workflow hand-offs run the knowledge primer before delivery. The bound model's
+unversioned name is an additional lane match and search term, alongside the base
+agent lane and item labels. The usual agent knowledge scope, lifecycle filter,
+relevance selection and byte cap still apply. A rule must be in a registered
+vault/git source and fit the primer budget to reach the next kick. See
+[registering repository knowledge](../knowledge-entries.md#how-the-directory-reaches-the-primer).
+
+The initial reviewer rules from `cncf/techdocs#424` live in
+[`techdocs-assessment-evidence.md`](../knowledge/techdocs-assessment-evidence.md)
+and [`techdocs-assessment-ownership.md`](../knowledge/techdocs-assessment-ownership.md).
+They cover evidence-based readiness grading on the documentation domain and the
+project's authoritative maintainer roster. They supplement rather than replace
+the upstream rubric. Automated review-feedback capture and reply verification
+are tracked separately in hivecommons/hive#19048; this injection path also accepts
+subsequent captured entries with the same scope.
 
 ### When the agent does not start
 
@@ -392,6 +596,43 @@ dispatch, a hive owner starts the draft by hand:
    the reviewer runs or skips the verifier (`/verify`, the `verified` label), marks the PR
    ready (`/ready`), stakeholders `/confirm`, and an independent approver merges.
 
+## Independent fact-check before a person reviews (optional)
+
+The first review of a drafted deliverable can be done by a second agent instead of the
+reviewer's own pass over the draft. The hive's opt-in fact-check pass
+(`review.analysis_factcheck`, [Independent fact-check for analysis PRs](../review-swarm.md#independent-fact-check-for-analysis-prs-reviewanalysis_factcheck))
+runs a different agent over a draft `Docs analysis` pull request after the drafter opens it
+and before anyone marks it ready. It re-verifies each claim, score and attribution against
+the cited source, checks the judgments for skew in both directions, checks that the material
+rated was actually inspected, and checks people and roles against the project's maintainers
+file. Its findings go back to the drafter, which revises the same branch, for a bounded
+number of rounds.
+
+It is off by default and the model does not turn it on: the qualifying agents and labels are
+the operator's choice in `hive.yaml`. There is no Settings control for this block. See
+[Editing `hive.yaml`](../editing-hive-yaml.md) for where to make the change and how to
+apply it, including what to ask for if you only have the hosted dashboard. For a hive
+bound to `cncf/techdocs`, for example:
+
+```yaml
+review:
+  analysis_factcheck:
+    enabled: true
+    author_agents: [quality]     # the agent that fills the techdocs-drafter profile
+    labels: [Docs analysis]      # the deliverable label this model uses
+    reviewer_agents: [reviewer]  # must be a different agent or model from the drafter
+```
+
+How it fits the lifecycle above:
+
+- The PR stays in `drafting` while the pass runs. The pass never applies `verified`, never
+  marks the PR ready on the default `ready_policy: human`, and never merges; `/verify`,
+  `/ready`, `/confirm` and `/approve` stay human gates.
+- It is separate from the `techdocs-verifier` profile and the `verified` label. The pass
+  gives the reviewer a PR that already carries an independent review.
+- It stops as soon as a person reviews the PR, so a reviewer's own comments reach the
+  drafter through the review-feedback sweep instead.
+
 ## Not representable today
 
 These parts of the spec are documented in the model's annotations but not enforced by
@@ -403,5 +644,6 @@ the engine:
 - Phase as a state dimension and the A→C skip — carried by labels; the
   `open-next-phase-tracking-issue`, `notify-contacts` and `mention-stakeholders`
   bookkeeping actions are declarative only.
-- Membership of the frozen stakeholder set — the gate exists, the check does not yet.
+- Membership of the frozen stakeholder set — the gate exists, the check does not yet:
+  `/hive confirm` is accepted from anyone with write access to `cncf/techdocs`.
 - Data-collection scripts and the strict provenance check — a manual check.

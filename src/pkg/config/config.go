@@ -70,6 +70,7 @@ type Config struct {
 	GitHub             GitHubConfig        `yaml:"github"`
 	GitLab             GitLabConfig        `yaml:"gitlab,omitempty"`
 	Gitea              GiteaConfig         `yaml:"gitea,omitempty"`
+	Forgejo            ForgejoConfig       `yaml:"forgejo,omitempty"`
 	Notifications      NotificationsConfig `yaml:"notifications"`
 	Dashboard          DashboardConfig     `yaml:"dashboard"`
 	Data               DataConfig          `yaml:"data"`
@@ -144,6 +145,10 @@ type Config struct {
 	// escalation or codebase damage, from any author. Default on; see
 	// SentinelConfig.
 	Sentinel SentinelConfig `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
+
+	// SessionTaint is the observe-only session taint recorder (#18987). Off by
+	// default; see SessionTaintConfig.
+	SessionTaint SessionTaintConfig `yaml:"session_taint,omitempty" json:"session_taint,omitempty"`
 	// Security holds the hive-wide security knobs that are not one agent's
 	// or one sweep's; see SecurityConfig.
 	Security SecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
@@ -168,11 +173,16 @@ type Config struct {
 	Retro RetroConfig `yaml:"retro,omitempty" json:"retro,omitempty"`
 	// Meetings turns on hive as a live meeting participant through Quorum
 	// (hivecommons/hive#18284). Zero value: off, no Quorum process.
-	Meetings  MeetingsConfig  `yaml:"meetings,omitempty" json:"meetings,omitempty"`
-	Swarm     SwarmConfig     `yaml:"swarm,omitempty" json:"swarm,omitempty"`
-	Autonomy  AutonomyConfig  `yaml:"autonomy,omitempty" json:"autonomy,omitempty"`
-	Review    ReviewConfig    `yaml:"review,omitempty" json:"review,omitempty"`
-	AutoMerge AutoMergeConfig `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
+	Meetings MeetingsConfig `yaml:"meetings,omitempty" json:"meetings,omitempty"`
+	Swarm    SwarmConfig    `yaml:"swarm,omitempty" json:"swarm,omitempty"`
+	Autonomy AutonomyConfig `yaml:"autonomy,omitempty" json:"autonomy,omitempty"`
+	Review   ReviewConfig   `yaml:"review,omitempty" json:"review,omitempty"`
+	// ReviewFeedback holds the owner's preferences for capturing rules that
+	// reviewers state on the hive's own PRs (hivecommons/hive#19135). Nil:
+	// every preference falls back to its env var, then its default. Read and
+	// written through ReviewRulesSettingsSnapshot / SetReviewRulesSettings.
+	ReviewFeedback *ReviewFeedbackConfig `yaml:"review_feedback,omitempty" json:"review_feedback,omitempty"`
+	AutoMerge      AutoMergeConfig       `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
 	// Decisions tunes how decisions on needs-human items are recorded; its
 	// `delegate` block gates the activity monitor's "Let hive decide"
 	// action (default on).
@@ -187,6 +197,10 @@ type Config struct {
 	// Customers gates the Customers section and its people store (default
 	// on). Nothing it stores leaves the hive.
 	Customers CustomersConfig `yaml:"customers,omitempty" json:"customers,omitempty"`
+	// Ask is the optional Ask AI help panel (#19177): docs questions answered
+	// server side by Kapa.ai, directly or through the hub relay. Default off
+	// and inert when unconfigured. See src/docs/design/dashboard-ask-ai-help.md.
+	Ask AskConfig `yaml:"ask,omitempty" json:"ask,omitempty"`
 	// DuplicateSweep gates the cross-PR duplicate suggestion pass
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
 	// change and no GitHub traffic.
@@ -287,11 +301,20 @@ type Config struct {
 	RemovedAgents []string `yaml:"removed_agents,omitempty" json:"removed_agents,omitempty"`
 
 	SourcePath string `yaml:"-" json:"-"`
+	// disk is the content hash of each layer file this config was loaded
+	// from or last saved to; Save refuses to overwrite a file whose content
+	// changed since (hivecommons/hive#19561). See disk_state.go.
+	disk *diskLayers
 	// LaunchCmdDegradations lists the base-config agents whose launch_cmd the
 	// loader dropped because it contradicted the agent's backend, so the
 	// dashboard can raise a banner for each. Runtime-only; see
 	// DegradeContradictingLaunchCmds.
 	LaunchCmdDegradations []LaunchCmdDegradation `yaml:"-" json:"-"`
+	// ModelIDNormalizations lists the claude/copilot agents whose Claude
+	// model id the loader rewrote to their backend's naming convention, so
+	// the dashboard can warn for each. Runtime-only; see
+	// NormalizeModelIDConventions.
+	ModelIDNormalizations []ModelIDNormalization `yaml:"-" json:"-"`
 	// GateRegressions lists the safety gates a previous runtime overlay
 	// carried that this config lacks or weakens, as detected at boot
 	// (hivecommons/hive#16438). Runtime-only; served in /api/status as

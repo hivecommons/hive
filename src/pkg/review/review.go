@@ -289,14 +289,21 @@ type Aggregate struct {
 	DecisionFinding string `json:"decision_finding,omitempty"`
 	// RedundantOf is the PR a reviewer named as already carrying this
 	// change, carried from the first report that set one.
-	RedundantOf    int                     `json:"redundant_of,omitempty"`
-	HumanSummaries []string                `json:"human_summaries,omitempty"`
-	FixAttempts    int                     `json:"fix_attempts,omitempty"`
-	MaxFixAttempts int                     `json:"max_fix_attempts,omitempty"`
-	Threshold      outputschema.Severity   `json:"human_threshold"`
-	Reasons        []string                `json:"reasons,omitempty"`
-	Findings       []PerspectiveFinding    `json:"findings,omitempty"`
-	Perspectives   map[Perspective]Verdict `json:"perspectives"`
+	RedundantOf    int      `json:"redundant_of,omitempty"`
+	HumanSummaries []string `json:"human_summaries,omitempty"`
+	// SecurityRoutedToPerson: the security perspective's own report
+	// returned requires_human (not a decision question the relay stamped
+	// across every perspective), so the head is routed to a person for a
+	// security read no delegate or fixer can give. Read it through
+	// SecurityRequiresPerson, which also needs the aggregate to still
+	// require a human (hivecommons/hive#19229, #19226).
+	SecurityRoutedToPerson bool                    `json:"security_routed_to_person,omitempty"`
+	FixAttempts            int                     `json:"fix_attempts,omitempty"`
+	MaxFixAttempts         int                     `json:"max_fix_attempts,omitempty"`
+	Threshold              outputschema.Severity   `json:"human_threshold"`
+	Reasons                []string                `json:"reasons,omitempty"`
+	Findings               []PerspectiveFinding    `json:"findings,omitempty"`
+	Perspectives           map[Perspective]Verdict `json:"perspectives"`
 	// BlockSummaries are the summaries of the perspectives whose own
 	// verdict is changes_requested or reject, one "<perspective>: <summary>"
 	// each. A reviewer can block with no structured finding and explain
@@ -588,6 +595,9 @@ func aggregateReports(reports []PerspectiveReport, opts AggregateOptions) Aggreg
 			}
 			decisionQuestions = append(decisionQuestions, strings.TrimSpace(r.DecisionQuestion))
 			agg.Reasons = append(agg.Reasons, decisionReason(r.DecisionQuestion))
+		}
+		if effective.Verdict == VerdictRequiresHuman && r.Perspective == PerspectiveSecurity && !r.DecisionRequested {
+			agg.SecurityRoutedToPerson = true
 		}
 		if effective.Verdict == VerdictRequiresHuman {
 			if summary := humanSummaryReason(r); summary != "" {
@@ -1382,12 +1392,34 @@ func decisionReason(question string) string {
 	return "maintainer decision requested: " + question
 }
 
+// RequiresHumanSummarySeparator joins a perspective and its summary in a
+// HumanSummaries entry: "<perspective> requires human: <summary>". The
+// governor's follow-up issues quote that entry verbatim, so
+// SecurityRequiresHumanSummary can recognise one filed before the
+// structured marker existed.
+const RequiresHumanSummarySeparator = " requires human: "
+
 func humanSummaryReason(r PerspectiveReport) string {
 	summary := strings.TrimSpace(r.Summary)
 	if summary == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s requires human: %s", r.Perspective, summary)
+	return string(r.Perspective) + RequiresHumanSummarySeparator + summary
+}
+
+// SecurityRequiresPerson reports a head the security review routed to a
+// person: its own report returned requires_human and the aggregate still
+// requires a human (a policy resolution or the hive-superseding fix route
+// clears RequiresHuman, and with it this answer).
+func (a Aggregate) SecurityRequiresPerson() bool {
+	return a.SecurityRoutedToPerson && a.RequiresHuman
+}
+
+// SecurityRequiresHumanSummary reports whether text carries the security
+// perspective's HumanSummaries entry ("security requires human: …"), the
+// exact form humanSummaryReason writes.
+func SecurityRequiresHumanSummary(text string) bool {
+	return strings.Contains(strings.ToLower(text), string(PerspectiveSecurity)+RequiresHumanSummarySeparator)
 }
 
 // incompleteCoverageReason names the configured perspectives this head has

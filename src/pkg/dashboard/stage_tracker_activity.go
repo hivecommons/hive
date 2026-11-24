@@ -44,6 +44,12 @@ type StageTrackerActivity struct {
 	// (running, queued, or not reported), so the chevron can name the last
 	// one or two the head waits on (hivecommons/hive#16630).
 	ChecksPending []string `json:"checks_pending,omitempty"`
+	// ChecksSkipped names the counted checks whose result is skipped or
+	// neutral (a job skipped by its own `if:` condition). They are finished
+	// and count in ChecksPassed, never in ChecksPending: the merge gate does
+	// not block on them (github.CheckConclusionNonBlocking), so the strip
+	// never shows one as running or stuck.
+	ChecksSkipped []string `json:"checks_skipped,omitempty"`
 	// ChecksStuck names the pending checks that have been queued or in
 	// progress longer than trackerCheckStuckAfter: they are not running in
 	// any useful sense and will not finish on their own
@@ -153,6 +159,9 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	// Required checks with no run on the head while commit statuses were
 	// not read: unknown rather than missing, with the no-run caption.
 	noRunUnread := map[string]bool{}
+	// Required checks that finished skipped or neutral: passed for the
+	// tally, as the merge gate treats them.
+	skippedNames := map[string]bool{}
 	for _, observation := range observations {
 		name := observation.name
 		check := github.PRActivityCheck{}
@@ -182,19 +191,23 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 			state = "running"
 			running = true
 		case check.State == "completed":
-			switch check.Conclusion {
-			case "success":
+			switch {
+			case check.Conclusion == "success":
 				state = "passing"
-			case "neutral", "skipped":
-				state = "skipped"
-			case "failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale":
+			case github.CheckConclusionNonBlocking(check.Conclusion):
+				// The merge gate lets a skipped or neutral required check
+				// through, as branch protection does: it is a pass here
+				// too, never a pending or stuck check.
+				state = "passing"
+				skippedNames[name] = true
+			case github.CheckConclusionIsRed(check.Conclusion):
 				state = "failing"
 			}
 		}
 		if state == "missing" || (state == "queued" && len(observation.checks) == 1 && check.Kind == "commit_status") {
 			presubmitWaiting[name] = true
 		}
-		if state != "passing" && state != "failing" && state != "skipped" {
+		if state != "passing" && state != "failing" {
 			settled[name] = false
 		}
 		// Check runs only: a pending commit status carries when it was
@@ -203,7 +216,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 			pendingSince[name] = *check.Since
 		}
 		// A red required check leads, then missing/unknown, then running/queued.
-		rank := map[string]int{"passing": 0, "queued": 1, "running": 2, "skipped": 3, "unknown": 4, "missing": 5, "failing": 6}
+		rank := map[string]int{"passing": 0, "queued": 1, "running": 2, "unknown": 4, "missing": 5, "failing": 6}
 		if previous, seen := perName[name]; !seen || rank[state] >= rank[previous] {
 			perName[name] = state
 		}
@@ -249,13 +262,15 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		switch perName[name] {
 		case "passing":
 			out.ChecksPassed++
+			if skippedNames[name] {
+				out.ChecksSkipped = append(out.ChecksSkipped, name)
+			}
 		case "failing":
 			out.ChecksFailed++
 			out.ChecksFailing = append(out.ChecksFailing, name)
 		case "missing":
 			unreported = append(unreported, name)
 			out.ChecksPending = append(out.ChecksPending, name)
-		case "skipped":
 		default:
 			out.ChecksPending = append(out.ChecksPending, name)
 		}
@@ -276,6 +291,9 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	case "passing":
 		out.Caption = "CI green · all " + plural(total, "required check") + " passed"
 		out.Detail = "Every check that branch protection requires has reported success for the PR's current commit."
+		if len(out.ChecksSkipped) > 0 {
+			out.Detail = "Every check that branch protection requires has finished on the PR's current commit. " + stageTrackerSkippedChecksSentence(out.ChecksSkipped)
+		}
 	case "failing":
 		out.Caption = "CI failing · " + check + " red"
 		out.Detail = "Required check " + check + " finished without success (failed, timed out, was cancelled, or needs action) on the PR's current commit. A fix or a re-run has to turn it green before CI can pass."
@@ -333,9 +351,6 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 			out.Caption = "CI unknown · " + check + " reported but with no conclusion"
 			out.Detail = "Required check " + check + " exists for the PR's current commit but hive cannot read a clear result from it (several runs share the name, or the run ended with no conclusion)."
 		}
-	case "skipped":
-		out.Caption = "CI skipped · check " + check + " skipped"
-		out.Detail = "Required check " + check + " finished as skipped or neutral on the PR's current commit, which branch protection does not count as a pass."
 	}
 	// Running is active, full stop: the chevron has one fill. The poll's
 	// age rides ObservedAt for the tooltip, never a dimmer state
@@ -436,6 +451,7 @@ func pluralVerb(n int, one, many string) string {
 func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivity, now time.Time) {
 	type tally struct {
 		passing, failing bool
+		skipped          bool
 		run              bool
 		since            time.Time
 	}
@@ -455,12 +471,16 @@ func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivi
 		if check.Since != nil {
 			at = *check.Since
 		}
-		red := check.State == "completed" && (check.Conclusion == "failure" || check.Conclusion == "timed_out" || check.Conclusion == "cancelled" || check.Conclusion == "action_required" || check.Conclusion == "startup_failure" || check.Conclusion == "stale")
-		if red {
+		completed := check.State == "completed"
+		if completed && github.CheckConclusionIsRed(check.Conclusion) {
 			t.failing = true
 		}
 		if !at.Before(t.since) {
-			t.since, t.passing = at, check.State == "completed" && check.Conclusion == "success"
+			// A latest run that finished skipped or neutral is done, not
+			// pending: the merge gate does not block on it, so it counts
+			// as passed and can never be called stuck.
+			t.skipped = completed && github.CheckConclusionNonBlocking(check.Conclusion)
+			t.since, t.passing = at, completed && (check.Conclusion == "success" || t.skipped)
 			t.run = check.Kind != "commit_status"
 		}
 	}
@@ -474,6 +494,9 @@ func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivi
 			out.ChecksFailing = append(out.ChecksFailing, name)
 		case t.passing:
 			out.ChecksPassed++
+			if t.skipped {
+				out.ChecksSkipped = append(out.ChecksSkipped, name)
+			}
 		default:
 			out.ChecksPending = append(out.ChecksPending, name)
 			if t.run && !t.since.IsZero() {
@@ -511,6 +534,9 @@ func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivi
 	default:
 		out.Caption = fmt.Sprintf("CI unknown · all %s passed · required set unknown", observed)
 		out.Detail = fmt.Sprintf("Every check run observed on the PR's current commit succeeded, but %s, so it cannot call CI green.", unknownSet)
+	}
+	if len(out.ChecksSkipped) > 0 {
+		out.Detail += " " + stageTrackerSkippedChecksSentence(out.ChecksSkipped)
 	}
 }
 
@@ -551,6 +577,17 @@ func stageTrackerPendingChecksWord(pending []string) string {
 		return strings.Join(quoted, ", ") + " pending"
 	}
 	return plural(len(pending), "check") + " pending"
+}
+
+// stageTrackerSkippedChecksSentence names the checks that finished as
+// skipped or neutral, once, for the Detail: they count as passed because
+// the merge gate does not block on them.
+func stageTrackerSkippedChecksSentence(names []string) string {
+	quoted := make([]string, 0, len(names))
+	for _, name := range names {
+		quoted = append(quoted, stageTrackerCheckName(name))
+	}
+	return fmt.Sprintf("%s finished as skipped or neutral (its workflow's own condition left it out); the merge gate does not block on that, so it counts as passed.", strings.Join(quoted, ", "))
 }
 
 // stageTrackerUnreportedChecksSentence names the required checks with no

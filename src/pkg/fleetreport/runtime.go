@@ -145,6 +145,12 @@ const (
 	kickFailureStreak = 3
 	// degradedMinDuration is how long model discovery must stay degraded.
 	degradedMinDuration = time.Hour
+	// forgeUnreachableSustained is how long a forge_unreachable condition must
+	// stay open before it is reportable (hivecommons/hive#19403). A single
+	// launch-time mint that timed out is an egress blip, cleared by the next
+	// successful mint — the token refresh tick runs every 40m by default — so
+	// only an outage that outlives a refresh is filed upstream.
+	forgeUnreachableSustained = time.Hour
 	// hub5xxStreak is how many consecutive 5xx answers from the hub (the
 	// condition is cleared on the next accepted request) make it reportable,
 	// so a single blip during a hub rollout is not filed upstream.
@@ -252,10 +258,10 @@ var Classes = map[string]ClassSpec{
 	ClassIssueClaimEffectFailed:      {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"issue-claims: github side effect failed"}},
 	ClassSpekStreamUnavailable:       {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"[spektacular] stream child exited; restarting", "[spektacular] stream child keeps exiting; giving up", "[spektacular] stream child did not restart"}},
 	ClassTranscriptScanSlow:          {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"transcript activity scan outlived its interval"}},
-	ClassForgeUnreachable:            {Component: "network", Severity: "medium", MinCount: 1, Keywords: []string{"github host unreachable", "forge unreachable"}},
+	ClassForgeUnreachable:            {Component: "network", Severity: "medium", MinCount: 1, MinDuration: forgeUnreachableSustained, Keywords: []string{"github host unreachable", "forge unreachable"}},
 	ClassHubHeartbeatUnprovisioned:   {Component: "agent-runtime", Severity: "medium", MinCount: 1, IdleClear: 3 * time.Hour, LogFed: true, Keywords: []string{"hub heartbeat rejected: hive id is not provisioned"}},
 	ClassGitHubAppAlertsPermission:   {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"scoped token mint with vulnerability_alerts:read failed; retrying without it"}},
-	ClassGitHubAppStatusesPermission: {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"could not set the prow/lgtm commit status: the github app lacks the statuses: write permission"}},
+	ClassGitHubAppStatusesPermission: {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"could not set the prow/lgtm commit status: the github app lacks the statuses: write permission", "pr-gate: verify pr contents is missing on recent heads: the github app lacks the statuses: write permission"}},
 	ClassProxyPlainForwardFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward failed"}},
 	ClassAgentLifecycleRepeated:      {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to send kick", "agent cli crashed (bare shell detected)", "tmux kill-session before restart failed", "agent tmux session missing", "would restart dead agent"}},
 }

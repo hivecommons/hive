@@ -187,6 +187,11 @@
     .cluster-health-message.info { color: var(--muted); background: var(--surface); border: 1px solid var(--border); }
     .cluster-health-message.warn { color: var(--amber); background: var(--surface); border: 1px solid var(--amber); }
 
+    .customers-share-setting { padding: var(--sp-5); margin-bottom: var(--sp-6); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); font-size: var(--fs-base); }
+    .customers-share-setting h3 { font-size: var(--fs-base); margin-bottom: var(--sp-2); }
+    .customers-share-setting p:last-child { font-size: var(--fs-sm); color: var(--muted); margin-top: var(--sp-2); }
+    .customers-share-counts { font-size: var(--fs-sm); margin-top: var(--sp-2); }
+
     /* ── Hive search + facets ──
        The facet panel is a CLICK-TOGGLED left tray, collapsed by default so the
        dashboard is uncluttered until the operator asks for filters. Collapsed it
@@ -824,6 +829,9 @@
       <span id="nav-user" class="nav-user"></span>
     </nav>
     <div class="header-right">
+      <!-- Ask AI help opener (#19181): stays empty unless the hub serves the
+           panel script below, which it does only when Ask is on. -->
+      <span id="hive-ask-slot"></span>
       <span id="hub-version"></span>
       <a href="#" class="header-link" onclick="fetch('/api/auth/logout',{method:'POST'}).then(function(){location.href='/'});return false;">Logout</a>
     </div>
@@ -835,6 +843,7 @@
         <p class="section-label">Dashboard</p>
         <h1>My Hives</h1>
         <p class="subtitle">Hive instances you own or have access to</p>
+        <p id="profile-share-link" hidden><a href="/profile-share">Profile sharing</a></p>
         <p style="margin-top:var(--sp-4);padding:8px 14px;border:1px solid var(--line);border-radius:8px;background:color-mix(in srgb,var(--hub-dashboard-accent) 8%,transparent);font-size:0.85rem">👋 New to Hive? Read the <a href="https://docs.kubestellar.io/docs/hive/getting-started" target="_blank" rel="noopener" style="color:var(--amber);font-weight:700">Getting Started Guide</a> before diving in.</p>
         <p id="benchmarks-pointer" class="benchmarks-pointer">📊 See how models perform across the fleet &mdash; merge rate, CI first-try and estimated cost per PR, from real hive output. <a href="https://hivecommons.dev/benchmarks/" target="_blank" rel="noopener">Open the benchmarks ↗</a></p>
         <p id="latest-image-sha" style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-2)"></p>
@@ -1086,6 +1095,17 @@
           (worker-count reductions apply on the next hub restart).
         </div>
         <div id="scale-globals" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--sp-5);margin-bottom:var(--sp-6)"></div>
+        <div class="customers-share-setting">
+          <h3>Customers profile sharing</h3>
+          <p>In force: <strong id="customers-share-effective">Unknown</strong> · Default: Off</p>
+          <p id="customers-share-counts" class="customers-share-counts" hidden></p>
+          <p>Set <code>HIVE_HUB_CUSTOMERS_SHARE_ENABLED</code> on the hub to enable the personal profile and consent page. The environment is authoritative; this setting cannot be changed here. A hive receives a person's real name, organization or country only after that person consents for that hive, and only values they entered themselves. Counts above are per hive; no person or value is shown.</p>
+        </div>
+        <div class="customers-share-setting">
+          <h3>Ask AI help <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hub-deployment.md#ask-ai-help" target="_blank" rel="noopener noreferrer" aria-label="Help: Ask AI help">?</a></h3>
+          <p>In force: <strong id="ask-effective">Unknown</strong> · Default: Off</p>
+          <p>Set <code>HIVE_ASK_ENABLED</code> and the Kapa values on the hub to show an Ask panel on this dashboard. When on, a signed-in person's question and the label of the section they are in are sent to Kapa.ai after they confirm a notice; nothing else is sent. The environment is authoritative; this setting cannot be changed here.</p>
+        </div>
         <div style="font-size:0.85rem;color:var(--text);margin:var(--sp-5) var(--sp-0) var(--sp-4);font-weight:600">Per-cluster limits</div>
         <div class="table-wrap"><table style="width:100%;font-size:0.85rem"><thead><tr>
           <th style="text-align:left">Cluster</th><th style="text-align:right">Hives</th><th style="text-align:right">Pool avail</th>
@@ -2769,7 +2789,8 @@
     }
 
     /* ---- Clickable user avatars ---------------------------------------
-       Every face in this dashboard is a link to that person's GitHub profile.
+       Every GitHub face in this dashboard is a link to that person's GitHub
+       profile. A face from another identity provider has no link.
        The avatar IS the affordance: a separate ↗ glyph or a separately-linked
        username next to it was two controls for one destination, so those are
        gone and the picture carries the click.
@@ -3518,6 +3539,10 @@
       return (rank[role] || 0) >= (rank[tier] || 0);
     }
 
+    function canManageAccess(h) {
+      return roleAtLeast(h.role, 'read-write');
+    }
+
     /* One-line description of what each grantable role allows. Shown as the
        native tooltip on every role <option>/<select> and as the inline hint
        under the Manage Access "Add User" role dropdown (#4144), so an owner
@@ -3642,20 +3667,24 @@
       }
       return lines.join('\n');
     }
-    function inlineAccessAvatar(a) {
+    function accessFace(a, px, label, extraStyle) {
       var uname = String(a.username || '');
-      var role = String(a.role || '');
-      var provider = a.provider || identityProviderFromKey(uname);
-      var extraStyle = 'border:1px solid ' + accessRoleColor(role) + ';background:var(--surface);flex:0 0 auto';
       // A non-GitHub key (ibmid/google/microsoft) has no github.com profile to
       // link to — linkedAvatar would build a 404'ing image and a link to
       // someone else's account by coincidence of URL-shape. userAvatar uses
       // the provider-stored avatar_url when present, else initials derived
       // from the real display label (never from the opaque provider:sub key).
-      var avatar = provider === 'github'
-        ? linkedAvatar(uname, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), extraStyle)
+      return (a.provider || identityProviderFromKey(uname)) === 'github'
+        ? linkedAvatar(uname, px, label, extraStyle)
         : userAvatar({display_name: a.display_label, avatar_url: a.avatar_url, github_username: uname},
-            INLINE_ACCESS_AVATAR_PX, extraStyle);
+            px, extraStyle);
+    }
+    function inlineAccessAvatar(a) {
+      var uname = String(a.username || '');
+      var role = String(a.role || '');
+      var provider = a.provider || identityProviderFromKey(uname);
+      var extraStyle = 'border:1px solid ' + accessRoleColor(role) + ';background:var(--surface);flex:0 0 auto';
+      var avatar = accessFace(a, INLINE_ACCESS_AVATAR_PX, accessAvatarTitle(a), extraStyle);
       if (provider === 'github') return avatar;
       // userAvatar returns a bare <img> with no title/tooltip and no profile
       // link (there is none to link to) — wrap it so the same rich tooltip
@@ -4381,8 +4410,7 @@
            TestSingleHoverPanelInvariant), not that the panel's contents are
            tooltip-free. */
         return '<div style="display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-1) var(--sp-0)">' +
-          linkedAvatar(a.username, PANEL_ACCESS_AVATAR_PX,
-            accessAvatarTitle(a), 'flex:0 0 auto') +
+          accessFace(a, PANEL_ACCESS_AVATAR_PX, accessAvatarTitle(a), 'flex:0 0 auto') +
           '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(a.username) + '</span>' +
           '<span style="color:' + rc + ';font-size:var(--fs-2xs);font-weight:600;white-space:nowrap">' + esc(a.role) + '</span>' +
           '</div>';
@@ -4711,12 +4739,28 @@
       }
     }
 
+    /* The viewer's own face links to their own profile, like every other
+       GitHub face in the dashboard. avatar_url comes from the auth payload (it
+       is GitHub's CDN URL, not derivable from the login), so this one builds
+       its <img> directly rather than via avatarImg — but the anchor, the
+       role tooltip, and the initials fallback on load failure are shared.
+       NAV_AVATAR_PX mirrors the .nav-avatar CSS rule's fixed 28px size, so
+       the fallback SVG matches the box it is replacing. Any other viewer
+       gets the <img> with no anchor, because their login is a display name
+       or an email, not a GitHub account. */
+    function navAvatarHTML(data, label) {
+      var img = '<img src="' + escAttr(data.avatar_url) + '" class="nav-avatar" alt="" ' +
+        'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(data.login, NAV_AVATAR_PX)) + '">';
+      return data.provider === 'github' ? avatarProfileLink(data.login, label, img) : img;
+    }
+
     async function loadUser() {
       try {
         var resp = await fetch('/api/auth/user');
         var data = await resp.json();
         applyImpersonationBanner(data);
         if (data.authenticated) {
+          _personalProfileLinksAllowed = !data.impersonating;
           _isAdmin = !!data.hub_admin;
           _isRootAdmin = !!data.root_admin;
           /* The signed-in login is the ONE piece of viewer identity the hive
@@ -4730,17 +4774,8 @@
              normalizes to '' and renders the empty ＋ control. */
           _myCountry = normalizeCountryCode(data.country);
           var roleText = data.hub_admin ? 'Hub Admin' : 'User';
-          /* The viewer's own face links to their own profile, like every other
-             face in the dashboard. avatar_url comes from the auth payload (it is
-             GitHub's CDN URL, not derivable from the login), so this one builds
-             its <img> directly rather than via avatarImg — but the anchor, the
-             role tooltip, and the initials fallback on load failure are shared.
-             NAV_AVATAR_PX mirrors the .nav-avatar CSS rule's fixed 28px size, so
-             the fallback SVG matches the box it is replacing. */
           document.getElementById('nav-user').innerHTML =
-            avatarProfileLink(data.login, String(data.login || '') + ' — ' + roleText,
-              '<img src="' + escAttr(data.avatar_url) + '" class="nav-avatar" alt="" ' +
-              'onerror="this.onerror=null;this.src=' + jsArg(avatarInitialsSVG(data.login, NAV_AVATAR_PX)) + '">') +
+            navAvatarHTML(data, String(data.login || '') + ' — ' + roleText) +
             /* The viewer's country, immediately after their face — and, unlike
                every other flag in the dashboard, CLICKABLE, because this is the
                viewer's own record. Wrapped in a stable #nav-country host so a
@@ -4759,6 +4794,9 @@
     }
 
     var _userQuota = 0, _userUsed = 0, _isAdmin = false, _isRootAdmin = false;
+    var _personalProfileLinksAllowed = false;
+    var _profileShareHiveIDs = new Set();
+    var _profileShareHiveSignature = '';
     /* Lowercased login of the signed-in viewer, set by loadUser(). Empty until
        that resolves, and empty is safe: hiveAccessAvatars() then simply omits
        nobody, which is a cosmetic over-render for one paint rather than a
@@ -7891,6 +7929,11 @@
         _userUsed = data.saas_used || 0;
         _allDashHives = data.hives || [];
         _hiveRegistry = data.hives || [];
+        var showProfileShare = _personalProfileLinksAllowed && data.customersShareEnabled === true;
+        var profileShareIDs = showProfileShare ? (data.profileShareHiveIDs || []) : [];
+        document.getElementById('profile-share-link').hidden = !showProfileShare;
+        _profileShareHiveIDs = new Set(profileShareIDs);
+        _profileShareHiveSignature = JSON.stringify(profileShareIDs);
         /* The fleet reference polygon behind every kite. Captured here rather
            than derived in the browser: it is the average over the SAME
            population the server scored, and recomputing it client-side from
@@ -8997,7 +9040,7 @@
         '|' + JSON.stringify(_dashFacetCollapsed) + '|' + JSON.stringify(_dashSectionCollapsed) +
         '|' + _dashGroupBy + '|' + JSON.stringify(_dashGroupCollapsed) +
         '|' + _dashActiveView + '|' + _dashDefaultView + '|' + JSON.stringify(_dashSavedViews) +
-        '|' + _dashFacetTrayOpen;
+        '|' + _dashFacetTrayOpen + '|' + _profileShareHiveSignature;
       if (!force && sig === _lastHivesJSON) return;
       _lastHivesJSON = sig;
       /* Status/facet filters describe ASSIGNED hives only. An unassigned
@@ -9156,9 +9199,9 @@
           if (h.role === 'owner') {
             actions += '<br class="mb-2"><button class="hv-btn btn-danger btn-sm" onclick="removeLocalHive(\'' + esc(h.id) + '\')" title="Remove from registry (does not delete the hive)">Remove</button>';
           }
-        } else if (isHosted && (roleAtLeast(h.role, 'read-write'))) {
+        } else if (canManageAccess(h)) {
           actions = '<button class="hv-btn btn-primary btn-sm" onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')">Permissions</button>';
-          if (h.role === 'owner') {
+          if (isHosted && h.role === 'owner') {
             actions += '<button class="hv-btn btn-danger btn-sm" onclick="deleteHive(\'' + esc(h.id) + '\')">Delete</button>';
           }
         }
@@ -9167,6 +9210,7 @@
         var snapUrl = snapshotLink(h);
         var apiUrl = apiLink(h);
         var menuItems = [];
+        if (_profileShareHiveIDs.has(h.id)) menuItems.push('<a href="/profile-share?hive=' + encodeURIComponent(h.id) + '" class="hive-menu-item">Profile sharing</a>');
         if (_isAdmin && h.provStatus === 'available' && !h.assigning) menuItems.push('<div onclick="openAssignModal(\'' + esc(h.id) + '\')" class="hive-menu-item" style="color:#3fb950;font-weight:600">Assign / Claim</div><div style="border-top:1px solid #30363d;margin:var(--sp-2) var(--sp-0)"></div>');
         /* Reset assignment: escape hatch for a placeholder wedged at
            assigned && !claim_delivered (assignedUnclaimed) — its spoke never
@@ -9181,7 +9225,7 @@
         if (apiBase) menuItems.push('<a href="' + apiBase + '/api/docs" target="_blank" class="hive-menu-item">API Docs</a>');
         if (menuItems.length > 0 && (canConvert || isHosted || isLocal)) menuItems.push('<div style="border-top:1px solid #30363d;margin:var(--sp-2) var(--sp-0)"></div>');
         if (canConvert) menuItems.push('<div onclick="openConvert(this)" data-hive-id="' + esc(h.id) + '" data-dash-url="' + esc(h.dashboardUrl||'') + '" data-org="' + esc(h.org) + '" data-repos="' + esc((h.repos||[]).join(', ')) + '" data-primary="' + esc(h.primaryRepo) + '" data-level="' + (h.acmmLevel||1) + '" data-name="' + esc(h.name||'') + '" class="hive-menu-item">Convert to Hosted</div>');
-        if (isHosted && (roleAtLeast(h.role, 'read-write'))) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')" class="hive-menu-item">Permissions</div>');
+        if (canManageAccess(h)) menuItems.push('<div onclick="openAccessModal(\'' + esc(h.id) + '\',\'' + esc(h.dashboardUrl || '') + '\')" class="hive-menu-item">Permissions</div>');
         /* Timeline is owner-or-admin, matching the API's authorization. */
         if (isHosted && (h.role === 'owner' || _isAdmin)) menuItems.push('<div onclick="openTimelineModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" class="hive-menu-item">Activity Timeline</div>');
         /* Pause/Resume hive (#15092): the spoke's own top-bar "running ⏸"
@@ -11672,6 +11716,27 @@
         ' placeholder="' + placeholder + '"' +
         ' style="width:90px;padding:var(--sp-3) var(--sp-4);background:var(--surface);border:1px solid var(--border);border-radius:var(--r);color:var(--text);font-size:0.85rem;text-align:right">';
     }
+    /* Hub admin view of profile sharing (#19164): consent counts per hive
+       only. The endpoint returns no person, field choice or value, and is
+       absent (404) while the sharing switch is off. */
+    async function loadCustomerConsentCounts(enabled) {
+      var el = document.getElementById('customers-share-counts');
+      if (!el) return;
+      if (!enabled) { el.hidden = true; el.textContent = ''; return; }
+      try {
+        var resp = await fetch('/api/saas/admin/profile-share/counts', { credentials: 'same-origin', cache: 'no-store' });
+        if (!resp.ok) { el.hidden = true; return; }
+        var data = await resp.json();
+        var rows = data.hives || [];
+        el.hidden = false;
+        if (!rows.length) { el.textContent = 'No person has consented to share with any hive.'; return; }
+        el.innerHTML = 'Consents per hive: ' + rows.map(function(r) {
+          var line = '<strong>' + esc(r.name || r.hive_id) + '</strong> ' + (r.consents | 0);
+          if (r.awaiting_reconfirmation) line += ' (' + (r.awaiting_reconfirmation | 0) + ' awaiting reconfirmation)';
+          return line;
+        }).join(' · ');
+      } catch (e) { /* transient: next poll retries */ }
+    }
     async function loadScaleSettings() {
       if (!_isAdmin) return;
       try {
@@ -11685,6 +11750,11 @@
         if (body) body.style.display = _scaleControlsCollapsed ? 'none' : '';
         if (toggle) toggle.style.transform = _scaleControlsCollapsed ? '' : 'rotate(90deg)';
         var eff = data.effective || {};
+        document.getElementById('customers-share-effective').textContent =
+          typeof eff.customers_share_enabled !== 'boolean' ? 'Unknown' : (eff.customers_share_enabled ? 'On' : 'Off');
+        document.getElementById('ask-effective').textContent =
+          typeof eff.ask_enabled !== 'boolean' ? 'Unknown' : (eff.ask_enabled ? 'On' : 'Off');
+        loadCustomerConsentCounts(eff.customers_share_enabled === true);
         document.getElementById('scale-controls-summary').textContent =
           'wave ' + eff.upgrade_wave_size + ' · workers ' + eff.provision_workers +
           ' · per-cluster ' + eff.provision_per_cluster + ' · kubectl ' + eff.kubectl_per_cluster;
@@ -16571,5 +16641,6 @@
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); }
     }
   </script>
+<!-- hive-ask-panel -->
 </body>
 </html>

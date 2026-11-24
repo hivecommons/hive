@@ -1196,7 +1196,6 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		agentCfg.Model = model
 		agentCfg.ModelOwner = config.FieldOwnerOperator
 		effectiveModel = agentCfg.Model
-		modelChanged = agentCfg.Model != prevModel
 	}
 	// A backend change with no model in the request keeps the saved model,
 	// so re-spell it for the new backend: the Copilot spelling

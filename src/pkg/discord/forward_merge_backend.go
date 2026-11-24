@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 func (b *discordBackend) sendTo(channelID, content string) error {
@@ -20,6 +21,8 @@ func (b *discordBackend) sendTo(channelID, content string) error {
 	if err != nil {
 		return err
 	}
+	// The shared outbound dash rule (#19103), as Bot.do applies it.
+	data, _ = prosefilter.SanitizeJSON(data, discordProseKeys)
 
 	url := fmt.Sprintf("%s/channels/%s/messages", discordAPIBase, channelID)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(data))

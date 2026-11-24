@@ -11,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/proxy"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
+	"github.com/hivecommons/hive/crux/sessiontaint"
 	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/crux/trajectory"
 	"github.com/hivecommons/hive/crux/watchdog"
@@ -112,6 +113,10 @@ type boot struct {
 	// tests replace them.
 	configSaveSeq func() uint64
 	saveConfig    func() error
+	// loadConfigForReload reads the config from disk for a reload the
+	// persist path runs itself (hivecommons/hive#19561); nil means
+	// config.LoadWithDashboardOverlay(configPath). Tests replace it.
+	loadConfigForReload func() (*config.Config, error)
 	// sweepConfig is an immutable copy published outside long-running eval IO.
 	sweepConfig atomic.Pointer[config.Config]
 
@@ -175,6 +180,8 @@ type boot struct {
 	dashSrv                       *dashboard.Server
 	writeback                     *writeback.Gate
 	writebackOnce                 sync.Once
+	sessionTaintOnce              sync.Once
+	sessionTaint                  *sessiontaint.Observer
 	beadStores                    map[string]*beads.Store
 	beadStoreLoadFailures         int
 	tokenCollector                *tokens.Collector
@@ -370,6 +377,9 @@ type boot struct {
 	// customers is the people store behind the Customers section
 	// (hivecommons/hive#18742); nil when customers are off.
 	customers *customersDashboard
+	// customersEnricher holds the colony providers across enrichment
+	// passes (customers.enrichment, off by default); built on first use.
+	customersEnricher *customersEnricher
 	// meetingsLive is the Spektacular live loop (hivecommons/hive#18291).
 	meetingsLive *live.Runner
 	// meetingsInboxSrc lists ended meetings in the inbox (#18293).

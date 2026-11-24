@@ -53,7 +53,7 @@ func TestLoadEmbedded(t *testing.T) {
 			t.Fatalf("%s: tier %q", e.Path, b.Tier)
 		}
 	}
-	for _, key := range []string{techdocsKey2026_11_1, techdocsKey2026_11_2} {
+	for _, key := range []string{techdocsKey2026_11_1, techdocsKey2026_11_2, techdocsKey2026_11_3, techdocsKey2026_11_4} {
 		if !seen[key] {
 			t.Fatalf("techdocs model %s missing: %v", key, seen)
 		}
@@ -63,6 +63,8 @@ func TestLoadEmbedded(t *testing.T) {
 const (
 	techdocsKey2026_11_1 = "cncf-techdocs-assessment@curated-2026.11.1"
 	techdocsKey2026_11_2 = "cncf-techdocs-assessment@curated-2026.11.2"
+	techdocsKey2026_11_3 = "cncf-techdocs-assessment@curated-2026.11.3"
+	techdocsKey2026_11_4 = "cncf-techdocs-assessment@curated-2026.11.4"
 )
 
 // techdocsVersion returns the embedded cncf-techdocs-assessment model at one
@@ -154,15 +156,106 @@ func TestDecodeRejects(t *testing.T) {
 	}
 }
 
-// techdocs compiles the latest embedded cncf-techdocs-assessment version;
-// TestTechDocsIntakeHook pins that every version derives the same stages.
+// techdocs compiles the latest embedded cncf-techdocs-assessment version
+// (curated-2026.11.4);
+// TestTechDocsIntakeHook and TestTechDocsWhoseTurnLabels pin that every
+// version derives the same stages.
 func techdocs(t *testing.T) *workflowmodel.Profile {
 	t.Helper()
-	p, _, err := workflowmodel.Compile(techdocsVersion(t, "curated-2026.11.2"))
+	p, _, err := workflowmodel.Compile(techdocsVersion(t, "curated-2026.11.4"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// TestTechDocsStageLabels pins hivecommons/hive#19611: curated-2026.11.3
+// spells the four states whose built-in label says the wrong thing in their
+// own slug, in the same number band; everything else is curated-2026.11.2,
+// so the stages derived (and everything keyed on the number) are unchanged
+// and only the label the writer puts on the item differs.
+func TestTechDocsStageLabels(t *testing.T) {
+	v2 := techdocsVersion(t, "curated-2026.11.2")
+	v3 := techdocsVersion(t, "curated-2026.11.3")
+	want := map[string]string{
+		"accepted":           "stage/020-accepted",
+		"drafting":           "stage/070-drafting",
+		"in-review":          "stage/050-reviewer-check",
+		"stakeholder-review": "stage/060-stakeholder-review",
+	}
+	got := map[string]string{}
+	for _, st := range v3.Spec.States {
+		if st.Lifecycle.StageLabel != "" {
+			got[st.ID] = st.Lifecycle.StageLabel
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("2026.11.3 stage labels = %v, want %v", got, want)
+	}
+	for _, st := range v2.Spec.States {
+		if st.Lifecycle.StageLabel != "" {
+			t.Fatalf("2026.11.2 must declare no stage labels (never edited in place): %s %q", st.ID, st.Lifecycle.StageLabel)
+		}
+	}
+	if v3.Metadata.Annotations["workflow.hivecommons.dev/changes"] == v2.Metadata.Annotations["workflow.hivecommons.dev/changes"] {
+		t.Fatal("2026.11.3 must carry its own workflow.hivecommons.dev/changes annotation")
+	}
+	a, b := workflowmodel.Clone(v2), workflowmodel.Clone(v3)
+	a.Spec.Meta.Version, b.Spec.Meta.Version = "", ""
+	a.Metadata.Annotations, b.Metadata.Annotations = nil, nil
+	for i := range b.Spec.States {
+		b.Spec.States[i].Lifecycle.StageLabel = ""
+	}
+	if a.Hash() != b.Hash() {
+		t.Fatal("2026.11.3 must differ from 2026.11.2 only in version, annotations and stage labels")
+	}
+
+	p2, _, err := workflowmodel.Compile(v2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p3, _, err := workflowmodel.Compile(v3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := issue("triage/accepted")
+	d2 := stageengine.DeriveFromModel(p2, stagelabels.IssueItem).Derive(accepted)
+	d3 := stageengine.DeriveFromModel(p3, stagelabels.IssueItem).Derive(accepted)
+	if d2.Abstain || d2.Stage != stagelabels.Claimed || d2.Label() != "stage/020-claimed" {
+		t.Fatalf("2026.11.2: accepted issue derived stage %v label %q", d2.Stage, d2.Label())
+	}
+	if d3.Abstain || d3.Stage != stagelabels.Claimed || d3.Label() != "stage/020-accepted" {
+		t.Fatalf("2026.11.3: accepted issue derived stage %v label %q", d3.Stage, d3.Label())
+	}
+	// An item still wearing the built-in spelling swaps to the model's on
+	// the next write (a rebind from 11.2), and keeps its stage meanwhile.
+	worn := []string{"stage/020-claimed", "triage/accepted"}
+	if add, remove := stagelabels.Plan(worn, d2.Desired()); len(stagelabels.StageLabels(add))+len(stagelabels.StageLabels(remove)) != 0 {
+		t.Fatalf("2026.11.2: plan add=%v remove=%v, want no stage change", add, remove)
+	}
+	add, remove := stagelabels.Plan(worn, d3.Desired())
+	if !reflect.DeepEqual(stagelabels.StageLabels(add), []string{"stage/020-accepted"}) || !reflect.DeepEqual(stagelabels.StageLabels(remove), []string{"stage/020-claimed"}) {
+		t.Fatalf("2026.11.3: plan add=%v remove=%v", add, remove)
+	}
+	for _, l := range remove {
+		if l == "triage/accepted" {
+			t.Fatalf("2026.11.3: plan removed the accept gate's input label: %v", remove)
+		}
+	}
+	if got := stagelabels.Current([]string{"stage/020-accepted", "triage/accepted"}); got != stagelabels.Claimed {
+		t.Fatalf("stage/020-accepted reads as %v, want 020", got)
+	}
+	// The labels are provisioned on bind with the model's other labels.
+	defs := map[string]workflowmodel.LabelDef{}
+	for _, d := range p3.LabelDefs(stagelabels.StageColor) {
+		defs[d.Name] = d
+	}
+	for state, label := range want {
+		d, ok := defs[label]
+		if !ok || d.State != state || d.Color != stagelabels.StageColor {
+			t.Fatalf("label %s not provisioned for %s: %+v", label, state, d)
+		}
+	}
 }
 
 func issue(labels ...string) stageengine.Facts {
@@ -296,5 +389,123 @@ func TestTechDocsDispatch(t *testing.T) {
 	}
 	if len(p.Dispatch) != 2 {
 		t.Fatalf("dispatch targets %+v", p.Dispatch)
+	}
+}
+
+// whoseTurn are the curated-2026.11.4 status labels (hivecommons/hive#19609).
+var whoseTurn = []string{"ready-for-techdocs-review", "ready-for-stakeholder-review", "ready-for-approver"}
+
+// TestTechDocsWhoseTurnLabels pins hivecommons/hive#19609: curated-2026.11.4
+// differs from 2026.11.3 only in its whose-turn label entries, and the stage
+// reconciler's plan puts exactly the label naming the audience that acts next
+// on a deliverable PR, takes the other two off, never touches the verified
+// and confirmed gates, and derives the same state whether or not someone
+// removed the status label by hand.
+func TestTechDocsWhoseTurnLabels(t *testing.T) {
+	v3 := techdocsVersion(t, "curated-2026.11.3")
+	v4 := techdocsVersion(t, "curated-2026.11.4")
+	if v4.Metadata.Annotations["workflow.hivecommons.dev/changes"] == v3.Metadata.Annotations["workflow.hivecommons.dev/changes"] {
+		t.Fatal("2026.11.4 must carry its own workflow.hivecommons.dev/changes annotation")
+	}
+	a, b := workflowmodel.Clone(v3), workflowmodel.Clone(v4)
+	a.Spec.Meta.Version, b.Spec.Meta.Version = "", ""
+	a.Metadata.Annotations, b.Metadata.Annotations = nil, nil
+	var added []workflowmodel.LabelEntry
+	b.Spec.Labels.Entries = nil
+	for _, e := range v4.Spec.Labels.Entries {
+		if strings.HasPrefix(e.Name, "ready-for-") {
+			added = append(added, e)
+			continue
+		}
+		b.Spec.Labels.Entries = append(b.Spec.Labels.Entries, e)
+	}
+	if a.Hash() != b.Hash() {
+		t.Fatal("2026.11.4 must differ from 2026.11.3 only in version, annotations and the whose-turn labels")
+	}
+	wantStates := map[string][]string{
+		"ready-for-techdocs-review":    {"drafting", "in-review"},
+		"ready-for-stakeholder-review": {"stakeholder-review"},
+		"ready-for-approver":           {"awaiting-merge"},
+	}
+	gotStates := map[string][]string{}
+	for _, e := range added {
+		if e.Description == "" || len(e.Description) > 100 || e.Color == "" {
+			t.Fatalf("%s: GitHub needs a colour and a description of at most 100 characters: %+v", e.Name, e)
+		}
+		gotStates[e.Name] = append(gotStates[e.Name], e.State)
+	}
+	if !reflect.DeepEqual(gotStates, wantStates) {
+		t.Fatalf("whose-turn states %v; want %v", gotStates, wantStates)
+	}
+
+	p := techdocs(t)
+	prs := stageengine.DeriveFromModel(p, stagelabels.PRItem)
+	cases := []struct {
+		name  string
+		facts func(labels ...string) stageengine.Facts
+		state string
+		want  string // "" when nobody's turn is named
+	}{
+		{"drafting", func(l ...string) stageengine.Facts { f := pr(l...); f.Draft = true; return f }, "drafting", "ready-for-techdocs-review"},
+		{"verified draft", func(l ...string) stageengine.Facts {
+			f := pr(append([]string{"verified"}, l...)...)
+			f.Draft = true
+			return f
+		}, "in-review", "ready-for-techdocs-review"},
+		{"ready but unverified", func(l ...string) stageengine.Facts { return pr(l...) }, "in-review", "ready-for-techdocs-review"},
+		{"stakeholder review", func(l ...string) stageengine.Facts { return pr(append([]string{"verified"}, l...)...) }, "stakeholder-review", "ready-for-stakeholder-review"},
+		{"confirmed", func(l ...string) stageengine.Facts { return pr(append([]string{"verified", "confirmed"}, l...)...) }, "awaiting-merge", "ready-for-approver"},
+		{"checks failing", func(l ...string) stageengine.Facts {
+			f := pr(append([]string{"verified"}, l...)...)
+			f.PR.Checks.Red = []string{"spell-check"}
+			return f
+		}, "checks-failing", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bare := prs.Derive(tc.facts())
+			if bare.Abstain || bare.ModelState != tc.state {
+				t.Fatalf("derived %+v; want state %s", bare, tc.state)
+			}
+			// Fresh PR: only the label for this state is added.
+			add, _ := stagelabels.Plan(tc.facts().Labels, bare.Desired())
+			var turn []string
+			for _, l := range add {
+				if strings.HasPrefix(l, "ready-for-") {
+					turn = append(turn, l)
+				}
+			}
+			if want := []string{tc.want}; (tc.want == "" && len(turn) != 0) || (tc.want != "" && !reflect.DeepEqual(turn, want)) {
+				t.Fatalf("added whose-turn %v; want %q", turn, tc.want)
+			}
+			// A PR carrying all three (a stale pass, a hand edit): the
+			// other two come off, the gates stay, and the status labels do
+			// not move the state.
+			all := tc.facts(whoseTurn...)
+			full := prs.Derive(all)
+			if full.ModelState != tc.state {
+				t.Fatalf("status labels moved the state: %s, want %s", full.ModelState, tc.state)
+			}
+			add, remove := stagelabels.Plan(all.Labels, full.Desired())
+			for _, l := range add {
+				if strings.HasPrefix(l, "ready-for-") {
+					t.Fatalf("re-added %s on a PR that carries it", l)
+				}
+			}
+			removed := map[string]bool{}
+			for _, l := range remove {
+				removed[l] = true
+			}
+			for _, l := range whoseTurn {
+				if removed[l] == (l == tc.want) {
+					t.Fatalf("remove %v: %s kept=%v; only %q may stay", remove, l, !removed[l], tc.want)
+				}
+			}
+			for _, gate := range []string{"verified", "confirmed", "Docs analysis"} {
+				if removed[gate] {
+					t.Fatalf("status reconcile removed %s: %v", gate, remove)
+				}
+			}
+		})
 	}
 }

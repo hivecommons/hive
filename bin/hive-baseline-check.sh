@@ -23,6 +23,15 @@
 # helper now also reads the same check on the upstream repository's default
 # branch (the GitHub fork parent, or --upstream) and, when it is red there,
 # returns DEFER_EXTERNAL with a head-pinned marker the hive honours.
+#
+# hivecommons/hive#19191: two false incidents (#19190, #19191) were filed from
+# siblings whose reds were their own. (d) A sibling whose failing check says
+# in its annotations that it is a "per-PR provider verdict, not a shared CI
+# incident" (native-queue-policy relaying the PR's own red provider) is not
+# evidence of a shared failure and is not counted. (e) A check with no result
+# on the default branch at all (a PR-only check) has no baseline to compare
+# against, so behind or unreadable siblings cannot make it shared: it takes
+# THRESHOLD up-to-date red siblings, otherwise base is merged first.
 
 set -u -o pipefail
 
@@ -43,8 +52,10 @@ Options:
 
 Exit status:
   0  shared failure: red on the default branch, or red on N sibling PRs at
-     least one of which is up to date with the default branch, or red on the
-     upstream repository's default branch (DEFER_EXTERNAL)
+     least one of which is up to date with the default branch (N of which,
+     when the check has no result on the default branch at all), or red on
+     the upstream repository's default branch (DEFER_EXTERNAL). Siblings
+     whose failure annotation calls it a per-PR verdict are not counted.
   1  PR-local: the evidence does not point at a repository incident. The
      `action` says what to do — FIX_DIFF, MERGE_BASE (the branch is behind
      the default branch; merge it before diagnosing), or NOT_REACHABLE_FORK
@@ -95,6 +106,12 @@ MAX_AGE_HOURS="${HIVE_BASELINE_MAX_AGE_HOURS:-24}"
 # compare call; the sample is enough to tell "everyone is behind" from
 # "someone up to date is red too".
 DRIFT_SAMPLE="${HIVE_BASELINE_DRIFT_SAMPLE:-10}"
+# How many red siblings to inspect for a per-PR verdict annotation. Each
+# costs one annotations call.
+VERDICT_SAMPLE="${HIVE_BASELINE_VERDICT_SAMPLE:-20}"
+# The phrase a check writes into its failure annotation when its red is the
+# PR's own verdict rather than a shared incident (native-queue-policy, #18280).
+PER_PR_VERDICT_MARKER="not a shared CI incident"
 JSON_OUTPUT=false
 UPSTREAM=""
 while [[ $# -gt 0 ]]; do
@@ -139,6 +156,7 @@ done
 [[ "$THRESHOLD" =~ ^[1-9][0-9]*$ ]] || error "threshold must be a positive integer"
 [[ "$MAX_AGE_HOURS" =~ ^[0-9]+$ ]] || error "max baseline age must be a non-negative integer (hours)"
 [[ "$DRIFT_SAMPLE" =~ ^[0-9]+$ ]] || error "HIVE_BASELINE_DRIFT_SAMPLE must be a non-negative integer"
+[[ "$VERDICT_SAMPLE" =~ ^[0-9]+$ ]] || error "HIVE_BASELINE_VERDICT_SAMPLE must be a non-negative integer"
 [[ -z "$PR_NUMBER" || "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || error "PR number must be a positive integer"
 [[ -z "$UPSTREAM" || "$UPSTREAM" =~ ^[^/[:space:]]+/[^/[:space:]]+$ ]] || error "--upstream must be owner/name"
 command -v gh >/dev/null 2>&1 || error "gh is required"
@@ -202,8 +220,12 @@ CHECK_NAME_URI="$(jq -rn --arg s "$CHECK_NAME" '$s | @uri')"
 
 # check_red_at <head-oid> → exit 0 when the exact check is red at that commit,
 # 1 when it is not (green, pending or absent), 2 when it could not be read.
+# On a red check run it also sets RED_RUN_ID to the job id at the end of the
+# run's Actions details URL ("" for a non-Actions check or a status context),
+# which the per-PR verdict filter below reads.
 check_red_at() {
   local runs verdict statuses
+  RED_RUN_ID=""
   runs="$(gh api "repos/$REPO/commits/$1/check-runs?check_name=$CHECK_NAME_URI&per_page=100")" || return 2
   verdict="$(jq -r --arg check "$CHECK_NAME" --argjson red "$RED_STATES" '
       [.check_runs[]? | select(.name == $check)] as $runs
@@ -212,7 +234,13 @@ check_red_at() {
         else "not-red" end
     ' <<<"$runs" 2>/dev/null)"
   case "$verdict" in
-    red) return 0 ;;
+    red)
+      RED_RUN_ID="$(jq -r --arg check "$CHECK_NAME" --argjson red "$RED_STATES" '
+          [.check_runs[]? | select(.name == $check)
+           | select(((.conclusion // "") | ascii_downcase) as $s | ($red | index($s)) != null)
+           | (.details_url // "") | capture("/job/(?<id>[0-9]+)")? | .id] | (last // "")
+        ' <<<"$runs" 2>/dev/null)"
+      return 0 ;;
     not-red) return 1 ;;
     none) ;;
     *) return 2 ;;
@@ -230,18 +258,51 @@ check_red_at() {
 }
 
 SIBLING_PRS='[]'
+SIBLING_RUN_IDS='{}'
 while IFS=$'\t' read -r sib_number sib_oid; do
   [[ -n "$sib_number" ]] || continue
   [[ -n "$sib_oid" ]] || error "open PR $REPO#$sib_number has no head commit"
   check_red_at "$sib_oid"
   case $? in
-    0) SIBLING_PRS="$(jq -c --argjson n "$sib_number" '. + [$n]' <<<"$SIBLING_PRS")" ;;
+    0)
+      SIBLING_PRS="$(jq -c --argjson n "$sib_number" '. + [$n]' <<<"$SIBLING_PRS")"
+      SIBLING_RUN_IDS="$(jq -c --arg n "$sib_number" --arg id "$RED_RUN_ID" '. + {($n): $id}' <<<"$SIBLING_RUN_IDS")"
+      ;;
     1) ;;
     *) error "could not read check \"$CHECK_NAME\" for $REPO#$sib_number" ;;
   esac
 done < <(jq -r '.[] | [(.number | tostring), .headRefOid] | @tsv' <<<"$PRS_JSON")
 SIBLING_PRS="$(jq -c 'unique' <<<"$SIBLING_PRS")"
 SIBLING_COUNT="$(jq -r 'length' <<<"$SIBLING_PRS")"
+
+# per_pr_verdict <owner/repo> <check-run-id> → succeeds when the check run's
+# annotations say its red is the PR's own verdict. Any API failure answers
+# "no": an unreadable annotation list must not hide a real shared failure.
+per_pr_verdict() {
+  local annotations_json
+  annotations_json="$(gh api "repos/$1/check-runs/$2/annotations" 2>/dev/null)" || return 1
+  jq -e --arg marker "$PER_PR_VERDICT_MARKER" \
+    'any(.[]?; ((.message // "") | contains($marker)))' <<<"$annotations_json" >/dev/null 2>&1
+}
+
+# Drop red siblings whose failure is a per-PR verdict (#19191, case d). The
+# check run id is the job id at the end of an Actions detailsUrl; a status
+# context or a non-Actions check has none and is kept as evidence.
+PER_PR_SIBLINGS='[]'
+if (( SIBLING_COUNT >= THRESHOLD && VERDICT_SAMPLE > 0 )); then
+  while IFS=$'\t' read -r sib_number sib_run_id; do
+    [[ -n "$sib_number" && -n "$sib_run_id" ]] || continue
+    if per_pr_verdict "$REPO" "$sib_run_id"; then
+      PER_PR_SIBLINGS="$(jq -c --argjson n "$sib_number" '. + [$n] | unique' <<<"$PER_PR_SIBLINGS")"
+    fi
+  done < <(jq -r --argjson reds "$SIBLING_PRS" --argjson ids "$SIBLING_RUN_IDS" --argjson n "$VERDICT_SAMPLE" '
+      [.[] | select(.number as $num | $reds | index($num) != null)]
+      | .[:$n][]
+      | [(.number | tostring), ($ids[(.number | tostring)] // "")] | @tsv
+    ' <<<"$PRS_JSON")
+  SIBLING_PRS="$(jq -c --argjson drop "$PER_PR_SIBLINGS" '[.[] | select(. as $n | $drop | index($n) == null)]' <<<"$SIBLING_PRS")"
+  SIBLING_COUNT="$(jq -r 'length' <<<"$SIBLING_PRS")"
+fi
 
 # behind_by <owner/repo> <base> <head-oid> → prints the commit count the head
 # is behind base, or "unknown" when the compare call fails. Never fatal: a
@@ -333,6 +394,10 @@ if [[ -n "$UPSTREAM" ]]; then
 fi
 
 BASE_RED=false
+# No result for the check on the default branch at all: a PR-only check, so
+# there is no baseline to compare the siblings against (#19191, case e).
+BASE_MISSING=false
+[[ "$BASE_CONCLUSION" == "missing" ]] && BASE_MISSING=true
 case "$BASE_CONCLUSION" in
   failure|error|cancelled|timed_out|action_required|startup_failure|stale)
     BASE_RED=true
@@ -347,7 +412,12 @@ EXIT=1
 if [[ "$BASE_RED" == true ]]; then
   SHARED=true; REASON="default-branch"; ACTION="DEFER_TO_INCIDENT"; EXIT=0
 elif (( SIBLING_COUNT >= THRESHOLD )); then
-  if (( SIBLINGS_CURRENT > 0 )); then
+  if [[ "$BASE_MISSING" == true ]] && (( SIBLINGS_CURRENT < THRESHOLD )); then
+    # Nothing on the base to corroborate the siblings, and too few of them
+    # are up to date to stand in for it: drifting branches look exactly like
+    # this. Merge base and re-run before anyone calls it an incident.
+    SHARED=false; REASON="no-baseline"; ACTION="MERGE_BASE"; EXIT=1
+  elif (( SIBLINGS_CURRENT > 0 )); then
     # An up-to-date sibling is red on a check the base calls green: the
     # base's green is not describing the current state. Shared, whatever
     # the stored conclusion's age.
@@ -377,6 +447,10 @@ if [[ "$EXIT" -eq 1 && -n "$PR_NUMBER" ]]; then
   elif [[ "$PR_BEHIND_BY" != "unknown" && "$PR_BEHIND_BY" != "0" ]]; then
     ACTION="MERGE_BASE"
     [[ "$REASON" == "isolated" ]] && REASON="stale-branch"
+  elif [[ "$REASON" == "no-baseline" && "$PR_BEHIND_BY" == "0" ]]; then
+    # Already up to date with base: merging it changes nothing, the red is
+    # this PR's own.
+    ACTION="FIX_DIFF"
   fi
 fi
 # Red upstream outranks every local verdict but one: a fresh green on this
@@ -426,6 +500,7 @@ if [[ "$JSON_OUTPUT" == true ]]; then
     --argjson shared "$SHARED" \
     --argjson threshold "$THRESHOLD" \
     --argjson sibling_prs "$SIBLING_PRS" \
+    --argjson per_pr_siblings "$PER_PR_SIBLINGS" \
     --argjson siblings_sampled "$SIBLINGS_SAMPLED" \
     --argjson siblings_behind "$SIBLINGS_BEHIND" \
     --argjson siblings_current "$SIBLINGS_CURRENT" \
@@ -442,7 +517,7 @@ if [[ "$JSON_OUTPUT" == true ]]; then
     '{repo:$repo, check:$check, shared:$shared, reason:$reason, action:$action,
       base_branch:$base_branch, base_conclusion:$base_conclusion,
       base_completed_at:$base_completed_at, base_age_hours:$base_age_hours, base_stale:$base_stale,
-      sibling_threshold:$threshold, sibling_prs:$sibling_prs,
+      sibling_threshold:$threshold, sibling_prs:$sibling_prs, per_pr_verdict_prs:$per_pr_siblings,
       sibling_drift:{sampled:$siblings_sampled, behind:$siblings_behind, current:$siblings_current, unknown:$siblings_unknown},
       upstream:(if $upstream == "" then null else
           {repo:$upstream, branch:(if $upstream_branch == "" then null else $upstream_branch end),
@@ -476,6 +551,11 @@ else
     stale-branches)
       printf 'NOT SHARED (%s): check "%s" is red on %s open sibling PR(s) in %s, but every sampled one (%s) is behind "%s", which is green (%sh ago). Merge "%s" into the branch before diagnosing.\n' \
         "$ACTION" "$CHECK_NAME" "$SIBLING_COUNT" "$REPO" "$SIBLINGS_SAMPLED" "$BASE_BRANCH" "$BASE_AGE_HOURS" "$BASE_BRANCH"
+      ;;
+    no-baseline)
+      printf 'NOT SHARED (%s): check "%s" has no result on %s default branch "%s" and is red on %s open sibling PR(s) (threshold %s), but only %s of %s sampled are up to date with "%s". Merge "%s" into the branch and re-run before calling it an incident.\n' \
+        "$ACTION" "$CHECK_NAME" "$REPO" "$BASE_BRANCH" "$SIBLING_COUNT" "$THRESHOLD" \
+        "$SIBLINGS_CURRENT" "$SIBLINGS_SAMPLED" "$BASE_BRANCH" "$BASE_BRANCH"
       ;;
     stale-baseline)
       printf 'UNKNOWN (%s): check "%s" is red on %s open sibling PR(s) in %s, all sampled (%s) behind "%s", and the green conclusion on "%s" is %sh old (older than %sh). A stale-green baseline cannot be told from branch drift; re-run "%s" on "%s" before repairing any PR.\n' \

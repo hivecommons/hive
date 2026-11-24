@@ -13,6 +13,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/sessiontaint"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/factcheck"
@@ -794,6 +795,10 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 			slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("error", err.Error()))
 		return
 	}
+	// Session taint (#18987), observe only. Recorded once per review the hive
+	// completed, after every gate and retry. The enforcement phases move this
+	// check before the write.
+	c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayReview, req.Repo)
 	resp.OK = true
 	resp.Number = req.Number
 	resp.State = state

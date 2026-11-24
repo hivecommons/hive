@@ -670,7 +670,7 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			if requiredKnown && required[name] {
 				requiredSuccess[name] = true
 			}
-		case "neutral", "skipped":
+		case CheckConclusionNeutral, CheckConclusionSkipped: // non-blocking; the CI track reads CheckConclusionNonBlocking
 		case "cancelled":
 			// A cancelled run (e.g. an advisory job that hit its timeout)
 			// carries no verdict of its own, like opaqueWorkflowRuns. With the

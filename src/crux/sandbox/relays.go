@@ -59,8 +59,21 @@ for tool in %s; do
     exit %d
   fi
 done
+gaps=0
+if [ -r /proc/self/status ]; then
+  nnp=; cap=; sec=
+  while read -r key val; do
+    case "$key" in NoNewPrivs:) nnp=$val;; CapEff:) cap=$val;; Seccomp:) sec=$val;; esac
+  done < /proc/self/status
+  [ "$nnp" = 1 ] || { echo 'hive: sandbox containment gap: no_new_privs is not set' >&2; gaps=1; }
+  case "$cap" in *[!0]*|"") echo "hive: sandbox containment gap: capabilities not dropped (CapEff=$cap)" >&2; gaps=1;; esac
+  [ -n "$sec" ] && [ "$sec" != 0 ] || { echo 'hive: sandbox containment gap: no seccomp filter' >&2; gaps=1; }
+else
+  echo 'hive: sandbox containment gap: /proc/self/status is unreadable, so containment cannot be verified' >&2; gaps=1
+fi
+case "$HIVE_REQUIRE_HARDENED" in 1|true|yes|on) [ "$gaps" = 0 ] || exit %d;; esac
 PATH="$relay_dir:$PATH"; export PATH
-exec "$@"`, strings.Join(RelayRequirements, " "), strings.Join(RelayNames, ", "), strings.Join(RelayRequirements, " and "), RelayPreflightExitCode)
+exec "$@"`, strings.Join(RelayRequirements, " "), strings.Join(RelayNames, ", "), strings.Join(RelayRequirements, " and "), RelayPreflightExitCode, RelayPreflightExitCode)
 }
 
 // RelayCommand wraps a kick command so it runs with the relays first on PATH

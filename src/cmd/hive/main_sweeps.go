@@ -343,6 +343,11 @@ func resolveRedPRFixer(cfg *config.Config, owner string, available func(string) 
 	return ""
 }
 
+// redPRFixOwnSignoffExec is the `git rebase --exec` step the no-dco repair
+// advice names (stagelabels.OwnSignoffRebaseExec): it signs off only the
+// agent's own commits, never a person's (hivecommons/hive#19102).
+const redPRFixOwnSignoffExec = stagelabels.OwnSignoffRebaseExec
+
 // redPRFixKick renders the targeted FIX-BEFORE-NEW kick a re-engagement
 // delivers. It names ONE PR — the stuck one — with its evidence, so the kick is
 // answerable on its own rather than relying on the owner's next cadence kick
@@ -361,13 +366,18 @@ func redPRFixKick(o escalation.Observation, rerouted bool) string {
 	// re-sign would rewrite a branch nothing asked to change.
 	if slices.Contains(o.Labels, stagelabels.NoDCOLabel) {
 		if slices.ContainsFunc(o.FailingChecks, github.IsDCOContext) {
-			fmt.Fprintf(&b, "  FIRST (required): the PR is %s — it inherited unsigned commits. Re-sign them: gh pr checkout %d --repo %s → git rebase --signoff <base> (original authors preserved) → git push --force-with-lease\n", stagelabels.NoDCOLabel, o.Number, o.Repo)
+			fmt.Fprintf(&b, "  FIRST (required): the PR is %s, a commit is missing its Signed-off-by. Sign off ONLY the commits you authored: gh pr checkout %d --repo %s → git rebase <base> --exec %s → git push --force-with-lease\n", stagelabels.NoDCOLabel, o.Number, o.Repo, redPRFixOwnSignoffExec)
+			b.WriteString("  NEVER add your Signed-off-by to a commit someone else wrote (git rebase --signoff signs every commit in the range, theirs too): leave their commits as they are and comment on the PR asking the author to sign them off.\n")
 			b.WriteString("  THEN fix any failing CI the same way.\n")
 		} else {
 			fmt.Fprintf(&b, "  Note: the PR carries %s, but no DCO check is failing here; re-sign its commits only if this repository asks for it. Fix the failing CI first.\n", stagelabels.NoDCOLabel)
 		}
 	}
 	fmt.Fprintf(&b, "  gh pr checkout %d --repo %s → fix → git commit -s → git push\n", o.Number, o.Repo)
+	// The merge-request re-engagement path reaches this kick for a person's
+	// PR too (hivecommons/hive#19110: a coverage fix pushed as the lane
+	// failed the squash sign-off check), and the hook knows no author.
+	b.WriteString("  If the PR's author is a person, not the hive App or a bot: " + stagelabels.PersonPRAgentCommitRule + "\n")
 	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR.\n")
 	b.WriteString("After the push, STOP: do not watch, poll, or sleep on CI (no gh run watch/view loops).\n")
 	b.WriteString("The automerge sweep merges the PR once it is green; if checks are still queued, end the turn.\n")
@@ -1399,6 +1409,15 @@ func sentinelSweepOptions(cfg *config.Config, ghClient *github.Client, dashSrv *
 			if dashSrv == nil {
 				return
 			}
+			if event.Cleared {
+				// The current head is clean and the hive removed its own
+				// label. The ring keeps the earlier head's finding for
+				// audit; only the clearance is logged (#19262).
+				detail := fmt.Sprintf("repo=%s, pr=%d, author=%s, head=%s, cleared_head=%s",
+					event.Repo, event.Number, event.Author, event.HeadSHA, event.ClearedHead)
+				dashSrv.AuditLogRecord("system", github.SentinelAlertClearedAuditAction, detail, "", event.Repo, event.Number)
+				return
+			}
 			// Findings the write-back gate refused still reach the Security
 			// tab and /api/sentinel: the scan happened, only the GitHub
 			// write did not (#writeback containment).
@@ -1467,8 +1486,8 @@ func runSentinelSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *co
 	if dashSrv != nil && cfg.Dashboard.Matrix.Active() {
 		dashSrv.RecordMatrixIngest(time.Now(), matrixIngestInterval)
 	}
-	if len(result.Flagged) > 0 || len(result.Notified) > 0 || len(result.Remediated) > 0 || result.Seen > 0 {
-		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "suppressed", len(result.Suppressed), "remediated", len(result.Remediated), "skipped", result.Skipped, "errors", len(result.Errors), "cached_repos", result.CachedRepos, "listed_repos", result.ListedRepos)
+	if len(result.Flagged) > 0 || len(result.Notified) > 0 || len(result.Remediated) > 0 || len(result.Cleared) > 0 || result.Seen > 0 {
+		logger.Info("sentinel sweep complete", "seen", result.Seen, "flagged", len(result.Flagged), "notified", len(result.Notified), "suppressed", len(result.Suppressed), "remediated", len(result.Remediated), "cleared", len(result.Cleared), "skipped", result.Skipped, "errors", len(result.Errors), "cached_repos", result.CachedRepos, "listed_repos", result.ListedRepos)
 	}
 	hookDispatcher().Fire(context.Background(), hooks.Payload{
 		Transition: hooks.TransitionSweepCompleted,
@@ -1495,6 +1514,9 @@ func logSentinelResult(result *github.SentinelSweepResult, logger *slog.Logger) 
 	}
 	for _, ev := range result.Remediated {
 		logger.Info("sentinel unflagged trusted author PR", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "trusted_reason", ev.TrustedReason, "head", ev.HeadSHA)
+	}
+	for _, ev := range result.Cleared {
+		logger.Info("sentinel cleared alert on clean head", "repo", ev.Repo, "pr", ev.Number, "author", ev.Author, "head", ev.HeadSHA, "cleared_head", ev.ClearedHead)
 	}
 }
 
@@ -2685,6 +2707,9 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		// original, but its fixes go to the hive's copy: the fix gate must
 		// not read the label as an in-place adoption of this branch.
 		item.SupersedingPR, item.SupersededByHive = reviewSupersedingCopy(fullRepo, pr.Number)
+		// Repository rules and dependency preflight (hivecommons/hive#19069),
+		// gathered once per head for a PR about to be reviewed.
+		item.PreflightSection = reviewPreflightFor(ctx, cfg, ghr, artifact, state, fullRepo, pr, logger)
 		prs = append(prs, item)
 	}
 	// PRs a review webhook just fired for go first, so the early eval cycle

@@ -121,7 +121,7 @@
           const q = item.decision_needed && item.decision_needed.question ? String(item.decision_needed.question).toLowerCase() : '';
           const me = typeof window !== 'undefined' && window._hiveUser ? String(window._hiveUser).toLowerCase() : '';
           const mine = !!me && new RegExp('@' + me.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w-])').test(q);
-          if (typeof stageTrackerGateAnswered === 'function' && stageTrackerGateAnswered(item)) return count + (String(item.human_approver || '').trim() ? ' · signed off' : ' · no sign-off pending');
+          if (typeof stageTrackerGateAnswered === 'function' && stageTrackerGateAnswered(item)) return count + ' · ' + stageTrackerGateAnsweredWord(item);
           return count + (mine ? ' · needs your sign-off' : ' · needs owner sign-off');
         }
         case 'reviewing': return count + ' · ' + (actor ? actor + ' reviewing' : 'in progress');
@@ -134,6 +134,27 @@
         case 'waiting_ci': case 'not_started': case 'not_requested': case 'closed': case 'unverified': return a.caption || count;
         default: return count + ' · ' + (newHead ? reReview : total && done ? 'perspectives' : 'queued');
       }
+    }
+
+    // How an answered sign-off ask was answered (human_gate.answered_via,
+    // stage_tracker_gate.go gateAnsweredVia*).
+    const STAGE_TRACKER_ANSWERED_VIA_REVIEW = 'review';
+    const STAGE_TRACKER_ANSWERED_VIA_DASHBOARD = 'dashboard';
+    const STAGE_TRACKER_ANSWERED_VIA_POLICY = 'policy';
+    // Pure: the review word once the reviewer's sign-off ask on this head is
+    // answered. "signed off" only for a GitHub Approve review (the
+    // human_approver the lane recorded); a dashboard approval names who
+    // approved; the owner-delegate policy reads "answered by policy"; else
+    // "decision answered". Never "no sign-off pending", which read like a
+    // missing DCO Signed-off-by.
+    function stageTrackerGateAnsweredWord(item) {
+      const g = item && item.human_gate && typeof item.human_gate === 'object' ? item.human_gate : null;
+      const via = g && g.answered_via ? String(g.answered_via) : '';
+      const by = String((g && g.answered_by) || '').trim().replace(/^@/, '');
+      if (via === STAGE_TRACKER_ANSWERED_VIA_REVIEW || (!via && String((item && item.human_approver) || '').trim())) return 'signed off';
+      if (via === STAGE_TRACKER_ANSWERED_VIA_POLICY) return 'answered by policy';
+      if (via === STAGE_TRACKER_ANSWERED_VIA_DASHBOARD && by) return 'approved by ' + by;
+      return 'decision answered';
     }
 
     // Unreported checks whose workflow runs sit behind GitHub's
@@ -626,7 +647,9 @@
         // word, "Waiting on shared CI · #17463" (hivecommons/hive#17500).
         const incident = sg.detour && sg.number === 30 && remediation === 'deferred' && item.deferral && Number(item.deferral.incident) > 0 && item.deferral.incident_url ? '#' + Number(item.deferral.incident) : '';
         const detourText = incident && sg.detour.text.indexOf(incident) >= 0 ? esc(sg.detour.text).replace(esc(incident), `<a class="ham-incident-link" href="${esc(item.deferral.incident_url)}" target="_blank" rel="noopener" title="${esc('Shared-CI incident ' + incident)}">${esc(incident)}</a>`) : (sg.detour ? esc(sg.detour.text) : '');
-        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${detourText}${detourHolder}${reasonHtml}</span>` : (gateWord || `<span class="ham-seg-t${progressHolderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${progressHolderHtml}${reasonHtml}</span>`);
+        // A held / waived SHA requirement rides the lit chevron as a note (#18866).
+        const shaHoldNote = active && !sg.cap && !sg.detour && !gateWord && typeof stageTrackerSHAHoldNoteHtml === 'function' ? stageTrackerSHAHoldNoteHtml(item) : '';
+        const word = sg.detour ? `<span class="ham-detour${detourHolder ? ' ham-has-holder' : ''}">${detourText}${detourHolder}${reasonHtml}</span>` : (gateWord || `<span class="ham-seg-t${progressHolderHtml ? ' ham-has-holder' : ''}">${esc(sg.short)}${progressHolderHtml}${reasonHtml}${shaHoldNote}</span>`);
         const gateCue = gateWord && typeof stageTrackerGateCueHtml === 'function' ? stageTrackerGateCueHtml(item, nowMs, trains) : '';
         // The agent-working spinner (tracker-cues) names the agent and what
         // it did, so a spinning glyph is never unexplained.
@@ -636,9 +659,12 @@
         // the column is the row's history and wears the history mark.
         if (sg.cap) inner = sg.terminal ? stageTrackerIcon(sg.number, 'ham-ico') : stageTrackerIcon('history', 'ham-ico ham-history-ico', 'History — no decisions or actions recorded yet');
         else if (active) {
+          const shaHold = typeof stageTrackerSHAHoldOf === 'function' ? stageTrackerSHAHoldOf(item) : null;
+          const shaHoldTip = shaHold ? shaHold.pill + ' — ' + shaHold.tip : '';
           const fullTip = [tip, gateCaption || (sg.detour ? sg.detour.text : sg.short + (progressActor ? ' · ' + progressActor.who : '')), item.caption, item.reason,
             item.head ? 'head ' + item.head : '',
-            item.hold ? (item.hold.pill || 'Held by @' + item.hold.by) + (item.hold.reason ? ' · ' + item.hold.reason : '') : ''].filter(Boolean).join(' · ');
+            item.hold ? (item.hold.pill || 'Held by @' + item.hold.by) + (item.hold.reason ? ' · ' + item.hold.reason : '') : '',
+            shaHoldTip].filter(Boolean).join(' · ');
           const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
           const caption = gateWord || word;
           const text = decision ? stageTrackerDecisionTriggerHtml(decision, caption, fullTip) : caption;
@@ -950,6 +976,26 @@
       const who = h.by === 'hive' ? 'hive' : '@' + h.by;
       return 'Held by ' + who + (h.reason ? ' · ' + h.reason : '');
     }
+    // Pure: the row's SHA-hold state (hivecommons/hive#18866) — `needs-sha`
+    // held, or `sha-waived` by a maintainer — as the server sends it in
+    // `sha_hold` ({state, pill, tip, note, by}); null for a PR or no state.
+    function stageTrackerSHAHoldOf(item) {
+      const h = item && item.kind === 'issue' ? item.sha_hold : null;
+      return h && (h.state === 'held' || h.state === 'waived') && h.pill ? h : null;
+    }
+    // The visible pill: "Held: needs commit SHA" / "SHA waived by <login>",
+    // its hover saying how to lift (post a SHA, or waive) or restore.
+    function stageTrackerSHAHoldChipHtml(item) {
+      const h = stageTrackerSHAHoldOf(item);
+      if (!h) return '';
+      const label = String(h.pill) + (h.tip ? ' — ' + h.tip : '');
+      return `<span class="ham-badge ham-badge-sha-hold ham-sha-${esc(h.state)}" title="${esc(h.tip || '')}" aria-label="${esc(label)}">${esc(h.pill)}</span>`;
+    }
+    // The note on the lit Open chevron, beside the stage word.
+    function stageTrackerSHAHoldNoteHtml(item) {
+      const h = stageTrackerSHAHoldOf(item);
+      return h && h.note ? `<span class="ham-human-reason ham-sha-hold-note"> · ${esc(h.note)}</span>` : '';
+    }
     // Pure: the hold pill's hover text — who, why, since when.
     function stageTrackerHoldTip(item, nowMs) {
       const h = item && item.hold;
@@ -997,7 +1043,7 @@
       const person = isPerson
         ? `<span class="ham-badge ham-finisher-person" title="${esc('Hive cannot finish this on its own' + (why ? ': ' + why : '') + (folded.length ? ' · also flagged: ' + folded.join(', ') : ''))}">🧑 needs a person</span>` : '';
       // The informational notice is not a gate reason, so its chip stays.
-      const sentinel = person + (gated && !item.sentinel_notice ? '' : stageTrackerSentinelChipHtml(item)) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '');
+      const sentinel = person + (gated && !item.sentinel_notice ? '' : stageTrackerSentinelChipHtml(item)) + (typeof stageTrackerPreparationChipHtml === 'function' ? stageTrackerPreparationChipHtml(item) : '') + (typeof stageTrackerAdoptionChipHtml === 'function' ? stageTrackerAdoptionChipHtml(item) : '') + (typeof stageTrackerPresenceChipHtml === 'function' ? stageTrackerPresenceChipHtml(item) : '') + (typeof stageTrackerPushChipHtml === 'function' ? stageTrackerPushChipHtml(item, Date.now()) : '') + (typeof stageTrackerReroutePillHtml === 'function' ? stageTrackerReroutePillHtml(item) : '') + (typeof stageTrackerSupersedesChipHtml === 'function' ? stageTrackerSupersedesChipHtml(item, Date.now()) : '') + (typeof stageTrackerOverlapBadgeHtml === 'function' ? stageTrackerOverlapBadgeHtml(item) : '') + (typeof stageTrackerSHAHoldChipHtml === 'function' ? stageTrackerSHAHoldChipHtml(item) : '');
       const mods = allMods.slice()
         .filter(m => !personMod(m))
         .filter(m => !gated || STAGE_TRACKER_GATE_MODS.indexOf(m) < 0)

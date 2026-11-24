@@ -55,9 +55,9 @@ func TestNoWork_HubNotReady(t *testing.T) {
 	}
 }
 
-// TestNoWork_NoMatchingWork (#2546): with a status snapshot but an empty candidate
-// set (no actionable issues), selectTask returns an explicit no_matching_work
-// negative-ack rather than a silent nil.
+// TestNoWork_NoMatchingWork (#2546, #19052): with a status snapshot but no
+// actionable issues at all, selectTask returns an explicit queue_empty
+// negative-ack (no filtered detail) rather than a silent nil.
 func TestNoWork_NoMatchingWork(t *testing.T) {
 	hub, s := covK2Hub(t)
 	// A status snapshot with a repo but NO actionable issues → empty candidate set.
@@ -75,9 +75,12 @@ func TestNoWork_NoMatchingWork(t *testing.T) {
 	if msg == nil {
 		t.Fatalf("empty candidate set must send an explicit negative-ack, got nil (silent)")
 	}
-	if msg.Type != "task_unavailable" || msg.Reason != taskUnavailableNoMatchingWork {
+	if msg.Type != "task_unavailable" || msg.Reason != taskUnavailableQueueEmpty {
 		t.Fatalf("expected task_unavailable/%s, got type=%q reason=%q",
-			taskUnavailableNoMatchingWork, msg.Type, msg.Reason)
+			taskUnavailableQueueEmpty, msg.Type, msg.Reason)
+	}
+	if msg.Filtered != nil {
+		t.Fatalf("queue_empty must not carry filtered detail, got %v", msg.Filtered)
 	}
 }
 

@@ -17,6 +17,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 ### First installation
 
 - [Hosted Hive Hub onboarding](hosted-hub.md) — signing in at `https://hive.hivecommons.dev`, requesting a hosted hive, installing the GitHub App, configuring model gateways and Copilot login, reading `/fleet`, and fixing common setup problems.
+- [Ask AI help](ask-ai-help.md) — the optional Ask panel on the hub and hive dashboards: what leaves, consent, hub relay and direct modes, configuration keys and the docs-link fallback (#19177).
 - [Hub Fleet activity page](hub-fleet-activity.md) — the read-only `/activity` board of open issues and PRs across the hives you can see: per-viewer scoping, hive chips, group-by-hive freshness headers, always-visible truncation and stale-source disclosures, 15-second ETag polling, and display mode (`?kiosk=1`, `?display=1`, `am.*` views and `hub-activity` playlists).
 - [Docker Compose quick start](quickstart-docker-compose.md) — default standalone installation, prerequisites, and verification.
 - [Podman quick start](quickstart-podman.md) — standalone Quadlet/systemd installation, with rootless/rootful prerequisites.
@@ -27,6 +28,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 
 - [Self-hosted hub deployment](hub-deployment.md) — `HIVE_MODE=hub`, hub storage, heartbeat secrets, and SaaS spoke registration.
 - [`CAP_NET_ADMIN` and self-hosted spokes](net-admin-requirement.md) — **Operator:** diagnose fail-closed startup, grant required network capabilities, or understand the explicit advisory-only opt-out.
+- [Editing `hive.yaml`](editing-hive-yaml.md) — find the persisted config, choose Settings or YAML, and verify a reload or restart.
 - [Config layering](config-layering.md) — how ConfigMap seed, PVC dashboard overlay, and runtime config interact.
 - [Operator reference](operator-reference.md) — top-level config blocks, hive flags/env, GitHub token scopes, and image provenance.
 - [Running a hive at ACMM Level 6](running-at-level-6.md) — preparation, GitHub/coverage/knowledge/Hive/ClankeR settings, weekly routine, and incident recovery.
@@ -107,6 +109,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Native merge queue](native-merge-queue.md) — how the auto-merge lanes enqueue eligible PRs into GitHub's native merge queue (App auth only), the `native-merge-queued`/`native-merge-queue-*` stage reasons, and how Hive withdraws only its own entries when a gate breaks.
 - [`hive-open-issue`](hive-open-issue.md) — **Agent/developer reference:** request issue creation, comments, or claims through the App bot, with deduplication and retries.
 - [Review-bot threads on hive-mediated PRs](review-bot-threads.md) — route bot feedback back to the authoring agent while protecting human review threads.
+- [Reviewer-stated rules from review feedback](review-feedback-rules.md): how the review-feedback sweep captures rules and sources of truth a person states on a hive PR into the knowledge store, gates them on reviewer trust, loads them into the matching agent's next runs, and proposes the text when its home is another project's repo.
 - [Network and port requirements](network-requirements.md) — inbound ports, proxy paths, egress, and firewall guidance.
 - [TLS, HTTPS, and certificates](tls-setup.md) — termination patterns and certificate ownership.
 - [Security notes](security.md) — log scrubbing and secret redaction guarantees/limits.
@@ -198,6 +201,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Experiment Lab (Nous)](experiment-lab.md) — experiment lifecycle, dashboard/API configuration, fast-fail bounds, and the gate-decision flow. No `nous:` block in `hive.yaml`.
 - [Hive-self background experiments (Nous)](nous-hive-self-experiments.md) — background-only self-improvement experiment mode, outcome questions (including user satisfaction), cohorts, guardrails, and auto-revert. Hidden from spoke dashboards and Experiment Lab.
 - [GitHub write surface](github-write-surface.md) — inventory agent and system writes, their audit coverage, and opt-in per-lane restrictions.
+- [Outbound text: no em-dashes](outbound-prose.md) - the shared dash filter, every outbound path it covers (proxy agent writes, notifications, meetings, hub posts, commit messages), the `HIVE_AGENT_PROSE_FILTER` switch and the CI inventory guard.
 - [Compact GitHub CLI reads (`hive-gh`) and one-line denials](github-cli-compact.md) — **Agent/developer reference:** compact output fields, full-read escape hatch, and denial codes.
 - [GitHub App setup](github-app-setup.md) — the Forge App on GitHub and GitHub Enterprise: app creation, permissions, Setup URL, and `/gh-setup`.
 - [Forge setup: GitLab, Gitea, and Forgejo](forge-app-setup.md) — **Adapter/reference only:** explains configured adapter surfaces and why a complete hive still requires GitHub.
@@ -253,11 +257,14 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [CNCF reference architecture](cncf-reference-architecture.md) — CNCF submission/reference template.
 - [Podman CI runner map](podman-ci-runner-map.md) — measured hosted-runner capabilities and which Podman lane goes where; SELinux is the only lane needing non-hosted infrastructure.
 - [CI runner labels](ci-runner-labels.md) — how `runs-on:` picks the self-hosted fleet, why a fork must degrade to a GitHub-hosted runner, and the one variable `hivecommons` sets.
+- [Contributing drift gate](contributing-drift-gate.md) - the reusable workflow that fails a repo's CI when a command it runs is not mentioned in its CONTRIBUTING.md or README.md, its exemptions file, and how a sibling repo pins it by SHA.
+- [Refresh-only heads](ci-refresh-only-heads.md) - which heavy CI jobs (Docker multi-arch, FOSSA, Mutation) skip a verified hive App base refresh that leaves the PR diff unchanged, and the fail-safe proof behind the skip.
 - [Session taint design](design/session-taint.md) - **design/proposal:** a session-level record of what an agent has read and the rules that would hold or deny later pushes, comments and PRs against it, off by default with an observe-only first phase (RFC #18987).
 - [Gate-integrity invariants for agent lanes](design/gate-integrity-invariants.md) — proposed write-gate rules for agent lanes: no history rewrites on branches a lane did not create, no sign-off on other authors' commits, and hold-gated demotion for gate manipulation.
 - [Crux: the agent runtime boundary](design/crux.md) — **Design record:** runtime separation, module boundary, staged rollout, and naming decision.
-- [One authorization point for writes](design/authorization-decision-point.md) - proposed design for a single decision seam, decision events and per-decision scoped credentials across the proxy, relays and push broker (RFC #18988).
+- [One authorization point for writes](design/authorization-decision-point.md) - design for a single decision seam, decision events and per-decision scoped credentials across the proxy, relays and push broker (RFC #18988); the first slice, a shadow-mode check of the push broker's changed-files guard, is shipped, off by default and enforces nothing.
 - [Customers: a profile per person and a customer graph](design/customers.md) — proposed design for the Customers section, the people store, the read-only graph endpoint, and inferred goals and satisfaction (RFC #18742).
+- [Customers enrichment](customers-enrichment.md) - public affiliation (gitdm, crowd.dev) and activity (devstats) for confirmed customers, all off by default, with what each source sends.
 - [Design documents](design/README.md) — browse records labelled shipped, partly shipped, design-only, or historical; proposals are not current behavior.
 - [Discord reaction-consensus issue promotion](design/discord-issue-promotion.md) — proposed design for turning Discord reaction consensus into an audited Hive label write that composes with `project.issue_filter.require_labels` (RFC #6239).
 - [GitHub @-mention triggers](design/github-mention-triggers.md) — **v6 development branch only:** summon agents from issues/PRs with the existing permission guards; not a v5 feature.
@@ -282,6 +289,7 @@ Some documents describe planned or design-only work rather than live features. T
 - [Security response process](security-response.md) — report a vulnerability, identify responders, follow handling/escalation steps, and understand commitments and limits.
 - [CNCF TAG-Security self-assessment](security-self-assessment.md) — the CNCF Incubation self-assessment artifact: metadata, actors/actions/goals, critical security components with file/line citations, project compliance, secure development practices, vulnerability response process, and the three most significant known weaknesses stated plainly.
 - [ioscan red-team evaluation](ioscan-red-team.md) — measured adversarial/benign test results, false positives, known gaps, and containment evidence.
+- [Prompt-injection defences compared with trentina](prompt-injection-trentina-comparison.md) — trentina's gateway strategies mapped to Hive's controls, with the gaps worth closing (tool-output scanning, MCP tool pinning, delimiter and exfil-URL rules, a benign corpus gate).
 - [CNCF General Technical Review](general-technical-review.md) — the full Day 0/1/2 GTR questionnaire answered against this repository, cited file-by-file, with every currently-unanswerable question marked `[NEEDS OPERATOR INPUT]` rather than guessed at.
 - [Heartbeat bearer cutover](heartbeat-bearer-cutover.md) — retiring the fleet-wide heartbeat bearer, whose possession proves only "some provisioned spoke" and lets any spoke heartbeat as any hive, in favour of the per-hive key — without re-provisioning the fleet, and the precondition that gates the removal.
 - [Rootless Podman startup and exit-77 behavior](podman-rootless-startup-spike.md) — measured rootless matrix: fail-closed exit 77, gate installation under `--cap-add NET_ADMIN`, proven interception, and what is still unproven.

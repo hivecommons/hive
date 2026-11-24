@@ -191,6 +191,11 @@ func TestWriteMergeEligible_TrustedAuthorConflictGetsRebaseKickWithLoopGuard(t *
 	if !row.Conflict || !row.TrustedAuthor || row.ReachableAction != github.ReachableActionPush || row.Agent != "scanner" {
 		t.Errorf("row = %+v, want a trusted-author push conflict row owned by the fallback fixer", row)
 	}
+	// hivecommons/hive#19102, #19063: the squash lands this PR under the
+	// person, so the row must tell the fixer it is a person's PR.
+	if !row.PersonAuthored {
+		t.Errorf("row = %+v, want person_authored on a trusted author's PR", row)
+	}
 	if row.RebaseAttempt != 1 || row.RebaseAttemptsMax != rebasemerge.MaxRebaseAttempts || row.BaseRef != "v5" {
 		t.Errorf("row = %+v, want attempt 1/%d onto v5", row, rebasemerge.MaxRebaseAttempts)
 	}

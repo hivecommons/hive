@@ -16,6 +16,9 @@
     const CUSTOMERS_ORIGIN_LABELS = { hive_user: 'hive user', manual: 'added by hand', accepted: 'accepted suggestion' };
     // The short origin pill on a row; the long wording stays in its tooltip.
     const CUSTOMERS_ORIGIN_SHORT = { hive_user: 'hive user', manual: 'added', accepted: 'accepted' };
+    // Long names of the public sources an affiliation suggestion can come from
+    // (customers.enrichment); the chip shows the short key.
+    const CUSTOMERS_AFFILIATION_SOURCES = { gitdm: 'cncf/gitdm', crowddev: 'crowd.dev (LFX Insights)' };
     // A row shows this many identity pills and tag pills, then "+N".
     const CUSTOMERS_SOURCE_PILLS_SHOWN = 2;
     const CUSTOMERS_TAG_PILLS_SHOWN = 3;
@@ -201,12 +204,54 @@
     const CUSTOMERS_PROFILE_FIELDS = [
       { key: 'real_name', label: 'Real name', max: 120 },
       { key: 'organization', label: 'Organization', max: 120 },
-      { key: 'location', label: 'Location or country', max: 120 }
+      { key: 'location', label: 'Location', max: 120 },
+      { key: 'country', label: 'Country (code or name)', max: 120 }
     ];
+
+    // CUSTOMERS_REFRESH_RELOAD_MS: how long after "Refresh from profiles" for
+    // everyone the list is read again, so the first pass shows.
+    const CUSTOMERS_REFRESH_RELOAD_MS = 5000;
+
+    // CUSTOMERS_PROFILE_SOURCES: the forge a profile-fill value was read
+    // from, by the rule it carries (#19302).
+    const CUSTOMERS_PROFILE_SOURCES = { github_profile: 'GitHub', ghe_profile: 'GitHub Enterprise', gitlab_profile: 'GitLab', gitea_profile: 'Gitea', linear_profile: 'Linear' };
+
+    // customersFieldSourceLabel: the forge an automatic field came from, or
+    // '' for anything else.
+    function customersFieldSourceLabel(f) {
+      return (f && Object.prototype.hasOwnProperty.call(CUSTOMERS_PROFILE_SOURCES, f.rule)) ? CUSTOMERS_PROFILE_SOURCES[f.rule] : '';
+    }
+
+    // customersFieldProvenance: where an automatic field came from, for its
+    // tooltip: the source, the login it was read for and when.
+    function customersFieldProvenance(f) {
+      if (f && f.rule === 'location') return 'Derived from the location';
+      const label = customersFieldSourceLabel(f) || 'GitHub';
+      let t = 'From the public ' + label + ' profile';
+      if (f && f.login) t += ' of ' + f.login;
+      if (f && f.rule) t += ' (source=' + f.rule + ')';
+      if (f && typeof f.at === 'string' && f.at) t += ', fetched ' + f.at.slice(0, 10);
+      return t;
+    }
 
     function customersProfileValue(p, key) {
       const f = (p && p.profile && p.profile[key]) || {};
       return typeof f.value === 'string' ? f.value : '';
+    }
+
+    // CUSTOMERS_HUB_LABELS: where a hub value came from, by its rule
+    // (pkg/customers HubLabel, #19306). A hub value without a known rule was
+    // shared with consent.
+    const CUSTOMERS_HUB_LABELS = {
+      hub_consent: 'from hub: entered by the person, shared with consent',
+      hub_person: 'from hub: entered by the person',
+      hub_admin: 'from hub: set by a hub admin',
+      hub_email_domain: 'from hub: derived from an organization email domain',
+      hub_browser_language: 'from hub: inferred from browser language',
+      hub_unrecorded: 'from hub: source not recorded'
+    };
+    function customersHubLabel(f) {
+      return CUSTOMERS_HUB_LABELS[(f && f.rule) || ''] || CUSTOMERS_HUB_LABELS.hub_consent;
     }
 
     // customersOrgPill: the organization as one small pill, with where it came
@@ -215,8 +260,62 @@
       const v = customersProfileValue(p, 'organization');
       if (!v) return '';
       const f = p.profile.organization;
-      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : 'From the public GitHub profile';
-      return '<span class="kc-pill customers-pill customers-org" data-source="' + (f.source === 'manual' ? 'manual' : 'auto') + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? customersHubLabel(f) : customersFieldProvenance(f));
+      const src = f.source === 'manual' || f.source === 'hub' ? f.source : 'auto';
+      return '<span class="kc-pill customers-pill customers-org" data-source="' + src + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
+    }
+
+    // customersFlagEmoji: the flag for an ISO 3166 alpha-2 code, or '' when the
+    // code is not two letters. Some systems draw the flag as the two letters,
+    // so the code is always shown as text beside it.
+    function customersFlagEmoji(code) {
+      if (typeof code !== 'string' || !/^[A-Z]{2}$/.test(code)) return '';
+      return String.fromCodePoint(0x1F1E6 + code.charCodeAt(0) - 65, 0x1F1E6 + code.charCodeAt(1) - 65);
+    }
+
+    // customersCountryName: the country's name in the browser language, or the
+    // code itself when the browser cannot name it.
+    function customersCountryName(code) {
+      try {
+        const n = new Intl.DisplayNames(undefined, { type: 'region' }).of(code);
+        if (n) return n;
+      } catch (e) { /* no Intl.DisplayNames: fall back to the code */ }
+      return code;
+    }
+
+    // customersCountryPill: a compact flag and ISO code on the row. The name is
+    // the accessible label, so the meaning never depends on the emoji.
+    function customersCountryPill(p) {
+      const code = customersProfileValue(p, 'country');
+      if (!/^[A-Z]{2}$/.test(code)) return '';
+      const name = customersCountryName(code);
+      const f = p.profile.country;
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? 'From the hub' : customersFieldProvenance(f));
+      return '<span class="kc-pill customers-pill customers-country" role="img" aria-label="' + escapeHtml('Country: ' + name) + '" title="' + escapeHtml(name + ' - ' + why) + '">' +
+        '<span aria-hidden="true">' + customersFlagEmoji(code) + '</span> ' + escapeHtml(code) + '</span>';
+    }
+
+    // customersAffiliationSourceChip: for a suggestion that came from
+    // enrichment (customers.enrichment), a chip naming the public source and
+    // the dates it gives. Offline guesses have no chip.
+    function customersAffiliationSourceChip(s) {
+      if (!s || !s.source) return '';
+      const label = CUSTOMERS_AFFILIATION_SOURCES[s.source] || s.source;
+      const dates = s.from && s.until ? s.from + ' to ' + s.until : (s.from ? 'since ' + s.from : (s.until ? 'until ' + s.until : ''));
+      const title = 'From ' + label + (dates ? ', ' + dates : '') + '. Public data; nothing is saved until you accept.';
+      return '<span class="kc-pill customers-pill customers-affiliation-source" data-source="' + escapeHtml(s.source) + '" title="' + escapeHtml(title) + '">' + escapeHtml(s.source) + '</span>' +
+        (dates ? ' <span class="muted-xs">' + escapeHtml(dates) + '</span>' : '');
+    }
+
+    // customersAffiliationHtml: the likely organization, with its evidence, as
+    // a suggestion to accept or dismiss. Nothing is saved until Accept.
+    function customersAffiliationHtml(p) {
+      const s = p && p.affiliation_suggestion;
+      if (!s || !s.value) return '';
+      const why = s.source ? customersAffiliationSourceChip(s) : '<span class="muted-xs">(' + escapeHtml(s.evidence || 'a guess') + ')</span>';
+      return '<div class="customers-inline" data-customers-field="affiliation-suggestion"><span>Likely: <strong>' + escapeHtml(s.value) + '</strong> ' + why + '</span>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersAffiliationAccept" data-arg0="' + escapeHtml(s.value) + '">Accept</button>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersAffiliationDismiss" data-arg0="' + escapeHtml(s.value) + '">Dismiss</button></div>';
     }
 
     // customersOriginPill: where the person came from, in one short word.
@@ -297,7 +396,7 @@
         rowChevronHtml('customersToggle', isMe ? 'me' : p.id, open, 'profile of ' + name, pid) +
         customersAvatarHtml(name, customersGithubLogin(p), '', '') +
         '<div class="customers-row-main"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') +
-        customersSourcePills(p) + customersOriginPill(p, updated) + customersOrgPill(p) + customersTagPills(p) + extra.join('') + pill + '</div>' +
+        customersSourcePills(p) + customersOriginPill(p, updated) + customersOrgPill(p) + customersCountryPill(p) + customersTagPills(p) + extra.join('') + pill + '</div>' +
         (updated ? '<span class="muted-xs customers-updated" title="Last updated">' + escapeHtml(updated) + '</span>' : '') + '</div>' +
         (open ? '<div class="customers-profile" id="' + pid + '" role="region" aria-label="Profile of ' + escapeHtml(name) + '">' + customersProfileHtml(_customersOpen) + '</div>' : '') + '</div>';
     }
@@ -381,6 +480,7 @@
       const people = data.people || [];
       const suggestions = data.suggestions || [];
       out += customersAddFormHtml();
+      out += '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRefreshAllProfiles" title="Look every customer up again on their public forge profile, a few at a time">Refresh from profiles</button></div>';
       out += '<div class="customers-block"><div class="section-label m-0">Customers</div><div class="customers-list">' +
         (people.length ? people.map(p => customersRowHtml(p, false)).join('') : '<p class="empty-dashed">No other customers yet. Add one, or accept a suggestion.</p>') + '</div></div>';
       out += '<details class="customers-block customers-suggested" data-ui-key="suggested"' + (_customersUi.open.suggested ? ' open' : '') + '><summary class="customers-summary">Suggested (' + suggestions.length + ')</summary>' +
@@ -407,16 +507,17 @@
       if (!fixed) {
         buttons += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityRemove" data-arg0="' + escapeHtml(key) + '">Remove</button>';
       }
-      return '<div class="customers-row" data-claimed="' + (i.claimed ? 'true' : 'false') + '"><span class="badge">' + escapeHtml(CUSTOMERS_KIND_LABELS[i.kind] || i.kind) + '</span>' +
-        '<div class="customers-row-main"><div class="customers-row-title">' + escapeHtml(i.value) + '</div>' +
-        (meta.length ? '<div class="muted-xs">' + escapeHtml(meta.join(' · ')) + '</div>' : '') + '</div>' + buttons + '</div>';
+      return '<tr data-claimed="' + (i.claimed ? 'true' : 'false') + '"><td><span class="badge">' + escapeHtml(CUSTOMERS_KIND_LABELS[i.kind] || i.kind) + '</span></td>' +
+        '<th scope="row" class="customers-ident-value">' + escapeHtml(i.value) + '</th>' +
+        '<td class="muted-xs">' + escapeHtml(meta.join(' · ')) + '</td>' +
+        '<td class="customers-ident-actions">' + buttons + '</td></tr>';
     }
 
     function customersIdentitiesHtml(p) {
       const ids = p.identities || [];
       const note = customersIsFull() ? '' : '<p class="muted-xs">What you add here is shown as unconfirmed until the hive owner or a read-write user confirms it.</p>';
       return '<div class="customers-block"><div class="section-label m-0">Identities</div>' + note +
-        '<div class="customers-list">' + (ids.length ? ids.map(i => customersIdentityRowHtml(p, i)).join('') : '<p class="empty-dashed">No identities.</p>') + '</div>' +
+        (ids.length ? '<div class="customers-table-wrap"><table class="customers-ident-table"><thead><tr><th scope="col">Type</th><th scope="col">Identity</th><th scope="col">Source</th><th scope="col" aria-label="Actions"></th></tr></thead><tbody>' + ids.map(i => customersIdentityRowHtml(p, i)).join('') + '</tbody></table></div>' : '<p class="empty-dashed">No identities.</p>') +
         '<div class="customers-inline"><label>Known by<select class="kb-search-box" data-customers-field="identity-kind">' + customersKindOptions() + '</select></label>' +
         '<label>Login, address or id<input class="kb-search-box" type="text" maxlength="254" data-customers-field="identity-value" autocomplete="off"></label>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityAdd">Add identity</button></div></div>';
@@ -496,18 +597,44 @@
     // Each says whether GitHub or a person set it; a field set by hand has a
     // button that hands it back to the automatic source. Everyone who can
     // open the profile may edit these, a read-only user on their own.
+    // customersPublicContributionsHtml: read-only public activity from
+    // enrichment (customers.enrichment.devstats), each row linking out to the
+    // source. Nothing here can be edited; it comes from a public dashboard.
+    function customersPublicContributionsHtml(p) {
+      const rows = ((p && p.public_contributions) || []).filter(a => a && a.project);
+      if (!rows.length) return '';
+      const items = rows.map(function (a) {
+        const label = escapeHtml(a.project) + ': ' + escapeHtml(String(a.contributions || 0)) + ' contributions' + (a.period ? ' <span class="muted-xs">(' + escapeHtml(a.period) + ')</span>' : '');
+        const src = ' <span class="kc-pill customers-pill customers-affiliation-source" data-source="' + escapeHtml(a.source || '') + '">' + escapeHtml(a.source || '') + '</span>';
+        const url = String(a.url || '');
+        const link = /^https:\/\//.test(url) ? ' <a href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" title="Open on ' + escapeHtml(a.source || 'the source') + '" aria-label="Open ' + escapeHtml(a.project) + ' on ' + escapeHtml(a.source || 'the source') + '"><span aria-hidden="true">&#8599;</span></a>' : '';
+        return '<li data-customers-field="public-contribution">' + label + src + link + '</li>';
+      }).join('');
+      return '<div class="customers-block" data-customers-field="public-contributions"><div class="section-label m-0">Public contributions</div>' +
+        '<ul class="customers-public-contributions">' + items + '</ul>' +
+        '<div class="muted-xs">Public data from CNCF devstats, looked up by GitHub login. Read only.</div></div>';
+    }
+
     function customersDetailsHtml(p) {
       const rows = CUSTOMERS_PROFILE_FIELDS.map(function (f) {
         const cur = (p.profile && p.profile[f.key]) || {};
         const manual = cur.source === 'manual';
-        const mark = cur.value ? (manual ? 'set by hand' : 'from GitHub') : (manual ? 'cleared by hand' : 'not known');
-        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
+        // A hub value carries its hub label (#19163, #19306); editing it
+        // here makes it manual.
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from ' + (customersFieldSourceLabel(cur) || 'GitHub')))) : (manual ? 'cleared by hand' : 'not known');
+        const tip = cur.value && cur.source === 'auto' ? ' title="' + escapeHtml(customersFieldProvenance(cur)) + '"' : '';
+        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs"' + tip + '>(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
-          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
+          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let the public profile fill this in again">Auto</button>' : '');
       }).join('');
-      return '<div class="customers-block"><div class="section-label m-0">Details</div>' +
-        '<div class="customers-inline">' + rows + '</div>' +
-        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>';
+      const cc = customersProfileValue(p, 'country');
+      const ccLine = /^[A-Z]{2}$/.test(cc) ? '<div class="muted-xs" data-customers-field="country-line"><span aria-hidden="true">' + customersFlagEmoji(cc) + '</span> ' + escapeHtml(cc) + ' ' + escapeHtml(customersCountryName(cc)) + '</div>' : '';
+      return '<div class="customers-block"><div class="section-label m-0">Details</div>' + ccLine +
+        '<div class="customers-inline">' + rows + '</div>' + customersAffiliationHtml(p) +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button>' +
+        (customersIsFull() ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRefreshProfile" title="Read this person\'s public forge profile now and fill the fields nobody set by hand">Refresh from profiles</button>' : '') +
+        '</div></div>' +
+        customersPublicContributionsHtml(p);
     }
 
     function customersNotesHtml(p) {
@@ -1001,7 +1128,38 @@
       if (saved) showToast('Details saved', 'success');
     }
 
-    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to GitHub'); }
+    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to the public profile'); }
+
+    // customersRefreshProfile: "Refresh from profiles" on the open profile
+    // (#19302). The hive reads the public forge profile now and fills the
+    // fields nobody set by hand.
+    async function customersRefreshProfile() {
+      if (!_customersOpen) return;
+      const id = _customersOpen.me ? 'me' : _customersOpen.id;
+      try {
+        const out = await customersRequest('POST', '/api/customers/' + encodeURIComponent(id) + '/refresh-profile', {});
+        if (out.customer) _customersOpen = out.customer;
+        customersShow();
+        const fill = out.fill || {};
+        if (fill.skipped) showToast('Not refreshed: ' + String(fill.skipped).replace(/_/g, ' '), 'warning');
+        else showToast(fill.filled ? 'Details filled from public profiles' : 'Public profiles checked: nothing new', 'success');
+        fetchCustomers();
+      } catch (e) { customersProfileError(e.message); }
+    }
+
+    // customersRefreshAllProfiles: "Refresh from profiles" for everyone. The
+    // hive looks every customer up again in the background, a few per pass.
+    async function customersRefreshAllProfiles() {
+      try {
+        await customersRequest('POST', '/api/customers/refresh-profiles', {});
+        showToast('Refreshing every customer from public profiles, a few at a time', 'success');
+        setTimeout(fetchCustomers, CUSTOMERS_REFRESH_RELOAD_MS);
+      } catch (e) { showToast(e.message, 'error'); }
+    }
+
+    function customersAffiliationAccept(value) { customersEdit({ op: 'profile', field: 'organization', value: value }, 'Organization set'); }
+
+    function customersAffiliationDismiss(value) { customersEdit({ op: 'affiliation_dismiss', value: value }, 'Suggestion dismissed'); }
 
     function customersNotesSave() { customersEdit({ op: 'notes', notes: (customersField('notes') || {}).value || '' }, 'Notes saved'); }
 

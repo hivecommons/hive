@@ -20,6 +20,7 @@ const (
 	OpName                = "name"
 	OpNotes               = "notes"
 	OpProfile             = "profile"
+	OpAffiliationDismiss  = "affiliation_dismiss"
 	OpIdentityAdd         = "identity_add"
 	OpIdentityRemove      = "identity_remove"
 	OpTag                 = "tag"
@@ -38,7 +39,7 @@ const TagAuto = "auto"
 // selfOps is what a viewer without the full view may do, and only to their
 // own profile: name, identities, tags and goals.
 var selfOps = map[string]bool{
-	OpName: true, OpProfile: true, OpIdentityAdd: true, OpIdentityRemove: true, OpTag: true,
+	OpName: true, OpProfile: true, OpAffiliationDismiss: true, OpIdentityAdd: true, OpIdentityRemove: true, OpTag: true,
 	OpGoalAdd: true, OpGoalEdit: true, OpGoalConfirm: true, OpGoalReject: true,
 }
 
@@ -79,6 +80,13 @@ type PersonView struct {
 	// the identity belongs to someone else, and was raised as a question
 	// instead.
 	Hinted bool `json:"hinted,omitempty"`
+	// Affiliation is a suggested organization with its evidence, never a
+	// stored fact: Accept writes it as a by-hand organization. Detail views
+	// only.
+	Affiliation *AffiliationSuggestion `json:"affiliation_suggestion,omitempty"`
+	// PublicContributions is read-only public activity from enrichment
+	// sources that are switched on (devstats). Detail views only.
+	PublicContributions []EnrichedActivity `json:"public_contributions,omitempty"`
 }
 
 // ListView is the Customers list as one viewer sees it.
@@ -101,6 +109,58 @@ type Service struct {
 	store     *Store
 	index     *Index
 	resolvers Resolvers
+	// enrich holds public facts from customers.enrichment; nil when it is
+	// not wired. enrichActive says whether a source is switched on now, so a
+	// source turned off stops showing at once.
+	enrich       *EnrichmentStore
+	enrichActive func(source string) bool
+}
+
+// SetEnrichment wires the enrichment store. active reports whether a source
+// is switched on; nil means none is. Call before the service is shared.
+func (s *Service) SetEnrichment(e *EnrichmentStore, active func(source string) bool) {
+	s.enrich, s.enrichActive = e, active
+}
+
+// Enrichment is the enrichment store, or nil.
+func (s *Service) Enrichment() *EnrichmentStore { return s.enrich }
+
+// activeEnrichedActivity is the public activity enrichment holds for a
+// person from sources that are switched on now.
+func (s *Service) activeEnrichedActivity(id string) []EnrichedActivity {
+	if s.enrich == nil || s.enrichActive == nil {
+		return nil
+	}
+	pe, ok := s.enrich.Get(id)
+	if !ok {
+		return nil
+	}
+	var out []EnrichedActivity
+	for _, a := range pe.Activity {
+		if s.enrichActive(a.Source) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// activeEnrichedAffiliations are the affiliations enrichment holds for a
+// person from sources that are switched on now.
+func (s *Service) activeEnrichedAffiliations(id string) []EnrichedAffiliation {
+	if s.enrich == nil || s.enrichActive == nil {
+		return nil
+	}
+	pe, ok := s.enrich.Get(id)
+	if !ok {
+		return nil
+	}
+	var out []EnrichedAffiliation
+	for _, a := range pe.Affiliations {
+		if s.enrichActive(a.Source) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // NewService wraps a store. index and resolvers may be nil.
@@ -154,6 +214,10 @@ func (s *Service) CanSee(v Viewer, id string) bool {
 // view builds what the viewer sees of p.
 func (s *Service) view(v Viewer, p Person, isMe, detail bool) PersonView {
 	out := PersonView{Person: p, Me: isMe}
+	if detail {
+		out.Affiliation = SuggestAffiliationWith(p, s.activeEnrichedAffiliations(p.ID), s.store.now())
+		out.PublicContributions = s.activeEnrichedActivity(p.ID)
+	}
 	if !v.Full {
 		// A viewer without the full view sees what they may edit. Notes,
 		// the satisfaction assessment, merge history and hints are the
@@ -247,6 +311,8 @@ func (s *Service) Edit(v Viewer, id string, e Edit) (PersonView, error) {
 		} else {
 			p, err = s.store.SetProfileField(p.ID, e.Field, e.Value, v.User)
 		}
+	case OpAffiliationDismiss:
+		p, err = s.store.DismissAffiliation(p.ID, e.Value)
 	case OpIdentityAdd:
 		id := Identity{Kind: IdentityKind(e.Kind), Value: e.Value}
 		if !v.Full {
@@ -310,6 +376,11 @@ func (s *Service) Forget(v Viewer, id string) (int, error) {
 		return 0, err
 	}
 	if _, err := s.store.Forget(p.ID); err != nil {
+		return 0, err
+	}
+	// Enrichment goes with the person. The store's tombstones stop the
+	// person, and so their enrichment, from coming back.
+	if err := s.enrich.Delete(p.ID); err != nil {
 		return 0, err
 	}
 	if s.index == nil {

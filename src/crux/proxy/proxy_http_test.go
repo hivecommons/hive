@@ -33,15 +33,19 @@ func TestProxyHTTPAllowedGET(t *testing.T) {
 
 	go p.proxyHTTP(proxyClient, proxyUpstream, "scanner", agent.ModeAdvisory, agent.AgentCapabilities{})
 
-	go func() {
-		fmt.Fprintf(clientConn, "GET /repos/org/repo HTTP/1.1\r\nHost: api.github.com\r\n\r\n")
-	}()
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/org/repo", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header = relayTestRequestHeaders()
+	go func() { _ = req.Write(clientConn) }()
 
 	go func() {
 		req, err := http.ReadRequest(bufio.NewReader(upstreamConn))
 		if err != nil {
 			return
 		}
+		assertRelayHeaderHygiene(t, req.Header, relayTestRequestHeaders())
 		resp := &http.Response{
 			StatusCode: 200,
 			Proto:      "HTTP/1.1",
@@ -51,6 +55,7 @@ func TestProxyHTTPAllowedGET(t *testing.T) {
 			Body:       http.NoBody,
 			Request:    req,
 		}
+		setRelayTestResponseHeaders(resp.Header)
 		resp.Write(upstreamConn)
 		upstreamConn.Close()
 	}()
@@ -62,6 +67,7 @@ func TestProxyHTTPAllowedGET(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Errorf("GET should be allowed, got %d", resp.StatusCode)
 	}
+	assertRelayResponseHeaderHygiene(t, resp)
 }
 
 func TestProxyHTTPBlockedPOST(t *testing.T) {

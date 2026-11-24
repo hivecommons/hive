@@ -543,6 +543,7 @@ func TestParseForgeTargetWithKind(t *testing.T) {
 		{"gitlab saas", "gitlab", "gitlab.com", ForgeGitLab, "gitlab.com", "https://gitlab.com", "", false},
 		{"gitlab self-managed from URL", "gitlab", "https://gitlab.example.com/group", ForgeGitLab, "gitlab.example.com", "https://gitlab.example.com", "", false},
 		{"gitea", "gitea", "codeberg.org", ForgeGitea, "codeberg.org", "https://codeberg.org", "", false},
+		{"forgejo", "forgejo", "codeberg.org", ForgeForgejo, "codeberg.org", "https://codeberg.org", "", false},
 		{"gitlab requires a host", "gitlab", "", "", "", "", "", true},
 		{"gitlab rejects a non-host", "gitlab", "not a host", "", "", "", "", true},
 		{"empty kind → public github", "", "github.com", ForgeGitHub, "github.com", "", "", false},

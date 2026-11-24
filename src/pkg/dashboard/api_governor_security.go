@@ -65,6 +65,8 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 		SandboxJobClaimMount        *string                        `json:"agentSandboxJobWorkspaceClaimMount"`
 		SandboxJobEnvFromSecrets    *[]string                      `json:"agentSandboxJobEnvFromSecrets"`
 		SandboxSubstrate            *config.SandboxSubstrateConfig `json:"agentSandboxSubstrate"`
+		// Job scheduling, resources, preflight and the read relay (#19553).
+		sandboxJobDefaultsBody
 		// Sentinel (suspicious-activity alerts) is pointer-typed per field
 		// so an absent key means "unchanged" — a save that only toggled a
 		// behavior must not wipe the sensitive-path list.
@@ -180,6 +182,13 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 
 	if body.ReviewMaxParallel != nil && (*body.ReviewMaxParallel < 0 || *body.ReviewMaxParallel > 64) {
 		jsonError(w, "review max_parallel_reviews must be between 0 and 64", http.StatusBadRequest)
+		return
+	}
+	// Validated before anything changes, so a refused value leaves the whole
+	// request unapplied.
+	jobDefaults, err := body.sandboxJobDefaultsBody.parse(s.deps.Config.AgentSandbox)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -320,6 +329,7 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 	if body.SandboxTimeoutS != nil {
 		cfg.AgentSandbox.TimeoutS = *body.SandboxTimeoutS
 	}
+	jobDefaults.apply(&cfg.AgentSandbox)
 	if body.SandboxJobServiceAccount != nil || body.SandboxJobSchedulerName != nil || body.SandboxJobTTLSeconds != nil ||
 		body.SandboxJobWorkspaceClaim != nil || body.SandboxJobClaimMount != nil || body.SandboxJobEnvFromSecrets != nil {
 		if cfg.AgentSandbox.Job == nil {
@@ -475,7 +485,7 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 	// sees what an unset variable means without reading the pod log.
 	credentialInjection := config.ResolveProxyInjectGHAuth(os.Getenv)
 
-	return map[string]interface{}{
+	out := map[string]interface{}{
 		"credentialWarnings":                 credentialWarnings,
 		"credentialInjection":                credentialInjection,
 		"ioscanEnabled":                      cfg.Ioscan.IsEnabled(),
@@ -523,6 +533,10 @@ func securitySectionResponse(cfg *config.Config) map[string]interface{} {
 		"sandboxWarnings":                    sandboxWarnings,
 		"sentinel":                           sentinelSectionResponse(cfg.Sentinel, cfg.SentinelSensitivePathsRepoOverrides()),
 	}
+	for k, v := range sandboxJobDefaultsResponse(cfg) {
+		out[k] = v
+	}
+	return out
 }
 
 // sentinelSectionResponse renders the suspicious-activity block. It sends

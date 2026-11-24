@@ -1101,6 +1101,27 @@ Every alert is also written to the dashboard audit log as `sentinel-alert`,
 and, when `evidence.enabled` is on, recorded under `sentinel` in the flagged
 head's [review evidence bundle](../review-evidence.md).
 
+The sentinel judges the PR's **current head** (hivecommons/hive#19262,
+`pkg/github/sentinel_head_scope.go`). Each new head is evaluated on its own
+files, even on a PR that already carries the label:
+
+- **Finding on the new head:** the label stays and the hive's sentinel
+  comment is rewritten as the alert for that head.
+- **Clean new head:** if the hive added the label for an earlier head's
+  finding (its own alert comment names an earlier head and the newest label
+  event is the hive's own, made no later than that comment), the label is
+  removed, the comment is rewritten to say the current head is clean with
+  the earlier alert kept in a collapsed block, a quiet-mode `sentinel` card
+  section is rewritten for the current head, and the audit log records
+  `sentinel-alert-cleared`. A label a person added, directly or through the
+  dashboard after the alert, is never removed, and neither is any label when
+  the hive cannot name its own accounts.
+- **Unchanged head:** skipped, as before.
+
+The dashboard's sentinel state follows the live label plus the findings
+recorded for the current head, so it clears with the label. Earlier heads'
+findings stay in `/api/sentinel` for audit.
+
 On the dashboard's Projects cards, every open PR that carries the configured
 sentinel label is drawn as a red pill (status chip and main pill), taking
 precedence over the held, needs-human and merge colours, and the pill legend

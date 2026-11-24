@@ -147,6 +147,60 @@ func TestDetectAction(t *testing.T) {
 	}
 }
 
+func TestDetectActionPlainSpecAndDesign(t *testing.T) {
+	positive := []struct{ rest, subject string }{
+		{"start a spec for this", ""},
+		{"can you write a spec for the login flow", "the login flow"},
+		{"draft a design for the inbox", "the inbox"},
+		{"could you please create a design doc for calendar sync", "calendar sync"},
+		{"please kick off a spec for onboarding", "onboarding"},
+		{"open a spec on rate limits", "rate limits"},
+		{"make a design for the lobby", "the lobby"},
+		{"write up a quick spec about retries", "retries"},
+		{"let's start designs for the dashboard", "the dashboard"},
+		{"go ahead and write specs for the api", "the api"},
+	}
+	for _, c := range positive {
+		typ, subject, ok := DetectAction(c.rest)
+		if typ != actions.TypeSpek || subject != c.subject || !ok {
+			t.Errorf("DetectAction(%q) = %q, %q, %v; want spek, %q, true", c.rest, typ, subject, ok, c.subject)
+		}
+	}
+	negative := []string{
+		"the spec says we retry twice",
+		"per the design we cache it",
+		"we spec'd that last week",
+		"i need to inspect the logs",
+		"that is a special case",
+		"be more specific about the spec",
+		"the design review happened yesterday",
+		"what does the design say",
+		"don't write a spec for that",
+		"we should start with the design",
+		"is there a spec for this",
+		"start a design review",
+		"the spec is a draft",
+	}
+	for _, rest := range negative {
+		if typ, _, ok := DetectAction(rest); ok {
+			t.Errorf("DetectAction(%q) = %q, true; want no action", rest, typ)
+		}
+	}
+}
+
+func TestPlainSpecStillNeedsApproval(t *testing.T) {
+	a := newActionRig(t, nil, nil)
+	a.e.Observe(Line{Who: "Cy", Text: "betty start a spec for calendar sync", Spoken: true})
+	a.reply()
+	d := a.only()
+	if d.Type != actions.TypeSpek || d.Status != actions.StatusPending {
+		t.Fatalf("draft %+v", d)
+	}
+	if a.created() != 0 {
+		t.Fatal("nothing may be created before approval")
+	}
+}
+
 func TestRepoMention(t *testing.T) {
 	repos := []string{"hivecommons/hive", "hivecommons/spektacular"}
 	cases := map[string]string{

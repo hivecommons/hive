@@ -231,7 +231,7 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// EvaluateForAppSelfMerge is ever asked. A diff fence carried from an
 	// adopted contributor PR (automerge_adoption_fence.go) is refused the
 	// same way: the App PR carries the fenced diff, so a person merges it.
-	if fence := carriedFenceGate(displayRepo, pr, c.info); fence != "" {
+	if fence := c.carriedFenceGate(ctx, displayRepo, owner, repo, pr); fence != "" {
 		return AutoMergeSweepEvent{}, fence, nil
 	}
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
@@ -803,7 +803,7 @@ func (c *Engine) trySweepTrustedAuthorPRAdmitting(ctx context.Context, displayRe
 	} else if held {
 		return AutoMergeSweepEvent{}, reason, nil
 	}
-	if fence := carriedFenceGate(displayRepo, pr, c.info); fence != "" {
+	if fence := c.carriedFenceGate(ctx, displayRepo, owner, repo, pr); fence != "" {
 		return AutoMergeSweepEvent{}, fence, nil
 	}
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {

@@ -207,6 +207,8 @@
       // standalone hive, which keeps the entry hidden.
       window._myHivesURL = cfg.my_hives_url || '';
       renderMyHivesMenuItem();
+      // Ask AI help (#19184): load the panel only when this hive has it on.
+      if (typeof loadAskPanel === 'function') loadAskPanel(cfg);
       const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')
         ? cfg.org + '/' + cfg.primaryRepo
         : (cfg.primaryRepo || '');

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 const (
@@ -61,6 +62,9 @@ const (
 )
 
 func (n *Notifier) Send(title, message string, priority Priority) {
+	// The one funnel for ntfy, Slack and Discord webhook alerts: the shared
+	// outbound dash rule applies here (hivecommons/hive#19103).
+	title, message = prosefilter.SanitizeTitle(title), prosefilter.Sanitize(message)
 	if n.hiveID != "" {
 		title = fmt.Sprintf("[%s] %s", n.hiveID, title)
 	}

@@ -70,6 +70,10 @@ type FeedbackItem struct {
 	Line      int               `json:"line,omitempty"`
 	URL       string            `json:"url,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`
+	// AuthorAssociation is GitHub's association of the author with the repo
+	// (OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR), upper-case. The rule
+	// capture trust gate (pkg/reviewrules) reads it.
+	AuthorAssociation string `json:"author_association,omitempty"`
 }
 
 // FeedbackMessage is one comment in a review thread.
@@ -88,10 +92,33 @@ type PRFeedback struct {
 	State   string
 	Draft   bool
 	HeadRef string
+	// HeadSHA is the PR's head commit, "" when the read did not report it.
+	// The sweep compares it across passes to tell whether a kicked agent
+	// pushed (#19320).
+	HeadSHA string
+	// LastHiveReplyAt is when the hive's identity last commented, reviewed or
+	// replied in a thread on the PR, ignoring the sweep's own notes (needs
+	// human, review-rule notices). Zero when it never has.
+	LastHiveReplyAt time.Time
 	// Items are the unanswered human comments, oldest first.
 	Items []FeedbackItem
 	// Source is "graphql" or "rest": which read produced this result.
 	Source string
+	// HiveReplies are the hive's own comments that carry a review-rules
+	// block (the structured statement of the rules a reviewer stated). They
+	// are read even when no human comment is unanswered.
+	HiveReplies []FeedbackMessage
+	// AgentReplies are the hive's comments that carry the handled-ids
+	// marker: the kicked agent's replies to feedback.
+	AgentReplies []FeedbackMessage
+	// RuleCandidates are every human comment on the PR, whatever its handled,
+	// resolved or addressed state, oldest first. Rule capture reads these
+	// (hivecommons/hive#19136); kick routing reads Items.
+	RuleCandidates []FeedbackItem
+	// AddressedChangeRequests are the people's standing CHANGES_REQUESTED
+	// reviews whose every point the hive has handled
+	// (hivecommons/hive#19538): the sweep re-requests those reviewers.
+	AddressedChangeRequests []AddressedChangeRequest
 }
 
 // Open reports whether the PR can still take a revision.
@@ -102,13 +129,14 @@ type rawPRFeedback struct {
 	IsDraft     bool   `json:"isDraft"`
 	Merged      bool   `json:"merged"`
 	HeadRefName string `json:"headRefName"`
+	HeadRefOid  string `json:"headRefOid"`
 	rawPRConversation
 }
 
 var prFeedbackQuery = fmt.Sprintf(`query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      state isDraft merged headRefName
+      state isDraft merged headRefName headRefOid
       comments(last: %d) { nodes { databaseId url body createdAt authorAssociation author { __typename login } } }
       reviews(last: %d) { nodes { databaseId url body createdAt authorAssociation state author { __typename login } } }
       reviewThreads(last: %d) {
@@ -161,31 +189,125 @@ func (c *Client) FetchPRFeedback(ctx context.Context, repo string, number int) (
 		state = "closed"
 	}
 	return PRFeedback{
-		State:   state,
-		Draft:   raw.IsDraft,
-		HeadRef: raw.HeadRefName,
-		Items:   UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive),
-		Source:  source,
+		State:                   state,
+		Draft:                   raw.IsDraft,
+		HeadRef:                 raw.HeadRefName,
+		HeadSHA:                 raw.HeadRefOid,
+		LastHiveReplyAt:         LastHiveReplyAt(raw.rawPRConversation, c.isHiveAuthor),
+		Items:                   UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.isHiveIdentityComment, c.addressesHive),
+		Source:                  source,
+		HiveReplies:             HiveRuleReplies(raw.rawPRConversation, c.isHiveAuthor),
+		AgentReplies:            HiveFeedbackReplies(raw.rawPRConversation, c.isHiveAuthor),
+		RuleCandidates:          RuleCandidates(raw.rawPRConversation, c.isHumanFeedbackAuthor),
+		AddressedChangeRequests: AddressedChangeRequests(raw.rawPRConversation, raw.HeadRefOid, c.isHumanFeedbackAuthor, c.isHiveIdentityComment),
 	}, nil
+}
+
+func (c *Client) isHiveAuthor(a *rawPRCommentAuthor) bool {
+	return a != nil && c.isHiveLogin(strings.TrimSpace(a.Login))
 }
 
 // addressesHive reports whether a conversation comment is aimed at the hive:
 // it mentions the App bot or the AI author account, or starts with /hive.
 // Inline review comments and review bodies on a hive PR are always aimed at
 // the hive; plain conversation comments between people are not.
+//
+// The App bot is matched with or without its "[bot]" suffix: people type
+// "@hivecommons-hive", not "@hivecommons-hive[bot]" (cncf/techdocs#424).
+// Mentions inside code spans, fenced code and quoted lines do not count, and
+// a login only matches as a whole mention, so "@hive-foo" or an email
+// address never addresses "hive".
 func (c *Client) addressesHive(body string) bool {
-	lower := strings.ToLower(body)
-	if strings.HasPrefix(strings.TrimSpace(lower), "/hive") {
+	if strings.HasPrefix(strings.TrimSpace(strings.ToLower(body)), "/hive") {
 		return true
 	}
 	id := c.getHiveIdentity()
-	for _, login := range []string{c.appBotLogin, id.AppLogin, id.AIAuthor} {
+	return MentionsAnyLogin(body, hiveMentionLogins(c.appBotLogin, id.AppLogin, id.AIAuthor))
+}
+
+// hiveMentionLogins expands the hive's logins into every spelling a person
+// may use to mention them: each login as configured plus, for an App bot
+// login, its bare slug without the "[bot]" suffix.
+func hiveMentionLogins(logins ...string) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(l string) {
+		l = strings.ToLower(strings.TrimSpace(l))
+		if l == "" || seen[l] {
+			return
+		}
+		seen[l] = true
+		out = append(out, l)
+	}
+	for _, l := range logins {
+		add(l)
+		if slug, ok := strings.CutSuffix(strings.ToLower(strings.TrimSpace(l)), botLoginSuffix); ok {
+			add(slug)
+		}
+	}
+	return out
+}
+
+// MentionsAnyLogin reports whether text @-mentions any of logins as a
+// whole mention, case-insensitively, outside code and quoted lines.
+func MentionsAnyLogin(text string, logins []string) bool {
+	text = strings.ToLower(stripMentionNoise(text))
+	for _, login := range logins {
 		login = strings.ToLower(strings.TrimSpace(login))
-		if login != "" && strings.Contains(lower, "@"+login) {
+		if login != "" && mentionsLogin(text, login) {
 			return true
 		}
 	}
 	return false
+}
+
+// stripMentionNoise drops the parts of a Markdown body where an @login is
+// not a mention: fenced code, inline code spans and quoted ("> ") lines.
+func stripMentionNoise(text string) string {
+	text = fencedCodeBlockPattern.ReplaceAllString(text, " ")
+	text = inlineCodeSpanPattern.ReplaceAllString(text, " ")
+	lines := strings.Split(text, "\n")
+	kept := lines[:0]
+	for _, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), ">") {
+			continue
+		}
+		kept = append(kept, ln)
+	}
+	return strings.Join(kept, "\n")
+}
+
+// mentionsLogin reports whether lower (already lower-cased) contains
+// "@"+login as a standalone mention: the "@" does not follow a login or
+// email character, and the login is not followed by one.
+func mentionsLogin(lower, login string) bool {
+	needle := "@" + login
+	for from := 0; ; {
+		i := strings.Index(lower[from:], needle)
+		if i < 0 {
+			return false
+		}
+		i += from
+		end := i + len(needle)
+		before := i == 0 || !isMentionChar(lower[i-1])
+		after := end >= len(lower) || !isMentionTailChar(lower[end])
+		if before && after {
+			return true
+		}
+		from = i + 1
+	}
+}
+
+// isMentionChar reports whether b may precede "@" in an email address or a
+// longer token, so an "@" after it is not a mention.
+func isMentionChar(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-' || b == '_' || b == '.' || b == '+' || b == '/'
+}
+
+// isMentionTailChar reports whether b continues a login (or a "[bot]"
+// suffix), so a match ending before it is a prefix of a longer login.
+func isMentionTailChar(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= '0' && b <= '9' || b == '-' || b == '_' || b == '['
 }
 
 var feedbackHandledIDs = regexp.MustCompile(`<!--\s*hive:feedback-handled\s+ids=([^\s>]*)\s*-->`)
@@ -221,29 +343,25 @@ func handledIDsIn(body string) []string {
 // A review with an empty body (inline threads only) contributes nothing
 // itself; its inline comments are the feedback. The draft state, labels and
 // repo lane of the PR play no part. isHive says whether a comment is the
-// hive's own; addressed says whether a conversation comment is aimed at it.
-func UnansweredFeedback(raw rawPRConversation, isHuman func(*rawPRCommentAuthor) bool, isHive func(*rawPRCommentAuthor, string) bool, addressed func(string) bool) []FeedbackItem {
+// hive's own (a thread reply); isHiveIdentity says whether a comment was
+// posted by the hive's own login, and only such a comment's handled marker
+// counts: the marker is a plain hidden comment anyone can paste, and it
+// carries the "-- hive:" trailer prefix isHive accepts (hivecommons/hive#19547).
+// addressed says whether a conversation comment is aimed at the hive.
+func UnansweredFeedback(raw rawPRConversation, isHuman func(*rawPRCommentAuthor) bool, isHive, isHiveIdentity func(*rawPRCommentAuthor, string) bool, addressed func(string) bool) []FeedbackItem {
 	handled := map[string]bool{}
 	hiveComments := append(append([]rawPRComment{}, raw.Comments.Nodes...), raw.Reviews.Nodes...)
 	for _, th := range raw.ReviewThreads.Nodes {
 		hiveComments = append(hiveComments, th.Comments.Nodes...)
 	}
 	for _, rc := range hiveComments {
-		if rc.Author != nil && isHive != nil && isHive(rc.Author, rc.Body) {
+		if rc.Author != nil && isHiveIdentity != nil && isHiveIdentity(rc.Author, rc.Body) {
 			for _, id := range handledIDsIn(rc.Body) {
 				handled[id] = true
 			}
 		}
 	}
-	human := func(rc rawPRComment) bool {
-		if rc.Author == nil || strings.TrimSpace(rc.Body) == "" || HasAttributionTrailer(rc.Body) {
-			return false
-		}
-		if !feedbackTrustedAssociations[strings.ToUpper(rc.AuthorAssociation)] {
-			return false
-		}
-		return isHuman != nil && isHuman(rc.Author)
-	}
+	human := func(rc rawPRComment) bool { return humanFeedback(rc, isHuman) }
 	var out []FeedbackItem
 	add := func(kind PRCommentKind, rc rawPRComment, thread, path string, line int, ctxThread []FeedbackMessage) {
 		id := string(kind) + ":" + strconv.FormatInt(rc.DatabaseID, 10)
@@ -251,7 +369,8 @@ func UnansweredFeedback(raw rawPRConversation, isHuman func(*rawPRCommentAuthor)
 			return
 		}
 		out = append(out, FeedbackItem{ID: id, ThreadID: thread, Thread: ctxThread, Kind: kind, Author: rc.Author.Login,
-			Body: truncateCommentBody(rc.Body), Path: path, Line: line, URL: rc.URL, CreatedAt: rc.CreatedAt})
+			Body: truncateCommentBody(rc.Body), Path: path, Line: line, URL: rc.URL, CreatedAt: rc.CreatedAt,
+			AuthorAssociation: strings.ToUpper(rc.AuthorAssociation)})
 	}
 	for _, rc := range raw.Comments.Nodes {
 		if human(rc) && addressed != nil && addressed(rc.Body) {
@@ -303,6 +422,61 @@ func UnansweredFeedback(raw rawPRConversation, isHuman func(*rawPRCommentAuthor)
 	return out
 }
 
+// humanFeedback reports whether a comment is a person's: non-empty, from a
+// human (isHuman) with a trusted association, and without a hive attribution
+// trailer.
+func humanFeedback(rc rawPRComment, isHuman func(*rawPRCommentAuthor) bool) bool {
+	if rc.Author == nil || strings.TrimSpace(rc.Body) == "" || HasAttributionTrailer(rc.Body) {
+		return false
+	}
+	if !feedbackTrustedAssociations[strings.ToUpper(rc.AuthorAssociation)] {
+		return false
+	}
+	return isHuman != nil && isHuman(rc.Author)
+}
+
+// RuleCandidates returns every human comment on a PR for rule capture
+// (hivecommons/hive#19136): inline comments, non-empty review bodies of any
+// state, and conversation comments, with the same author checks as
+// UnansweredFeedback but none of its routing gates. A comment named in a
+// handled marker, older than the hive's reply in its thread, in a resolved
+// thread, or a conversation comment not addressed to the hive is still a
+// candidate, because a reviewer can state a rule in any of them. Which
+// candidates were already classified is the rule index's concern.
+func RuleCandidates(raw rawPRConversation, isHuman func(*rawPRCommentAuthor) bool) []FeedbackItem {
+	var out []FeedbackItem
+	add := func(kind PRCommentKind, rc rawPRComment, thread, path string, line int) {
+		if !humanFeedback(rc, isHuman) {
+			return
+		}
+		out = append(out, FeedbackItem{ID: string(kind) + ":" + strconv.FormatInt(rc.DatabaseID, 10), ThreadID: thread, Kind: kind,
+			Author: rc.Author.Login, Body: truncateCommentBody(rc.Body), Path: path, Line: line, URL: rc.URL, CreatedAt: rc.CreatedAt,
+			AuthorAssociation: strings.ToUpper(rc.AuthorAssociation)})
+	}
+	for _, rc := range raw.Comments.Nodes {
+		add(PRCommentConversation, rc, "", "", 0)
+	}
+	for _, rc := range raw.Reviews.Nodes {
+		add(PRCommentReview, rc, "", "", 0)
+	}
+	for _, th := range raw.ReviewThreads.Nodes {
+		line := 0
+		if th.Line != nil {
+			line = *th.Line
+		}
+		for _, rc := range th.Comments.Nodes {
+			add(PRCommentInline, rc, th.ID, th.Path, line)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
 // fetchPRFeedbackREST assembles the same raw shape from the REST list
 // endpoints. Thread resolution is not exposed over REST, so every thread reads
 // as unresolved; the sweep's handled-id store keeps that from looping.
@@ -312,7 +486,7 @@ func (c *Client) fetchPRFeedbackREST(ctx context.Context, owner, repo string, nu
 	if err != nil {
 		return nil, err
 	}
-	raw := &rawPRFeedback{State: strings.ToUpper(pr.GetState()), IsDraft: pr.GetDraft(), Merged: pr.GetMerged() || !pr.GetMergedAt().IsZero(), HeadRefName: pr.GetHead().GetRef()}
+	raw := &rawPRFeedback{State: strings.ToUpper(pr.GetState()), IsDraft: pr.GetDraft(), Merged: pr.GetMerged() || !pr.GetMergedAt().IsZero(), HeadRefName: pr.GetHead().GetRef(), HeadRefOid: pr.GetHead().GetSHA()}
 	author := func(u *gh.User) *rawPRCommentAuthor {
 		if u == nil {
 			return nil

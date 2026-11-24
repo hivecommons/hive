@@ -1170,6 +1170,7 @@ select.admin-act{min-width:0;max-width:100%%}
    Never hidden, so the operator can always see and Resume it. */
 .cc-q-item.cc-q-held{opacity:.55}
 .cc-q-item.cc-q-held:hover{opacity:.8}
+.cc-q-excluded-note{margin:var(--sp-2) var(--sp-0) var(--sp-0);font-size:var(--fs-xs);color:var(--text-muted)}
 .cc-q-held-tag{margin-left:7px;font-size:var(--fs-2xs);font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--status-attention);background:color-mix(in srgb,var(--status-attention) var(--component-tint),transparent);border:var(--line-width) solid color-mix(in srgb,var(--status-attention) var(--component-border),transparent);border-radius:var(--r-pill);padding:var(--sp-0) var(--sp-3);vertical-align:middle}
 /* Resume-all (#queue-hold): a small amber header button. Hidden until there is at
    least one held issue and the viewer is owner/read-write (JS-toggled display). */
@@ -2468,6 +2469,7 @@ It clears automatically when the period elapses. An operator can shorten or disa
 <button type="button" class="hv-btn btn-icon btn-sm queue-suspend-btn btn-secondary" id="queue-suspend-btn" title="Pause contributions" aria-label="Pause contributions" style="display:none"><span id="queue-suspend-icon"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span></button>
 </span>
 <span class="cc-live stale" id="cc-live"><span class="cc-live-dot"></span><span id="cc-live-label">connecting</span></span></div>
+<div class="cc-q-excluded-note" id="queue-excluded-note" hidden></div>
 <!-- Playlist-style SEARCH (#2592). A pure VIEW filter over the loaded queue
      (repo / number / title / label, case-insensitive, live) — it never changes
      the persisted order, only what is shown. Read-only, so visible to everyone. -->
@@ -5314,7 +5316,7 @@ function knowledgeLine(c){
 // raw reason as a fallback so a new server-side reason still renders legibly.
 function idleReasonLabel(r){
   var m={contribution_suspended:'contribution suspended',hub_not_ready:'hub not ready',
-    no_matching_work:'no matching work',token_mint_failed:'token mint failed',
+    no_matching_work:'no matching work',queue_empty:'queue empty',token_mint_failed:'token mint failed',
     tier_disabled:'tier disabled',concurrency_limit:'concurrency limit'};
   return m[r]||String(r).replace(/_/g,' ');
 }
@@ -6059,6 +6061,10 @@ async function opsPoll(){
     ccCooldownCount=(data&&typeof data.cooldown_count==='number')?data.cooldown_count:0;
     ccInFlightCount=(data&&typeof data.in_flight_count==='number')?data.in_flight_count:0;
     ccHeldCount=(data&&typeof data.held_count==='number')?data.held_count:0;
+    // #19078: umbrella / owner-only issues are never offered to a contributor; the
+    // queue header says how many, so "N workable" is not mistaken for the whole backlog.
+    ccUmbrellaCount=(data&&typeof data.umbrella_count==='number')?data.umbrella_count:0;
+    ccHumanOnlyCount=(data&&typeof data.human_only_count==='number')?data.human_only_count:0;
     safeRender('queue-counts',function(){if(typeof ccRenderQueue==='function')ccRenderQueue();});
     safeRender('cooldown-count',function(){if(typeof ccRenderCooldownCount==='function')ccRenderCooldownCount();});
   }catch(e){
@@ -6139,6 +6145,8 @@ var ccLastAch=0;           // debounce achievement pops
 var ccCooldownCount=0;     // issues still within cooldown (from fleet payload, #2649)
 var ccInFlightCount=0;     // issues currently held by a live connection (fleet payload)
 var ccHeldCount=0;         // issues manually PARKED by the operator (fleet payload, on-hold tally)
+var ccUmbrellaCount=0;     // umbrella / tracker issues withheld from contributors (fleet payload)
+var ccHumanOnlyCount=0;    // owner-only issues withheld from contributors (fleet payload)
 var ccWallPosts=[];
 var ccWallEnabled=false;
 function ccWallPostHTML(p){
@@ -6419,11 +6427,19 @@ function ccRenderQueue(flip){
   // the fleet payload (#2649 companion). A segment is OMITTED when its count is 0
   // so the header stays compact; " · " (a middot) separates present segments.
   if(qc){
-    var segs=[ccQueue.length+' ready'];
+    var segs=[ccQueue.length+' workable'];
     if(ccCooldownCount>0)segs.push(ccCooldownCount+' in cooldown');
     if(ccInFlightCount>0)segs.push(ccInFlightCount+' in flight');
     if(ccHeldCount>0)segs.push(ccHeldCount+' on hold');
     qc.textContent=segs.join(' · ');
+  }
+  // #19078: one quiet line naming the umbrella and owner-only issues that are not offered
+  // to contributors. Hidden at zero. Text only (textContent), never markup.
+  var xn=document.getElementById('queue-excluded-note');
+  if(xn){
+    var xcount=ccUmbrellaCount+ccHumanOnlyCount;
+    xn.hidden=xcount<=0;
+    xn.textContent=xcount>0?(xcount+' umbrella and owner-only item'+(xcount===1?' is':'s are')+' not offered to contributors'):'';
   }
   // No-blink guard: if a per-row ⋯ menu / "Move to #" dialog is OPEN and this is a
   // POLL re-render (flip is falsy — NOT a drag/move, which the operator initiated),

@@ -708,7 +708,7 @@ setter is added without one.
 | `SetLinearCredentialResolver`, `SetSandboxPushMinter`, `SetSandboxPRClient` | callback | `GET /v1/linear/credential`, `POST /v1/tokens`, `POST /v1/pulls` (stage 2) |
 | observers (`SetKickOutcomeObserver`, `SetPauseTransitionObserver`, `SetRelaunchObserver`, `SetPersistPauseCallback`, `SetRecordPromptCallback`, `SetSandboxAuditCallback`, `SetAuditSink`, `SetConditionReporter`) | event | the `/v1/events` stream (stage 3); conditions also `POST /v1/conditions` |
 | `SetSpanStarter` | in-process-only | a span is a Go value wrapping a call in one address space. The sidecar's manager starts spans on the OpenTelemetry global tracer (a no-op without an exporter in the runtime's process); trajectory events do not depend on it |
-| `SetKnowledgeAdviser` | in-process-only | the mid-task knowledge advisor (#17052) asks hive's `knowledge.Primer` off the poll tick (one call in flight per agent) for every new scope an agent enters; phase 1 keeps it in-process (the sidecar runs with no adviser, so the feature is off there) until a `/v1/knowledge/advise` capability is worth its round trip |
+| `SetKnowledgeAdviser` | callback | `POST /v1/knowledge/advise` (`knowledge_advise` capability, off by default behind `knowledge.sidecar_advise`; #17157): the runtime sends the scope an agent entered plus its redacted pane tail, the hive runs the same adviser chain it runs in-process and answers advice lines plus the delivery policy. The policy snapshot's `knowledge_advise` flag decides whether the runtime installs `hivecap.KnowledgeAdviser` at all, so with the knob off nothing changes. Authenticated like every `/v1/*` callback; the hive checks the agent belongs to the calling runtime and the kick is its current kick (403), refuses a second call in flight per agent and a third evaluation of one scope per kick (429), rejects a pane tail over `pane_lines` (400) and a body over 64 KiB (413). Fails closed: any error is no advice, one warning per kick |
 
 No setter is served from a `runtime:` config key: every value is already
 resolved hive-side from the live config, so a reload reaches the runtime
@@ -719,6 +719,8 @@ on its next poll, and the callback pattern was already there.
 - [x] `SetInferenceCallbacks` over the `inference_routes` family and
   `SetSandboxMutationBoundary` over the `effects` family (#14394).
 - [x] `SetSpanStarter` documented as in-process-only (#14394).
+- [x] `SetKnowledgeAdviser` over `POST /v1/knowledge/advise` (#17157), default
+  off. See [agent-knowledge-and-memory.md](../agent-knowledge-and-memory.md#sidecar-runtimes-knowledgesidecar_advise).
 - [x] `SetAgentMint` / `SetAppAuth` / Bob key resolvers as callback-backed
   writers (`crux/hivecap/credentials.go`, #14404). Tokens are never logged
   and go only to the existing per-agent cache path; all three fail closed

@@ -64,3 +64,23 @@ func TestLiteLLMChatCompletionsURL(t *testing.T) {
 		t.Fatal(LocalLiteLLMProxyURL())
 	}
 }
+
+// OpenRouter and Groq store an endpoint that ends in /v1, most other gateways
+// store the server root. Both forms must reach the same OpenAI path.
+func TestOpenAIURL(t *testing.T) {
+	for _, tc := range []struct{ endpoint, path, want string }{
+		{"https://gw.example", "/chat/completions", "https://gw.example/v1/chat/completions"},
+		{"https://gw.example/", "/chat/completions", "https://gw.example/v1/chat/completions"},
+		{"https://gw.example/v1", "/chat/completions", "https://gw.example/v1/chat/completions"},
+		{" https://gw.example/v1/ ", "/chat/completions", "https://gw.example/v1/chat/completions"},
+		{"https://openrouter.ai/api/v1", "/models", "https://openrouter.ai/api/v1/models"},
+		{"https://openrouter.ai/api/v1/", "/models", "https://openrouter.ai/api/v1/models"},
+		{"http://vllm:8000", "/models", "http://vllm:8000/v1/models"},
+		{"http://vllm:8000/", "/models", "http://vllm:8000/v1/models"},
+		{"https://us-south.ml.cloud.ibm.com/ml/gateway", "/models", "https://us-south.ml.cloud.ibm.com/ml/gateway/v1/models"},
+	} {
+		if got := OpenAIURL(tc.endpoint, tc.path); got != tc.want {
+			t.Errorf("OpenAIURL(%q, %q) = %q, want %q", tc.endpoint, tc.path, got, tc.want)
+		}
+	}
+}

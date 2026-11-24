@@ -213,6 +213,10 @@ type HubConfig struct {
 	// ContributeRepoFilters are optional, full owner/name keyed admission
 	// filters layered on top of the hive-wide title/author/label filters.
 	ContributeRepoFilters map[string]ContributeRepoFilter `yaml:"contribute_repo_filters,omitempty" json:"contribute_repo_filters,omitempty"`
+	// ContributeUmbrella decides which issues are umbrella, tracker or
+	// owner-only work that a contributor relay is never handed, with a
+	// per-repo override map (hivecommons/hive#19078). See ContributeUmbrella.
+	ContributeUmbrella ContributeUmbrella `yaml:"contribute_umbrella,omitempty" json:"contribute_umbrella,omitempty"`
 	// ContributeSkipAssignedToOthers, when true, makes the /contribute queue
 	// skip any issue that is already assigned to someone OTHER than the
 	// contributor requesting work. An issue assigned to the contributor

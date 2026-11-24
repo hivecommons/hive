@@ -81,6 +81,7 @@ js/progressive.js
 js/feedback.js
 js/sections.js
 js/layout.js
+js/kick-outcomes.js
 js/agent-detail.js
 js/sidebar.js
 js/history-sparklines.js
@@ -166,6 +167,7 @@ js/plan-agent-controls.js
 js/acmm.js
 js/version.js
 js/sse-bootstrap.js
+js/ask.js
 js/config-state.js
 js/settings-search.js
 js/config-dialog.js
@@ -174,6 +176,9 @@ js/config-webhooks.js
 js/config-hub.js
 js/config-agent.js
 js/config-governor.js
+js/config-parent-autoclose.js
+js/config-review-rules.js
+js/config-review-retry.js
 js/config-workflows.js
 js/config-workflows-handoff.js
 js/config-workflows-library.js
@@ -191,6 +196,7 @@ js/config-helpers.js
 js/linear-repos-save.js
 js/chat.js
 js/gh-auth.js
+js/topbar-strip.js
 js/nps.js
 js/welcome.js
 js/shimmy-handlers.js

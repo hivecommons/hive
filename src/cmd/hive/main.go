@@ -19,6 +19,7 @@ import (
 	"time"
 
 	cruxconfig "github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/posture"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 
 	gh "github.com/google/go-github/v72/github"
@@ -561,6 +562,14 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	b.startID = startrec.NewID()
 	b.logger = withStartID(slog.New(slogfeed.New(logscrub.NewHandler(slog.NewJSONHandler(early, &slog.HandlerOptions{Level: slog.LevelInfo})))), b.startID)
 	slog.SetDefault(b.logger)
+
+	// Containment posture (#19458): warn on every gap; HIVE_REQUIRE_HARDENED
+	// turns any gap into a startup failure.
+	if err := posture.Boot(b.logger, deps.getenv); err != nil {
+		b.logger.Error("refusing to start without required containment", "error", err.Error())
+		deps.exit(1)
+		return false
+	}
 
 	// Process singleton: refuse to become a second hive process in this
 	// container (#2453, #2496). Two concurrent processes beat as the same pod,
@@ -2151,6 +2160,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	archiveOnShutdown := func() { b.agentMgr.ArchiveAllKickLogs("shutdown") }
 	b.preShutdownHooks.add("archive-kick-logs", archiveOnShutdown)
 	b.agentMgr.SetSandboxConfig(b.cfg.AgentSandbox)
+	syncForgeCredentialEnv(b.cfg)
 	// #7421: the governor records a kick when it is dispatched; the manager
 	// tells it afterwards how the turn ENDED, so a kick that produced a
 	// clarifying question or a policy stand-down is not counted like one that
@@ -3739,6 +3749,9 @@ func (b *boot) bootSupervision() {
 	// the PR rows of the FIX-BEFORE-NEW and held-PR blocks. Read b.beadStores
 	// at call time, not at wire time.
 	b.sched.SetTopicClaimLookup(func() []scheduler.TopicClaim { return topicClaimLookup(b.beadStores)() })
+	// #19325: the audit trail's PR-to-agent attribution tags each held PR an
+	// agent opened as its own, whatever its lane topic or labels.
+	b.sched.SetPRAuthorLookup(cachedPRAuthorLookup(b.cfg.Project.Org, auditPRAgents, time.Now))
 	// #9584: close answered question issues unless the author objects (default off).
 	b.questionAutoclose.Store(wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger))
 	// The pr-request watcher's PR-opened hook (Linear session narration, the
@@ -3848,6 +3861,26 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		// Step E (#18884): the budgeted GitHub search on accept. Off unless
 		// customers.mention_search.enabled; never reached by the sweep.
 		svc.mentions = newCustomersMentionSearch(svc.svc, b.customersMentionConfig, b.currentGitHubClient)
+		// Phase 3 of customers-hub-consent (#19163): pull hub-consented
+		// fields for a person just accepted. Off unless
+		// customers.hub_import.enabled and a hub registration.
+		svc.hubImport = func(ctx context.Context, person string) {
+			b.runCustomersHubImport(ctx, b.customersMentionConfig(), person)
+		}
+		// #19302: fill profile fields from each customer's public forge
+		// profile (backfill, periodic refresh, on accept and on demand).
+		// Off unless customers.profile_fill.enabled.
+		svc.profileFill = newCustomersProfileFill(svc.svc.Store(), customersProfileFillDeps{
+			cfg:         b.customersMentionConfig,
+			client:      b.currentGitHubClient,
+			linearToken: b.dashSrv.LinearAgentAccessToken,
+			orgs:        newCustomersOrgNames(),
+			logger:      b.logger,
+		})
+		b.cleanup.push(svc.startCustomersProfileFill(b.ctx))
+		// Customers enrichment: public affiliation from cncf/gitdm, off
+		// unless customers.enrichment and its gitdm switch are on.
+		wireCustomersEnrichment(svc.svc, customersDataDir, b.customersMentionConfig, b.logger)
 		b.dashSrv.SetCustomersService(svc)
 		if b.sched != nil {
 			installCustomersAgentContext(svc, b.sched.SetCustomerContextLookup)
@@ -4125,6 +4158,10 @@ func (b *boot) bootPoliciesWith(deps bootPoliciesDeps) {
 // allowlist and sets the dashboard's auth providers.
 func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 
+func syncForgeCredentialEnv(cfg *config.Config) {
+	cruxconfig.AddExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName(), cfg.Forgejo.TokenEnvName())
+}
+
 // bootWatchersWith is bootWatchers with its long-lived effects injected; see
 // bootWatchersDeps.
 func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
@@ -4182,7 +4219,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		prevGitHub := b.cfg.GitHub
 
 		// Swap the in-memory config pointer contents
-		*b.cfg = *newCfg
+		b.cfg.ReplaceFromReload(newCfg)
 		nextACMMLevel = b.cfg.ACMMLevelOrZero()
 
 		// Re-sync subsystems that cache config values
@@ -4213,6 +4250,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 			b.ensureMentionStore()
 		}
 		b.syncMentionRuntime()
+		syncForgeCredentialEnv(b.cfg)
 		// Re-run the posture check on reload, not only at boot: flipping the
 		// Security tab's sandbox toggle writes the config and lands here, which
 		// is the exact moment an operator forms the belief that they are now
@@ -4322,6 +4360,10 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	b.configWatcher = deps.newConfigWatcher(b.configPath, b.submitConfigReload, b.logger)
 	config.SetSaveObserver(b.configWatcher.SkipNext)
 	b.dashSrv.SetSkipReloadFunc(b.configWatcher.SkipNext)
+	// A save that refuses to overwrite a file edited on disk asks for a
+	// reload, so the edit reaches memory even if no watch event arrived
+	// (hivecommons/hive#19561).
+	config.SetExternalChangeObserver(func(string) { b.configWatcher.Trigger() })
 	deps.startConfigWatcher(b.ctx, b.configWatcher)
 
 	// Persist operator pause/resume into the on-disk config so it survives
@@ -4359,6 +4401,12 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	var knowledgeAdviserImpl crux.KnowledgeAdviser = knowledgeMatcher
 	if _, ok := b.cfg.KnowledgeAdvisorLLM(); ok {
 		knowledgeAdviserImpl = newKnowledgeAdviserLLM(b, knowledgeMatcher)
+	}
+	if problem := b.cfg.KnowledgeAdvisorLLMProblem(); problem != "" {
+		// Shadow or rank is asked for but cannot make a model call; say so
+		// instead of resolving silently to the phase-1 matcher or to a call
+		// the endpoint refuses every time (#17054 evidence pass 2).
+		b.logger.Warn("knowledge advisor: ranking pass is misconfigured", "problem", problem)
 	}
 	b.agentMgr.SetKnowledgeAdviser(knowledgeAdviserImpl)
 
@@ -4454,6 +4502,18 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 	// leak handler.
 	canaryLeakHandler := b.handleCanaryLeak
 
+	// Opt-in translator timeouts and bounded 429/5xx retry (#19057). The
+	// all-off default leaves the translator unchanged; settings are read once
+	// here, so a change needs a restart.
+	inferenceResilience, ignoredResilienceEnv := b.cfg.Governor.InferenceResilience.Resolve(os.Getenv)
+	proxy.SetInferenceResilience(inferenceResilience)
+	if len(ignoredResilienceEnv) > 0 {
+		b.logger.Warn("inference resilience env ignored (invalid value)", "vars", ignoredResilienceEnv)
+	}
+	if inferenceResilience.Enabled() {
+		b.logger.Info("inference resilience enabled", "settings", inferenceResilience.Summary())
+	}
+
 	b.githubProxy, err = deps.newGitHubProxy(b.logger, b.cfg.Project.Org, b.cfg.Project.Repos)
 	if err != nil {
 		b.logger.Error("failed to create github proxy", "error", err)
@@ -4492,6 +4552,17 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		// unconditionally: with HIVE_PROXY_INJECT_GH_AUTH unset (the default)
 		// the proxy never consults the source and the registry stays empty.
 		b.githubProxy.SetAgentTokenSource(github.AgentProxyToken)
+		// Review-thread replies on the hive's own PRs (#19096): the proxy lets
+		// the agent that opened a PR (audit trail agent_pr_created) reply in
+		// its review threads, lets the hive retract its own comment for a
+		// short window, and keeps any refused reply for the review-feedback
+		// sweep's needs-human note. The closures read b.cfg and the live client per
+		// call because both are replaced on reload and key rotation.
+		b.githubProxy.SetReviewThreadGuard(newReviewThreadGuard(
+			func() string { return b.cfg.Project.Org },
+			func() string { return b.currentGitHubClient().AppBotLogin() },
+			b.logger,
+		))
 		// project.reference_repos (#18015): study-only repos outside the
 		// project, with a rare per-entry issues/prs opt-in served by a
 		// credential verified here (boot refuses otherwise).
@@ -5214,6 +5285,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			providerLimitReason, providerLimitRebuffs, providerLimitHiveWide, providerLimitAgents := spoke.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
 			lastWriteKickAt, kickDisposition, kickSkipReason, notWritableQueued :=
 				outputFreshnessHeartbeatFields(acmmLvl, govState, agents)
+			prGateCause, prGateDependsOn := b.dashSrv.PRGateCause()
 			ghAppTokenStatus, ghAppTokenLastMintAt, ghAppTokenError :=
 				githubAppTokenHeartbeatFields(b.cfg, b.dashSrv.GetGitHubAppPermIssue())
 			ghAppErrorClass, ghAppHTTPStatus := githubAppStructuredFailure(
@@ -5230,6 +5302,9 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			agentErrorStreaks := spoke.TimedSection("agent_error_streaks", b.tokenCollector.AgentErrorStreaks)
 			consentWedged := spoke.TimedSection("consent_wedged", b.agentMgr.ConsentWedgedAgents)
 			noCadenceAgents := spoke.TimedSection("no_cadence_agents", b.gov.NoCadenceAgents)
+			// Head of the hash-chained audit log (#19439), held by the hub out
+			// of reach of a writer on /data. One read so seq and hash agree.
+			auditChainHead := b.dashSrv.AuditChainHead()
 
 			return &spoke.HeartbeatPayload{
 				AgentsWithModel:      &agentsWithModel,
@@ -5373,6 +5448,8 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// Per-user last audit-logged real action, so the hub can tell
 				// users who DO things from users who merely stay logged in.
 				UserLastActions: spoke.TimedSection("user_last_actions", b.dashSrv.UserLastActions),
+				AuditChainSeq:   auditChainHead.Seq,
+				AuditChainHead:  auditChainHead.Hash,
 				Owner:           spoke.TimedSection("owner", b.ownerForHeartbeat),
 				// Report the API URL we are actually running against so the hub
 				// can see whether a GitHub Enterprise API URL it delivered has
@@ -5407,6 +5484,8 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				GitHubAppRequired:        b.dashSrv.IsGitHubAppRequired(),
 				GitHubAppPermIssue:       b.dashSrv.GetGitHubAppPermIssue(),
 				GitHubAppState:           b.dashSrv.GetGitHubAppState(),
+				PRGateCause:              prGateCause,
+				PRGateDependsOn:          prGateDependsOn,
 				GitHubAppTokenStatus:     ghAppTokenStatus,
 				GitHubAppTokenLastMintAt: ghAppTokenLastMintAt,
 				GitHubAppTokenError:      ghAppTokenError,
@@ -6268,7 +6347,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					"was_org", b.cfg.Project.Org, "now_org", pc.Org,
 					"repos", pc.Repos, "primary_repo", pc.PrimaryRepo,
 					"acmm_level", pc.ACMMLevel)
-				b.cfg.Project.Org = pc.Org
+				b.cfg.SetProjectOrg(pc.Org)
 				b.cfg.Project.Repos = pc.Repos
 				b.cfg.Project.PrimaryRepo = pc.PrimaryRepo
 				// Only adopt a non-empty author. The hub echoes this struct back on
@@ -6584,12 +6663,17 @@ func (b *boot) bootLanes() {
 	}
 	if b.dashSrv != nil {
 		// Read-only rank-versus-holdout summary route (#18897). The arm
-		// comparison needs the retro lane; the decision counts do not.
-		var armSummary func() []retro.ArmSummary
+		// attribution makes no model call, so it runs whether or not the
+		// retro findings lane is enabled (#19577).
+		var armReport func() retro.AdvisorArmReport
 		if b.retroLane != nil {
-			armSummary = b.retroLane.AdvisorArmSummary
+			armReport = b.retroLane.AdvisorArmReport
+		} else if len(b.beadStores) > 0 {
+			attribution := retro.NewAdvisorAttribution(b.beadStores, b.beadStores[retro.Actor], b.dashSrv.LifecycleTimeline(), getEscalationStore(), b.logger)
+			attribution.SetAdvisorDecisions(b.knowledgeAdvisorDecisions())
+			armReport = attribution.Report
 		}
-		b.dashSrv.SetKnowledgeAdvisorSummary(b.knowledgeAdvisorDecisions(), armSummary)
+		b.dashSrv.SetKnowledgeAdvisorSummary(b.knowledgeAdvisorDecisions(), armReport)
 	}
 }
 
@@ -7976,6 +8060,9 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Run by Spektacular live mode for one model call per prompt; see
 		// pkg/meetings/meetllm. Reads its endpoint and key from the env.
 		return true, meetllm.Run(args[1:], os.Stdin, stdout, stderr, os.Getenv)
+	case auditVerifySubcommand:
+		// Checks the audit log's hash chain; see audit_verify_cmd.go.
+		return true, runAuditVerify(args[1:], stdout, stderr)
 	case memoryDrainSubcommand:
 		// Run as the agent by the Claude Code memory hooks Hive seeds; see
 		// memory_drain_cmd.go. Always exits 0.

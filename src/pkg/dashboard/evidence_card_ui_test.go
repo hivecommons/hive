@@ -32,7 +32,7 @@ func TestEvidenceCardInThroughputSection(t *testing.T) {
 	for _, snippet := range []string{
 		"/api/evidence/summary?${query}",
 		"if (repo) url += `&repo=${encodeURIComponent(repo)}`;",
-		"if (query !== evWindowQuery() || repo !== prtRepo) return;",
+		"if (evFetch !== call) return; // a newer selection is in flight",
 		"async function fetchPRThroughput() {\n      fetchEvidenceSummary();",
 		"dto.reviewer_calibration",
 		"dto.reviewer_accuracy_by_model",
@@ -255,8 +255,8 @@ func TestEvidenceMaintainabilityRendering(t *testing.T) {
 	var source strings.Builder
 	source.WriteString(jsFunc(t, html, "formatNumber"))
 	source.WriteByte('\n')
-	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nlet evConfidenceSeries = 'self-reported';\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\nconst evDetails = {};\nconst EV_OM_DRAIN_MAX = 1, EV_OM_SCOUT_MIN = 1, EV_OM_SCOUT_MAX = 2, EV_OM_PARITY_TOLERANCE = 0.25, EV_OM_ROLLING_DAYS = 30, EV_OM_SPARK_TRAIL_DAYS = 7, EV_OM_BAR_MAX_RATIO = 3, EV_OM_SPARK_MAX_RATIO = 3;\nconst EV_OM_STATUS = { in_band: 'in band', above: 'backlog growing', below: 'scouting below cadence', no_data: 'no data' };\n")
-	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evServerCard", "evCalibrationSeries", "evCalibrationControls", "evSelectConfidence", "evOutcomesSvg", "evOutcomesByModelHtml", "evControlArmHtml", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "evIssueReopenRatesHtml", "evOmStatusLabel", "evOmRatioText", "evOmVerdict", "evOmSparkline", "evOpensMergesHtml", "renderEvidenceSummary"} {
+	source.WriteString("const EV_PALETTE_SIZE = 6, EV_SVG_W = 320, EV_TOP_REASONS = 3;\nconst EV_WRITE_TIERS = ['ADVISORY', 'ISSUES_ONLY', 'ISSUES_AND_PRS', 'ISSUES_PRS_MERGE'];\nlet evLast = null;\nlet evConfidenceSeries = 'self-reported';\nconst evWindowLabel = () => 'all time';\nconst evWindowControls = () => '';\nconst evExplainerHtml = () => ({ button: '', body: '' });\nconst EV_CALIB_MIN_BUCKET_N = 5, EV_GRADE_MIN_N = 20;\nconst evDetails = {};\nlet evFetch = null, evFetchError = null, evLoadedKey = 'k';\nconst evSelectionKey = () => 'k';\nconst renderEvidenceStatus = () => { throw new Error('status view drawn for loaded data'); };\nconst EV_OM_DRAIN_MAX = 1, EV_OM_SCOUT_MIN = 1, EV_OM_SCOUT_MAX = 2, EV_OM_PARITY_TOLERANCE = 0.25, EV_OM_ROLLING_DAYS = 30, EV_OM_SPARK_TRAIL_DAYS = 7, EV_OM_BAR_MAX_RATIO = 3, EV_OM_SPARK_MAX_RATIO = 3;\nconst EV_OM_STATUS = { in_band: 'in band', above: 'backlog growing', below: 'scouting below cadence', no_data: 'no data' };\n")
+	for _, name := range []string{"escapeHtml", "evRate", "evPanel", "evServerCard", "evCalibrationSeries", "evCalibrationControls", "evSelectConfidence", "evOutcomesSvg", "evOutcomesByModelHtml", "evControlArmHtml", "evCalibrationSvg", "evAccuracySvg", "evShadowGateSvg", "evClaimVsVerdictSvg", "evWriteActivitySvg", "evCIGateHtml", "evCIRecoveryHtml", "evGateGrade", "evConvergenceGrade", "evConvergenceSvg", "evPct", "evWindowHint", "evSentinelSparkline", "evWorkBalanceSvg", "evMaintainabilityRows", "evMaintainabilitySvg", "evGradeLine", "evIssueReopenRatesHtml", "evOmStatusLabel", "evOmRatioText", "evOmVerdict", "evOmSparkline", "evOpensMergesHtml", "evRender", "evStatusHtml", "renderEvidenceSummary"} {
 		source.WriteString(jsFunc(t, html, name))
 		source.WriteByte('\n')
 	}
@@ -315,7 +315,7 @@ assert.match(evGradeLine('none', 'needs more'), /<span class="ev-grade none">Rat
 assert.match(evGradeLine('strong'), /Rated: Strong<\/span>$/);
 const EV_AUTHOR_KINDS = ['human', 'agent', 'bot'];
 const PRT_WINDOWS = [], prtHours = 0;
-const card = {innerHTML: '', querySelector() { return null; }};
+const card = {innerHTML: '', querySelector() { return null; }, setAttribute() {}};
 const document = {getElementById() { return card; }};
 renderEvidenceSummary({...dto, all_time: true});
 assert.match(card.innerHTML, /data-ev-panel="maintainability" open><summary>Maintainability trend<span[^>]*>n=1/);
@@ -420,6 +420,12 @@ func TestEvidenceCardUIHasNoUndefinedCallees(t *testing.T) {
 	for _, fn := range []string{
 		"fetchEvidenceSummary",
 		"renderEvidenceSummary",
+		"renderEvidenceStatus",
+		"evRender",
+		"evStatusHtml",
+		"evSelectionKey",
+		"evFetchStatusText",
+		"retryEvidenceSummary",
 		"evPanel",
 		"evRate",
 		"evOutcomesSvg",
@@ -587,5 +593,102 @@ func TestEvidenceCardWindowTooShortHint(t *testing.T) {
 		if strings.Contains(html, stale) {
 			t.Errorf("stale closed-state copy still present: %q", stale)
 		}
+	}
+}
+
+// TestEvidenceCardLoadStates pins #19310: the card shows a loading state
+// while /api/evidence/summary is in flight, a distinct error state with Retry
+// when it fails or times out, and "no ... in this window" only after a
+// successful response. A refetch for a selection already in flight is not
+// stacked.
+func TestEvidenceCardLoadStates(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable: evidence load states not executed")
+	}
+	html := indexHTML(t)
+	for _, snippet := range []string{
+		`<div id="evidence-card" class="prt-card advisory-subsection-card evidence-card" aria-live="polite" aria-busy="true"><div class="ev-status ev-status-loading" role="status"><span class="ev-spinner" aria-hidden="true"></span>Loading evidence…</div></div>`,
+		".ev-spinner { display:inline-block;",
+		"animation:spin 0.8s linear infinite;",
+		"const EV_FETCH_TIMEOUT_MS = 90000;",
+	} {
+		if !strings.Contains(html, snippet) {
+			t.Errorf("Evidence load state missing snippet %q", snippet)
+		}
+	}
+	var source strings.Builder
+	source.WriteString("const EV_FETCH_TIMEOUT_MS = 90000, EV_MS_PER_SECOND = 1000;\nlet evLast = null, evLoadedKey = '', evFetch = null, evFetchError = null;\nlet evWindow = {hours: 24};\nlet prtRepo = '';\nconst evWindowControls = () => '<span class=\"pills\"></span>';\nconst evWindowLabel = () => 'last 24h';\nconst evWindowQuery = () => `hours=${evWindow.hours}`;\nlet rendered = [];\nfunction renderEvidenceSummary(dto) { evLast = dto || {}; rendered.push(dto); card.innerHTML = 'CARDS n=' + (dto.n || 0) + ' ' + evStatusHtml(true); }\n")
+	for _, name := range []string{"escapeHtml", "evSelectionKey", "evRender", "evFetchStatusText", "evStatusHtml", "renderEvidenceStatus", "retryEvidenceSummary", "fetchEvidenceSummary"} {
+		source.WriteString(jsFunc(t, html, name))
+		source.WriteByte('\n')
+	}
+	source.WriteString(`
+const assert = require('node:assert/strict');
+const attrs = {};
+const card = {innerHTML: '', setAttribute(k, v) { attrs[k] = v; }};
+const document = {getElementById() { return card; }};
+const window = {};
+let pending = [];
+let fetchCalls = 0;
+global.fetch = (url, opts) => { fetchCalls++; return new Promise((resolve, reject) => { pending.push({url, resolve, reject, opts}); if (opts && opts.signal) opts.signal.addEventListener('abort', () => { const e = new Error('aborted'); e.name = 'AbortError'; reject(e); }); }); };
+(async () => {
+  // 1. In flight: a loading state, no zero cards, aria-busy.
+  let p = fetchEvidenceSummary();
+  assert.match(card.innerHTML, /class="ev-status ev-status-loading" role="status"><span class="ev-spinner"[^>]*><\/span>Loading evidence for this window/);
+  assert.doesNotMatch(card.innerHTML, /CARDS|n=0|in this window<\/div>/);
+  assert.equal(attrs['aria-busy'], 'true');
+  // 2. A periodic refresh for the same selection does not stack a request.
+  fetchEvidenceSummary();
+  assert.equal(fetchCalls, 1);
+  // 3. A gateway timeout is an error with Retry, never n=0.
+  pending.shift().resolve({ok: false, status: 504, json: async () => ({})});
+  await p;
+  assert.match(card.innerHTML, /class="ev-status ev-status-error" role="alert">Could not load evidence: HTTP 504: the server took too long to answer\. Cards are hidden rather than shown as zero\. <button[^>]*data-action="retryEvidenceSummary"[^>]*>Retry<\/button>/);
+  assert.doesNotMatch(card.innerHTML, /CARDS|n=0/);
+  assert.equal(attrs['aria-busy'], 'false');
+  // 4. A network error is an error too.
+  p = retryEvidenceSummary();
+  assert.match(card.innerHTML, /Loading evidence for this window/);
+  pending.shift().reject(new TypeError('Failed to fetch'));
+  await p;
+  assert.match(card.innerHTML, /Could not load evidence: Failed to fetch\./);
+  // 5. Retry, then success: cards render from the real response.
+  p = retryEvidenceSummary();
+  pending.shift().resolve({ok: true, status: 200, json: async () => ({n: 149})});
+  await p;
+  assert.match(card.innerHTML, /^CARDS n=149 $/);
+  // 6. A refresh while data is shown keeps the cards and says it is refreshing.
+  p = fetchEvidenceSummary();
+  assert.match(card.innerHTML, /CARDS n=149 <div class="ev-status ev-status-refreshing" role="status">/);
+  pending.shift().resolve({ok: false, status: 500, json: async () => ({})});
+  await p;
+  assert.match(card.innerHTML, /CARDS n=149 <div class="ev-status ev-status-error" role="alert">Could not refresh evidence: HTTP 500\. Showing the last data that loaded\./);
+  // 7. A new window does not show the old window's cards while it loads,
+  // and a stale answer for the old window is dropped.
+  p = fetchEvidenceSummary();
+  const stale = pending.shift();
+  evWindow = {hours: 168};
+  const p2 = fetchEvidenceSummary();
+  await p; // the superseded request was aborted
+  assert.match(card.innerHTML, /Loading evidence for this window/);
+  assert.doesNotMatch(card.innerHTML, /CARDS/);
+  stale.resolve({ok: true, status: 200, json: async () => ({n: 1})});
+  pending.shift().resolve({ok: true, status: 200, json: async () => ({n: 872})});
+  await p2;
+  assert.match(card.innerHTML, /^CARDS n=872 $/);
+  assert.equal(rendered.filter((d) => d && d.n === 1).length, 0);
+  // 8. Switching back to a window with no data for it redraws the status view.
+  evWindow = {hours: 24};
+  evRender();
+  assert.match(card.innerHTML, /Loading evidence for this window/);
+  // 9. A request that outlives the client timeout is reported as a timeout.
+  assert.match(fetchEvidenceSummary.toString(), /setTimeout\(\(\) => \{ call\.timedOut = true; controller\.abort\(\); \}, EV_FETCH_TIMEOUT_MS\)/);
+  assert.match(fetchEvidenceSummary.toString(), /no answer after \$\{EV_FETCH_TIMEOUT_MS \/ EV_MS_PER_SECOND\} s/);
+  assert.equal(evFetchStatusText(403), 'HTTP 403: this login cannot read evidence');
+})().catch((e) => { console.error(e); process.exit(1); });
+`)
+	if out, err := exec.Command(node, "-e", source.String()).CombinedOutput(); err != nil {
+		t.Fatalf("evidence load states failed: %v\n%s", err, out)
 	}
 }

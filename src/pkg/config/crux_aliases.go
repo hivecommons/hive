@@ -61,6 +61,7 @@ type (
 type (
 	SandboxJobAffinity                = cruxconfig.SandboxJobAffinity
 	SandboxPreflightConfig            = cruxconfig.SandboxPreflightConfig
+	SandboxSetupConfig                = cruxconfig.SandboxSetupConfig
 	SandboxJobNodeAffinity            = cruxconfig.SandboxJobNodeAffinity
 	SandboxJobNodeSelector            = cruxconfig.SandboxJobNodeSelector
 	SandboxJobNodeSelectorTerm        = cruxconfig.SandboxJobNodeSelectorTerm
@@ -186,6 +187,7 @@ var (
 
 var (
 	APIKeySHA256              = cruxconfig.APIKeySHA256
+	CanonicalizeClaudeModel   = cruxconfig.CanonicalizeClaudeModel
 	CopiedSandboxBlock        = cruxconfig.CopiedSandboxBlock
 	AllowSecretFileRoot       = cruxconfig.AllowSecretFileRoot
 	DropDanglingModelFlag     = cruxconfig.DropDanglingModelFlag
@@ -193,6 +195,7 @@ var (
 	IsInferenceBackend        = cruxconfig.IsInferenceBackend
 	LiteLLMChatCompletionsURL = cruxconfig.LiteLLMChatCompletionsURL
 	LocalLiteLLMProxyURL      = cruxconfig.LocalLiteLLMProxyURL
+	OpenAIURL                 = cruxconfig.OpenAIURL
 	ModelArgs                 = cruxconfig.ModelArgs
 	ModelFlag                 = cruxconfig.ModelFlag
 	NormalizeKickLogSource    = cruxconfig.NormalizeKickLogSource
@@ -272,3 +275,25 @@ const (
 var NormalizeStandbyTier = cruxconfig.NormalizeStandbyTier
 
 var DefaultRepeatFailureExclude = cruxconfig.DefaultRepeatFailureExclude
+
+// CanonicalizeModelForBackend is the one mapping between the Claude CLI and
+// Copilot CLI spellings of the same Claude model (see crux/config).
+var CanonicalizeModelForBackend = cruxconfig.CanonicalizeModelForBackend
+
+// Sandbox preflight and Job scheduling bounds the dashboard's Settings
+// controls validate against (hivecommons/hive#19553).
+const (
+	MaxSandboxPreflightCommands          = cruxconfig.MaxSandboxPreflightCommands
+	DefaultSandboxPreflightTimeoutS      = cruxconfig.DefaultSandboxPreflightTimeoutS
+	DefaultSandboxPreflightTotalTimeoutS = cruxconfig.DefaultSandboxPreflightTotalTimeoutS
+	DefaultSandboxScheduleTimeoutS       = cruxconfig.DefaultSandboxScheduleTimeoutS
+	// Sandbox setup step bounds (hivecommons/hive#19574).
+	MaxSandboxSetupCommands          = cruxconfig.MaxSandboxSetupCommands
+	DefaultSandboxSetupTimeoutS      = cruxconfig.DefaultSandboxSetupTimeoutS
+	DefaultSandboxSetupTotalTimeoutS = cruxconfig.DefaultSandboxSetupTotalTimeoutS
+)
+
+var (
+	ValidateSandboxPreflight = cruxconfig.ValidateSandboxPreflight
+	ValidateSandboxSetup     = cruxconfig.ValidateSandboxSetup
+)

@@ -63,6 +63,7 @@ var heartbeatResponseFieldFence = map[string]heartbeatFieldClass{
 	"HubBanner":         heartbeatFieldAllowed, // admin message, display only
 	"ActivityETag":      heartbeatFieldAllowed,
 	"ActivityEventsAck": heartbeatFieldAllowed,
+	"Protocol":          heartbeatFieldAllowed, // feature negotiation answer (#19237)
 	// Response signature binding.
 	"SigHiveID":   heartbeatFieldAllowed,
 	"SigSeq":      heartbeatFieldAllowed,

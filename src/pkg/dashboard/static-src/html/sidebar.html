@@ -25,8 +25,13 @@
       <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spek)</span></a>
     </div>
     <div class="oc-nav-group" id="oc-agent-nav-group">
+      <div class="oc-nav-label">Agents</div>
+      <!-- The control panel and activity links sit outside the collapsible
+           tree body, so collapsing "All agents" keeps them visible. -->
+      <a class="oc-nav-item" data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🎛</span><span class="oc-nav-text">Control panel</span></a>
+      <a class="oc-nav-item" data-section="agent-activity-section" data-action="ocNavigate" data-arg0="agent-activity-section"><span class="oc-nav-emoji">📡</span><span class="oc-nav-text">Activity</span></a>
       <div class="oc-tree-toggle" data-action="ocToggleAgentTree" data-arg-types="t">
-        <span class="oc-tree-arrow">▼</span> <span>Agents</span>
+        <span class="oc-tree-arrow" aria-hidden="true">▼</span> <span class="oc-tree-label">All agents <span id="oc-agent-tree-count" class="oc-tree-count">(0)</span></span>
       </div>
       <div class="oc-tree-children" id="oc-agent-tree-body">
         <div id="oc-agent-tree">
@@ -51,26 +56,35 @@
       <a class="oc-nav-item" data-section="search-section" data-action="ocNavigate" data-arg0="search-section" hidden><span class="oc-nav-emoji">🔍</span><span class="oc-nav-text">Search</span></a>
       <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
     </div>
-    <div class="oc-nav-group">
-      <div class="oc-nav-label">Admin</div>
+    <div class="oc-nav-group" id="pull-requests-nav-group">
+      <div class="oc-nav-label">Pull requests</div>
+      <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">Review</span></a>
+      <a class="oc-nav-item" data-section="lifecycle-section" data-action="ocNavigate" data-arg0="lifecycle-section"><span class="oc-nav-emoji">🔀</span><span class="oc-nav-text">PR timeline</span></a>
+    </div>
+    <div class="oc-nav-group" id="usage-nav-group">
+      <div class="oc-nav-label">Usage</div>
       <a class="oc-nav-item" data-section="token-panel" data-action="ocNavigate" data-arg0="token-panel"><span class="oc-nav-emoji">🪙</span><span class="oc-nav-text">Tokens</span></a>
       <a class="oc-nav-item" data-section="cost-panel" data-action="ocNavigate" data-arg0="cost-panel"><span class="oc-nav-emoji">💵</span><span class="oc-nav-text">Cost</span></a>
-      <a class="oc-nav-item" data-section="review-queue-section" data-action="ocNavigate" data-arg0="review-queue-section"><span class="oc-nav-emoji">🔎</span><span class="oc-nav-text">Review</span></a>
-      <a class="oc-nav-item" data-section="agents-section" data-action="ocNavigate" data-arg0="agents-section"><span class="oc-nav-emoji">🤖</span><span class="oc-nav-text">Agents</span></a>
-      <a class="oc-nav-item" data-section="agent-activity-section" data-action="ocNavigate" data-arg0="agent-activity-section"><span class="oc-nav-emoji">📡</span><span class="oc-nav-text">Agent activity</span></a>
-      <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📜</span><span class="oc-nav-text">Audit Log</span></a>
-      <a class="oc-nav-item" data-section="lifecycle-section" data-action="ocNavigate" data-arg0="lifecycle-section"><span class="oc-nav-emoji">🔀</span><span class="oc-nav-text">Lifecycle Timeline</span></a>
-      <a class="oc-nav-item" data-section="debug-section" data-action="ocNavigate" data-arg0="debug-section"><span class="oc-nav-emoji">🩺</span><span class="oc-nav-text">Diagnostics</span></a>
     </div>
-    <div class="oc-nav-group">
+    <div class="oc-nav-group" id="troubleshooting-nav-group">
+      <div class="oc-nav-label">Troubleshooting</div>
+      <a class="oc-nav-item" data-section="debug-section" data-action="ocNavigate" data-arg0="debug-section"><span class="oc-nav-emoji">🩺</span><span class="oc-nav-text">Diagnostics</span></a>
+      <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📜</span><span class="oc-nav-text">Audit log</span></a>
+    </div>
+    <!-- Help mirrors the top bar "? Help" menu (#oc-help-menu): same labels,
+         same targets. A future Ask AI entry goes right after Getting started. -->
+    <div class="oc-nav-group" id="help-nav-group">
       <div class="oc-nav-label">Help</div>
+      <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting started checklist: one-time setup steps for a new hive, with a link to the full guide"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting started</span></a>
       <a class="oc-nav-item" data-section="faq-section" data-action="ocNavigate" data-arg0="faq-section" title="Short answers to the questions people ask once a hive is running: levels and holds, the Evidence card, release channels, the Model Gateway, pausing, cost, and where to get help"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
-      <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started checklist — one-time setup steps for a new hive"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting Started</span></a>
-      <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">📘</span><span class="oc-nav-text">API Spec (Redoc)</span></a>
-      <a class="oc-nav-item" href="https://docs.hivecommons.dev/docs/hive/getting-started" target="_blank" rel="noopener noreferrer" title="Zero to Automation: the beginner guide to running your hive, level by level"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Getting Started Guide</span></a>
-      <a class="oc-nav-item" href="https://hivecommons.dev/discord" target="_blank" rel="noopener"><span class="oc-nav-emoji">💬</span><span class="oc-nav-text">Join our Discord</span></a>
-      <a class="oc-nav-item" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener" title="Live stream of the hosted hive's Activity Monitor"><span class="oc-nav-emoji">📺</span><span class="oc-nav-text">Watch live on Twitch</span></a>
-      <a class="oc-nav-item" data-action="openFeedbackModal" data-arg0="bug" data-prevent="1"><span class="oc-nav-emoji">🐛</span><span class="oc-nav-text">Report an Issue</span></a>
+      <a class="oc-nav-item" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer" title="The Hive documentation, including the Getting Started guide"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Docs</span></a>
+      <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">🔌</span><span class="oc-nav-text">API reference</span></a>
+      <a class="oc-nav-item" data-action="openFeedbackModal" data-arg0="bug" data-prevent="1"><span class="oc-nav-emoji">🐛</span><span class="oc-nav-text">Report an issue</span></a>
+    </div>
+    <div class="oc-nav-group" id="community-nav-group">
+      <div class="oc-nav-label">Community</div>
+      <a class="oc-nav-item" href="https://hivecommons.dev/discord" target="_blank" rel="noopener"><span class="oc-nav-emoji">💬</span><span class="oc-nav-text">Discord</span></a>
+      <a class="oc-nav-item" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener" title="Live stream of the hosted hive's Activity Monitor"><span class="oc-nav-emoji">📺</span><span class="oc-nav-text">Live on Twitch</span></a>
     </div>
     <!-- Pinned label filters (#12172): one entry per pinned saved filter /
          preset with a live count across every project. Rendered by hfRenderPinned(). -->

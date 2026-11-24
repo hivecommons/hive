@@ -38,6 +38,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"automerge.(*engineStatusForge).CreateComment": {Class: NotificationClassStatus, Passthrough: true},
 
 	// status: bookkeeping readable on demand.
+	"main.reviewFeedbackSweep.acknowledgeRules":               {Class: NotificationClassStatus},
 	"dashboard.(*ContributeWSHub).markAlreadyDoneIssue":       {Class: NotificationClassStatus},
 	"dashboard.(*ContributeWSHub).releaseGateParkLabel":       {Class: NotificationClassStatus},
 	"dashboard.(*ContributeWSHub).releaseToolingBlockedLabel": {Class: NotificationClassStatus},
@@ -48,6 +49,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"dashboard.(*Server).handleRepoItemBlockerClosePartial":   {Class: NotificationClassStatus},
 	"dashboard.(*Server).handleRepoItemDecision":              {Class: NotificationClassStatus},
 	"dashboard.(*Server).handleRepoItemSentinelConfirm":       {Class: NotificationClassStatus},
+	"dashboard.(*Server).handleRepoItemSHAWaiver":             {Class: NotificationClassStatus},
 	"dashboard.(*Server).handleReviewQueueSupersededClose":    {Class: NotificationClassStatus},
 	"dashboard.(*Server).mirrorPlanWith":                      {Class: NotificationClassStatus},
 	"github.(*Client).CloseIssueForConfiguredLinePR":          {Class: NotificationClassStatus},
@@ -59,6 +61,9 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).SweepLegacyFleetReportIssues":           {Class: NotificationClassStatus},
 	"github.(*Client).closeDecomposedParent":                  {Class: NotificationClassStatus},
 	"github.(*Client).closeIssueForMergedPRClaimWithIssue":    {Class: NotificationClassStatus},
+	"github.(*Client).closeDoneTracker":                       {Class: NotificationClassStatus},
+	"github.(*Client).closeVerified":                          {Class: NotificationClassStatus},
+	"github.(*Client).parkVerifiedForClose":                   {Class: NotificationClassStatus},
 	"github.(*Client).closeSupersededPRDecision":              {Class: NotificationClassStatus},
 	"github.(*Client).fileReviewBacklog":                      {Class: NotificationClassStatus},
 	"github.(*Client).foldSentinelNotice":                     {Class: NotificationClassStatus},
@@ -117,11 +122,15 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).upsertScannerNote":                     {Class: NotificationClassAttention},
 	"github.(*Client).remindAttention":                       {Class: NotificationClassAttention},
 	"main.factCheckSweep.needsHuman":                         {Class: NotificationClassAttention},
+	"main.reviewFeedbackSweep.checkRuleReply":                {Class: NotificationClassAttention},
 	"main.reviewFeedbackSweep.needsHuman":                    {Class: NotificationClassAttention},
+	"main.reviewFeedbackSweep.proposeRuleHome":               {Class: NotificationClassAttention},
 
 	// required_review: a review submission or request a merge depends on.
 	"github.(*Client).QueuePRAutoMergeWithNoteResultAtHead": {Class: NotificationClassRequiredReview},
 	"github.(*Client).handleOneReviewRequest":               {Class: NotificationClassRequiredReview},
+	"github.(*Client).RerequestReview":                      {Class: NotificationClassRequiredReview},
+	"main.reviewFeedbackSweep.rerequestAddressedReviews":    {Class: NotificationClassRequiredReview},
 
 	// protocol_command: machine-consumed comments.
 	"dashboard.postClaimComment":                         {Class: NotificationClassProtocolCommand},

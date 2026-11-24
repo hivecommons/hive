@@ -623,14 +623,16 @@ func TestAgentByID_NotFound(t *testing.T) {
 	}
 }
 
-func TestWatcherSkipNext(t *testing.T) {
+// SkipNext is a no-op since hivecommons/hive#19561: it must not arm
+// anything that could swallow the next operator edit.
+func TestWatcherSkipNextIsNoOp(t *testing.T) {
 	w := NewWatcher("/tmp/test.yaml", func(c *Config) {}, nil)
 	w.SkipNext()
 	w.mu.Lock()
-	if !w.skipNext {
-		t.Error("skipNext should be true after SkipNext()")
+	defer w.mu.Unlock()
+	if w.timer != nil || w.stopped {
+		t.Error("SkipNext changed watcher state")
 	}
-	w.mu.Unlock()
 }
 
 func TestEnabledExplicitlySet_Default(t *testing.T) {

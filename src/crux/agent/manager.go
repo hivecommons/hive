@@ -319,6 +319,10 @@ type AgentProcess struct {
 	// to observe.
 	kickDelivering   atomic.Bool
 	lastTokenRestart time.Time // cooldown for auto-restart after token detection
+	// Last prompt-timeout WARN pane dump (UnixNano) and dumps demoted to INFO
+	// since; atomics as concurrent kick waits run without m.mu (#19376).
+	promptTimeoutDumpAt          atomic.Int64
+	promptTimeoutDumpsSuppressed atomic.Int64
 	// copilotModelFallbackRequested is the --model id (if any) the poller has
 	// already surfaced via LastError for paneShowsCopilotModelFallback
 	// (#9927): a restart cannot fix a rejected id — the CLI will substitute
@@ -1331,11 +1335,21 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 					"waited", inputPromptTimeout)
 				return false, kickPromptNotReadyReason
 			}
-			m.logger.Warn("prompt timeout — dumping pane",
-				"agent", agent.Name,
-				"session", agent.tmuxSession)
 			output := m.captureTmuxPaneForAgent(agent)
 			dialogTitle, hasDialog := claudePermissionDialog(output)
+			// Several kicks queued for one stuck agent each run this wait
+			// and time out together; one WARN dump per agent per window is
+			// the diagnostic, the rest are the same pane again. A single
+			// stuck agent dumping ~30 times a minute filed a fleet
+			// self-report on its own (#19376); the stall itself is still
+			// self-reported by markKickUndeliverableLocked.
+			if !m.claimPromptTimeoutDump(agent, time.Now()) {
+				return false, m.promptTimeoutAlreadyDumped(agent, dialogTitle, hasDialog)
+			}
+			m.logger.Warn("prompt timeout — dumping pane",
+				"agent", agent.Name,
+				"session", agent.tmuxSession,
+				"suppressed_since_last_dump", agent.promptTimeoutDumpsSuppressed.Swap(0))
 			m.logger.Warn("pane content at timeout",
 				"agent", agent.Name,
 				"len", len(output),

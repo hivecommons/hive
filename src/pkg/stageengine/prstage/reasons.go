@@ -97,9 +97,14 @@ const (
 	// edits `.github/workflows/**` needs `workflows: write`; without it the
 	// lane parks the PR for a person's merge click (hivecommons/hive#14664).
 	UnauthorizedStepMergeWorkflowPath = "merge-workflow-path"
-	TrustedAuthorReasonAppAuthored    = "trusted-author:app-authored"
-	TrustedBotLaneSkipReason          = "trusted-bot-lane"
-	WorkflowApprovalRequiredPrefix    = "workflow-approval-required:"
+	// UnauthorizedStepPostPRGateStatus: the hive posts the required PR-contents
+	// check itself (auto_merge.pr_gate, enforce) and its installation lacks
+	// Commit statuses write, or GitHub refused the write; an organization
+	// owner accepts the permission (hivecommons/hive#19038).
+	UnauthorizedStepPostPRGateStatus = "post-pr-gate-status"
+	TrustedAuthorReasonAppAuthored   = "trusted-author:app-authored"
+	TrustedBotLaneSkipReason         = "trusted-bot-lane"
+	WorkflowApprovalRequiredPrefix   = "workflow-approval-required:"
 	// WorkflowRunsHeldPrefix: GitHub holds workflow runs on the head behind
 	// its approve-workflows gate and the hive did not approve them (its
 	// policy does not trust the head, auto-approval is off, or GitHub

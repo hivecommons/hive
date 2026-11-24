@@ -116,6 +116,13 @@ func EnforceStageAdding(ctx context.Context, l Labeler, k Item, owner, repo stri
 		if lab == StalledLabel {
 			want.Stalled = true
 		}
+		// A model-owned spelling of the same stage (#19611) is the bound
+		// model's label, not a stale one: a hook that only knows the stage
+		// keeps it rather than swapping in the built-in slug the model's
+		// writer would swap straight back.
+		if s, ok := StageOfLabel(lab); ok && s == stage && stage != None && want.StageLabel == "" {
+			want.StageLabel = strings.TrimSpace(lab)
+		}
 	}
 	add, remove := Plan(fresh, want)
 	for _, lab := range extra {

@@ -172,7 +172,7 @@ jobs:
       # #10234). Never fails the job.
       - name: Warm shared Go tool cache (serialize the cold-cache population)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           cache: false
           go-version-file: src/go.mod
@@ -216,7 +216,7 @@ jobs:
       # #10234). Never fails the job.
       - name: Warm shared Go tool cache (serialize the cold-cache population)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           cache: false
           go-version-file: src/go.mod
@@ -244,23 +244,26 @@ jobs:
           GOBIN: ${{ runner.temp }}/hive-ci-tools
         run: go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
 
+      - name: Gosec HIGH gate self-test
+        run: python3 .github/scripts/test-gosec-high-gate.py
+
       # -exclude-generated: generated files are not hand-maintained, so a
       # finding there is not actionable by a reviewer.
       # Test files are IN scope deliberately: a test that shells out on
       # attacker-influenced input is a real hole, not a test-only concern.
-      # NON-BLOCKING FOR NOW, deliberately and temporarily.
       #
-      # The first run surfaced a real backlog, including G115 integer-overflow
-      # conversions in pkg/knowledge and pkg/dashboard. Those deserve triage on
-      # their own merits, not a rushed batch fix under a red gate — and a gate
-      # that blocks every PR from day one on a pre-existing backlog gets
-      # disabled rather than drained.
-      #
-      # So gosec RUNS and its findings are visible in the log on every PR, but
-      # does not fail the build yet. Flipping this to blocking is the last step
-      # of the triage issue #4903; do not flip it before the
-      # HIGH-severity findings are resolved, and do not delete the step to make
-      # the summary look clean.
+      # BLOCKING ON HIGH SEVERITY (#19443). The scan itself never fails
+      # (-no-fail): it prints the full text report, every severity, to the
+      # log and writes a JSON copy. The "Fail on HIGH-severity findings" step
+      # below reads both module reports and fails the job on any HIGH finding
+      # that is not in .github/gosec-high-baseline.json — a ratchet, like the
+      # Semgrep --baseline-commit run in static-security.yml. The baseline
+      # holds the ~230 HIGH findings already in the tree when the gate landed
+      # (#4903 backlog) and only shrinks. MEDIUM and LOW findings stay visible
+      # and do not block. A new HIGH finding that is not exploitable is
+      # suppressed at the line with `#nosec <rule> -- <reason>`, not by adding
+      # it to the baseline or weakening this gate. A scan that crashes before
+      # writing its report fails closed in the gate.
       #
       # -concurrency 4: gosec defaults to runtime.NumCPU(), which in a runner
       # pod is the NODE's 32 vCPUs, not the pod's 6-CPU limit
@@ -272,17 +275,18 @@ jobs:
       # (test-native-queue-workflows.py enforces it).
       - name: Scan
         working-directory: src
-        continue-on-error: true
         # The nested src/crux module is not loaded from here; it has its own
         # "Scan crux module" step below.
-        run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
+        run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated -no-fail -fmt json -out "${{ runner.temp }}/gosec-src.json" -stdout -verbose text ./...'
 
       # src/crux is a nested Go module: the src/ scan above does not load it
       # (0 "Checking file: .../src/crux/" lines), so scan it from its own root.
       - name: Scan crux module
         working-directory: src/crux
-        continue-on-error: true
-        run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated ./...'
+        run: '"${{ runner.temp }}/hive-ci-tools/gosec" -concurrency 4 -exclude-generated -no-fail -fmt json -out "${{ runner.temp }}/gosec-crux.json" -stdout -verbose text ./...'
+
+      - name: Fail on HIGH-severity findings
+        run: python3 .github/scripts/gosec-high-gate.py "${{ runner.temp }}/gosec-src.json" "${{ runner.temp }}/gosec-crux.json"
 
   golangci-lint:
     needs: required-context-scope
@@ -304,7 +308,7 @@ jobs:
       # #10234). Never fails the job.
       - name: Warm shared Go tool cache (serialize the cold-cache population)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           cache: false
           go-version-file: src/go.mod
@@ -402,7 +406,7 @@ jobs:
       # #10234). Never fails the job.
       - name: Warm shared Go tool cache (serialize the cold-cache population)
         run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           cache: false
           go-version-file: src/go.mod

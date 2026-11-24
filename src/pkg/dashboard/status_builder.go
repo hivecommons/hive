@@ -842,6 +842,8 @@ func buildPlatform(cfg *config.Config) *FrontendPlatform {
 	case config.ForgeGitea:
 		// Gitea has no public default, so any configured URL is meaningful.
 		p.Forge.InstanceURL = cfg.Gitea.InstanceURL()
+	case config.ForgeForgejo:
+		p.Forge.InstanceURL = cfg.Forgejo.InstanceURL()
 	}
 
 	// --- Mint --- (never expose key material — enabled/issuer/keyPresent only)
@@ -2533,7 +2535,7 @@ func earliestRFC3339(a, b string) string {
 func repoForge(cfg *config.Config, repo string) (kind, url string) {
 	kind = cfg.ForgeKindForRepo(repo)
 	switch kind {
-	case config.ForgeGitLab, config.ForgeGitea:
+	case config.ForgeGitLab, config.ForgeGitea, config.ForgeForgejo:
 		url = cfg.ForgeURLForRepo(repo)
 	}
 	return kind, strings.TrimRight(url, "/")

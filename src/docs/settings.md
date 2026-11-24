@@ -4,7 +4,7 @@ This page is the starting point for the dashboard's **Settings** tabs. It has on
 
 Every setting on a Settings tab has a small **?** mark next to its name. Rest the pointer on it, or move to it with the Tab key, to see a short explanation of the setting. Click it, tap it, or press Enter on it to open the page that explains the setting in a new tab. When a setting has its own guide, the mark opens that guide; otherwise it opens this page at the tab's entry. Clicking a mark never changes the setting.
 
-For the dashboard's other sections, see [Dashboard sections explained](dashboard-sections.md). For which file a saved setting is written to, see [Spoke configuration layering](config-layering.md).
+For the dashboard's other sections, see [Dashboard sections explained](dashboard-sections.md); to find a section or a tab by its on-screen name, see the [Dashboard UI map](dashboard-ui-map.md). If a key has no editable control, see [Editing `hive.yaml`](editing-hive-yaml.md) for file locations and reload behavior.
 
 ## Linking to a setting
 
@@ -44,6 +44,17 @@ Which labels hold, require, or route work, the label the merger queue applies to
 
 The repos the hive manages and the caps on how many issues and PRs are listed in one kick (`governor.kick_limits`). See the `governor.kick_limits` row of the [notable fields](operator-reference.md#notable-fields).
 
+To add a repository to an existing hive, open its dashboard and choose
+**Settings → Repos**, or use the gear on **Projects**. Enter `org/repo` or the
+GitHub URL for the hive's forge and choose **+ Add**. If the GitHub App needs
+access, follow **Manage App access**, then choose **Re-check & add**. Choose
+**Save & close** to apply the monitored list. Adding a repository from a
+different organization migrates the hive to that organization. To request
+a *new* hosted hive instead, use
+[Request a hosted hive for a repo](hosted-hub.md#2-request-a-hosted-hive-for-a-repo).
+
+The same tab has a **Parent auto-close** card (owner only, `repos.<key>.parent_autoclose`): per monitored repo, choose "Close finished parents (default)", "Also close epics and holds", "Also close trackers whose work is done" or "Never auto-close parents". It shows the effective value for each repo, applies on save without a restart, and is audited. A parent a person reopened is never re-closed, and issues marked as tracking issues are never auto-closed. See [stage-labels](labels-and-control-signals/stage-labels.md#decomposed-parents--closed-by-their-children-never-stalled).
+
 ## Budget
 
 The token budget and its rolling period, optional dollar and coin caps, the percentage at which the governor enters budget-critical mode, per-agent exemptions, and the model lock that stops automatic model downgrades. See [Governor cadence and budget](operator-reference.md#governor-cadence-and-budget) and [Token collection and usage tracking](token-tracking.md).
@@ -79,6 +90,8 @@ Where rolling log files are written, when they rotate, how long rotated files ar
 
 Input/output scanning, the agent sandbox runner, and suspicious-activity alerts. See [ioscan](ioscan.md), [Credential-free sandbox isolation](sandbox-isolation.md), [Suspicious-activity alerts](operator-reference.md#suspicious-activity-alerts-sentinel), and the [Security Model](security-model.md).
 
+"Advanced sandbox: default image and Job settings", then "Job scheduling, resources, preflight, setup and GitHub read relay", holds the hive-wide Kubernetes Job defaults: node selector, resource limits and requests (including device resources such as `ibm.com/spyre_pf`), tolerations, image pull secret names, schedule timeout, the node preflight commands and timeouts (`agent_sandbox.preflight`), the workspace setup step (`agent_sandbox.setup`: setup commands and health checks run in the checked-out workspace after the preflight and before the agent, and their two timeouts), and the opt-in GitHub read relay (`agent_sandbox.job.github_read_proxy`, applied when hive restarts). Maps take one `key=value` per line and tolerations one taint per line. See [Setting up a sandbox from the dashboard](sandbox-isolation.md#setting-up-a-sandbox-from-the-dashboard).
+
 ## Features
 
 Optional capabilities, each off or inert until you turn it on. Where a feature has its own guide, its **?** mark opens that guide:
@@ -91,14 +104,16 @@ Optional capabilities, each off or inert until you turn it on. Where a feature h
 - Auto-merge: [App self-merge sweep](operator-reference.md#app-self-merge-sweep-auto_merge), [Trusted bot authors](hive-merge.md#trusted-bot-authors), [Trusted-author auto-merge](hive-merge.md#trusted-author-auto-merge), and the per-repository merge policy (`auto_merge.require_current_base`, `auto_merge.squash_only`, `auto_merge.human_merge_paths`, `auto_merge.human_merge_pin_only`, `auto_merge.human_merge_owner_approval`).
 - Review gate: [Review swarm](review-swarm.md#configuration), [Blocking line and backlog](review-swarm.md#blocking-line-reviewseverity-reviewbacklog), and [external review bot threads](review-bot-threads.md).
 - Trajectory review: [Trajectory-Review Lane](trajectory-review.md#configuration).
+- Reviewer-stated rules: [Reviewer-stated rules from review feedback](review-feedback-rules.md#settings). A card under Review (owner only, `review_feedback.rules.*`) turns capture on or off, picks whose rules are recorded at once, adds phrases that count, and switches built-in signals off; each control shows its default and where the current value comes from.
 - Linear agent: [Linear agent integration](linear-agent.md).
 - Upstream watch: [Upstream watch](upstream-watch.md#configuration).
+- Ask AI help: [Ask AI help](ask-ai-help.md).
 
 The other features on this tab (OpenTelemetry export, external execution, auto-plan, issue claims, PR follow-up, long-running runs, provider rotation, merge recommendations, convergence rollout, stall replan, and question auto-close) are explained by their **?** tooltips, and their configuration keys are listed in the [Hive operator reference](operator-reference.md#configuration-blocks).
 
 ## Knowledge
 
-Whether the public read-only knowledge MCP endpoint is on, the knowledge pipeline, and the external knowledge connectors. The **Knowledge pipeline** block sets the bead synthesizer (schedule, target layer, minimum confidence, per-cycle fact and GitHub API caps, bead retention), scheduled curator promotion (schedule, threshold, source and target layers), repository code maps (schedule, layer, size cap) and the kick primer's fact and byte caps. Turning the bead synthesizer on or off applies at once; the other pipeline settings apply after a restart, and 0 or empty restores the default. The engine, the vault paths and the primer merge strategy are shown read-only because they are set in `hive.yaml`. The repositories to map and the primer priority list stay yaml-only. See [Knowledge curator](knowledge-curator.md) and [Knowledge connectors](knowledge-connectors.md).
+Whether the public read-only knowledge MCP endpoint is on, the knowledge pipeline, and the external knowledge connectors. The **Knowledge pipeline** block opens with the **Mid-task advisor for sidecar runtimes** switch (`knowledge.sidecar_advise`, off by default, applies at once, needs `knowledge.advisor` set in `hive.yaml`; see [Sidecar runtimes](agent-knowledge-and-memory.md#sidecar-runtimes-knowledgesidecar_advise)), then sets the bead synthesizer (schedule, target layer, minimum confidence, per-cycle fact and GitHub API caps, bead retention), scheduled curator promotion (schedule, threshold, source and target layers), repository code maps (schedule, layer, size cap) and the kick primer's fact and byte caps. Turning the bead synthesizer on or off applies at once; the other pipeline settings apply after a restart, and 0 or empty restores the default. The engine, the vault paths and the primer merge strategy are shown read-only because they are set in `hive.yaml`. The repositories to map and the primer priority list stay yaml-only. See [Knowledge curator](knowledge-curator.md) and [Knowledge connectors](knowledge-connectors.md).
 
 ## Meeting attendee
 
@@ -127,6 +142,42 @@ The **Hub settings** block at the bottom of the tab sets explicit task acceptanc
 
 The OpenAI-compatible gateways (LiteLLM, OpenRouter, vLLM, and others) agents send inference through, and their keys. See [Configure model gateways and keys](hosted-hub.md#configure-model-gateways-and-keys).
 
+## Appearance
+
+The dashboard's look, stored under `dashboard.theme_overrides`: a background image (URL, opacity, position, size, attachment), the UI and monospace fonts, CSS token overrides, light-mode token overrides and custom CSS. See [Appearance themes](dashboard.md#appearance-themes).
+
+## Agents
+
+The managed agents (click a name to open that agent's settings tabs, described under [Agent: General](#agent-general) and below) and the **Backend placement policy**, which restricts the CLI or inference backends agents may use. Deny wins over allow, and an empty allow list permits every supported backend. See [Agent Configuration](agent-configuration.md).
+
+## Workflows
+
+The workflow library: the workflows this hive can run for its repos. Each control's **?** tooltip explains it.
+
+## Inbox
+
+Settings for the [Inbox](dashboard-sections.md#inbox) section. See [Input methods and the Inbox](inbox-input-methods.md) and [Inbox and voice sources](inbox-voice-sources.md).
+
+## Project Observability
+
+Targets for the managed project's telemetry and operations agents. Platforms are referenced by name only (an endpoint environment variable and a credential secret reference); literal URLs, tokens and API keys are refused. Hive's own OpenTelemetry export is set elsewhere. See [How to opt in](telemetry.md#how-to-opt-in-governorproject_observability).
+
+## Meetings
+
+The connections Hive uses to join meetings: the Vexa tenant key and, for Discord, the bot token and the transcription and speech tokens. The tab shows only whether each secret is set. See [Meetings](meetings.md).
+
+## Forge App
+
+The GitHub App (or other forge app) this hive authenticates as, the per-app key files it holds, and the GitHub API budget. See [GitHub App setup](github-app-setup.md) and [GitHub API budget governor](operator-reference/sweeps-and-operations.md#github-api-budget-governor).
+
+## Bob
+
+The hive-wide API key for the IBM Bob CLI backend (agents that use bob cannot start without it) and the Bob session prefix. See [Tagging Bob sessions for Bobalytics](backend-support-tiers.md#tagging-bob-sessions-for-bobalytics).
+
+## Variables
+
+Named variables that agents' prompt templates can use: each has a name, a type, a scope, and a value or an environment variable, with an optional default.
+
 ## Dashboard
 
 Settings for the dashboard itself (`dashboard.*`): its port and agent poll interval, the Experiment Lab, whether the header also shows the usage gauge, hub-proxied auth, Sessions, the dashboard auth token, the access allowlist, and the issue bands.
@@ -142,6 +193,8 @@ How your configuration maps to SOC 2, FedRAMP, and ISO 27001 controls. See [The 
 ## Agent: General
 
 One agent's identity, engine, model, and behaviour: name, role, kick template, operating mode, sandbox, CLI pin, caveman, Jev, and explain modes, and the repos and keywords it works on. See [Agent Configuration](agent-configuration.md#anatomy-of-an-agent).
+
+"Sandbox settings: image, runtime and Job" also has the agent's own Job scheduling (node selector, resource limits and requests, tolerations, image pull secrets, schedule timeout) and "Node preflight" with an override switch: off inherits `agent_sandbox.preflight`, on uses this agent's list, and an empty list turns preflight off for it. "Workspace setup" works the same way with "Use this agent's own setup" (`sandbox.setup`; empty lists turn it off). "In effect for this agent" shows each resolved value, including the preflight and the setup step, and whether it comes from this agent or from `agent_sandbox` defaults, and warns when the agent's own Job block hides hive-wide scheduling fields. See [Setting up a sandbox from the dashboard](sandbox-isolation.md#setting-up-a-sandbox-from-the-dashboard).
 
 ## Agent: Pipeline
 

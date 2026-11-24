@@ -9,6 +9,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func reviewer(name string) AgentCapability {
@@ -170,7 +171,7 @@ func TestBuildFixPromptAndCapExhaustion(t *testing.T) {
 	if !strings.Contains(prompt, "nil panic") || !strings.Contains(prompt, "attempt 1") || !strings.Contains(prompt, "Hive-Fix-Attempt: 1/") || !strings.Contains(prompt, "acme/hive#7") {
 		t.Fatalf("fix prompt missing expected context:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "git commit -s") || !strings.Contains(prompt, "git rebase --signoff") || !strings.Contains(prompt, "Signed-off-by") {
+	if !strings.Contains(prompt, "git commit -s") || !strings.Contains(prompt, stagelabels.OwnSignoffRebaseExec) || strings.Contains(prompt, "git rebase --signoff") || !strings.Contains(prompt, "Signed-off-by") {
 		t.Fatalf("fix prompt must require sign-off on follow-up commits:\n%s", prompt)
 	}
 	state := DispatchState{}

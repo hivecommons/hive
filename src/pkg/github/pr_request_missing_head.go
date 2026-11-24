@@ -43,6 +43,31 @@ func (e *errMissingHead) Error() string {
 		e.head, e.repo, PushBranchRequestDir)
 }
 
+// errMissingBase reports that the PR request's base branch does not exist on
+// the remote while the head does. Unlike a missing head, no push can fix it, so
+// the watcher rejects the request instead of retrying with backoff.
+type errMissingBase struct {
+	repo  string
+	base  string
+	cause error
+}
+
+func (e *errMissingBase) Unwrap() error { return e.cause }
+
+func (e *errMissingBase) Error() string {
+	return fmt.Sprintf(
+		"base branch %q does not exist on %s; re-submit the PR request with the repository's real target branch as base",
+		e.base, e.repo)
+}
+
+func missingBaseReason(err error) (string, bool) {
+	var missing *errMissingBase
+	if !errors.As(err, &missing) {
+		return "", false
+	}
+	return missing.Error(), true
+}
+
 // missingHeadReason renders an errMissingHead for the operator-facing surfaces
 // (result file, quarantine log) and reports whether err was one.
 func missingHeadReason(err error) (string, bool) {
@@ -164,7 +189,14 @@ func (c *Client) diagnoseCompareFailure(ctx context.Context, owner, repo, base, 
 	}
 
 	// The head ref DOES exist, so the 404 was about something else — most
-	// likely the base. Say that rather than inventing a push failure.
+	// likely the base. Confirm it: a base branch that is absent is permanent
+	// (only a corrected request can fix it), so it must not retry forever.
+	baseRef := "refs/heads/" + strings.TrimPrefix(strings.TrimSpace(base), "refs/heads/")
+	if _, _, err := c.client.Git.GetRef(ctx, owner, repo, baseRef); err != nil &&
+		errors.As(err, &ghErr) && ghErr.Response != nil &&
+		ghErr.Response.StatusCode == http.StatusNotFound {
+		return &errMissingBase{repo: owner + "/" + repo, base: base, cause: cause}
+	}
 	return fmt.Errorf(
 		"comparing %s/%s %s...%s: GitHub returned 404 although branch %q exists — check that the base branch %q exists on the remote: %w",
 		owner, repo, base, head, head, base, cause)

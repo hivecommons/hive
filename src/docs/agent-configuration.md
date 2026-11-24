@@ -796,6 +796,39 @@ The agent inference proxy (`127.0.0.1:18444`) no longer keeps the key it resolve
 
 When the gateway answers `401`, the proxy re-resolves the key once. If that yields a different key, it retries the request once with it, and counts an auth failure only when the retry is also rejected. An unchanged key is not retried. The `inference backend auth failure` WARN carries `key_source` (`file:<path>`, `env:<NAME>`, `static` for a route with a fixed credential such as a minted watsonx IAM token, or `none`) and `key_changed_since_start` (whether the key differs from the first key this process resolved for that backend). It never logs the key.
 
+#### Translator timeouts and bounded retry
+
+The inference translator that carries every agent's model calls to a gateway has no timeout and no retry for a rate limit or server error unless you opt in ([#19057](https://github.com/hivecommons/hive/issues/19057)). Everything below is **off by default**: with the block absent, or every value at its default, the translator behaves exactly as before. Settings are read once at start, so a change needs a restart.
+
+```yaml
+governor:
+  inference_resilience:
+    connect_timeout_s: 0           # TCP connect to the gateway; 0 = off
+    response_header_timeout_s: 0   # wait for the upstream to start answering; 0 = off
+    idle_stream_timeout_s: 0       # cut a response that sends no bytes for this long; 0 = off
+    retry_enabled: false           # bounded retry for 429 and 5xx
+    retry_max_retries: 2           # retries after the first attempt (at most 5)
+    retry_base_delay_ms: 500       # first backoff step; doubles each retry
+    retry_max_delay_s: 20          # cap on one wait and on an honored Retry-After
+```
+
+| Key | Environment variable | Default |
+| --- | --- | --- |
+| `connect_timeout_s` | `HIVE_INFERENCE_CONNECT_TIMEOUT_S` | `0` (off) |
+| `response_header_timeout_s` | `HIVE_INFERENCE_RESPONSE_HEADER_TIMEOUT_S` | `0` (off) |
+| `idle_stream_timeout_s` | `HIVE_INFERENCE_IDLE_STREAM_TIMEOUT_S` | `0` (off) |
+| `retry_enabled` | `HIVE_INFERENCE_RETRY_ENABLED` | `false` |
+| `retry_max_retries` | `HIVE_INFERENCE_RETRY_MAX_RETRIES` | `2` (maximum `5`) |
+| `retry_base_delay_ms` | `HIVE_INFERENCE_RETRY_BASE_DELAY_MS` | `500` |
+| `retry_max_delay_s` | `HIVE_INFERENCE_RETRY_MAX_DELAY_S` | `20` |
+
+A valid environment variable wins over the yaml key; an invalid one is ignored and named in a start-up warning. Values are whole numbers, and seconds are capped at 3600.
+
+- **Timeouts.** The connect and response-header timeouts apply to the request to the gateway. A non-streaming call only gets headers once the model has finished, so keep `response_header_timeout_s` above your longest healthy generation. The idle-stream timeout counts only time spent waiting for the upstream, from one byte to the next, so a stream that is slow but keeps producing bytes is never cut. A timeout is not retried: the agent gets the same `502` (before any byte) or the same stopped stream (after) that a dead upstream always gave.
+- **Retry.** With `retry_enabled`, a `429` or a `5xx` other than `501` is resent up to `retry_max_retries` times, with exponential backoff (`base * 2^(n-1)`, capped at `retry_max_delay_s`) and jitter in the upper half of each step. A `Retry-After` (seconds or an HTTP date) is honored, plus jitter of up to one base step; one longer than `retry_max_delay_s` is not waited for, and the response is passed to the agent instead. A retry happens only while no response byte has reached the agent, so a stream that has started is never replayed. The retry resends the translated request that is already held in memory with the same headers and the route's current key, so there is no buffer to size and no body-size cap. The existing single resend after a `401` is separate and unchanged, and key resolution is untouched.
+- **Mid-stream death.** A stream that dies after its first byte is logged (`inference SSE translation failed`) and stopped, as before.
+- **Observability.** Each retry logs `inference upstream retrying` and each timeout logs `inference upstream timeout`, with `backend`, `status` and `agent` (and `attempt`, `delay_ms` or `kind`), never a request or response body and never a header value. Counters `crux.proxy.inference.retries` (attributes `route`, `status`) and `crux.proxy.inference.timeouts` (attributes `route`, `kind` of `connect`, `response_header` or `idle`) are exported through the OpenTelemetry meter.
+
 ### Claude Managed Agents hosted execution
 
 Claude Managed Agents is an external hosted engine, not a `backend:` value.
@@ -1371,7 +1404,7 @@ Hand-writing `reference_repos` does not scale when the hive's work arrives as re
 The flow:
 
 1. A request issue is opened in an authorized repo (`cncf/techdocs#395`, say) through an issue form. Its body carries the form headings and the repositories under them.
-2. The workflow model bound to that repo declares which headings matter: `spec.intake.referenceRepoFields` lists the headings whose repositories are in scope and `spec.intake.outOfScopeFields` the headings whose repositories are excluded. A model without `intake.referenceRepoFields` derives nothing. For TechDocs that is `cncf-techdocs-assessment@curated-2026.11.2`; `curated-2026.11.1` is unchanged, so a hive bound to it must rebind.
+2. The workflow model bound to that repo declares which headings matter: `spec.intake.referenceRepoFields` lists the headings whose repositories are in scope and `spec.intake.outOfScopeFields` the headings whose repositories are excluded. A model without `intake.referenceRepoFields` derives nothing. For TechDocs that is `cncf-techdocs-assessment@curated-2026.11.2` or later; `curated-2026.11.1` is unchanged, so a hive bound to it must rebind.
 3. A person with write access to the authorized repo applies `triage/accepted`. That label is the grant. The hive reads who applied it from the issue timeline and checks their repository permission. A label applied by a bot or App account grants nothing, so the hive can never grant itself access by moving the label. A label applied by someone without write access grants nothing either.
 4. Every repository under an in-scope heading, and not under an out-of-scope heading, becomes a `write: [issues, prs]` entry. The issue's own repo, any authorized repo and any repo in `project.repos` are skipped.
 5. The credential follows `project.remote_write_identity`, exactly as for a hand-written write-tier entry: the hive's App bot where the requesting project installed the App, otherwise (unless the setting is `bot_only`) the hive owner's connected GitHub account. When neither applies, the entry is served read-only instead, the hive keeps running, and the request issue gets exactly one comment marked `<!-- hive:reference-repos-read-only repos=... state=read-only -->` saying which repos the hive can read but not write and, unless the setting is `bot_only`, that the hive owner connects their account on the dashboard to change that; the policies flip without a restart. The comment never asks the project to install the App. The comment is posted once per request issue and repo set, never again on a plain reload. A derived entry never consults `write_token_file` and never fails boot.
@@ -1520,6 +1553,14 @@ Issues managed by [GitHub Agentic Workflows](https://github.com/github/gh-aw) (`
 - **Closing keywords are nudged.** A hive-authored PR whose body says `Closes`/`Fixes #<tracking>` has the reference downgraded to `Refs` with an inline note; a PR created through the hive gets one marked reviewer comment explaining that the issue is an archive and the keyword would be ignored. GitHub itself still honours a `Closes #N` written by a human on a PR the hive does not own — the owning workflow is expected to recreate its tracking issue in that case.
 
 The `hive/tracking` label also satisfies the tracker-issue check used by `/contribute`, so a tracking issue is never handed to an external contributor either.
+
+### Umbrella and owner-only issues
+
+Umbrella, epic, tracker and decomposed-parent issues, and issues that wait on a person, are the opposite of a tracking archive: they stay actionable for the owner and the hive and **can be closed**. They are never handed to a contributor relay. Mark one with a label (`umbrella`, `tracker`, `epic`, `meta-tracker`), the body marker `<!-- hive:umbrella -->`, a `[Tracking]` / `[Epic]` / `[Umbrella]` / `[Tracker]` title prefix, a task list of two or more issue or PR references, or sub-issues; owner-only by `needs-human`, `human-only`, `human-only:*` or `<!-- hive:human-only -->`. The rules, defaults and per-repo overrides live under `hub.contribute_umbrella` (see the [label reference](labels-and-control-signals/reference.md) and [Contributor relay](contributor-relay.md#umbrella-and-owner-only-issues-are-never-handed-to-a-relay)).
+
+- **Not offered.** `/contribute` selection and the ready-work queue refuse them (withheld reasons `umbrella` and `human_only`); `/api/contribute/status` counts them as `umbrella_items` and `human_only_items` and leaves them out of `actionable_items` and `candidate_items`.
+- **Not advertised.** The good-first-issue sweep scores them `umbrella:<rule>` / `human-only:<rule>` and withdraws `help wanted` and `good first issue` on the next sweep (logged and audited as `gfi-withdraw`; `withdraw_advertisement: false` opts out).
+- **Still closable.** Unlike `hive/tracking`, none of these markers blocks `CloseIssue`, `parent_autoclose` or the tracker-closing rule.
 
 **Not the same thing as the contribute filters.** `hub.contribute_labels_mode` + its label list gate which issues are *handed out to external contributors* over `/contribute` — they have never gated the hive's **own** agents, so an operator who allow-listed a queue label there (a common setup for routing labeled issues to contributors) still had a hive whose own scanner could work every other open issue. `project.issue_filter.require_labels` is the agent-side gate; configure both if you want the same label to govern both lanes.
 

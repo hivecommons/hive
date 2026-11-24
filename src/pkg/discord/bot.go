@@ -18,6 +18,7 @@ import (
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/chat"
 	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 const (
@@ -454,6 +455,9 @@ func (b *Bot) do(method, url string, payload, out any) error {
 		if data, err = json.Marshal(payload); err != nil {
 			return err
 		}
+		// Every bot message, embed, edit, thread and channel name goes
+		// through here: apply the shared outbound dash rule (#19103).
+		data, _ = prosefilter.SanitizeJSON(data, discordProseKeys)
 	}
 	for attempt := 0; ; attempt++ {
 		var body io.Reader
@@ -513,7 +517,18 @@ func (b *discordBackend) SetTopic(topic string) error {
 	return b.setChannelTopic(topic)
 }
 
+// discordProseKeys are the Discord payload fields people read.
+var discordProseKeys = prosefilter.Keys{
+	"content":     prosefilter.Prose,
+	"description": prosefilter.Prose,
+	"value":       prosefilter.Prose,
+	"title":       prosefilter.Title,
+	"name":        prosefilter.Title,
+	"topic":       prosefilter.Title,
+}
+
 func (b *discordBackend) setChannelTopic(topic string) error {
+	topic = prosefilter.SanitizeTitle(topic)
 	payload, err := json.Marshal(map[string]string{"topic": topic})
 	if err != nil {
 		return fmt.Errorf("marshal topic payload: %w", err)

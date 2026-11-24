@@ -106,6 +106,12 @@ type PullRequest struct {
 	// the PR this cycle (ReviewPriority*), stamped onto its kicks.
 	MergeReady bool
 	CIPending  bool
+	// PreflightSection is the pre-rendered evidence block the hive gathered
+	// for this PR (hivecommons/hive#19069): repository rule documents, named
+	// operator rules, dependency advisories and release age. It holds
+	// identifiers, versions, dates and paths only, never the PR body or text
+	// from a third party. Empty means no evidence was gathered.
+	PreflightSection string
 	// PreparationOwner marks the exact live head of an active base-refresh
 	// owner. It changes slot ordering only, after normal review admission.
 	PreparationOwner bool
@@ -345,6 +351,8 @@ func BuildPerspectivePromptWith(p Perspective, pr PullRequest, opts PromptOption
 	b.WriteString(deltaSection(pr, opts.Delta))
 	b.WriteString(buildReviewBotFindingsInstruction(pr, opts.ReviewBotLogins, opts.ReviewBotMinPriority))
 	b.WriteString(groundingSection(pr))
+	b.WriteString(preflightSection(pr))
+	b.WriteString(perspectiveGuidance(p))
 	if p == PerspectivePlanMatch {
 		b.WriteString(planMatchSection(pr))
 	}

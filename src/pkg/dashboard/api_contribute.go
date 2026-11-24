@@ -718,6 +718,11 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 	profiles := listContributorProfiles()
 	active := 0
 	actionable, candidates := 0, 0
+	// #19078: candidates is the contributor-workable candidate count;
+	// candidatesRaw is the old raw scanner population, kept under an explicit
+	// name for callers that read it. Umbrella and owner-only issues are
+	// counted separately and are never offered to a contributor.
+	candidatesRaw, umbrella, humanOnly := 0, 0, 0
 	if s.contributeHub != nil {
 		active = s.contributeHub.ActiveCount()
 		// "Actionable" is the work a contributor can actually be offered, not the
@@ -728,6 +733,9 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 		snap := s.contributeHub.admissionQueueSnapshot(readyQueueDefaultLimit, withheldNone)
 		actionable = snap.offerableTotal
 		candidates = snap.candidateTotal
+		candidatesRaw = snap.candidateRawTotal
+		umbrella = snap.umbrellaTotal
+		humanOnly = snap.humanOnlyTotal
 	} else {
 		// Defensive fallback for partially constructed test/embedding servers. A
 		// production route always has a contribute hub after registration.
@@ -736,6 +744,7 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 			for _, repo := range s.status.Repos {
 				candidates += len(repo.ActionableIssues)
 			}
+			candidatesRaw = candidates
 		}
 		s.statusMu.RUnlock()
 	}
@@ -757,11 +766,18 @@ func (s *Server) handleContributeStatus(w http.ResponseWriter, r *http.Request) 
 		// to explain why admission reduced the raw population. This is deliberately
 		// not named actionable: candidates may still be disabled or filtered out.
 		"candidate_items": candidates,
-		"surface":         s.contributeSurface(),
-		"api_version":     contributorProtocolVersion,
-		"served_sha":      versionShort,
-		"announcement":    s.activeContributeAnnouncement(),
-		"help_links":      s.contributeHelpLinks(),
+		// #19078: umbrella / tracker issues and owner-only issues are not
+		// contributor work. They stay actionable for the owner and the hive and
+		// are counted here, outside actionable_items and candidate_items.
+		// candidate_items_raw is the pre-exclusion scanner population.
+		"umbrella_items":      umbrella,
+		"human_only_items":    humanOnly,
+		"candidate_items_raw": candidatesRaw,
+		"surface":             s.contributeSurface(),
+		"api_version":         contributorProtocolVersion,
+		"served_sha":          versionShort,
+		"announcement":        s.activeContributeAnnouncement(),
+		"help_links":          s.contributeHelpLinks(),
 		// #13458: the relay audit level this hive asks contributors to share,
 		// shown on /contribute before setup. "" requests nothing.
 		"audit_share_requested": s.contributeAuditShareRequest(),
@@ -1063,10 +1079,12 @@ func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 	// heldCount = operator-held issues still in the actionable universe (would be
 	// offerable but for the manual hold); the queue header surfaces it as "H on hold".
 	cooldownCount, inFlightCount, heldCount := 0, 0, 0
+	umbrellaCount, humanOnlyCount := 0, 0
 	if s.contributeHub != nil {
 		snap = s.contributeHub.FleetSnapshot()
 		cooldownCount, inFlightCount = s.contributeHub.CooldownCounts()
 		heldCount = s.contributeHub.HeldCount()
+		umbrellaCount, humanOnlyCount = s.contributeHub.ExcludedCounts()
 	}
 	// #7317 item 3: the live pane tail is gated exactly like the stored one on
 	// /api/contribute/runs — see paneTailViewer. The snapshot builds it for
@@ -1092,6 +1110,8 @@ func (s *Server) handleContributeFleet(w http.ResponseWriter, r *http.Request) {
 		"cooldown_count":    cooldownCount,
 		"in_flight_count":   inFlightCount,
 		"held_count":        heldCount,
+		"umbrella_count":    umbrellaCount,
+		"human_only_count":  humanOnlyCount,
 		"pane_tail_visible": paneVisible,
 	})
 }
@@ -1113,6 +1133,9 @@ func (s *Server) handleContributeQueue(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"queue_total": 0,
 		"held_total":  0,
+		// #19078: the umbrella and owner-only issues withheld from the queue.
+		"umbrella_total":   0,
+		"human_only_total": 0,
 	}
 	if s.contributeHub != nil {
 		// One snapshot serves the queue and — only when the convergence toggle
@@ -1130,6 +1153,8 @@ func (s *Server) handleContributeQueue(w http.ResponseWriter, r *http.Request) {
 		queue = snap.queue
 		resp["queue_total"] = snap.offerableTotal
 		resp["held_total"] = snap.heldTotal
+		resp["umbrella_total"] = snap.umbrellaTotal
+		resp["human_only_total"] = snap.humanOnlyTotal
 		if scope.collects() {
 			resp["withheld"] = snap.withheld
 			resp["admission_coverage"] = snap.coverage
@@ -1734,14 +1759,22 @@ func validateGitHubToken(token, apiURL string) string {
 	}
 	ghTokenCacheMu.RUnlock()
 
-	userEndpoint := "https://api.github.com/user"
-	if apiURL != "" && apiURL != "https://api.github.com" {
+	userEndpoint := config.DefaultGitHubAPIURL + "/user"
+	ctx := context.Background()
+	if apiURL != "" && apiURL != config.DefaultGitHubAPIURL {
 		userEndpoint = apiURL + "/user"
+		// A configured API URL is intentionally chosen and may be private;
+		// githubTokenTransport still pins and checks every dial to it.
+		ctx = context.WithValue(ctx, githubTokenConfiguredTargetKey{}, true)
 	}
 
 	const tokenValidateTimeout = 10 * time.Second
-	client := &http.Client{Timeout: tokenValidateTimeout}
-	req, err := http.NewRequest("GET", userEndpoint, nil)
+	client := &http.Client{
+		Timeout:       tokenValidateTimeout,
+		Transport:     githubTokenRoundTripper(),
+		CheckRedirect: githubTokenCheckRedirect,
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, userEndpoint, nil)
 	if err != nil {
 		return ""
 	}

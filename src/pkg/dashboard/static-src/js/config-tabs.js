@@ -637,7 +637,13 @@
           </div>`;
       const schedules = d.schedules || ['hourly', 'daily'];
       const layers = d.layers || ['personal', 'project', 'org', 'community'];
+      const advisorOn = !!d.advisor;
       return `
+        <div class="card-inset mt-5">
+          <div class="settings-subsection-title">Mid-task advisor for sidecar runtimes</div>
+          ${toggle('sa-enabled', 'Serve the mid-task knowledge advisor to a sidecar runtime', 'knowledge.sidecar_advise', d.sidecar_advise, 'off by default; with it off a sidecar runtime gets no advisor.', true, 'Lets a sidecar-mode runtime ask this hive for mid-task knowledge hints over the callback endpoint. Needs the mid-task advisor, which is switched on in hive.yaml. The hive runs the same advisor it runs in-process and sends no model settings or credentials to the runtime. Off unless turned on.')}
+          ${advisorOn ? '' : '<div class="config-help">The mid-task advisor is off in hive.yaml, so this has no effect until it is on.</div>'}
+        </div>
         <div class="card-inset mt-5">
           <div class="settings-subsection-title">Bead synthesizer</div>
           ${toggle('bs-enabled', 'Synthesize completed beads into wiki facts', 'knowledge.bead_synthesizer.enabled', bs.enabled, 'on by default; starts or stops the running synthesizer.', true, 'Turns completed beads (and their merged PRs) into wiki facts on a schedule. On unless set to false. Saving starts or stops the running synthesizer at once.')}
@@ -713,6 +719,7 @@
     async function saveKnowledgePipeline() {
       const d = _kpState.data || {};
       const cur = {
+        top: { sidecar_advise: d.sidecar_advise },
         bead_synthesizer: d.bead_synthesizer || {},
         publish: (d.bead_synthesizer || {}).publish || {},
         retention_policy: (d.bead_synthesizer || {}).retention_policy || {},
@@ -721,6 +728,7 @@
         primer: d.primer || {}
       };
       const fields = [
+        ['top', 'sidecar_advise', 'sa-enabled', 'bool'],
         ['bead_synthesizer', 'enabled', 'bs-enabled', 'bool'],
         ['bead_synthesizer', 'schedule', 'bs-schedule', 'str'],
         ['bead_synthesizer', 'target_layer', 'bs-target_layer', 'str'],
@@ -751,7 +759,9 @@
       ];
       const body = {};
       const put = (group, key, v) => {
-        if (group === 'retention_policy' || group === 'publish') {
+        if (group === 'top') {
+          body[key] = v;
+        } else if (group === 'retention_policy' || group === 'publish') {
           body.bead_synthesizer = body.bead_synthesizer || {};
           body.bead_synthesizer[group] = body.bead_synthesizer[group] || {};
           body.bead_synthesizer[group][key] = v;
@@ -790,7 +800,7 @@
         if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
         _kpState = { loaded: true, error: '', data: data };
         const bsKeys = Object.keys(body.bead_synthesizer || {});
-        const liveOnly = Object.keys(body).length === 1 && bsKeys.length === 1 && bsKeys[0] === 'enabled';
+        const liveOnly = Object.keys(body).every(k => k === 'sidecar_advise' || (k === 'bead_synthesizer' && bsKeys.length === 1 && bsKeys[0] === 'enabled'));
         showToast(liveOnly ? 'Knowledge settings saved' : 'Knowledge settings saved — restart the hive to apply them', 'success');
         const el = document.getElementById('kp-pipeline-root');
         if (el) el.innerHTML = renderKnowledgePipelineBody();
@@ -1164,6 +1174,7 @@
       const bg = overrides.background || {};
       const fonts = overrides.fonts || {};
       const tokens = overrides.tokens || {};
+      const lightTokens = overrides.light_tokens || {};
       const customCSS = overrides.custom_css || '';
       const honeyOn = bg.image === HONEYCOMB_WATERMARK;
       const bgScope = bg.scope || 'page';
@@ -1196,6 +1207,7 @@
         + '<div class="config-field-row"><div class="config-field"><label>UI font ' + yamlHint('dashboard.theme_overrides.fonts.ui') + '</label><input id="theme-font-ui" type="text" value="' + esc(fonts.ui || '') + '" placeholder="Inter, system-ui, sans-serif"></div>'
         + '<div class="config-field"><label>Mono font ' + yamlHint('dashboard.theme_overrides.fonts.mono') + '</label><input id="theme-font-mono" type="text" value="' + esc(fonts.mono || '') + '" placeholder="JetBrains Mono, monospace"></div></div>'
         + '<div class="config-field"><label>CSS token overrides ' + yamlHint('dashboard.theme_overrides.tokens.<key>') + '</label><textarea id="theme-token-overrides" rows="5" placeholder="--accent=#e0a33a">' + esc(settingsMapText(tokens)) + '</textarea><div class="config-help">One allowlisted CSS token per line as <code>--token=value</code>.</div></div>'
+        + '<div class="config-field"><label>Light-mode token overrides ' + yamlHint('dashboard.theme_overrides.light_tokens.<key>') + '</label><textarea id="theme-light-token-overrides" rows="5" placeholder="--surface-0=#fdfaf3">' + esc(settingsMapText(lightTokens)) + '</textarea><div class="config-help">Applied in light mode only, on top of the light palette of the selected preset. Dark presets derive light-mode surfaces, lines and text, so set those here.</div></div>'
         + '<div class="config-field"><label>Custom CSS ' + yamlHint('dashboard.theme_overrides.custom_css') + '</label><textarea id="theme-custom-css" rows="10" data-input-action="updateThemeByteCount" placeholder=".panel { border-radius: 2px; }">' + esc(customCSS) + '</textarea><div class="theme-byte-count"><span id="theme-css-bytes">' + utf8Bytes(customCSS) + '</span> / 32768 bytes</div></div>'
         + '<div id="theme-save-status" style="font-size:.76rem;color:var(--muted)"></div></div>';
     }
@@ -1227,9 +1239,11 @@
       const fontUI = ((document.getElementById('theme-font-ui') || {}).value || '').trim();
       const fontMono = ((document.getElementById('theme-font-mono') || {}).value || '').trim();
       const tokens = parseSettingsMap((document.getElementById('theme-token-overrides') || {}).value || '');
+      const lightTokens = parseSettingsMap((document.getElementById('theme-light-token-overrides') || {}).value || '');
       const css = (document.getElementById('theme-custom-css') || {}).value || '';
       const overrides = { custom_css: css };
       if (Object.keys(tokens).length) overrides.tokens = tokens;
+      if (Object.keys(lightTokens).length) overrides.light_tokens = lightTokens;
       if (fontUI || fontMono) overrides.fonts = { ui: fontUI, mono: fontMono };
       if (bgURL.trim()) overrides.background = { image: bgURL.trim(), scope: scope, opacity: Number.isFinite(opacity) ? opacity : 0.08, position: position, size: size, attachment: attachment || 'fixed' };
       return overrides;

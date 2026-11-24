@@ -775,3 +775,25 @@ func (s reviewOnlyStore) For(repo string, n int, head string) (review.HumanChang
 func (s reviewOnlyStore) Forget(repo string, n int, source string, sourceID int64) error {
 	return s.inner.Forget(repo, n, source, sourceID)
 }
+
+// The decision hint added for issues (#19155) must not reach the PR sweep: on
+// a PR a newer one-letter reply such as `B` would become the newest candidate
+// and hide an older valid `/hive decision` (review on #19168).
+func TestSweepIssueUnparkCommandsPRBareLetterDoesNotHideDecision(t *testing.T) {
+	issues := []unparkWireIssue{hiveParkedPR(
+		humanComment(4242, "clubanderson", "/hive decision "+liveDecisionText),
+		humanComment(4243, "clubanderson", "B"),
+	)}
+	c, _ := newUnparkPRClient(t, issues, map[string]string{"clubanderson": "admin"})
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{
+		HumanChangeRequests: review.NewHumanChangeRequests(""),
+		TrustedMerger:       trustedMergerSet("clubanderson"),
+	})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.PRDecisions) != 1 || result.PRDecisions[0].Decision != liveDecisionText {
+		t.Fatalf("result = %+v, want the older /hive decision recorded despite the newer bare letter", result)
+	}
+}

@@ -66,6 +66,12 @@ const (
 	TimelineRenamed          = "renamed"
 	TimelineDigestPinned     = "digest_pinned"
 	TimelineDigestUnpinned   = "digest_unpinned"
+	// TimelineAuditChainRegressed: the spoke's hash-chained audit log
+	// (#19439) reported a head that cannot follow the one the hub already
+	// holds: its seq went backwards, or the same seq now has a different
+	// hash. Either the log's newest rows were removed, the chain was rebuilt,
+	// or the hive got a fresh /data volume.
+	TimelineAuditChainRegressed = "audit_chain_regressed"
 )
 
 // timelineDir is the directory holding one JSON file per hive. It follows the
@@ -364,6 +370,18 @@ func detectTransitions(old, new *RegistryEntry, now time.Time) []TimelineEvent {
 		}
 	}
 
+	// Audit chain: a head that cannot follow the last one the hub holds.
+	if old.AuditChainSeq > 0 && new.AuditChainSeq > 0 {
+		switch {
+		case new.AuditChainSeq < old.AuditChainSeq:
+			add(TimelineAuditChainRegressed, fmt.Sprintf("audit log hash chain went backwards: seq %d → %d (head %s → %s); rows were removed, the chain rebuilt, or /data replaced",
+				old.AuditChainSeq, new.AuditChainSeq, shortChainHash(old.AuditChainHead), shortChainHash(new.AuditChainHead)))
+		case new.AuditChainSeq == old.AuditChainSeq && old.AuditChainHead != "" && new.AuditChainHead != "" && new.AuditChainHead != old.AuditChainHead:
+			add(TimelineAuditChainRegressed, fmt.Sprintf("audit log hash chain rewritten: seq %d head %s → %s",
+				new.AuditChainSeq, shortChainHash(old.AuditChainHead), shortChainHash(new.AuditChainHead)))
+		}
+	}
+
 	// Version / SHA.
 	if old.GitHash != "" && new.GitHash != "" && !sameCommit(old.GitHash, new.GitHash) {
 		detail := fmt.Sprintf("version %s → %s", old.GitHash, new.GitHash)
@@ -636,7 +654,7 @@ func (s *HubServer) handleHiveTimeline(w http.ResponseWriter, r *http.Request) {
 func (s *HubServer) handleAccessLog(w http.ResponseWriter, r *http.Request) {
 	hiveID := r.PathValue("id")
 	username := s.getAuthUser(r)
-	h := loadSaaSHive(hiveID)
+	h := s.accessHive(hiveID)
 	if h == nil {
 		http.Error(w, `{"error":"hive not found"}`, http.StatusNotFound)
 		return
@@ -669,4 +687,15 @@ func (s *HubServer) decorateTimelineActors(events []TimelineEvent) {
 			events[i].ActorName = l
 		}
 	}
+}
+
+// shortChainHash abbreviates an audit chain row_hash for a timeline line.
+func shortChainHash(h string) string {
+	if h == "" {
+		return "?"
+	}
+	if len(h) > 12 {
+		return h[:12]
+	}
+	return h
 }

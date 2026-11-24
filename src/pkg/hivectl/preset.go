@@ -45,9 +45,10 @@ const (
 // pkg/forge (pinned by TestPresetForgeKindsMatchForgePackage) without making
 // hivectl depend on the forge adapters.
 const (
-	presetForgeGitHub = "github"
-	presetForgeGitLab = "gitlab"
-	presetForgeGitea  = "gitea"
+	presetForgeGitHub  = "github"
+	presetForgeGitLab  = "gitlab"
+	presetForgeGitea   = "gitea"
+	presetForgeForgejo = "forgejo"
 )
 
 // Preset is a parsed and validated contribution preset document.
@@ -510,9 +511,9 @@ func normalizePresetRepo(field string, r *PresetRepo) error {
 	}
 	kind := strings.ToLower(r.Forge)
 	switch kind {
-	case presetForgeGitHub, presetForgeGitLab, presetForgeGitea:
+	case presetForgeGitHub, presetForgeGitLab, presetForgeGitea, presetForgeForgejo:
 	default:
-		return fmt.Errorf("%s.forge %q is not a known forge (use %s, %s or %s)", field, r.Forge, presetForgeGitHub, presetForgeGitLab, presetForgeGitea)
+		return fmt.Errorf("%s.forge %q is not a known forge (use %s, %s, %s or %s)", field, r.Forge, presetForgeGitHub, presetForgeGitLab, presetForgeGitea, presetForgeForgejo)
 	}
 	r.Forge = kind
 

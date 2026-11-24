@@ -8,6 +8,12 @@
       box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
     .oc-agent-detail.active { display: block; }
+    .kick-outcomes { min-width: 0; margin-block: var(--sp-5); font-size: var(--fs-sm); }
+    .kick-outcomes h3 { font-size: var(--fs-sm); margin-bottom: var(--sp-3); }
+    .kick-outcome-list { list-style: none; padding: 0; margin: 0; max-height: 24rem; overflow-y: auto; }
+    .kick-outcome-list li { border-top: 1px solid var(--border); padding-block: var(--sp-3); overflow-wrap: anywhere; }
+    .kick-outcome-list blockquote { margin: var(--sp-2) 0; padding-inline-start: var(--sp-3); border-inline-start: 2px solid var(--line); white-space: pre-wrap; }
+    .kick-outcome-list code { white-space: normal; overflow-wrap: anywhere; }
     .oc-agent-detail.state-running, .oc-agent-detail[data-status="ok"] { border-color: var(--status-ok); }
     .oc-agent-detail.state-idle { border-color: var(--status-ok); }
     .oc-agent-detail.state-paused, .oc-agent-detail[data-status="warn"] { border-color: var(--status-warn); }
@@ -90,17 +96,20 @@
       display: flex; gap: var(--sp-4); margin-bottom: var(--sp-6); flex-wrap: wrap;
     }
 
-    /* Sidebar agent tree */
+    /* Sidebar agent tree: "All agents (n)" is a row inside the Agents group,
+       on the same gutter as the Control panel and Activity links above it
+       (#19282), not a second group heading. */
     .oc-tree-toggle {
-      /* .section-label convention */
-      display: flex; align-items: center; gap: var(--sp-4);
-      padding: 10px 20px 6px; font-size: var(--fs-xs); color: var(--amber);
+      display: flex; align-items: center; gap: var(--oc-nav-item-gap);
+      padding: 5px var(--oc-nav-item-pad-x) 5px calc(var(--oc-nav-item-pad-x) + var(--oc-nav-child-inset));
+      margin: 1px 8px; min-height: 28px; border-radius: var(--r);
+      font-size: var(--fs-base); color: var(--muted);
       cursor: pointer; user-select: none;
-      text-transform: uppercase; letter-spacing: 0.12em; font-weight: 800;
     }
-    .oc-tree-toggle:hover { color: var(--text); }
+    .oc-tree-toggle:hover { color: var(--text); background: var(--surface-2); }
     .oc-tree-arrow { font-size: var(--fs-2xs); transition: transform 0.15s; }
     .oc-tree-toggle.collapsed .oc-tree-arrow { transform: rotate(-90deg); }
+    .oc-tree-count { color: var(--muted); font-variant-numeric: tabular-nums; }
     .oc-tree-children { padding-left: var(--sp-2); }
     .oc-tree-children.collapsed { display: none; }
     .oc-nav-item .oc-agent-dot {

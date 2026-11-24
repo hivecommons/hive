@@ -2,7 +2,8 @@
 // customer, the identities that belong to them, their tags, goals and
 // satisfaction, and the edges that tie them to artefacts the hive already
 // holds. Nothing in this package talks to the network, and nothing it stores
-// leaves the hive.
+// leaves the hive; the opt-in hub import (hub_import.go) only sends salted
+// hashes of confirmed GitHub logins, through a caller-supplied HubMatcher.
 //
 // Design record: src/docs/design/customers.md (RFC #18742).
 package customers
@@ -64,6 +65,10 @@ type Source string
 const (
 	SourceAuto   Source = "auto"
 	SourceManual Source = "manual"
+	// SourceHub is a profile field the person entered on the hub and
+	// consented to share with this hive (hub_import.go). It outranks auto
+	// and never overwrites manual.
+	SourceHub Source = "hub"
 )
 
 // Bounds on what one person may hold. They keep people.json small and stop
@@ -85,6 +90,10 @@ const (
 // MaxProfileFieldLen bounds one profile field (real name, organization,
 // location).
 const MaxProfileFieldLen = 120
+
+// MaxDismissedAffiliations bounds how many refused affiliation suggestions a
+// profile remembers.
+const MaxDismissedAffiliations = 20
 
 // Sentinel errors. The dashboard maps them to status codes.
 var (
@@ -270,34 +279,106 @@ const (
 	FieldRealName     = "real_name"
 	FieldOrganization = "organization"
 	FieldLocation     = "location"
+	FieldCountry      = "country"
 )
 
 // ProfileFields is every profile field, in display order.
-var ProfileFields = []string{FieldRealName, FieldOrganization, FieldLocation}
+var ProfileFields = []string{FieldRealName, FieldOrganization, FieldLocation, FieldCountry}
 
-// ProfileSourceGitHub names the automatic source of a profile field: the
-// person's own public GitHub profile.
-const ProfileSourceGitHub = "github_profile"
+// Profile sources: the Rule an automatic profile field carries when the
+// profile fill (profilefill.go, #19302) read it from the person's own public
+// profile on a forge.
+const (
+	// ProfileSourceGitHub is a public profile on github.com.
+	ProfileSourceGitHub = "github_profile"
+	// ProfileSourceGHE is a public profile on a GitHub Enterprise server.
+	ProfileSourceGHE = "ghe_profile"
+	// ProfileSourceGitLab is a public profile on GitLab.
+	ProfileSourceGitLab = "gitlab_profile"
+	// ProfileSourceGitea is a public profile on Gitea or Forgejo.
+	ProfileSourceGitea = "gitea_profile"
+	// ProfileSourceLinear is a member of the connected Linear workspace.
+	ProfileSourceLinear = "linear_profile"
+)
+
+// ProfileSourceLabel is the forge a profile source names, for evidence text
+// and tooltips.
+func ProfileSourceLabel(rule string) string {
+	switch rule {
+	case ProfileSourceGitHub:
+		return "GitHub"
+	case ProfileSourceGHE:
+		return "GitHub Enterprise"
+	case ProfileSourceGitLab:
+		return "GitLab"
+	case ProfileSourceGitea:
+		return "Gitea"
+	case ProfileSourceLinear:
+		return "Linear"
+	}
+	return "a public profile"
+}
+
+// IsForgeProfileRule reports whether rule names a forge profile source.
+func IsForgeProfileRule(rule string) bool {
+	switch rule {
+	case ProfileSourceGitHub, ProfileSourceGHE, ProfileSourceGitLab, ProfileSourceGitea, ProfileSourceLinear:
+		return true
+	}
+	return false
+}
 
 // ProfileField is one optional fact about a person with its provenance, in
-// the shape of a tag's: Source is auto (filled from a public GitHub profile)
-// or manual (a person typed it, possibly to clear it). A manual value always
-// wins; "auto" hands the field back to the automatic source.
+// the shape of a tag's: Source is auto (filled from the person's public
+// forge profile, Rule naming which one, or derived from the location),
+// hub (the person entered it on the hub and consented to share it with this
+// hive) or manual (a person typed it here, possibly to clear it). A manual
+// value always wins, hub outranks auto; "auto" hands the field back to the
+// automatic source.
 type ProfileField struct {
 	Value  string    `json:"value,omitempty"`
 	Source Source    `json:"source,omitempty"`
 	Rule   string    `json:"rule,omitempty"`
 	At     time.Time `json:"at,omitempty"`
 	By     string    `json:"by,omitempty"`
+	// Login is the forge login a profile-fill value was read for (empty for
+	// a hand-set, hub or Linear value). At is when it was fetched.
+	Login string `json:"login,omitempty"`
 }
 
-// Profile holds the optional descriptive fields of a person. All of it is
-// either the person's own public GitHub profile text or typed by a person;
-// nothing here comes from the hub.
+// Profile fetch outcomes recorded in ProfileFetch.Outcome.
+const (
+	FetchFilled    = "filled"
+	FetchUnchanged = "unchanged"
+	FetchNotFound  = "not_found"
+	FetchFailed    = "failed"
+)
+
+// ProfileFetch records the last profile-fill lookup for a person, so the
+// periodic pass refreshes the stalest people first and retries a failure
+// sooner than a success.
+type ProfileFetch struct {
+	At      time.Time `json:"at"`
+	Outcome string    `json:"outcome"`
+	// Sources are the profile sources that answered (ProfileSource*).
+	Sources []string `json:"sources,omitempty"`
+}
+
+// Profile holds the optional descriptive fields of a person: the person's
+// own public GitHub profile text, what they consented to share from the hub
+// (customers.hub_import, off by default), or what a person typed.
 type Profile struct {
 	RealName     ProfileField `json:"real_name,omitempty"`
 	Organization ProfileField `json:"organization,omitempty"`
 	Location     ProfileField `json:"location,omitempty"`
+	// Country is an ISO 3166 alpha-2 code. Automatic, it is derived offline
+	// from Location (rule "location"); manual, a person chose or cleared it.
+	Country ProfileField `json:"country,omitempty"`
+	// DismissedAffiliations are the suggested organizations a person turned
+	// down, lower case, so the same one is not offered again.
+	DismissedAffiliations []string `json:"dismissed_affiliations,omitempty"`
+	// Fetched is the last profile-fill lookup, nil before the first.
+	Fetched *ProfileFetch `json:"fetched,omitempty"`
 }
 
 // Field returns a pointer to the named field, or nil for an unknown name.
@@ -309,6 +390,8 @@ func (pr *Profile) Field(name string) *ProfileField {
 		return &pr.Organization
 	case FieldLocation:
 		return &pr.Location
+	case FieldCountry:
+		return &pr.Country
 	}
 	return nil
 }

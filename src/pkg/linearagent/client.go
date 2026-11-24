@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // Client is the CONTROL-PLANE Linear GraphQL client: it acknowledges sessions
@@ -266,6 +268,9 @@ type graphQLEnvelope struct {
 	} `json:"errors"`
 }
 
+// linearAgentProseKeys are the Linear agent-session fields people read.
+var linearAgentProseKeys = prosefilter.Keys{"body": prosefilter.Prose, "title": prosefilter.Title, "description": prosefilter.Prose}
+
 // doGraphQL runs one authenticated GraphQL POST. Error strings carry only the
 // HTTP status and GraphQL error message — never the token or variables (which
 // hold issue content).
@@ -274,6 +279,8 @@ func doGraphQL(ctx context.Context, hc *http.Client, graphqlURL, accessToken, qu
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)
 	}
+	// Agent activity text shown in Linear (#19103).
+	body, _ = prosefilter.SanitizeJSON(body, linearAgentProseKeys)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, graphqlURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build request: %w", err)
@@ -289,6 +296,9 @@ func doGraphQL(ctx context.Context, hc *http.Client, graphqlURL, accessToken, qu
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, oauthResponseLimit))
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return fmt.Errorf("linear graphql status %d: %w", resp.StatusCode, ErrRateLimited)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("linear graphql status %d", resp.StatusCode)

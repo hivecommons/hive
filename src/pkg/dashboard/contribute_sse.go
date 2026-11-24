@@ -309,9 +309,18 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 		snap.withheld = withheld.items
 		return snap
 	}
+	// candidateRawTotal is the scanner's raw population (the pre-#19078
+	// candidate_items). candidateTotal drops the umbrella and owner-only issues
+	// so it counts only contributor-workable candidates; those two are counted
+	// on their own, from the snapshot, so a disabled repository's umbrellas are
+	// still accounted for even though the per-issue ladder never reaches them.
 	for _, repo := range status.Repos {
-		snap.candidateTotal += len(repo.ActionableIssues)
+		snap.candidateRawTotal += len(repo.ActionableIssues)
+		u, ho := h.excludedCounts(repo.Full, repo.ActionableIssues)
+		snap.umbrellaTotal += u
+		snap.humanOnlyTotal += ho
 	}
+	snap.candidateTotal = snap.candidateRawTotal - snap.umbrellaTotal - snap.humanOnlyTotal
 
 	// Which issues are already being worked right now — exclude them from "ready"
 	// exactly as selectTask does (an in-flight issue is not waiting to be picked).
@@ -423,6 +432,14 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 			// explanation is visible in review as a bare `continue` among
 			// annotated ones, and the shared ladder test fails it.
 			cand := withheldCandidateFrom(repo.Full, ref, issue)
+			// #19078: the same classifier selectTask uses, so a prose or marker
+			// umbrella and an owner-only issue are refused here too; the reason
+			// names which rule class excluded it. A tracker goes through the
+			// tracker rule below, which also holds a parent with open sub-issues.
+			if reason, _ := h.contributorExclusion(repo.Full, issue); reason != "" && reason != withheldReasonTracker {
+				withheld.addReason(cand, reason)
+				return
+			}
 			if hold := contributeTrackerHoldFor(issue); hold.held {
 				withheld.add(withheldTrackerItem(cand, hold))
 				return

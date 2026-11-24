@@ -325,8 +325,8 @@ func generateIssueStageGoldens() map[string][]issueStageGoldenCase {
 			Input: issueStageGoldenInput{Repo: repo, Number: 17020, Labels: []string{"good first issue", "help wanted", VerifiedOpenLabel, "proposal", stagelabels.PartiallyAddressedLabel}},
 		},
 		{
-			Name:  "regression/17054-rfc-epic-labelled-proposal-is-018",
-			Note:  "hivecommons/hive#17054 (a 📝 RFC whose Refs PR merged) derives 018 once it carries proposal.",
+			Name:  "regression/17054-approved-rfc-epic-labelled-proposal-is-010",
+			Note:  "hivecommons/hive#17054 (an approved 📝 RFC epic in rollout) carries approved-direction, so proposal no longer derives 018: the owner decision puts it past discussion (hivecommons/hive#19573).",
 			Input: issueStageGoldenInput{Repo: repo, Number: 17054, Labels: []string{"help wanted", "Epic", HumanAckLabel, "proposal"}},
 		},
 		{

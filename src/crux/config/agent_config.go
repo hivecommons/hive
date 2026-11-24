@@ -89,6 +89,11 @@ type AgentRuntimeGovernorConfig struct {
 	// (#4294) — the gateway declining to spend more money, as distinct from the
 	// hive's own token Budget above. See ProviderBudgetConfig.
 	ProviderBudget ProviderBudgetConfig `yaml:"provider_budget,omitempty" json:"provider_budget,omitempty"`
+	// InferenceResilience holds the opt-in timeouts and bounded 429/5xx retry
+	// of the inference translator (hivecommons/hive#19057). A nil block (the
+	// default) leaves the translator unchanged; it is a pointer so an absent
+	// block is omitted from yaml and json output.
+	InferenceResilience *InferenceResilienceConfig `yaml:"inference_resilience,omitempty" json:"inference_resilience,omitempty"`
 }
 
 type AgentConfig struct {
@@ -439,9 +444,10 @@ type AgentSandboxConfig struct {
 	Substrate *SandboxSubstrateConfig `yaml:"substrate,omitempty" json:"substrate,omitempty"`
 	// Publish gates what a sandboxed run may publish; see SandboxPublishConfig.
 	Publish *SandboxPublishConfig `yaml:"publish,omitempty" json:"publish,omitempty"`
-	// Preflight is the node health check run before the agent starts on the
-	// job runtime; see SandboxPreflightConfig.
+	// Preflight (node health) and Setup (workspace setup) run before the agent on the job runtime.
 	Preflight *SandboxPreflightConfig `yaml:"preflight,omitempty" json:"preflight,omitempty"`
+	Setup     *SandboxSetupConfig     `yaml:"setup,omitempty" json:"setup,omitempty"`
+	PidsLimit int                     `yaml:"pids_limit,omitempty" json:"pids_limit,omitempty"` // Podman --pids-limit; <=0 keeps the 4096 default (#19479)
 }
 
 // SandboxPublishConfig is the deterministic preflight hive runs before it
@@ -487,9 +493,9 @@ type AgentSandboxOverride struct {
 	// Publish, when set, replaces the global publish preflight for this
 	// agent; an empty verify list here turns the preflight off for it.
 	Publish *SandboxPublishConfig `yaml:"publish,omitempty" json:"publish,omitempty"`
-	// Preflight, when set, replaces the global preflight for this agent; an
-	// empty commands list here turns it off for the agent.
+	// Preflight and Setup, when set, replace the global block for this agent; empty lists turn it off.
 	Preflight *SandboxPreflightConfig `yaml:"preflight,omitempty" json:"preflight,omitempty"`
+	Setup     *SandboxSetupConfig     `yaml:"setup,omitempty" json:"setup,omitempty"`
 }
 
 // BobConfig configures the IBM bobshell ("bob") CLI backend. Only the

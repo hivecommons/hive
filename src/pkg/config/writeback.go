@@ -6,6 +6,30 @@ import (
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
+// WritebackPolicy shares Save's lock. The policy's maps are replaced on
+// updates so readers can keep this snapshot while a new mode is saved.
+func (c *Config) WritebackPolicy() writeback.Config {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	return c.Writeback.WithRepoOwner(c.Project.Org)
+}
+
+// SaveWritebackEdit publishes the policy only after its persistence succeeds.
+// edit must replace any maps or pointers it changes.
+func (c *Config) SaveWritebackEdit(edit func(*writeback.Config, string)) error {
+	saveMu.Lock()
+	defer saveMu.Unlock()
+	previous := c.Writeback
+	edit(&c.Writeback, c.Project.Org)
+	if c.SourcePath != "" {
+		if err := c.saveLocked(); err != nil {
+			c.Writeback = previous
+			return err
+		}
+	}
+	return nil
+}
+
 // WritebackOptInLabels returns the labels that count as a maintainer opting
 // a PR or issue in to unsolicited hive write-back on repo:
 // review.require_labels when set, else writeback.DefaultOptInLabel
@@ -50,6 +74,7 @@ func (c *Config) WritebackRepoListed(repo string) bool {
 // WritebackGateDeps builds the gate's lookups over this config.
 func (c *Config) WritebackGateDeps() writeback.Deps {
 	return writeback.Deps{
+		Config:      c.WritebackPolicy,
 		LevelFor:    c.EffectiveACMMLevelForRepo,
 		OptInLabels: c.WritebackOptInLabels,
 		RepoListed:  c.WritebackRepoListed,

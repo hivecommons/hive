@@ -184,7 +184,7 @@ Two layers, both automated with no human tagging step in the normal path (`src/d
 
 Three supported installation paths, all documented in the root `README.md`:
 
-1. **Docker Compose** (default): `git clone`, copy `src/hive.yaml.example` to `src/hive.yaml`, set `HIVE_GITHUB_TOKEN` and a CSPRNG-generated `HIVE_DASHBOARD_TOKEN` in `src/.env`, then `docker compose -f src/docker-compose.yaml up -d` — five commands (README.md "Quick Start (Docker Compose)").
+1. **Docker Compose** is the default. The [Compose quick start](quickstart-docker-compose.md) shows how to generate `src/hive.yaml` with the Go API on port `3002`, set the tokens in `src/.env`, and start Hive.
 2. **Podman**: a single script, `bin/hive-podman-setup.sh --rootless` (or `--rootful`), performs preflight checks, configuration, installs four systemd Quadlet units, wires boot persistence, and confirms the gateway answers on its published port before returning (README.md "Quick Start (Podman)").
 3. **Kubernetes**: `kubectl apply` of manifests under `src/deploy/k8s/` (Namespace, Secret, ConfigMap from `hive.yaml`, PVC, the `hive` ServiceAccount and its RBAC, Deployment, Service, Ingress), or the equivalent Kustomize base (README.md "Kubernetes Deployment").
 

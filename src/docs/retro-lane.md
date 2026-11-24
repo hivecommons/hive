@@ -39,6 +39,15 @@ ranking decision with the agent, kick id, the kick's primed issue/PR refs, mode,
 slug (plus the model call's latency and token counts when one was made), rotated with lumberjack like prompt history, at 5 MiB, 3 gzipped backups, 90 days. The retro lane reads it in
 production; without the PVC it is in-memory only.
 
+The arm attribution (`retro.AdvisorAttribution`, also behind `Lane.AdvisorArmSummary()`) classes
+every closed or done work bead, advisory beads excluded, whichever way it closed: `bd close`, a
+status update to `done`, `bd close-all`, or the governor releasing a topic claim when its PR merges
+or closes. It runs whether or not `retro.enabled` is on, since it makes no model call. A bead joins
+the decisions on its issue ref and its PR ref (a topic claim's `topic_repo#topic_pr`); refs are
+normalized first, so `gh-N`, `gh-owner/repo#N`, `repo#N`, `owner/repo#N` and forge issue or pull
+URLs all match the qualified refs a kick records. A bare `gh-N` matches only when the decisions
+it hits agree on one repo. A bead with no matching decision is `none`.
+
 To read the comparison, call `Lane.AdvisorArmSummary()`: per arm it gives the bead
 count and the mean `FixAttempts`, `CIFailureCount` and `KicksReceived`, with no model
 call (it works with `retro.analysis_model` empty). Compare `deliver` against `holdout`:
@@ -55,11 +64,22 @@ returns the same comparison without an exec, and the Knowledge section shows it 
 - `window`: the first and last decision timestamps, the first `rank` decision
   (`rank_mode_start`) and the decision count.
 - `settings`: the advisor settings read-only (`enabled`, `mode`, `model`, `holdout_percent`,
-  the call budget, `candidates`, `on_error`). The endpoint and API key are never returned.
-- `counts`: decisions by mode, arm (`shadow`, `deliver`, `holdout`) and outcome.
+  the call budget, `candidates`, `on_error`, and `problem`: why shadow or rank cannot make a
+  model call, or null). The endpoint and API key are never returned.
+- `counts`: decisions by mode, arm (`shadow`, `deliver`, `holdout`), outcome, model verdict
+  (`by_verdict`, across both arms) and exhausted budget (`by_budget`, including the
+  `error-agent-hour` and `error-fleet-day` error ledger).
+- `errors`: error decisions by class (`by_class`) and the five most frequent redacted
+  reasons (`top_reasons`: `class`, `reason`, `count`), for example
+  `rejected` / `HTTP 400: Bad Request`. Records written before these fields existed carry none.
 - `arms`: the `Lane.AdvisorArmSummary()` rows for `shadow`, `deliver` and `holdout`, with
-  `mixed` and `none` listed separately under their own keys. These cover every closed bead
-  with a closed PR; `since` does not narrow them.
+  `mixed` and `none` listed separately under their own keys. These cover every closed work
+  bead; `since` does not narrow them.
+- `coverage`: `closed_beads` (closed work beads seen), `with_closed_pr`, `no_ref` (no issue
+  or PR ref to join on) and `no_decision` (a ref but no matching decision). An empty `arms`
+  list with `closed_beads` above zero means the decisions did not join, not that nothing
+  closed; the hive also logs `retro: closed beads without a matching knowledge-advisor
+  decision` when those counts change.
 - `cost`: mean model latency and mean prompt and completion tokens, over the records that
   carry them (decisions made before these fields existed, or that never reached the model,
   have none; the sample counts are returned).

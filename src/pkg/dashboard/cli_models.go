@@ -431,38 +431,48 @@ var bobStaticModels = []string{bobAutoModel}
 // models — Claude ids are rejected with a ChatGPT account ("model is not
 // supported when using Codex with a ChatGPT account"), so codex must never
 // fall through to the copilot list. The catalog is baked into the CLI binary
-// (per-CLI-version, not per-account); this snapshot matches codex 0.166.0
-// and 0.167.0 (captured 2026-11-07 from live `codex app-server` model/list
-// exchanges; the 0.159.0 capture was #9804): visible ids in
-// picker order (GPT-6.1 Sol is the default and has been since at least
-// 0.160.0; GPT-6.1 Terra arrived in 0.165.0; GPT-6 Sol and Luna arrived in
+// (per-CLI-version, not per-account); this snapshot matches codex 0.170.0
+// (captured 2026-11-18 from a live `codex app-server` model/list exchange with
+// no login; the 0.159.0 capture was #9804): visible ids in
+// picker order (GPT-6.2 Sol is the default; GPT-6.2 Astra arrived after
+// 0.167.0; GPT-6.1 Terra arrived in 0.165.0; GPT-6 Sol and Luna arrived in
 // 0.156.1, #8417), then the hidden ids — hidden entries are still valid
 // --model values (see orderCodexServedModels). gpt-5.2 and gpt-5.4-mini were
 // retired from the catalog in 0.155.0; gpt-5.4 was retired between 0.156.1
 // and 0.159.0.
 // Keep in sync with CODEX_CLI_MODELS in static/index.html.
 var codexStaticModels = []string{
+	"gpt-6.2-sol",
+	"gpt-6.2-astra",
+	"gpt-6.1-terra",
 	"gpt-6.1-sol",
 	"gpt-6-astra",
 	"gpt-6-sol",
 	"gpt-6-luna",
 	"gpt-5.6-sol",
-	"gpt-6.1-terra",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
 	"gpt-5.5",
-	// Hidden in the 0.166.0 and 0.167.0 pickers but still valid --model values.
+	// Hidden in the 0.170.0 picker but still valid --model values.
 	"gpt-daybreak-blue-latest",
 	"gpt-daybreak-red-latest",
 	"codex-auto-review",
 }
 
 // geminiStaticModels is the fallback when no Gemini API key is configured (or
-// discovery fails). Keep CURRENT. Keep it in sync with GEMINI_CLI_MODELS in
+// discovery fails). Keep CURRENT. Every concrete id is in VALID_GEMINI_MODELS
+// of @google/gemini-cli 0.70.0 (packages/core/src/config/models.ts, checked
+// 2026-11-23, #19520): gemini-3.1-pro-preview is its Gemini 3.1 preview,
+// gemini-3.5-flash its default Flash and gemini-3.8-flash its latest Flash.
+// gemini-3.6-flash and gemini-3.7-flash are on OpenRouter but not in that
+// set, so they are not offered. Keep it in sync with GEMINI_CLI_MODELS in
 // static-src/js/backends-tokens.js. Both the concrete ids AND the bare
 // aliases the Gemini CLI accepts are included.
 var geminiStaticModels = []string{
+	"gemini-3.1-pro-preview",
 	"gemini-3-pro-preview",
+	"gemini-3.8-flash",
+	"gemini-3.5-flash",
 	"gemini-3-flash-preview",
 	"gemini-2.5-pro",
 	"gemini-2.5-flash",
@@ -506,10 +516,16 @@ var claudePinnedCLIModels = []string{
 // geminiPinnedCLIModels is the conservative Gemini CLI allowlist used to bound
 // the Google models API inventory. The API is account/provider-facing; the
 // installed CLI accepts the stable Gemini Code Assist ids below, not every
-// generateContent model the API may return. The bare aliases are CLI-defined
-// and are listed so the static fallback passes filterPinnedCLIModels.
+// generateContent model the API may return. No Gemini CLI is pinned in the
+// images, so the ids are checked by hand against VALID_GEMINI_MODELS of the
+// latest @google/gemini-cli (0.70.0, #19520; see geminiStaticModels). The
+// bare aliases are CLI-defined and are listed so the static fallback passes
+// filterPinnedCLIModels.
 var geminiPinnedCLIModels = []string{
+	"gemini-3.1-pro-preview",
 	"gemini-3-pro-preview",
+	"gemini-3.8-flash",
+	"gemini-3.5-flash",
 	"gemini-3-flash-preview",
 	"gemini-2.5-pro",
 	"gemini-2.5-flash",
@@ -1047,10 +1063,10 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 	// fallback list (see copilotAlwaysIncludeModels / claudeAlwaysIncludeModels
 	// / geminiAlwaysIncludeModels).
 	if backend == "copilot" {
-		r.models = dedupeModels(append(r.models, copilotAlwaysIncludeModels...))
+		r.models = canonicalModelList(backend, append(r.models, copilotAlwaysIncludeModels...))
 	}
 	if backend == "claude" {
-		r.models = dedupeModels(append(r.models, claudeAlwaysIncludeModels...))
+		r.models = canonicalModelList(backend, append(r.models, claudeAlwaysIncludeModels...))
 	}
 	if backend == "gemini" {
 		r.models = dedupeModels(append(r.models, geminiAlwaysIncludeModels...))
@@ -1101,10 +1117,10 @@ func (s *Server) staticCLIModelResult(backend string) cliModelResult {
 	default:
 		models := filterPinnedCLIModels(backend, dedupeModels(cliStaticFallback(backend)))
 		if backend == "copilot" {
-			models = dedupeModels(append(models, copilotAlwaysIncludeModels...))
+			models = canonicalModelList(backend, append(models, copilotAlwaysIncludeModels...))
 		}
 		if backend == "claude" {
-			models = dedupeModels(append(models, claudeAlwaysIncludeModels...))
+			models = canonicalModelList(backend, append(models, claudeAlwaysIncludeModels...))
 		}
 		if backend == "gemini" {
 			models = dedupeModels(append(models, geminiAlwaysIncludeModels...))

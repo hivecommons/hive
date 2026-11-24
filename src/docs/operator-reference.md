@@ -8,6 +8,8 @@ For the full centralized environment variable table, including hub, backup,
 inference, deployment, contributor, and legacy helper-script variables, see
 [Environment variable reference](env-vars.md).
 
+For where the file lives and how to apply changes, see [Editing `hive.yaml`](editing-hive-yaml.md).
+
 
 The reference is organized into the sections below. Existing links to this page remain available here.
 

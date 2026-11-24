@@ -158,6 +158,13 @@ rate may not fall and the false-positive count may not rise. A PR that improves
 either re-records the file with `IOSCAN_SCORECARD_UPDATE=1`. The diff of that
 file is the before/after evidence for the change.
 
+The scorecard also runs the 320-row benign corpus of real issue text in
+`src/pkg/ioscan/testdata/classifier-bench/real-issues/` and reports its dev and
+heldout splits separately. The dev false-positive count is gated and recorded
+like the benign controls. The heldout count is printed only, without ids, and
+is never gated or recorded. Only dev rows may inform tuning of rules,
+thresholds or the classifier prompt; see that directory's `README.md`.
+
 Adding a payload is a two-line change to `redTeamCorpus`. Record the outcome
 observed; a miss is a result and belongs in the table.
 

@@ -226,7 +226,8 @@ func (s *Scheduler) formatIssueListWithPolicyForAgent(issues []github.Issue, ref
 			if hasIssueLabel(issue.Labels, github.VerifiedOpenLabel) {
 				b.WriteString(fmt.Sprintf("; already verified (%s): remaining work is confirmed — do NOT re-verify, implement the rest", github.VerifiedOpenLabel))
 			} else {
-				b.WriteString(fmt.Sprintf("; verify once: close the issue if resolved, otherwise add only the label `%s` (hive removes %s itself; do not remove any `hive/` label), report the verification only after the label request's result says ok, and implement the remainder (hive then stops asking); context: %s", github.VerifiedOpenLabel, github.LikelyDoneLabel, reason))
+				b.WriteString(fmt.Sprintf("; verify once: close the issue if resolved, otherwise add only the label `%s` (hive removes %s itself; do not remove any `hive/` label), report the verification only after the label request's result says ok, and implement the remainder (hive then stops asking); end the verification note with `%s` when nothing is left (hive closes it, or parks it for a person to close) or `%s` when work remains; context: %s",
+					github.VerifiedOpenLabel, github.LikelyDoneLabel, github.VerificationMarker(github.VerificationVerdictComplete, issue.ClaimContext.PRNumber), github.VerificationMarker(github.VerificationVerdictPartial, issue.ClaimContext.PRNumber), reason))
 			}
 			b.WriteString("\n")
 		}
@@ -311,7 +312,7 @@ func (s *Scheduler) buildAgentListAndRoles() (list, roles string) {
 type KickMessage struct {
 	Agent string
 	Repo  string
-	// Forge is the forge kind ("github", "gitlab", "gitea") the kick's repo
+	// Forge is the forge kind ("github", "gitlab", "gitea", "forgejo") the kick's repo
 	// lives on: Repo's repo_policies[].forge override, else project.forge
 	// (hivecommons/hive#14112). A kick with no Repo carries project.forge.
 	Forge     string

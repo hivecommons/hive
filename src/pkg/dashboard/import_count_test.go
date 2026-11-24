@@ -90,8 +90,16 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// ancestry resolver shared with the hub behind GET /api/version/contains
 	// (hivecommons/hive#18915), plus pkg/netguard, the stdlib-only address
 	// classifier behind isPrivateURL that the hub shares so the two copies
-	// cannot drift (hivecommons/hive#18991).
-	const maxDashboardInternalImports = 76
+	// cannot drift (hivecommons/hive#18991), plus pkg/gfi, the umbrella and
+	// owner-only classifier the contributor queue gates and the tracker-row
+	// pill share so the two cannot disagree (hivecommons/hive#19078), plus
+	// pkg/askai, the Ask AI help service and hub-relay client shared with the
+	// hub so consent, limits and filtering cannot drift (hivecommons/hive#19183),
+	// plus pkg/auditchain, the dependency-free hash-chain leaf the /data/audit.jsonl
+	// writer seals rows with and `hive audit-verify` checks them with, so the
+	// two hash identically (hivecommons/hive#19439). v6 counts 76 before
+	// those three v5 additions.
+	const maxDashboardInternalImports = 79
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

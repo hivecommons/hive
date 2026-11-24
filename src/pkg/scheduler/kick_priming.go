@@ -346,6 +346,25 @@ func (s *Scheduler) primeKnowledge(agentName string, issues []github.Issue) stri
 // carried for the agent — a fresh KickSummary (the mid-task advisor's kick
 // identity, #17155) and the rendered slugs (KickPrimedSlugs, #17052).
 func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue) knowledgeInjection {
+	return s.primeKnowledgeStatsForWorkflow(agentName, issues, "")
+}
+
+// PrimeWorkflowDispatch adds the same scoped, lifecycle-filtered and byte-capped
+// knowledge as a generic kick, plus the bound model as an additional lane. The
+// model name is a search term so reviewer rules do not depend on an intake
+// issue's title mentioning the assessment rubric.
+func (s *Scheduler) PrimeWorkflowDispatch(msg KickMessage, d github.WorkflowDispatch) KickMessage {
+	model, _, _ := strings.Cut(d.Model, "@")
+	issues := []github.Issue{{Repo: d.Repo, Number: d.Number, Title: d.Title + " " + model, Labels: d.Labels}}
+	inj := s.primeKnowledgeStatsForWorkflow(msg.Agent, issues, model)
+	s.logKnowledgeInjection(msg.Agent, inj, 0, 0)
+	if inj.Section != "" {
+		msg.Message = inj.Section + "\n\n" + msg.Message
+	}
+	return msg
+}
+
+func (s *Scheduler) primeKnowledgeStatsForWorkflow(agentName string, issues []github.Issue, workflow string) knowledgeInjection {
 	s.mu.RLock()
 	primer := s.primer
 	cfg := s.cfg
@@ -358,7 +377,7 @@ func (s *Scheduler) primeKnowledgeStats(agentName string, issues []github.Issue)
 		limit = len(issues)
 	}
 	s.recordKickSummary(agentName, issues[:limit])
-	inj, slugs := s.renderKnowledge(primer, cfg, agentName, issues[:limit])
+	inj, slugs := s.renderKnowledge(primer, cfg, agentName, issues[:limit], workflow)
 	if inj.Primed {
 		s.primedSlugs.Store(agentName, slugs)
 	}
@@ -381,7 +400,7 @@ func (s *Scheduler) primeKnowledgeForTask(agentName string, task github.Issue) k
 	if primer == nil {
 		return knowledgeInjection{}
 	}
-	inj, _ := s.renderKnowledge(primer, cfg, agentName, []github.Issue{task})
+	inj, _ := s.renderKnowledge(primer, cfg, agentName, []github.Issue{task}, "")
 	s.logTaskKnowledgeSource(agentName, task, inj)
 	return inj
 }
@@ -430,18 +449,25 @@ func (s *Scheduler) logTaskKnowledgeSource(agentName string, task github.Issue, 
 // the wiki layers for issues and renders the section, returning the slugs it
 // rendered for a caller that records them. It writes no scheduler state other
 // than the cap-log dedupe key, which only picks the log level.
-func (s *Scheduler) renderKnowledge(primer *knowledge.Primer, cfg *config.Config, agentName string, issues []github.Issue) (knowledgeInjection, []string) {
-	if len(issues) == 0 {
-		return knowledgeInjection{}, nil
+func (s *Scheduler) renderKnowledge(primer *knowledge.Primer, cfg *config.Config, agentName string, issues []github.Issue, workflow string) (knowledgeInjection, []string) {
+	// Without issues or keywords there is nothing to rank, but pinned entries
+	// (reviewer-stated rules, #19094) load on scope alone, so the primer still
+	// runs when it has any; PrimeForKick then returns only those.
+	var keywords []string
+	if len(issues) > 0 {
+		keywords = extractKeywordsFor(cfg, issues)
 	}
-
-	keywords := extractKeywordsFor(cfg, issues)
 	if len(keywords) == 0 {
-		s.logger.Debug("knowledge primer: no keywords extracted from issues", "issue_count", len(issues))
-		return knowledgeInjection{}, nil
+		if !primer.HasPinned() {
+			if len(issues) > 0 {
+				s.logger.Debug("knowledge primer: no keywords extracted from issues", "issue_count", len(issues))
+			}
+			return knowledgeInjection{}, nil
+		}
+		s.logger.Debug("knowledge primer: no keywords, priming pinned entries only", "issue_count", len(issues))
+	} else {
+		s.logger.Info("knowledge primer: searching", "keywords", len(keywords), "sample", keywordSample(keywords))
 	}
-
-	s.logger.Info("knowledge primer: searching", "keywords", len(keywords), "sample", keywordSample(keywords))
 	var scope *knowledge.TOCScope
 	if sc, ok := cfg.KnowledgeAgentScope(agentName); ok {
 		agentScope := knowledge.AgentScope(sc.Layers, sc.Repos, sc.Types, sc.Tags, sc.IncludeStates)
@@ -451,6 +477,7 @@ func (s *Scheduler) renderKnowledge(primer *knowledge.Primer, cfg *config.Config
 		scope = &agentScope
 	}
 	kc := kickContextFor(cfg, agentName, issues)
+	kc.Workflow = workflow
 	primed := primer.PrimeForKick(context.Background(), scope, kc, keywords)
 	// The issue's own terms matched nothing: search again with the terms
 	// earlier releases used, so leaving the hive's routing words out never

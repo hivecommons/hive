@@ -430,13 +430,14 @@ func (c *Client) parentAutoClosePolicy(repo string) string {
 
 // parentAutoCloseExempt returns why a parent must not be auto-closed from
 // its policy and labels alone, or "" when it may be (hivecommons/hive#18869).
-// "false" exempts every parent; unless the policy is "epics_too", an issue
+// "false" exempts every parent; unless the policy is "epics_too" or
+// "trackers_too" (which implies it), an issue
 // labelled epic (any case) or hold is left for a person to close.
 func parentAutoCloseExempt(policy string, labels []string) string {
 	if policy == config.ParentAutoCloseOff {
 		return "repo parent_autoclose is false"
 	}
-	if policy == config.ParentAutoCloseEpicsToo {
+	if policy == config.ParentAutoCloseEpicsToo || policy == config.ParentAutoCloseTrackersToo {
 		return ""
 	}
 	for _, l := range labels {

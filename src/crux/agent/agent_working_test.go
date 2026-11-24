@@ -2,10 +2,12 @@ package agent
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -143,6 +145,68 @@ func TestWaitForInputPrompt_TimeoutWhileWorkingIsNotWarned(t *testing.T) {
 	stuck := run("some unrecognised screen with no prompt")
 	if !strings.Contains(stuck, "prompt timeout — dumping pane") {
 		t.Errorf("non-working timeout must still dump the pane at WARN:\n%s", stuck)
+	}
+}
+
+// Several kicks queued for one stuck agent time out together; only the first
+// may log the WARN pane dump within promptTimeoutDumpInterval, or one agent
+// alone crosses the agent_pane_timeout self-report threshold (#19376).
+func TestWaitForInputPrompt_TimeoutDumpRateLimitedPerAgent(t *testing.T) {
+	origTimeout, origPoll := inputPromptTimeout, inputPromptPollInterval
+	inputPromptTimeout = 100 * time.Millisecond
+	inputPromptPollInterval = 10 * time.Millisecond
+	defer func() {
+		inputPromptTimeout, inputPromptPollInterval = origTimeout, origPoll
+	}()
+
+	logBuf := &syncBuffer{}
+	m := NewManager(
+		map[string]config.AgentConfig{"scanner": {Backend: "claude"}},
+		slog.New(slog.NewTextHandler(logBuf, nil)), ProjectContext{})
+	m.mu.Lock()
+	agent := m.agents["scanner"]
+	m.mu.Unlock()
+	ft := termSeams(m)
+	pane := "some unrecognised screen with no prompt"
+	ft.captureVisiblePane = func(*AgentProcess) string { return pane }
+	ft.capturePane = func(*AgentProcess) string { return pane }
+
+	const waiters = 5
+	var wg sync.WaitGroup
+	for i := 0; i < waiters; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if m.waitForInputPromptForAgent(agent) {
+				t.Error("returned ready; want not ready")
+			}
+		}()
+	}
+	wg.Wait()
+
+	out := logBuf.String()
+	if got := strings.Count(out, "prompt timeout — dumping pane"); got != 1 {
+		t.Errorf("WARN pane dumps = %d, want 1:\n%s", got, out)
+	}
+	if got := strings.Count(out, "pane content at timeout"); got != 1 {
+		t.Errorf("pane content dumps = %d, want 1:\n%s", got, out)
+	}
+	if got := strings.Count(out, "pane already dumped recently"); got != waiters-1 {
+		t.Errorf("suppressed INFO lines = %d, want %d:\n%s", got, waiters-1, out)
+	}
+
+	// Once the interval has passed the next timeout dumps again and reports
+	// how many were suppressed in between.
+	agent.promptTimeoutDumpAt.Store(time.Now().Add(-promptTimeoutDumpInterval - time.Second).UnixNano())
+	if m.waitForInputPromptForAgent(agent) {
+		t.Fatal("returned ready; want not ready")
+	}
+	later := strings.TrimPrefix(logBuf.String(), out)
+	if !strings.Contains(later, "prompt timeout — dumping pane") {
+		t.Errorf("timeout after the interval did not dump at WARN:\n%s", later)
+	}
+	if !strings.Contains(later, fmt.Sprintf("suppressed_since_last_dump=%d", waiters-1)) {
+		t.Errorf("dump did not report the suppressed count:\n%s", later)
 	}
 }
 

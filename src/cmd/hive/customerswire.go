@@ -34,7 +34,15 @@ type customersDashboard struct {
 	// mentions is the accept-time GitHub search (step E, #18884); nil when
 	// it is not wired. Only Accept and AcceptInto reach it.
 	mentions *customers.MentionSearch
-	logger   *slog.Logger
+	// hubImport is the accept-time hub pull (#19163); nil when not wired.
+	// It asks only about the person just accepted and is off unless
+	// customers.hub_import.enabled and a hub registration.
+	hubImport func(ctx context.Context, person string)
+	// profileFill fills profile fields from public forge profiles
+	// (#19302); nil when not wired. Off unless
+	// customers.profile_fill.enabled.
+	profileFill *customers.ProfileFill
+	logger      *slog.Logger
 	// spawn runs the search; nil means a goroutine. Tests run it inline.
 	spawn func(func())
 }
@@ -158,6 +166,8 @@ func (c *customersDashboard) Accept(v dashboard.CustomersViewer, suggestionID st
 	res, err := customerResult(c.svc.Accept(customersViewer(v), suggestionID))
 	if err == nil {
 		c.searchOnAccept(res.ID, ident, found)
+		c.hubImportOnAccept(res.ID)
+		c.profileFillOnAccept(res.ID)
 	}
 	return res, err
 }
@@ -227,6 +237,8 @@ func (c *customersDashboard) AcceptInto(v dashboard.CustomersViewer, suggestionI
 	res, err := customerResult(c.svc.AcceptInto(customersViewer(v), suggestionID, into))
 	if err == nil {
 		c.searchOnAccept(res.ID, ident, found)
+		c.hubImportOnAccept(res.ID)
+		c.profileFillOnAccept(res.ID)
 	}
 	return res, err
 }

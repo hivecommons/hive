@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,7 +12,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/auditchain"
 )
 
 // Token-access audit trail (#6287).
@@ -252,11 +256,26 @@ func IngestTokenAccessEventsOnce(logger *slog.Logger, spool, logPath string, now
 	}
 	defer out.Close()
 
+	tokenAccessChain.mu.Lock()
+	defer tokenAccessChain.mu.Unlock()
+	head, known := tokenAccessChain.heads[logPath]
+	if !known {
+		head = tokenAccessChainHeadFromFile(logPath)
+	}
+
 	appended := 0
 	for _, name := range names {
 		path := filepath.Join(spool, name)
 		line, ok := readTokenAccessEvent(logger, path)
 		if ok {
+			next := head
+			if sealed, link, err := auditchain.Seal(line, head); err == nil {
+				line, next = sealed, link
+			} else if logger != nil {
+				// Written unchained rather than lost; audit-verify reports it.
+				logger.Warn("token-access audit: cannot hash-chain event; writing it unchained",
+					slog.String("event", name), slog.String("error", err.Error()))
+			}
 			if _, err := out.Write(append(line, '\n')); err != nil {
 				if logger != nil {
 					logger.Warn("token-access audit: append failed; leaving event in spool",
@@ -264,6 +283,9 @@ func IngestTokenAccessEventsOnce(logger *slog.Logger, spool, logPath string, now
 				}
 				return appended
 			}
+			// The head only advances once the row is on disk.
+			head = next
+			tokenAccessChain.heads[logPath] = head
 			appended++
 		}
 		// Consumed (or rejected): the hive owns the spool directory, so the
@@ -274,6 +296,53 @@ func IngestTokenAccessEventsOnce(logger *slog.Logger, spool, logPath string, now
 		}
 	}
 	return appended
+}
+
+// tokenAccessChain holds the hash-chain head of each durable log (#19439):
+// the seq and row_hash of the newest row the hive wrote. Every ingested row
+// is sealed onto it with pkg/auditchain, the same format /data/audit.jsonl
+// uses, so `hive audit-verify --token-access` can show an edited, dropped,
+// inserted or reordered row.
+//
+// The head is read from the file once per process and then kept in memory.
+// That is deliberate: if the file is rewritten behind the hive's back, the
+// next row the hive writes still links to the head it remembers, so the
+// rewrite shows up as a prev_hash break instead of the hive quietly extending
+// a forged chain.
+var tokenAccessChain = struct {
+	mu    sync.Mutex
+	heads map[string]auditchain.Link
+}{heads: map[string]auditchain.Link{}}
+
+// tokenAccessChainHeadFromFile returns the seq and row_hash of the newest
+// chained row in the log at path. Rows written before the chain existed carry
+// no row_hash and are skipped, so on the first ingest after the upgrade the
+// head is zero and the next row starts the chain at seq 1 with no prev_hash:
+// that row is the genesis checkpoint, and the older rows are reported by the
+// verifier as legacy rows outside the chain.
+func tokenAccessChainHeadFromFile(path string) auditchain.Link {
+	f, err := os.Open(path)
+	if err != nil {
+		return auditchain.Link{}
+	}
+	defer f.Close()
+	var head auditchain.Link
+	r := bufio.NewReader(f)
+	for {
+		line, err := r.ReadBytes('\n')
+		if line = bytes.TrimSpace(line); len(line) > 0 {
+			var row struct {
+				Seq     int64  `json:"seq"`
+				RowHash string `json:"row_hash"`
+			}
+			if json.Unmarshal(line, &row) == nil && row.RowHash != "" && row.Seq > 0 {
+				head = auditchain.Link{Seq: row.Seq, Hash: row.RowHash}
+			}
+		}
+		if err != nil {
+			return head
+		}
+	}
 }
 
 // tokenAccessClaimedUIDKey is where a mismatching self-reported uid is kept

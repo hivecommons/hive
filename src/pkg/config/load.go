@@ -93,6 +93,7 @@ func loadWithOverrides(path, envPath string, validateOpts ValidateOptions) (*Con
 	}
 
 	cfg.SourcePath = path
+	cfg.recordLayerSum(path, sumBytes(data))
 	cfg.applyBootstrapEnv()
 	cfg.applyDefaults()
 
@@ -114,6 +115,9 @@ func loadWithOverrides(path, envPath string, validateOpts ValidateOptions) (*Con
 	// when the base entry carries the same stale launch_cmd. Drop it here
 	// rather than let validation exit the process.
 	cfg.DegradeContradictingLaunchCmds()
+	// A claude or copilot agent carrying the other CLI's spelling of its
+	// Claude model id is rejected by its CLI; rewrite it.
+	cfg.NormalizeModelIDConventions()
 
 	if err := cfg.ApplyAgentSpecRepoScopes(); err != nil {
 		return nil, fmt.Errorf("applying agent spec repo scopes: %w", err)
@@ -164,6 +168,10 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 		// No overlay (or unreadable) — the seed is authoritative, as at boot.
 		return cfg, nil
 	}
+	// The overlay's agents and blocks win over the config file below, so a
+	// hand edit to it must be protected from the next save the same way as
+	// an edit to the config file (hivecommons/hive#19561).
+	cfg.recordLayerSum(DashboardOverlayFile, sumBytes(data))
 	var overlay Config
 	if err := yaml.Unmarshal([]byte(expandEnvVars(string(data))), &overlay); err != nil {
 		return cfg, nil // malformed overlay: fall back to seed, don't fail the reload

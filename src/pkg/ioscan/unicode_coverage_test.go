@@ -146,3 +146,16 @@ func TestSnippetFlattensAndBounds(t *testing.T) {
 		t.Fatalf("snippet len = %d (%q), want %d with an ellipsis", len(got), got, snippetMaxLen+3)
 	}
 }
+
+// Prose in a confusable-heavy script that also carries Latin commands and
+// URLs is ordinary issue text. Only a confusable mixed into ASCII is a spoof.
+func TestNormalizeLeavesNativeScriptProseWithLatinAlone(t *testing.T) {
+	in := "gh release list получает Forbidden при POST к https://api.github.com/graphql, просто перезагрузил страницу"
+	norm := normalizeUnicodeSteganography(in)
+	if norm.scanText != in || len(norm.findings) != 0 {
+		t.Fatalf("native-script prose rewritten or flagged: %q %+v", norm.scanText, norm.findings)
+	}
+	if ScanInput(in).Blocked {
+		t.Fatal("ScanInput blocked ordinary Cyrillic prose with Latin tokens")
+	}
+}

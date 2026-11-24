@@ -429,7 +429,7 @@ RUN timeout 120s npm install -g --ignore-scripts --no-fund --no-audit \
 # dashboard's codex model discovery (`codex app-server` model/list — pure
 # local stdio, no network, unaffected by the proxy CA) falls back to the
 # static list, and non-codex backends are unaffected.
-ARG CODEX_VERSION=0.170.0
+ARG CODEX_VERSION=0.172.0
 ARG CLINE_VERSION=3.0.74
 # npm can briefly advertise AWS SDK versions before all registry replicas serve
 # them. Wait at most three minutes between attempts and revalidate metadata.
@@ -447,7 +447,7 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_V
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.327
+ARG CLAUDE_CODE_VERSION=2.1.331
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -530,8 +530,8 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # Bump note: see src/docs/cli-pins.md (quorum row); update QUORUM_VERSION and
 # QUORUM_SHA256 together from the release's quorum.mjs.sha256, and
 # QUORUM_DAVEY_VERSION from quorum's package-lock.json.
-ARG QUORUM_VERSION=v0.5.1
-ARG QUORUM_SHA256=f5fa6789ac034f8aba01ca45765c6fe3f5e904d21e113c361b482197eefeb2b9
+ARG QUORUM_VERSION=v0.6.0
+ARG QUORUM_SHA256=5ca780c4caaf465c7813a86e066019f9a785936310654cd3b2a973027d13a20d
 ARG QUORUM_DAVEY_VERSION=0.1.12
 RUN if [ -n "${QUORUM_VERSION}" ]; then \
       test -n "${QUORUM_SHA256}" || { echo "QUORUM_SHA256 is required with QUORUM_VERSION" >&2; exit 1; } && \
@@ -577,9 +577,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=18.22.0
-ARG OMP_SHA256_AMD64=f706b27ba845834d8f8360705a2e9ba1534f3593fa24411d41358272de33642b
-ARG OMP_SHA256_ARM64=7238dd213d5c61bc9bf51735d552bc71901fdd44329f862b0a971146b1cdac3e
+ARG OMP_VERSION=19.1.0
+ARG OMP_SHA256_AMD64=be2b45c437b623e15c29b1f8c98aacb842f92118196454b5e9eed884359e9a01
+ARG OMP_SHA256_ARM64=785e8e519acb55852a85e5495271d768a221ca92c095c043cd3eb0d7f8d3eafc
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \
@@ -637,7 +637,7 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # Tolerant of failure like the copilot/codex layers: agents configured for
 # backend: pi simply won't launch if this is absent, same degradation as
 # any other missing backend binary.
-ARG PI_VERSION=1.5.0
+ARG PI_VERSION=1.6.0
 RUN npm install -g --ignore-scripts --no-fund --no-audit \
     "@earendil-works/pi-coding-agent@${PI_VERSION}" && npm cache clean --force || \
     echo "WARN: pi CLI install failed — skipping"

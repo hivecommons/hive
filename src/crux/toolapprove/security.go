@@ -108,11 +108,23 @@ func NewDefaultSecurityScanner() *DefaultSecurityScanner {
 
 var (
 	// destructiveCmdRe matches the non-rm destructive commands: mkfs, dd
-	// from /dev/zero and the fork bomb, which needs no word boundary. A
-	// recursive rm of a protected directory is decided by analyzeRmCommand
-	// (shellrm.go), which reads the command the way the shell does.
-	destructiveCmdRe  = regexp.MustCompile(`(?i)(\bmkfs\b|\bdd\s+if=/dev/zero\b|:\(\)\{\s*:\|:&\s*\};:)`)
-	credentialExfilRe = regexp.MustCompile(`(?i)\b(cat\s+~/\.ssh/|cat\s+/var/run/secrets/|printenv\s+.*TOKEN|echo\s+\$GH_TOKEN|echo\s+\$GITHUB_TOKEN)\b`)
+	// from /dev/zero or onto a raw block device, and the fork bomb, which
+	// needs no word boundary. A recursive rm of a protected directory is
+	// decided by analyzeRmCommand (shellrm.go), which reads the command the
+	// way the shell does. dd is destructive by its output target as much
+	// as its input source: "dd if=/dev/urandom of=/dev/sda" wipes a disk
+	// without ever reading /dev/zero, so both sides are checked.
+	destructiveCmdRe = regexp.MustCompile(`(?i)(\bmkfs\b|\bdd\s+if=/dev/zero\b|\bdd\s+[^;|&\n]*\bof=/dev/(?:[sh]d|vd|xvd|nvme)[a-z0-9]*\b|:\(\)\{\s*:\|:&\s*\};:)`)
+	// credentialExfilRe flags common commands that read or print credential
+	// material. It is a substring/pattern heuristic, not a shell parser
+	// (unlike analyzeRmCommand): it tolerates the quoting and $HOME/${HOME}
+	// variants a normal command line uses, but it does not follow variable
+	// indirection, and it deliberately omits bare env/printenv dumps, which
+	// are routine and would make the check too noisy to keep enabled.
+	credentialExfilRe = regexp.MustCompile(`(?i)\b(?:cat|less|more|head|tail|tac|base64|xxd|od|strings)(?:\s+-\S+(?:\s+\d+)?)*\s+["']?(?:~|\$\{?HOME\}?|/root)["']?/\.ssh/` +
+		`|\b(?:cat|less|more|head|tail|tac|base64|xxd|od|strings)(?:\s+-\S+(?:\s+\d+)?)*\s+["']?/var/run/secrets/` +
+		`|\bprintenv\s+.*TOKEN` +
+		`|\becho\s+["']?\$\{?(?:GH_TOKEN|GITHUB_TOKEN)\b`)
 )
 
 // Scan analyzes the tool request for security violations.

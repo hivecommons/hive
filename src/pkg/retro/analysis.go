@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/jsonextract"
 	"github.com/hivecommons/hive/pkg/outputschema"
 )
@@ -215,7 +216,7 @@ func (c *openAIChatClient) Complete(ctx context.Context, messages []chatMessage,
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, analysisTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.endpoint+"/v1/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, config.LiteLLMChatCompletionsURL(c.endpoint), bytes.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("build retro analysis request: %w", err)
 	}

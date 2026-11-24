@@ -45,6 +45,17 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			p.logClientRead("proxy client request read timed out", err, "agent", agentName)
 			return
 		}
+		// #19223: a request naming another host, or a path the upstream could
+		// resolve differently from the gates below, is refused before any gate
+		// reads it, and the connection is closed behind it.
+		if reason, refused := relayRequestTargetRefusal(req, host); refused {
+			_ = client.SetReadDeadline(time.Time{})
+			p.recordViolation(agentName, req.Method, reason)
+			_ = client.SetWriteDeadline(time.Now().Add(httpWriteTimeout))
+			_ = writeRelayBadRequest(client, reason)
+			_ = client.SetWriteDeadline(time.Time{})
+			return
+		}
 
 		blocked := false
 		blockReason := ""
@@ -73,6 +84,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// as paused even when the agent is also out of scope for it.
 		blockJSON := false
 		graphQLMutation := false
+		var graphQLBody []byte
 		// A direct write from a lane under write_surface.enforce (#9772) is
 		// refused and audited as agent_write_refused. Checked after pause and
 		// scope so their more specific reasons win when both apply.
@@ -113,8 +125,15 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				blockReason = reason
 				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
+			} else if reason, refused := p.reviewThreadRefusal(req, agentName); !isLinear && refused {
+				// Review-thread replies, PR review comments and comment deletes
+				// (#19096): allowed only on the hive's own PR for the agent that
+				// opened it, or for the hive's own recent comment.
+				blocked = true
+				blockReason = reason
+				blockCode = DenyReasonReviewThread
 			} else if !isLinear {
-				if reason, kind, refused := WriteSurfaceEnforceRefusal(p.writeSurfaceEnforcedFunc(), agentName, req.Method, req.URL.Path, req.URL.RawQuery); refused {
+				if reason, kind, refused := p.writeSurfaceEnforceRefusal(agentName, req.Method, req.URL.Path, req.URL.RawQuery); refused {
 					blocked = true
 					blockReason = reason
 					blockCode = DenyReasonWriteSurfaceEnforced
@@ -155,13 +174,18 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				p.logTimeout("proxy GraphQL request body read timed out", readErr, "agent", agentName, "path", req.URL.Path)
 				return
 			}
-			if reason, refused := p.graphQLAutoMergeRefusal(body); agentName != internalCallerName && refused {
+			graphQLBody = body
+			if reason, refused := p.graphQLAgentRepoScopeRefusal(agentName, body); agentName != internalCallerName && refused {
+				blocked = true
+				blockReason = reason
+				blockCode = DenyReasonAgentRepoScope
+			} else if reason, refused := p.graphQLAutoMergeRefusal(body); agentName != internalCallerName && refused {
 				blocked = true
 				blockReason = reason
 				blockCode = DenyReasonRepoAutoMergeOff
 				blockJSON = true
 			} else if agentName != internalCallerName {
-				if reason, refused := WriteSurfaceGraphQLRefusal(p.writeSurfaceEnforcedFunc(), agentName, body); refused {
+				if reason, refused := p.writeSurfaceGraphQLRefusal(agentName, body); refused {
 					blocked = true
 					blockReason = reason
 					blockCode = DenyReasonWriteSurfaceEnforced
@@ -239,12 +263,12 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				}
 			}
 		}
-		if reason, deny, ok := p.inspectCanaryEgress(agentName, req); ok {
+		if reason, code, deny, ok := p.inspectGitHubWriteEgress(agentName, req); ok {
 			if deny {
 				blocked = true
 				if blockReason == "" {
 					blockReason = reason
-					blockCode = DenyReasonCanaryEgress
+					blockCode = code
 				}
 			}
 		}
@@ -273,6 +297,9 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				detail = blockReason
 			}
 			p.recordViolation(agentName, req.Method, detail)
+			if agentName != internalCallerName && !isLinear {
+				p.noteRefusedReviewReply(req, agentName, detail)
+			}
 			if writeSurfaceKind != "" {
 				p.auditWriteRefused(agentName, writeSurfaceKind, req.Method, repoScopePath(req))
 			}
@@ -331,6 +358,13 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			}
 		}
 
+		// Advisory attribution can use a caller-supplied name, so it
+		// cannot exempt a request from header filtering.
+		filterAgentHeaders := agentName != internalCallerName || p.proxyAdvisoryOK
+		if filterAgentHeaders {
+			stripRelayRequestHeaders(req)
+		}
+
 		// #1861: with injection enabled, the upstream credential is decided
 		// HERE — after the ACMM/repo/canary gates, immediately before either
 		// forwarding branch — so every byte that reaches GitHub has passed
@@ -352,6 +386,14 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// (possibly rotated-out) copy the agent's process still holds.
 		if isLinear && agentName != internalCallerName {
 			p.injectLinearCredential(req, agentName, mode)
+		}
+		// #19103: an allowed agent write's text fields get the same dash
+		// rewrite hive's own writes get, after every gate has read the body
+		// as the agent sent it. Git smart-HTTP traffic is never touched.
+		if err := p.sanitizeAgentWriteProse(req, agentName, isLinear); err != nil {
+			_ = client.SetReadDeadline(time.Time{})
+			p.logTimeout("proxy prose-filter body read timed out", err, "agent", agentName, "path", req.URL.Path)
+			return
 		}
 		// Git smart HTTP uses chunked streaming that http.ReadResponse
 		// can't handle reliably. After the ACMM check passes, forward
@@ -415,6 +457,19 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// longer than responseBodyStallTimeout errors out and lets the
 		// handler's deferred Closes reclaim the sockets.
 		resp.Body = &stallBoundedBody{body: resp.Body, conn: upstream, idle: p.bodyStallTimeoutDuration()}
+		if graphQLBody != nil && resp.StatusCode == http.StatusOK {
+			resp.Body = &graphQLRepoCapture{
+				ReadCloser: resp.Body,
+				length:     resp.ContentLength,
+				observe: func(body []byte) {
+					p.observeGraphQLRepoResponse(agentName, graphQLBody, body, resp.Header.Get("Content-Encoding"))
+				},
+			}
+		}
+
+		if filterAgentHeaders {
+			stripRelayResponseHeaders(resp)
+		}
 
 		// Rolling per-Write deadline (see stallBoundedWriter): a response that
 		// keeps flowing is never cut for being long, while a client that stops

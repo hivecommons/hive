@@ -342,3 +342,26 @@ func TestDescribeAppKeyFailureNamesEnvOverride(t *testing.T) {
 		t.Errorf("both unset sources should render as (unset): %q", bare)
 	}
 }
+
+func TestInitGitHubAuthForgeOnlyBootsWithoutGitHubCredentials(t *testing.T) {
+	isolateAppKeyLookup(t)
+	t.Setenv("HIVE_GITHUB_TOKEN", "")
+
+	cfg := &config.Config{}
+	cfg.Project.Org = "acme"
+	cfg.Project.Forge = config.ForgeForgejo
+	cfg.Forgejo.URL = "https://codeberg.org"
+
+	got := initGitHubAuth(context.Background(), cfg, quietLogger())
+	if got.Client != nil || got.AppAuth != nil {
+		t.Fatalf("built a GitHub client with no credentials: %+v", got)
+	}
+	if got.Failure != "" {
+		t.Errorf("Failure = %q, want none for a hive that needs no GitHub credential", got.Failure)
+	}
+
+	cfg.Project.Forge = config.ForgeGitHub
+	if got := initGitHubAuth(context.Background(), cfg, quietLogger()); got.Failure == "" {
+		t.Error("a GitHub hive with no credentials must still report a failure")
+	}
+}

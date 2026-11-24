@@ -343,6 +343,11 @@ type ReviewConfig struct {
 	// reviewer's memory of it have both moved on. Empty means
 	// DefaultReviewDeltaMaxAge.
 	DeltaMaxAge string `yaml:"delta_max_age,omitempty" json:"delta_max_age,omitempty"`
+	// Evidence configures the facts the hive gathers before a review: the
+	// repository's own rule documents, named operator rules, and dependency
+	// vulnerability and release-age data (hivecommons/hive#19069). Per-repo
+	// overrides live at repos.<repo>.review_preflight.
+	Preflight ReviewPreflightConfig `yaml:"preflight,omitempty" json:"preflight,omitempty"`
 	// HumanDecisionLabel names an EXISTING repo label to apply when the review
 	// swarm holds a PR for a human. The review comment's in-body marker is
 	// always the primary signal and never depends on this: a label makes the

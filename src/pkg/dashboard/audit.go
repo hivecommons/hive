@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/auditchain"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/github"
@@ -110,8 +111,10 @@ var auditSensitiveActions = map[string]bool{
 	"config_governor_watchdog":                true,
 	"config_governor_work_source":             true,
 	"config_reference_repos":                  true,
+	"config_repo_parent_autoclose":            true,
 	"config_remote_write_identity":            true,
 	"config_review":                           true,
+	"config_review_feedback_rules":            true,
 	"config_write_surface":                    true,
 	"contributor-tier-changed":                true,
 	"copilot_auth_logout":                     true,
@@ -197,6 +200,10 @@ type AuditLog struct {
 	// duplicates having been dropped by notePRThroughput. The merged ledger
 	// (merged_ledger.go) is its consumer.
 	onPRMerged func(AuditEntry)
+	// chain is the head of the on-disk hash chain (#19439): the seq and
+	// row_hash of the newest row written. Zero until the first chained row;
+	// only advanced when a write succeeds. Meaningless when writer is nil.
+	chain auditchain.Link
 }
 
 // SetPRMergedHook installs the pr_merged observer; nil removes it.
@@ -220,6 +227,7 @@ func newAuditLog() *AuditLog {
 		a.initWriterLease(auditLogPath, auditWriterID())
 		a.loadFromDisk()
 		a.loadPRThroughputCounters(prThroughputCountersPath, auditLogPath)
+		a.startChain(auditLogPath)
 		go a.runWriterLease(a.stopLease)
 	}
 
@@ -299,15 +307,19 @@ func (a *AuditLog) logRecordAt(timestamp, user, action, detail, agent, repo stri
 		a.mu.Unlock()
 		return
 	}
+	a.reopenSpillIfRemovedLocked()
+	var data []byte
+	if a.writer != nil {
+		data = a.chainEntryLocked(&entry)
+	}
 	a.ring = append(a.ring, entry)
 	a.noteUserAction(entry.User, entry.Timestamp)
 
-	a.reopenSpillIfRemovedLocked()
-	if a.writer != nil {
-		if data, err := json.Marshal(entry); err == nil {
-			if _, err := a.writer.Write(append(data, '\n')); err != nil {
-				slog.Error("audit log write failed", "error", err)
-			}
+	if data != nil {
+		if _, err := a.writer.Write(append(data, '\n')); err != nil {
+			slog.Error("audit log write failed", "error", err)
+		} else if entry.RowHash != "" {
+			a.chain = auditchain.Link{Seq: entry.Seq, Hash: entry.RowHash}
 		}
 	}
 	onMerged := a.onPRMerged

@@ -123,3 +123,29 @@ func TestPodmanRunIntegration(t *testing.T) {
 		t.Fatalf("Run: %v stderr=%s", err, res.Stderr)
 	}
 }
+
+func TestPodmanArgsDropCapsAndLimitPids(t *testing.T) {
+	spec := LaunchSpec{Image: "agent:latest", Workspace: "/w", Command: []string{"true"}}
+	args, err := PodmanArgs(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--cap-drop=all", "--security-opt=no-new-privileges", "--pids-limit=4096"} {
+		if !slices.Contains(args, want) {
+			t.Fatalf("args %q missing %q", args, want)
+		}
+	}
+	spec.PidsLimit = 64
+	args, _ = PodmanArgs(spec)
+	if !slices.Contains(args, "--pids-limit=64") {
+		t.Fatalf("args %q missing override", args)
+	}
+}
+
+func TestRelayPreflightChecksContainment(t *testing.T) {
+	for _, want := range []string{"/proc/self/status", "HIVE_REQUIRE_HARDENED", "NoNewPrivs"} {
+		if !strings.Contains(relayPreflightScript, want) {
+			t.Fatalf("preflight missing %q", want)
+		}
+	}
+}
