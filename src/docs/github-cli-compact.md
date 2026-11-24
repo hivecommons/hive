@@ -101,6 +101,7 @@ The prose may be reworded; the codes are stable identifiers:
 | `repo_not_in_config` | proxy | repo filter |
 | `issue_shape` | proxy | issue/comment shape gate (#7014) |
 | `canary_egress` | proxy | canary token on egress (ADR 0008) |
+| `push_signoff` | proxy | in-pod push refused: lane commit without the lane's `Signed-off-by`, or lane sign-off on a commit the lane did not author and commit (#19297) |
 
 `HIVE_GH_DENY_VERBOSE=1` makes the wrapper append a second line pointing at the
 docs; it is never set in agent images.
