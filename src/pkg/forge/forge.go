@@ -86,6 +86,10 @@ type Issue struct {
 	State     string    `json:"state"`
 	CreatedAt time.Time `json:"created_at"`
 	URL       string    `json:"url"`
+	// Body and UpdatedAt are filled by adapters whose list payload carries
+	// them (Gitea and Forgejo); empty or zero elsewhere.
+	Body      string    `json:"body,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
 }
 
 // ChangeRequest is a forge-neutral pull request (GitHub) / merge request
