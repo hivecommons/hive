@@ -13,10 +13,10 @@ func TestMentionLoginsKeepsSpellingAndBots(t *testing.T) {
 		body string
 		want []string
 	}{
-		{"@m2Giles should decide whether this can land", []string{"m2Giles"}},
-		{"@kylerankin: a maintainer must confirm; cc @KyleRankin", []string{"kylerankin"}},
-		{"@renovate[bot] and @hive-app[bot]: @bketelsen should decide", []string{"renovate[bot]", "hive-app[bot]", "bketelsen"}},
-		{"mail ops@example.com, ask @projectbluefin/maintainers", []string{"projectbluefin/maintainers"}},
+		{"@Erin42 should decide whether this can land", []string{"Erin42"}},
+		{"@grace: a maintainer must confirm; cc @Grace", []string{"grace"}},
+		{"@renovate[bot] and @hive-app[bot]: @carol should decide", []string{"renovate[bot]", "hive-app[bot]", "carol"}},
+		{"mail ops@example.com, ask @example-org/maintainers", []string{"example-org/maintainers"}},
 		{"nobody is named here", nil},
 	} {
 		if got := MentionLogins(tc.body); !slices.Equal(got, tc.want) {

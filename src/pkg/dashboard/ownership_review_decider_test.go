@@ -23,7 +23,7 @@ func deciderVerdict(pr github.PullRequest, head, question string, age time.Durat
 const deciderPlainReason = "Hive's review needs a human decision"
 
 // The hive's review names who should decide in its decision question
-// (projectbluefin/server#666: "@bketelsen should decide whether ...").
+// ("@carol should decide whether ...").
 // Within reviewDeciderAnswerWindow the row waits on that person; past it, it
 // is the owner's turn again with the same reason code. Every other shape
 // keeps today's decision. Display only: the holds are unchanged.
@@ -50,69 +50,69 @@ func TestReviewDeciderOwnership(t *testing.T) {
 		wantCode   string
 		wantReason string
 	}{
-		{name: "one other login within the window", question: "@bketelsen should decide whether server's Prow merge backstop may drop", age: 2 * time.Hour,
-			wantWait: "Waits on bketelsen: Hive's review asked on " + day},
-		{name: "one other login past the window", question: "@bketelsen should decide whether server's Prow merge backstop may drop", age: 4 * 24 * time.Hour,
-			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: "Hive's review needs a human decision: bketelsen has not answered since " + lapsedDay},
-		{name: "exactly at the window is your turn", question: "@bketelsen should decide", age: reviewDeciderAnswerWindow,
-			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: "Hive's review needs a human decision: bketelsen has not answered since " + ownershipNow11565.Add(-reviewDeciderAnswerWindow).UTC().Format("Jan 2")},
-		{name: "spelling kept", question: "@m2Giles should decide whether this workflow-permission tightening can land", age: 2 * time.Hour,
-			wantWait: "Waits on m2Giles: Hive's review asked on " + day},
-		{name: "the author named, no maintainer wording", question: "@alice should decide whether printer containers may send a countme ping by default", age: 2 * time.Hour,
+		{name: "one other login within the window", question: "@carol should decide whether the release job may skip its smoke test", age: 2 * time.Hour,
+			wantWait: "Waits on carol: Hive's review asked on " + day},
+		{name: "one other login past the window", question: "@carol should decide whether the release job may skip its smoke test", age: 4 * 24 * time.Hour,
+			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: "Hive's review needs a human decision: carol has not answered since " + lapsedDay},
+		{name: "exactly at the window is your turn", question: "@carol should decide", age: reviewDeciderAnswerWindow,
+			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: "Hive's review needs a human decision: carol has not answered since " + ownershipNow11565.Add(-reviewDeciderAnswerWindow).UTC().Format("Jan 2")},
+		{name: "spelling kept", question: "@Erin42 should decide whether this config change can land", age: 2 * time.Hour,
+			wantWait: "Waits on Erin42: Hive's review asked on " + day},
+		{name: "the author named, no maintainer wording", question: "@alice should decide whether the service may send usage pings by default", age: 2 * time.Hour,
 			wantWait: "Waits on alice: Hive's review asked on " + day},
-		{name: "the author named with maintainer wording", question: "@alice: a maintainer must confirm the sandbox-widening switch still stands", age: 2 * time.Hour,
+		{name: "the author named with maintainer wording", question: "@alice: a maintainer must confirm the new network permission still applies", age: 2 * time.Hour,
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
-		{name: "the author named, A Maintainer in any case", question: "@alice A Maintainer must let the image build check run", age: 2 * time.Hour,
+		{name: "the author named, A Maintainer in any case", question: "@alice A Maintainer must let the build check run", age: 2 * time.Hour,
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
-		{name: "the author and one other login: the other decides", question: "@alice: @bketelsen should decide", age: 2 * time.Hour,
-			wantWait: "Waits on bketelsen: Hive's review asked on " + day},
-		{name: "nobody named", question: "Wait for the image build check to run on this head", age: 2 * time.Hour,
+		{name: "the author and one other login: the other decides", question: "@alice: @carol should decide", age: 2 * time.Hour,
+			wantWait: "Waits on carol: Hive's review asked on " + day},
+		{name: "nobody named", question: "Wait for the build check to run on this head", age: 2 * time.Hour,
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
-		{name: "two other logins", question: "@bketelsen or @m2Giles should decide", age: 2 * time.Hour,
+		{name: "two other logins", question: "@carol or @Erin42 should decide", age: 2 * time.Hour,
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
-		{name: "a team is not one person", question: "@projectbluefin/maintainers should decide", age: 2 * time.Hour,
+		{name: "a team is not one person", question: "@example-org/maintainers should decide", age: 2 * time.Hour,
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
-		{name: "bots and the hive's own login are dropped", question: "@renovate[bot] @copilot @hive-app[bot] @hive-app: @bketelsen should decide", age: 2 * time.Hour,
-			self: []string{"hive-app[bot]"}, wantWait: "Waits on bketelsen: Hive's review asked on " + day},
-		{name: "the dashboard owner named stays your turn", question: "@bketelsen should decide", age: 2 * time.Hour, owners: []string{"bketelsen"},
+		{name: "bots and the hive's own login are dropped", question: "@renovate[bot] @copilot @hive-app[bot] @hive-app: @carol should decide", age: 2 * time.Hour,
+			self: []string{"hive-app[bot]"}, wantWait: "Waits on carol: Hive's review asked on " + day},
+		{name: "the dashboard owner named stays your turn", question: "@carol should decide", age: 2 * time.Hour, owners: []string{"carol"},
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
-		{name: "the verdict's own dispatcher hold is part of the question", question: "@bketelsen should decide", age: 2 * time.Hour,
-			dispatch: dispatchHold12377(pr, "head-2", "review verdict requires_human"), wantWait: "Waits on bketelsen: Hive's review asked on " + day},
-		{name: "a fix-cap dispatcher hold keeps today's decision", question: "@bketelsen should decide", age: 2 * time.Hour,
+		{name: "the verdict's own dispatcher hold is part of the question", question: "@carol should decide", age: 2 * time.Hour,
+			dispatch: dispatchHold12377(pr, "head-2", "review verdict requires_human"), wantWait: "Waits on carol: Hive's review asked on " + day},
+		{name: "a fix-cap dispatcher hold keeps today's decision", question: "@carol should decide", age: 2 * time.Hour,
 			dispatch: dispatchHold12377(pr, "head-2", "review fix cap reached (6/6)"), wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
-		{name: "a reject keeps today's decision", question: "@bketelsen should decide", age: 2 * time.Hour, reject: true,
+		{name: "a reject keeps today's decision", question: "@carol should decide", age: 2 * time.Hour, reject: true,
 			wantCode: OwnershipReasonReviewRejected, wantReason: "Hive's review rejected this pull request"},
-		{name: "a question on an earlier head keeps today's decision", question: "@bketelsen should decide", age: 2 * time.Hour, head: "head-1",
+		{name: "a question on an earlier head keeps today's decision", question: "@carol should decide", age: 2 * time.Hour, head: "head-1",
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
 		{name: "the policy's maintainer placeholder names nobody", question: "@maintainer should decide whether this sandbox widening may land", age: 2 * time.Hour,
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
 		{name: "the maintainers placeholder next to the author names nobody", question: "@alice @maintainers: confirm the switch", age: 2 * time.Hour,
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
-		{name: "a fix-cap verdict keeps its question but is the owner's", question: "@bketelsen should decide", age: 2 * time.Hour,
+		{name: "a fix-cap verdict keeps its question but is the owner's", question: "@carol should decide", age: 2 * time.Hour,
 			dispatch: dispatchHold12377(pr, "head-2", "fix cycle cap reached (3/3)"),
 			mutate:   func(a *review.Aggregate) { a.Reasons = []string{"fix cycle cap reached (3/3)"} },
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
-		{name: "a fix-cap counter keeps today's decision", question: "@bketelsen should decide", age: 2 * time.Hour,
+		{name: "a fix-cap counter keeps today's decision", question: "@carol should decide", age: 2 * time.Hour,
 			mutate:   func(a *review.Aggregate) { a.FixAttempts, a.MaxFixAttempts = 3, 3 },
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
-		{name: "a requires_human verdict that asked no decision keeps today's decision", question: "@bketelsen should decide", age: 2 * time.Hour,
+		{name: "a requires_human verdict that asked no decision keeps today's decision", question: "@carol should decide", age: 2 * time.Hour,
 			mutate:   func(a *review.Aggregate) { a.DecisionRequested = false },
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
-		{name: "a login in a code span is not a mention", question: "`@bketelsen` wrote the config; @m2Giles should decide", age: 2 * time.Hour,
-			wantWait: "Waits on m2Giles: Hive's review asked on " + day},
-		{name: "a login in a fenced block is not a mention", question: "```\nowner: @bketelsen\n```\n@m2Giles should decide", age: 2 * time.Hour,
-			wantWait: "Waits on m2Giles: Hive's review asked on " + day},
-		{name: "app accounts without a bot suffix are dropped", question: "@github-actions @codex @coderabbitai @dependabot: @bketelsen should decide", age: 2 * time.Hour,
-			wantWait: "Waits on bketelsen: Hive's review asked on " + day},
+		{name: "a login in a code span is not a mention", question: "`@carol` wrote the config; @Erin42 should decide", age: 2 * time.Hour,
+			wantWait: "Waits on Erin42: Hive's review asked on " + day},
+		{name: "a login in a fenced block is not a mention", question: "```\nowner: @carol\n```\n@Erin42 should decide", age: 2 * time.Hour,
+			wantWait: "Waits on Erin42: Hive's review asked on " + day},
+		{name: "app accounts without a bot suffix are dropped", question: "@github-actions @codex @coderabbitai @dependabot: @carol should decide", age: 2 * time.Hour,
+			wantWait: "Waits on carol: Hive's review asked on " + day},
 		{name: "the author named, maintainers should confirm", question: "@alice: maintainers should confirm the switch", age: 2 * time.Hour,
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
 		{name: "the author named, the owner must approve", question: "@alice the Owner must approve this", age: 2 * time.Hour,
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
 		{name: "the author named, an approver", question: "@alice: an approver has to sign off", age: 2 * time.Hour,
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
-		{name: "the AI author is the hive's own login", question: "@hive-ai: @bketelsen should decide", age: 2 * time.Hour,
-			self: []string{"hive-ai"}, wantWait: "Waits on bketelsen: Hive's review asked on " + day},
-		{name: "the dashboard owner in another case stays your turn", question: "@BKetelsen should decide", age: 2 * time.Hour, owners: []string{"bketelsen"},
+		{name: "the AI author is the hive's own login", question: "@hive-ai: @carol should decide", age: 2 * time.Hour,
+			self: []string{"hive-ai"}, wantWait: "Waits on carol: Hive's review asked on " + day},
+		{name: "the dashboard owner in another case stays your turn", question: "@Carol should decide", age: 2 * time.Hour, owners: []string{"carol"},
 			wantCode: OwnershipReasonReviewRequiresHuman, wantReason: deciderPlainReason},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -153,10 +153,10 @@ func TestReviewDeciderOwnership(t *testing.T) {
 // the review asked.
 func TestReviewDeciderAnsweredHeadKeepsAnsweredPath(t *testing.T) {
 	pr := withHead12329(personPR11565(), "head-2")
-	v := deciderVerdict(pr, "head-2", "@bketelsen should decide whether operators may select an alternate ClusterIssuer", 2*time.Hour)
+	v := deciderVerdict(pr, "head-2", "@carol should decide whether operators may pick a different cache backend", 2*time.Hour)
 	answer := decisionAnswer(pr, "head-2", review.HumanChangeRequestKindChanges, ownershipNow11565.Add(-time.Hour))
 	got := decidePROwnership(pr, false, answeredEnv(t, []review.Aggregate{v}, review.DispatchState{}, answer))
-	if got.YourTurn || !got.WaitingElsewhere || reviewDeciderWaiting(&got) || !strings.Contains(got.Reason, "@Danathar answered Hive's review on this head") {
+	if got.YourTurn || !got.WaitingElsewhere || reviewDeciderWaiting(&got) || !strings.Contains(got.Reason, " answered Hive's review on this head") || !reviewAnsweredWaiting(&got) {
 		t.Fatalf("got %+v, want the answered path", got)
 	}
 }
@@ -179,7 +179,7 @@ func TestReviewDeciderCardBandAgrees(t *testing.T) {
 		{name: "past the window", age: 4 * 24 * time.Hour, wantBand: cardBandReview, wantGroup: cardGroupYourTurn, wantCode: "ownership:" + OwnershipReasonReviewRequiresHuman},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			v := deciderVerdict(pr, "head-2", "@bketelsen should decide whether server's Prow merge backstop may drop", tc.age)
+			v := deciderVerdict(pr, "head-2", "@carol should decide whether the release job may skip its smoke test", tc.age)
 			o := decidePROwnership(pr, false, answeredEnv(t, []review.Aggregate{v}, review.DispatchState{}))
 			band := decidePRCard(cardPRRow{repoFull: cardTestRepo, pr: pr, ownership: &o}, cardTestInputs(nil))
 			if band.Key != tc.wantBand || band.Group != tc.wantGroup || band.ReasonCode != tc.wantCode {
@@ -246,7 +246,7 @@ func TestOverviewPRWaitingCauses(t *testing.T) {
 // A zero now cannot measure the window: today's decision stands.
 func TestReviewDeciderZeroNowKeepsToday(t *testing.T) {
 	pr := withHead12329(personPR11565(), "head-2")
-	env := answeredEnv(t, []review.Aggregate{deciderVerdict(pr, "head-2", "@bketelsen should decide", 2*time.Hour)}, review.DispatchState{})
+	env := answeredEnv(t, []review.Aggregate{deciderVerdict(pr, "head-2", "@carol should decide", 2*time.Hour)}, review.DispatchState{})
 	env.now = time.Time{}
 	got := decidePROwnership(pr, false, env)
 	checkOwnership11565(t, got, want11565{OwnershipVerbReview, OwnershipReasonReviewRequiresHuman})
@@ -261,7 +261,7 @@ func TestReviewDeciderZeroNowKeepsToday(t *testing.T) {
 // someone else starts a new run.
 func TestReviewDeciderWindowSpansTheBlockingChain(t *testing.T) {
 	pr := withHead12329(personPR11565(), "head-2")
-	q := "@bketelsen should decide whether server's Prow merge backstop may drop"
+	q := "@carol should decide whether the release job may skip its smoke test"
 	day := func(age time.Duration) string { return ownershipNow11565.Add(-age).UTC().Format("Jan 2") }
 	for _, tc := range []struct {
 		name       string
@@ -271,20 +271,20 @@ func TestReviewDeciderWindowSpansTheBlockingChain(t *testing.T) {
 	}{
 		{name: "asked again on a new head, within the window",
 			verdicts: []review.Aggregate{deciderVerdict(pr, "head-1", q, 2*24*time.Hour), deciderVerdict(pr, "head-2", q, time.Hour)},
-			wantWait: "Waits on bketelsen: Hive's review asked on " + day(2*24*time.Hour)},
+			wantWait: "Waits on carol: Hive's review asked on " + day(2*24*time.Hour)},
 		{name: "asked again on a new head, past the window from the first ask",
 			verdicts:   []review.Aggregate{deciderVerdict(pr, "head-1", q, 4*24*time.Hour), deciderVerdict(pr, "head-2", q, time.Hour)},
-			wantReason: "Hive's review needs a human decision: bketelsen has not answered since " + day(4*24*time.Hour)},
+			wantReason: "Hive's review needs a human decision: carol has not answered since " + day(4*24*time.Hour)},
 		{name: "someone else was asked in between",
-			verdicts: []review.Aggregate{deciderVerdict(pr, "head-0", q, 5*24*time.Hour), deciderVerdict(pr, "head-1", "@m2Giles should decide", 4*24*time.Hour), deciderVerdict(pr, "head-2", q, time.Hour)},
-			wantWait: "Waits on bketelsen: Hive's review asked on " + day(time.Hour)},
+			verdicts: []review.Aggregate{deciderVerdict(pr, "head-0", q, 5*24*time.Hour), deciderVerdict(pr, "head-1", "@Erin42 should decide", 4*24*time.Hour), deciderVerdict(pr, "head-2", q, time.Hour)},
+			wantWait: "Waits on carol: Hive's review asked on " + day(time.Hour)},
 		{name: "an approving verdict in between ends the chain",
 			verdicts: []review.Aggregate{deciderVerdict(pr, "head-0", q, 5*24*time.Hour), func() review.Aggregate {
 				a := verdict12377(pr, "head-1", review.VerdictApprove)
 				a.RecordedAt = ownershipNow11565.Add(-4 * 24 * time.Hour)
 				return a
 			}(), deciderVerdict(pr, "head-2", q, time.Hour)},
-			wantWait: "Waits on bketelsen: Hive's review asked on " + day(time.Hour)},
+			wantWait: "Waits on carol: Hive's review asked on " + day(time.Hour)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := decidePROwnership(pr, false, answeredEnv(t, tc.verdicts, review.DispatchState{}))
@@ -311,7 +311,7 @@ func TestReviewDeciderDate(t *testing.T) {
 	if got := reviewDeciderDate(time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC), now); got != "Jan 1" {
 		t.Errorf("this year = %q", got)
 	}
-	if got := reviewDeciderWaitReason("bketelsen", time.Date(2025, 12, 30, 23, 0, 0, 0, time.UTC), now); got != "Waits on bketelsen: Hive's review asked on Dec 30, 2025" {
+	if got := reviewDeciderWaitReason("carol", time.Date(2025, 12, 30, 23, 0, 0, 0, time.UTC), now); got != "Waits on carol: Hive's review asked on Dec 30, 2025" {
 		t.Errorf("wait reason = %q", got)
 	}
 }
@@ -323,7 +323,7 @@ func TestReviewDeciderLoginsFromConfig(t *testing.T) {
 	cfg.GitHub.AppID, cfg.GitHub.InstallationID, cfg.GitHub.AppSlug = 4242, 7, "hive-app"
 	cfg.GitHub.AdditionalBotLogins = []string{"other-hive[bot]"}
 	cfg.Project.AIAuthor = "hive-ai"
-	cfg.Dashboard.AuthorizedUsers = []string{"github:Danathar", "BKetelsen:owner", "carol:read"}
+	cfg.Dashboard.AuthorizedUsers = []string{"github:Dave", "Carol:owner", "heidi:read"}
 	self, owners := reviewDeciderLoginsFor(cfg)
 	bot := cfg.GitHub.BotLogin()
 	if bot == "" || !strings.HasSuffix(bot, "[bot]") {
@@ -338,17 +338,17 @@ func TestReviewDeciderLoginsFromConfig(t *testing.T) {
 			t.Errorf("self logins %q lack %q", self, want)
 		}
 	}
-	if strings.Join(owners, ",") != "bketelsen,danathar" {
-		t.Errorf("owners = %q, want bketelsen,danathar", owners)
+	if strings.Join(owners, ",") != "carol,dave" {
+		t.Errorf("owners = %q, want carol,dave", owners)
 	}
 	env := newOwnershipEnv(cfg, nil, "", ownershipNow11565, nil)
 	if !env.reviewSwarm.ignoredDeciderMention(strings.TrimSuffix(bot, "[bot]")) || !env.reviewSwarm.ignoredDeciderMention("Hive-AI") || !env.reviewSwarm.ignoredDeciderMention("other-hive") {
 		t.Errorf("env does not drop the hive's own logins: %q", env.reviewSwarm.selfLogins)
 	}
-	if env.reviewSwarm.ignoredDeciderMention("bketelsen") {
+	if env.reviewSwarm.ignoredDeciderMention("carol") {
 		t.Error("a person is dropped as a bot")
 	}
-	if strings.Join(env.reviewSwarm.ownerLogins, ",") != "bketelsen,danathar" {
+	if strings.Join(env.reviewSwarm.ownerLogins, ",") != "carol,dave" {
 		t.Errorf("env owners = %q", env.reviewSwarm.ownerLogins)
 	}
 	if self, owners := reviewDeciderLoginsFor(nil); self != nil || owners != nil {
