@@ -329,9 +329,9 @@ func (s *Server) sessionViewFor(rec sessionRecord, p *crux.UserSessionProbe, rt 
 	return v
 }
 
-// reconcileSessions probes every running session once, marks those whose tmux
-// session is gone (pod restart, CLI exit) as ended and returns the probes of
-// the survivors. A restart of the hive process alone leaves tmux running, so
+// reconcileSessions probes running sessions, marks those whose tmux session
+// is gone (pod restart, CLI exit) as ended and returns the probes of the
+// survivors. A restart of the hive process alone leaves tmux running, so
 // those sessions stay running and reattach.
 func (s *Server) reconcileSessions(rt SessionRuntime, st *sessionStore) map[string]crux.UserSessionProbe {
 	probes := map[string]crux.UserSessionProbe{}
@@ -352,31 +352,45 @@ func (s *Server) reconcileSessions(rt SessionRuntime, st *sessionStore) map[stri
 			continue
 		}
 		p := rt.Probe(rec.ID)
+		if !p.Exists || p.Dead {
+			cur, claimed := s.claimSessionClose(st, rec.ID)
+			if !claimed {
+				continue
+			}
+			// Close and Resume may have replaced the session since the first probe.
+			p = rt.Probe(cur.ID)
+			if !p.Exists || p.Dead {
+				s.markSessionEnded(st, cur.ID, now, sessionResumeCommand(rt, cur))
+			}
+			s.releaseSessionClose(st, cur.ID)
+		}
 		if p.Exists && !p.Dead {
 			probes[rec.ID] = p
-			continue
 		}
-		s.markSessionEnded(rt, st, rec, now)
 	}
 	return probes
 }
 
-func (s *Server) markSessionEnded(rt SessionRuntime, st *sessionStore, rec sessionRecord, now string) {
-	resume := ""
+func sessionResumeCommand(rt SessionRuntime, rec sessionRecord) string {
 	if info, ok := rt.ResumeInfo(rec.ID, rec.Vendor, rec.Workspace); ok {
-		resume = info.Command
+		return info.Command
 	}
-	if _, _, err := st.update(rec.ID, func(r *sessionRecord) {
+	return ""
+}
+
+// markSessionEnded records the stopped terminal while its close claim is held.
+func (s *Server) markSessionEnded(st *sessionStore, id, now, resume string) {
+	if _, _, err := st.update(id, func(r *sessionRecord) {
 		r.Status = sessionStatusEnded
 		r.EndedAt = now
 		if resume != "" {
 			r.ResumeCommand = resume
 		}
 	}); err != nil && s.logger != nil {
-		s.logger.Warn("sessions: persisting ended state failed", "id", rec.ID, "error", err)
+		s.logger.Warn("sessions: persisting ended state failed", "id", id, "error", err)
 	}
 	// Nothing queued can be delivered to an ended session.
-	s.dropSessionQueue(rec.ID)
+	s.dropSessionQueue(id)
 }
 
 func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
@@ -716,6 +730,10 @@ var sessionsAfterReconcileSnapshot atomic.Pointer[func(*Server)]
 func (s *Server) failOrphanedPreparingSession(st *sessionStore, id, now string) {
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
+	s.failOrphanedPreparingSessionLocked(st, id, now)
+}
+
+func (s *Server) failOrphanedPreparingSessionLocked(st *sessionStore, id, now string) {
 	if s.sessionsPreparing[id] {
 		return
 	}
@@ -864,8 +882,8 @@ func (s *Server) handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "sending input requires owner or read-write role", http.StatusForbidden)
 		return
 	}
-	rec, ok := s.sessionForUse(w, st, r.PathValue("id"), actor)
-	if !ok {
+	id := r.PathValue("id")
+	if _, ok := s.sessionForUse(w, st, id, actor); !ok {
 		return
 	}
 	lim := s.sessionLimits()
@@ -899,14 +917,27 @@ func (s *Server) handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	item, pos, ok := s.enqueueSessionInput(rec.ID, sessionQueueItem{User: actor.user, Text: clean, Submit: body.Submit})
+	// The body may have arrived while shutdown was claiming this session.
+	// Check and queue the input under the same lock as that claim.
+	s.sessionsMu.Lock()
+	if _, ok := s.sessionForUse(w, st, id, actor); !ok {
+		s.sessionsMu.Unlock()
+		return
+	}
+	if st.closing[id] {
+		s.sessionsMu.Unlock()
+		jsonError(w, "the session is already closing; try again", http.StatusConflict)
+		return
+	}
+	item, pos, ok := s.enqueueSessionInput(id, sessionQueueItem{User: actor.user, Text: clean, Submit: body.Submit})
+	s.sessionsMu.Unlock()
 	if !ok {
 		jsonError(w, fmt.Sprintf("this session already has %d queued sends; wait for some to be delivered", sessionQueueMaxItems), http.StatusTooManyRequests)
 		return
 	}
-	s.ensureSessionQueueWorker(rt, st, rec.ID)
+	s.ensureSessionQueueWorker(rt, st, id)
 	jsonStatusResponse(w, http.StatusAccepted, map[string]any{"ok": true, "queued": map[string]any{"id": item.ID, "position": pos},
-		"queue": s.sessionQueueSnapshot(rec.ID, actor.user)})
+		"queue": s.sessionQueueSnapshot(id, actor.user)})
 }
 
 // sessionForUse loads a running session the actor may type into, writing the
@@ -973,9 +1004,7 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 	}
 	cmd := rec.ResumeCommand
 	if cmd == "" {
-		if info, ok := rt.ResumeInfo(rec.ID, rec.Vendor, rec.Workspace); ok {
-			cmd = info.Command
-		}
+		cmd = sessionResumeCommand(rt, rec)
 	}
 	if cmd == "" {
 		jsonError(w, "no conversation to resume was found", http.StatusConflict)
@@ -987,6 +1016,20 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
+	// ResumeInfo can take time. Delete and other starts may have won while
+	// it ran, so claim only a session that is still ended under their lock.
+	rec, found = st.get(rec.ID)
+	if !found {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if rec.Status != sessionStatusEnded || st.closing[rec.ID] || st.deleteInFlight(rec.ID) || s.sessionsPreparing[rec.ID] {
+		jsonError(w, "session is not ended", http.StatusConflict)
+		return
+	}
+	if rec.ResumeCommand != "" {
+		cmd = rec.ResumeCommand
+	}
 	if !s.checkSessionCapacity(w, st, actor.user) {
 		return
 	}
@@ -1005,20 +1048,23 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	message := s.sessionPreparingMessage(rt, rec.WorkspaceRepo, vendorLabel)
-	s.setSessionStartInFlightLocked(rec.ID, true)
 	// Whoever resumes the session holds its keyboard.
-	updated, _, err := st.update(rec.ID, func(x *sessionRecord) {
+	updated, found, err := st.updatePersisted(rec.ID, func(x *sessionRecord) {
 		x.Status, x.LastActivity, x.Message, x.Error = sessionStatusPreparing, now, message, ""
 		x.KeyboardHolder, x.KeyboardSince = actor.user, now
 		if x.WorkspaceRepo != "" {
 			x.Workspace = rt.SessionWorkspaceDir(x.ID, x.WorkspaceRepo)
 		}
 	})
+	if !found {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
 	if err != nil {
-		s.setSessionStartInFlightLocked(rec.ID, false)
 		jsonError(w, "could not save the session", http.StatusInternalServerError)
 		return
 	}
+	s.setSessionStartInFlightLocked(rec.ID, true)
 	s.auditSession(actor.user, auditSessionCreated, auditDetail("session", rec.ID, "vendor", rec.Vendor, "resumed", "true", "status", sessionStatusPreparing))
 	spec := crux.UserSessionSpec{ID: rec.ID, Vendor: rec.Vendor, UIDSlot: rec.UIDSlot, ResumeCommand: cmd,
 		WorkspaceRepo: rec.WorkspaceRepo, SpektacularBinary: s.sessionsSpektacularBinary()}
@@ -1064,25 +1110,9 @@ func (s *Server) sweepSessions(now time.Time) {
 	for _, rec := range st.list() {
 		switch rec.Status {
 		case sessionStatusRunning:
-			p, alive := probes[rec.ID]
-			if !alive || p.Attached > 0 {
-				continue
+			if p, alive := probes[rec.ID]; alive && sessionIdle(rec, p, now, ttl) {
+				s.closeIdleSession(rt, st, rec.ID, now, ttl)
 			}
-			last, err := time.Parse(time.RFC3339, rec.LastActivity)
-			if err != nil {
-				continue
-			}
-			if p.Activity.After(last) {
-				last = p.Activity
-			}
-			if now.Sub(last) < ttl {
-				continue
-			}
-			s.markSessionEnded(rt, st, rec, now.UTC().Format(time.RFC3339))
-			if err := rt.Kill(rec.ID); err != nil && s.logger != nil {
-				s.logger.Warn("sessions: idle kill failed", "id", rec.ID, "error", err)
-			}
-			s.auditSession("system", auditSessionClosed, auditDetail("session", rec.ID, "reason", "idle"))
 		case sessionStatusEnded, sessionStatusFailed:
 			if ended, err := time.Parse(time.RFC3339, rec.EndedAt); err == nil && now.Sub(ended) > sessionEndedRetention {
 				// The same job a person's delete runs: files first, the
@@ -1104,6 +1134,39 @@ func (s *Server) sweepSessions(now time.Time) {
 		_, found := st.get(id)
 		return found
 	})
+}
+
+func sessionIdle(rec sessionRecord, p crux.UserSessionProbe, now time.Time, ttl time.Duration) bool {
+	if !p.Exists || p.Dead || p.Attached > 0 {
+		return false
+	}
+	last, err := time.Parse(time.RFC3339, rec.LastActivity)
+	if err != nil {
+		return false
+	}
+	if p.Activity.After(last) {
+		last = p.Activity
+	}
+	return now.Sub(last) >= ttl
+}
+
+func (s *Server) closeIdleSession(rt SessionRuntime, st *sessionStore, id string, now time.Time, ttl time.Duration) {
+	rec, claimed := s.claimSessionClose(st, id)
+	if !claimed {
+		return
+	}
+	defer s.releaseSessionClose(st, id)
+	// An idle probe from before the claim may describe a different terminal.
+	if !sessionIdle(rec, rt.Probe(id), now, ttl) {
+		return
+	}
+	if err := s.stopSession(rt, st, rec, now.UTC().Format(time.RFC3339)); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("sessions: idle kill failed", "id", id, "error", err)
+		}
+		return
+	}
+	s.auditSession("system", auditSessionClosed, auditDetail("session", id, "reason", "idle"))
 }
 
 // sessionForWatch loads a running session the actor may at least watch (the
