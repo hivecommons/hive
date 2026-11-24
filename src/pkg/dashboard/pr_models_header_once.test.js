@@ -21,6 +21,7 @@ const src = [
   'let govPRModelsSort = "effectiveness"; let govPRModelsColumnSort = { key: "", dir: "desc" }; let govPRModelsWindow = "7d"; let govPRModelsData = null;',
   'const escapeHtml = s => String(s).replace(/[&<>"\']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",\'"\':"&quot;","\'":"&#39;"}[c]));',
   'const dashboardSectionHelpMark = () => "";',
+  'const isSectionCollapsed = () => false;',
   'const formatFixTime = () => "";',
   'const fmtUSD = n => n == null ? "—" : "$" + Number(n).toFixed(2);',
   pick(/function governorPRModelHiveCostTip\(b, data\) \{[\s\S]*?\n    \}\n/, 'governorPRModelHiveCostTip'),

@@ -60,6 +60,8 @@ let govPRModelsColumnSort = { key: '', dir: 'desc' };
 const renders = [];
 const window = { _lastStatus: { governor: {}, cadenceMatrix: [] } };
 function renderGovernor() { renders.push(govPRModelsColumnSort.key + ':' + govPRModelsColumnSort.dir); }
+let expands = 0;
+function expandGovernorPRModelsSection() { expands++; }
 const focusLog = [];
 let activeClass = '';
 const document = {
@@ -182,8 +184,11 @@ setGovernorPRModelsColumnSort('merged');
 assert.deepEqual(focusLog, ['.gov-pr-model-head .gov-pr-model-sort[data-arg0="merged"]', '.gov-pr-models-colsort']);
 setGovernorPRModelsColumnSort('model');
 
-// Unknown keys are ignored.
+// Unknown keys are ignored, and do not open a collapsed subsection.
+const expandsBefore = expands;
+assert.ok(expandsBefore > 0, 'a column sort opens a collapsed PRs by model subsection');
 setGovernorPRModelsColumnSort('bogus');
+assert.equal(expands, expandsBefore);
 assert.deepEqual(govPRModelsColumnSort, { key: 'model', dir: 'asc' });
 
 // Choosing rank (or PR count) clears the column sort; rank pins unattributed last again.
