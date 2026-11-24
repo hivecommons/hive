@@ -113,6 +113,58 @@ func TestDashboardSettingsAPISubscriptionGaugeHeaderToggle(t *testing.T) {
 	}
 }
 
+// TestDashboardSettingsAPIGitHubSignInToggle covers dashboard.github_sign_in
+// in Settings (#19721): an unset key reads as on, the owner can turn it off and
+// on, an omitted field leaves it unchanged, and the login page follows the
+// saved value without a restart.
+func TestDashboardSettingsAPIGitHubSignInToggle(t *testing.T) {
+	s := govServer(t)
+	s.deps.Config.Dashboard.GitHubSignIn = nil
+
+	var got dashboardSettingsPayload
+	get := doOwnerGet(s, "/api/config/dashboard")
+	if get.Code != http.StatusOK {
+		t.Fatalf("GET = %d: %s", get.Code, get.Body.String())
+	}
+	if err := json.Unmarshal(get.Body.Bytes(), &got); err != nil {
+		t.Fatalf("GET body: %v", err)
+	}
+	if !got.GitHubSignIn {
+		t.Fatal("github_sign_in = false with the key unset, want true")
+	}
+
+	put := doPut(s, "/api/config/dashboard", map[string]any{"github_sign_in": false})
+	if put.Code != http.StatusOK {
+		t.Fatalf("PUT off = %d: %s", put.Code, put.Body.String())
+	}
+	if s.deps.Config.Dashboard.GitHubSignInEnabled() {
+		t.Fatal("dashboard.github_sign_in not saved as false")
+	}
+	if err := json.Unmarshal(put.Body.Bytes(), &got); err != nil || got.GitHubSignIn {
+		t.Fatalf("PUT response github_sign_in = %v (err %v), want false", got.GitHubSignIn, err)
+	}
+	if s.signInPage() == loginPage {
+		t.Fatal("login page still offers GitHub sign-in after the toggle was turned off")
+	}
+
+	if rec := doPut(s, "/api/config/dashboard", map[string]any{"agent_poll_interval_s": 9}); rec.Code != http.StatusOK {
+		t.Fatalf("unrelated PUT = %d: %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.Dashboard.GitHubSignInEnabled() {
+		t.Fatal("a PUT without github_sign_in turned GitHub sign-in back on")
+	}
+
+	if rec := doPut(s, "/api/config/dashboard", map[string]any{"github_sign_in": true}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT on = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !s.deps.Config.Dashboard.GitHubSignInEnabled() {
+		t.Fatal("dashboard.github_sign_in not saved as true")
+	}
+	if s.signInPage() != loginPage {
+		t.Fatal("login page does not offer GitHub sign-in after the toggle was turned back on")
+	}
+}
+
 func TestDashboardSettingsAPISubscriptionGaugeHeaderRejectsNonOwner(t *testing.T) {
 	s := govServer(t)
 	var b bytes.Buffer

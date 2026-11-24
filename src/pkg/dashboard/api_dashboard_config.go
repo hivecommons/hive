@@ -19,6 +19,8 @@ type dashboardSettingsPayload struct {
 	AuthorizedUsers         []string                     `json:"authorized_users"`
 	AuthorizedUserNames     map[string]string            `json:"authorized_user_names"`
 	HubProxied              bool                         `json:"hub_proxied"`
+	GitHubSignIn            bool                         `json:"github_sign_in"`   // dashboard.github_sign_in resolved: unset reads as on
+	HubSignInLink           string                       `json:"hub_sign_in_link"` // response-only: Config.HubSignInLink, "" when the hive cannot build one
 	IssueBands              dashboardIssueBandsPayload   `json:"issue_bands"`
 	StageTracker            dashboardStageTrackerPayload `json:"stage_tracker"`
 	Sessions                dashboardSessionsPayload     `json:"sessions"`
@@ -120,6 +122,8 @@ func dashboardSettingsResponse(cfg *config.Config) dashboardSettingsPayload {
 		AuthorizedUsers:         append([]string{}, d.AuthorizedUsers...),
 		AuthorizedUserNames:     names,
 		HubProxied:              d.HubProxied,
+		GitHubSignIn:            d.GitHubSignInEnabled(),
+		HubSignInLink:           cfg.HubSignInLink(),
 		IssueBands: dashboardIssueBandsPayload{
 			WaitingLabels: append([]string{}, d.IssueBands.WaitingLabels...),
 			DoneLabels:    append([]string{}, d.IssueBands.DoneLabels...),
@@ -151,6 +155,7 @@ func (s *Server) handleDashboardSettingsPut(w http.ResponseWriter, r *http.Reque
 		AuthorizedUsers         []string                      `json:"authorized_users"`
 		AuthorizedUserNames     map[string]string             `json:"authorized_user_names"`
 		HubProxied              *bool                         `json:"hub_proxied"`
+		GitHubSignIn            *bool                         `json:"github_sign_in"`
 		IssueBands              *dashboardIssueBandsPayload   `json:"issue_bands"`
 		StageTracker            *dashboardStageTrackerPayload `json:"stage_tracker"`
 		Sessions                *dashboardSessionsPayload     `json:"sessions"`
@@ -207,6 +212,12 @@ func (s *Server) handleDashboardSettingsPut(w http.ResponseWriter, r *http.Reque
 	}
 	if body.HubProxied != nil {
 		next.HubProxied = *body.HubProxied
+	}
+	if body.GitHubSignIn != nil {
+		// Stored explicitly either way; signInPage and the device-flow
+		// handlers read the live config, so this applies without a restart.
+		githubSignIn := *body.GitHubSignIn
+		next.GitHubSignIn = &githubSignIn
 	}
 	if body.IssueBands != nil {
 		next.IssueBands.WaitingLabels = trimNonEmpty(body.IssueBands.WaitingLabels)
