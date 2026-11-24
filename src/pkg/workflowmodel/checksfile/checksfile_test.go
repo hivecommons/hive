@@ -293,3 +293,43 @@ func TestRenderNilModelAndUnversionedKey(t *testing.T) {
 		t.Fatalf("PRs: %q", f.createdPRs)
 	}
 }
+
+func TestRenderResolvesSpecCitations(t *testing.T) {
+	m := modelWithChecks(
+		workflowmodel.Check{ID: "provenance-block", Name: "Provenance", Kind: workflowmodel.CheckManual, Required: true, Source: "spec:15. The provenance block#L793-L877"},
+		workflowmodel.Check{ID: "ci", Name: "build", Kind: workflowmodel.CheckCI, Source: ".github/workflows/ci.yml"},
+	)
+	m.Metadata.Annotations = map[string]string{"workflow.hivecommons.dev/source": "acme/specs@882be6f specs/my spec.md"}
+	out, _, err := Render(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc document
+	if err := yaml.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatal(err)
+	}
+	want := "https://github.com/acme/specs/blob/882be6f/specs/my%20spec.md#L793-L877"
+	if doc.Checks[0].Source != want || doc.Checks[0].Description != "15. The provenance block" {
+		t.Fatalf("spec check: %+v", doc.Checks[0])
+	}
+	if doc.Checks[1].Source != ".github/workflows/ci.yml" || doc.Checks[1].Description != "" {
+		t.Fatalf("non-spec check changed: %+v", doc.Checks[1])
+	}
+}
+
+func TestRenderLeavesUnresolvableSpecCitations(t *testing.T) {
+	for _, ann := range []string{"", "spec:origin", "acme/specs@abc", "nope specs/a.md"} {
+		m := modelWithChecks(workflowmodel.Check{ID: "a", Name: "a", Source: "spec:Sec#L1-L2"})
+		if ann != "" {
+			m.Metadata.Annotations = map[string]string{"workflow.hivecommons.dev/source": ann}
+		}
+		out, _, _ := Render(m)
+		var doc document
+		if err := yaml.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatal(err)
+		}
+		if doc.Checks[0].Source != "spec:Sec#L1-L2" || doc.Checks[0].Description != "" {
+			t.Fatalf("annotation %q: %+v", ann, doc.Checks[0])
+		}
+	}
+}
