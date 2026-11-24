@@ -592,7 +592,8 @@
     .avatar-menu-signout { color: var(--red); }
     /* Guide button remains the topbar CTA through the shared primary chip
        recipe; its size/shape intentionally match every other nav chip. */
-    #fleet-breaker-wrap { display: inline-flex; align-items: center; }
+    #fleet-breaker-wrap { display: inline-flex; align-items: center; gap: var(--nav-chip-gap, 8px); }
+    #fleet-breaker-hub-link[hidden] { display: none; }
     #fleet-breaker-btn2[data-status="ok"] { --nav-chip-color: var(--status-ok); }
     #fleet-breaker-btn2[data-status="error"] { --nav-chip-color: var(--status-error); }
     #fleet-breaker-dot, #fleet-breaker-icon { transition: color .15s, transform .15s; }
@@ -9496,6 +9497,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
           <span id="fleet-breaker-pill" class="nav-chip__label">running</span>
           <span id="fleet-breaker-icon" class="nav-chip__icon" aria-hidden="true"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span>
         </button>
+        <!-- Shown only while the breaker is engaged and this viewer cannot
+             release it here: points at the hub My Hives page, whose ⋮ menu
+             carries "Resume hive" for the owner or a hub admin (#19778). -->
+        <a id="fleet-breaker-hub-link" class="nav-chip nav-chip--action" href="#" target="_blank" rel="noopener noreferrer"
+           title="Resume this hive from the hub: My Hives → ⋮ → Resume hive (hive owner or hub admin)"
+           aria-label="Resume this hive from My Hives on the hub" hidden><span class="nav-chip__label">Resume in My Hives ↗</span></a>
       </span>
       <span id="agent-navbar-upnext" class="agent-navbar-upnext" hidden aria-label="Upcoming agent run order" title="Upcoming agent run order"></span>
     </div>
@@ -13074,42 +13081,80 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // that invariant is enforced server-side (Manager.EngageBreaker/
     // ReleaseBreaker); the UI only reflects and triggers it.
     let _fleetBreakerEngaged = false;
+    // fleetBreakerChipView decides the chip's text for a breaker state and
+    // viewer. An engaged breaker must always say how to get out of it
+    // (#19778): an owner's chip names the action in its visible label, not
+    // only in the ▶ icon, and a viewer who cannot release it here is pointed
+    // at the hub My Hives page, whose ⋮ menu carries "Resume hive" — the
+    // place a hub-initiated pause comes from. hubURL is '' unless the link
+    // should show and the URL is http(s).
+    function fleetBreakerChipView(engaged, canToggle, count, myHivesURL) {
+      const held = count + ' agent' + (count === 1 ? '' : 's');
+      if (!engaged) {
+        return {
+          label: 'running',
+          ariaLabel: canToggle ? 'Fleet breaker: running — click to pause all agents' : 'Fleet breaker: running',
+          title: 'Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched.',
+          hubURL: '',
+        };
+      }
+      if (canToggle) {
+        return {
+          label: 'paused · resume',
+          ariaLabel: 'Fleet breaker: paused — click to resume paused agents',
+          title: 'Hive paused — the fleet breaker is holding ' + held + '. Click to resume; only the agents the breaker paused restart, on-demand and manually-paused agents stay as they are.',
+          hubURL: '',
+        };
+      }
+      const url = String(myHivesURL || '');
+      const hubURL = /^https?:\/\//i.test(url) ? url : '';
+      return {
+        label: 'paused',
+        ariaLabel: 'Fleet breaker: paused',
+        title: 'Hive paused — the fleet breaker is holding ' + held + '. Only the hive owner can resume it: from this chip when signed in as owner' +
+          (hubURL ? ', or from My Hives on the hub (⋮ → Resume hive).' : '.'),
+        hubURL: hubURL,
+      };
+    }
     // Renders the topbar breaker as one status chip button: state dot + label +
     // action icon. Owners can toggle it; read-only viewers get the same chip in a
-    // disabled status-only state (server also 403s non-owner POSTs).
+    // disabled status-only state (server also 403s non-owner POSTs) plus, while
+    // engaged, a link to where they can resume it.
     function _renderFleetBreaker(engaged, agents) {
       _fleetBreakerEngaged = !!engaged;
       const wrap = document.getElementById('fleet-breaker-wrap');
       if (!wrap) return;
       wrap.style.display = '';
       const count = (agents || []).length;
+      const canToggle = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const view = fleetBreakerChipView(_fleetBreakerEngaged, canToggle, count, window._myHivesURL);
       const btn = document.getElementById('fleet-breaker-btn2');
       if (btn) {
         const fleetStatus = statusMeta(_fleetBreakerEngaged ? 'paused' : 'running');
-        const canToggle = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
         const label = document.getElementById('fleet-breaker-pill');
         const dot = document.getElementById('fleet-breaker-dot');
         const icon = document.getElementById('fleet-breaker-icon');
-        const stateText = _fleetBreakerEngaged ? 'paused' : fleetStatus.label;
-        const actionText = _fleetBreakerEngaged ? 'resume paused agents' : 'pause all agents';
         btn.style.display = '';
         btn.classList.toggle('paused', _fleetBreakerEngaged);
         btn.dataset.status = fleetStatus.status;
         btn.disabled = !canToggle;
         btn.setAttribute('aria-disabled', canToggle ? 'false' : 'true');
         btn.setAttribute('aria-pressed', _fleetBreakerEngaged ? 'true' : 'false');
-        btn.setAttribute('aria-label', canToggle
-          ? ('Fleet breaker: ' + stateText + ' — click to ' + actionText)
-          : ('Fleet breaker: ' + stateText));
-        btn.title = _fleetBreakerEngaged
-          ? ('Fleet breaker is ENGAGED — ' + count + ' agent' + (count === 1 ? '' : 's') +
-             ' held paused. Release resumes only those; on-demand and manually-paused agents are untouched.')
-          : 'Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched.';
-        if (label) label.textContent = stateText;
+        btn.setAttribute('aria-label', view.ariaLabel);
+        btn.title = view.title;
+        if (label) label.textContent = view.label;
         if (dot) dot.textContent = _fleetBreakerEngaged ? '○' : '●';
         if (icon) icon.innerHTML = _fleetBreakerEngaged
           ? '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.2v7.6a.6.6 0 0 0 .92.5l6-3.8a.6.6 0 0 0 0-1l-6-3.8a.6.6 0 0 0-.92.5Z"/></svg>'
           : '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg>';
+      }
+      // href is assigned as a property from a URL fleetBreakerChipView already
+      // limited to http(s); it is never interpolated into markup.
+      const hubLink = document.getElementById('fleet-breaker-hub-link');
+      if (hubLink) {
+        if (view.hubURL) hubLink.href = view.hubURL;
+        else hubLink.removeAttribute('href');
+        hubLink.hidden = !view.hubURL;
       }
       // When engaged, make it obvious the whole fleet is held.
       const section = document.getElementById('agents-section');
@@ -65217,9 +65262,11 @@ function burnAreaChart() {
       window._aiAuthor = cfg.ai_author_effective || '';
       renderPRAuthorInMenu();
       // Hub My Hives page for the user-menu shortcut (#9696). Empty on a
-      // standalone hive, which keeps the entry hidden.
+      // standalone hive, which keeps the entry hidden. The paused breaker
+      // chip links there too (#19778), so repaint it now the URL is known.
       window._myHivesURL = cfg.my_hives_url || '';
       renderMyHivesMenuItem();
+      if (typeof refreshFleetBreakerState === 'function') refreshFleetBreakerState();
       // Ask AI help (#19184): load the panel only when this hive has it on.
       if (typeof loadAskPanel === 'function') loadAskPanel(cfg);
       const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')
@@ -85876,6 +85923,10 @@ function burnAreaChart() {
       if (username) window._hiveUser = username;
       if (role) window._hiveRole = role;
       if (typeof subscriptionGaugeRefresh === 'function') subscriptionGaugeRefresh();
+      // The breaker chip first renders at DOMContentLoaded, before the role is
+      // known, so an owner saw a disabled "paused" chip with no way to resume
+      // until the next status poll (#19778). Repaint it for the real role.
+      if (typeof refreshFleetBreakerState === 'function') refreshFleetBreakerState();
       const banner = document.getElementById('gh-auth-banner');
       const topBtn = document.getElementById('oc-gh-login-btn');
       const avatarWrap = document.getElementById('oc-gh-avatar-wrap');

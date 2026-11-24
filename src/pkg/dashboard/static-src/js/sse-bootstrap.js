@@ -204,9 +204,11 @@
       window._aiAuthor = cfg.ai_author_effective || '';
       renderPRAuthorInMenu();
       // Hub My Hives page for the user-menu shortcut (#9696). Empty on a
-      // standalone hive, which keeps the entry hidden.
+      // standalone hive, which keeps the entry hidden. The paused breaker
+      // chip links there too (#19778), so repaint it now the URL is known.
       window._myHivesURL = cfg.my_hives_url || '';
       renderMyHivesMenuItem();
+      if (typeof refreshFleetBreakerState === 'function') refreshFleetBreakerState();
       // Ask AI help (#19184): load the panel only when this hive has it on.
       if (typeof loadAskPanel === 'function') loadAskPanel(cfg);
       const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')

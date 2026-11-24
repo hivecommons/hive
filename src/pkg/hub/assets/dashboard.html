@@ -8861,6 +8861,37 @@
       }
       return line;
     }
+    /* The agents a whole-hive pause is holding: the fleet breaker (#15092)
+       tags every agent it pauses with pausedTrigger 'fleet-breaker'
+       (crux.BreakerTrigger), whether it was thrown from the hub's ⋮ menu or
+       the spoke's own top-bar chip. One predicate for the row's paused pill
+       and the menu's Pause/Resume item, so they cannot disagree. */
+    function hiveBreakerAgents(h) {
+      return ((h && h.agents) || []).filter(function(a) { return !!(a && a.paused && a.pausedTrigger === 'fleet-breaker'); });
+    }
+    /* hivePausedPill marks a paused hive in the My Hives row (#19778). Without
+       it a paused hive kept its green dot and IDLE mode, and only the ⋮ menu
+       reading "Resume hive" gave the state away. Rendered next to the mode
+       badge; a viewer who may resume (canResume: hosted, owner or admin — the
+       ⋮ item's own gate) gets it as a button that resumes, anyone else as a
+       label whose hover says who can. Empty for a hive that is not paused. */
+    function hivePausedPill(h, canResume) {
+      var held = hiveBreakerAgents(h);
+      if (!held.length) return '';
+      var title = 'Hive paused — the fleet breaker is holding ' + held.length +
+        (held.length === 1 ? ' agent' : ' agents') + ' (' + agentPauseProvenance(held[0]) + ').\n' +
+        (canResume
+          ? 'Click to resume: only the agents the pause stopped restart, on the spoke\'s next heartbeat.'
+          : 'The hive owner or a hub admin can resume it from this row\'s ⋮ menu.');
+      var style = 'display:inline-block;margin-left:var(--sp-3);padding:1px 7px;border-radius:9px;' +
+        'background:rgba(210,153,34,0.12);border:1px solid rgba(210,153,34,0.45);color:#d29922;' +
+        'font:inherit;font-size:var(--fs-xs);font-weight:600;white-space:nowrap;vertical-align:middle';
+      if (canResume) {
+        return '<button type="button" class="hive-paused-pill" onclick="setHiveBreaker(' + jsArg(h.id) + ',' + jsArg(h.name || h.id) + ',false)" ' +
+          'title="' + escAttr(title) + '" aria-label="Hive paused — resume" style="' + style + ';cursor:pointer">⏸︎ paused · ▶︎ resume</button>';
+      }
+      return '<span class="hive-paused-pill" title="' + escAttr(title) + '" style="' + style + ';cursor:help">⏸︎ paused</span>';
+    }
     /* ── Spoke pointer ──
        Why: the hub is a LIST of hives, but a new owner lands here and looks
        for the Guide / settings / GitHub App install that live inside their
@@ -9221,6 +9252,11 @@
            live-ticking "claim pending · Nm" pill so a stuck assignment is
            obvious. Self-suppresses (empty) for every other row. */
         modeCell += claimPendingPill(h);
+        /* Pause/Resume hive (#15092) is owner-or-admin like its endpoint, and
+           only hosted hives take the instruction over the heartbeat. */
+        var canBreaker = isHosted && (h.role === 'owner' || _isAdmin);
+        /* A paused hive says so in the row, next to its mode (#19778). */
+        modeCell += hivePausedPill(h, canBreaker);
         var rb = resolvedBase(h);
         var contributeUrl = rb ? rb + '/contribute' : '';
         var actions = '';
@@ -9259,11 +9295,9 @@
         /* Timeline is owner-or-admin, matching the API's authorization. */
         if (isHosted && (h.role === 'owner' || _isAdmin)) menuItems.push('<div onclick="openTimelineModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" class="hive-menu-item">Activity Timeline</div>');
         /* Pause/Resume hive (#15092): the spoke's own top-bar "running ⏸"
-           fleet breaker, reachable without opening its dashboard. Owner-or-
-           admin like the endpoint. The breaker is engaged when any agent
-           reports pausedTrigger 'fleet-breaker' (crux.BreakerTrigger). */
-        if (isHosted && (h.role === 'owner' || _isAdmin)) {
-          var breakerOn = (h.agents || []).some(function(a) { return a.paused && a.pausedTrigger === 'fleet-breaker'; });
+           fleet breaker, reachable without opening its dashboard. */
+        if (canBreaker) {
+          var breakerOn = hiveBreakerAgents(h).length > 0;
           menuItems.push('<div onclick="setHiveBreaker(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\',' + (!breakerOn) + ')" class="hive-menu-item">' + (breakerOn ? '▶︎ Resume hive' : '⏸︎ Pause hive') + '</div>');
         }
         if (roleAtLeast(h.role, 'read-write') || _isAdmin) menuItems.push('<div onclick="openOpenRouterFundModal(\'' + esc(h.id) + '\',\'' + esc(h.name || h.id) + '\')" class="hive-menu-item">⚡ Fund with OpenRouter</div>');
