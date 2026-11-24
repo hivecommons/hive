@@ -1,0 +1,1 @@
+- The Review Queue keeps your selected page when a background refresh finishes late, preserves keyboard focus during loading, and lets you retry failed or timed-out page changes.
