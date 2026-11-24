@@ -1,0 +1,1 @@
+- Hive now imports Linear issue priorities correctly, including issues with no priority.
