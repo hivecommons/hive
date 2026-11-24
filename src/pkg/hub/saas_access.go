@@ -249,9 +249,12 @@ func (s *HubServer) userOwnsHive(username, hiveID string) bool {
 }
 
 // accessHive returns the record the access handlers authorize against: the
-// SaaS meta record of a hosted hive, else the ID and Owner of the registry
-// entry of a self-registered spoke. The handlers never save it, so a grant on
-// a self-registered spoke writes no meta.json. Nil when neither place has it.
+// SaaS meta record of a hosted hive, else the ID of the registry entry of a
+// self-registered spoke with an EMPTY Owner: the registry Owner is reported by
+// the spoke's own heartbeat and never verified, so it must not confer access
+// control. Only the hub admin and users with a stored owner grant qualify. The
+// handlers never save it, so a grant on a self-registered spoke writes no
+// meta.json. Nil when neither place has it.
 func (s *HubServer) accessHive(hiveID string) *SaaSHive {
 	if h := loadSaaSHive(hiveID); h != nil {
 		return h
@@ -269,7 +272,7 @@ func (s *HubServer) registryAccessHives() []SaaSHive {
 	defer s.mu.RUnlock()
 	hives := make([]SaaSHive, 0, len(s.registry.Hives))
 	for _, e := range s.registry.Hives {
-		hives = append(hives, SaaSHive{ID: e.ID, Owner: e.Owner})
+		hives = append(hives, SaaSHive{ID: e.ID})
 	}
 	return hives
 }

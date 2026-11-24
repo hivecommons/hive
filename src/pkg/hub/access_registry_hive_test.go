@@ -46,7 +46,7 @@ func accessCall(s *HubServer, handler func(http.ResponseWriter, *http.Request), 
 }
 
 func TestAccessGrantsOnSelfRegisteredHive(t *testing.T) {
-	for _, user := range []string{"spoke-owner", hubAdminUsername, "co-owner"} {
+	for _, user := range []string{hubAdminUsername, "co-owner"} {
 		t.Run(user, func(t *testing.T) {
 			s := seedSelfRegisteredHive(t)
 			hive := map[string]string{"id": selfRegisteredHiveID}
@@ -78,7 +78,7 @@ func TestAccessGrantsOnSelfRegisteredHive(t *testing.T) {
 }
 
 func TestAccessGrantsOnSelfRegisteredHiveRefuseNonOwners(t *testing.T) {
-	for _, user := range []string{"writer", "target", ""} {
+	for _, user := range []string{"spoke-owner", "writer", "target", ""} {
 		t.Run(user, func(t *testing.T) {
 			s := seedSelfRegisteredHive(t)
 			hive := map[string]string{"id": selfRegisteredHiveID}
@@ -154,11 +154,39 @@ func TestAccessRequestsOnSelfRegisteredHive(t *testing.T) {
 	assertNoMetaRecord(t, selfRegisteredHiveID)
 }
 
-func TestGrantableUsersAllowsRegistryOwner(t *testing.T) {
+func TestGrantableUsersRefusesHeartbeatReportedOwner(t *testing.T) {
 	s := seedSelfRegisteredHive(t)
-	rec := accessCall(s, s.handleGrantableUsers, http.MethodGet, "", "spoke-owner", nil)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200 (body=%q)", rec.Code, rec.Body.String())
+	if rec := accessCall(s, s.handleGrantableUsers, http.MethodGet, "", "spoke-owner", nil); rec.Code != http.StatusForbidden {
+		t.Fatalf("spoke-owner: status = %d, want 403 (body=%q)", rec.Code, rec.Body.String())
+	}
+	for _, user := range []string{hubAdminUsername, "co-owner"} {
+		if rec := accessCall(s, s.handleGrantableUsers, http.MethodGet, "", user, nil); rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200 (body=%q)", user, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestHeartbeatReportedOwnerCannotApproveOrRevoke(t *testing.T) {
+	s := seedSelfRegisteredHive(t)
+	hive := map[string]string{"id": selfRegisteredHiveID}
+	grant := map[string]string{"id": selfRegisteredHiveID, "username": "target"}
+	mustSaveAccessOwnerRoleUser(t, "holder", map[string]string{selfRegisteredHiveID: "read"})
+	revoke := map[string]string{"id": selfRegisteredHiveID, "username": "holder"}
+
+	if rec := accessCall(s, s.handleRequestAccess, http.MethodPost, `{"note":"please"}`, "target", hive); rec.Code != http.StatusOK {
+		t.Fatalf("request: status = %d, want 200", rec.Code)
+	}
+	if rec := accessCall(s, s.handleApproveRequest, http.MethodPost, `{"role":"read"}`, "spoke-owner", grant); rec.Code != http.StatusForbidden {
+		t.Fatalf("approve: status = %d, want 403 (body=%q)", rec.Code, rec.Body.String())
+	}
+	if rec := accessCall(s, s.handleAccessRemove, http.MethodDelete, "", "spoke-owner", revoke); rec.Code != http.StatusForbidden {
+		t.Fatalf("revoke: status = %d, want 403 (body=%q)", rec.Code, rec.Body.String())
+	}
+	if _, ok := loadSaaSUser("target").Hives[selfRegisteredHiveID]; ok {
+		t.Fatalf("a refused approve wrote a grant")
+	}
+	if _, ok := loadSaaSUser("holder").Hives[selfRegisteredHiveID]; !ok {
+		t.Fatalf("a refused revoke removed the grant")
 	}
 }
 
