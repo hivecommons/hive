@@ -338,6 +338,24 @@ agents:
 
 **Workspace transport is a shared claim, not a copy.** The Job mounts `workspace_claim` with a `subPath` pointing at the per-kick workspace, at the same `/workspace` mount the Podman launcher uses. The sandbox `workspace_dir` must therefore live under `workspace_claim_mount` (it does by default: `/data/agents/sandbox`). When the Job is scheduled onto a different node than hive, which is the whole point of a node selector, the claim must be **ReadWriteMany**. Hive cannot check the access mode from inside its pod; a Job that fails to start with a multi-attach error is the symptom.
 
+**Copy transport for clusters without ReadWriteMany storage (#19621).** Opt in with `workspace_transport: copy` under `agent_sandbox.job` (or an agent's `sandbox.job`; a per-agent block without it inherits the global value). The Job then never mounts hive's data claim, and `workspace_claim` is not needed:
+
+```yaml
+agent_sandbox:
+  runtime: job
+  job:
+    workspace_transport: copy   # default: claim
+```
+
+1. Hive prepares the workspace on its own claim with its own credentials, as before.
+2. The Job's `/workspace` is a pod-local `emptyDir`. A `hive-bridge` init container from the hive image (`relay_image`, resolved like the relays) copies hive's `crux` binary into a second `emptyDir`, and the kick container runs `crux job-bridge -- <kick command>`.
+3. Hive reaches the bridge at the pod IP on port 8477 and pushes the workspace as a tar (`PUT /workspace`). The bridge then runs the kick command; its output stays the pod log and its exit code stays the container's.
+4. Once the command exits, hive pulls the workspace back (`GET /workspace`, answered 409 while the command runs), swaps it in on its own claim, and sends `POST /done`. The push broker and PR path run unchanged on that workspace.
+
+Every bridge request but `/healthz` carries a random per-run bearer token, set in the Job pod's environment and removed from the kick command's. With `network: none` the deny-all NetworkPolicy gets one ingress rule that admits only pods with hive's own labels to port 8477; egress stays denied. Hive's own pod must carry labels for that, and any NetworkPolicy on hive's side must allow it to reach Job pods on that port. With `network: default` the bridge is reachable on the cluster network and the token is what guards it.
+
+Limits of this first version: the review, issue and topic relays are off (their spool needs a directory hive and the Job share while the kick runs), the kick needs an explicit command, `relay_image` cannot be `none`, and the `crux` binary must match the Job node's architecture, so point `relay_image` at a multi-arch hive image when Jobs land on other architectures. Files the agent writes reach hive when the kick ends, not while it runs.
+
 **The credential boundary.** The Job receives exactly the Secrets named in `env_from_secrets`, resolved by Kubernetes from the pod template; hive never reads them. Environment variables from the allowlist are copied in with the same credential-name filter Podman applies. An allowlisted `ANTHROPIC_BASE_URL` that points at a pod-local proxy (such as `127.0.0.1:18444`) is not reachable from a Job pod, so operators must supply a routable endpoint or model credentials via `env_from_secrets`, or turn on the inference listener described below, which keeps the gateway key in hive. Hive's brokered GitHub token **never enters the Job**, so a Job cannot push or open a PR itself; hive does both from the returned workspace, with the same scan and scoped-token minting as the Podman path. If a workload needs its own registry or model credentials, they go in a Secret named here, and they are that workload's to protect.
 
 **What the operator sees.** The kick shows on the agent card like any sandboxed kick, with the runtime named in the output buffer and the audit line. The pod log is the transcript — hive collects it before the Job is deleted and archives it as the kick log, so "full log" on the card and the kick history keep working after the Job is gone — the container exit code is the sandbox exit code, and the kick timeout deletes a Job that is still running. A Job that **failed** is left in place until `ttl_seconds` (default one hour) so `kubectl describe job` and `kubectl logs` still work; a completed Job is deleted at once. Jobs carry the label `app.kubernetes.io/managed-by=hive-kubejob`.
@@ -631,7 +649,7 @@ On-demand agents, paused agents and `pause`/`continuous` cadences are never over
 ## Remaining gaps
 
 - The default target is the hive primary repo and default base ref; richer per-kick repo/ref selection is still future work.
-- The Job runtime is a first slice: one Job per kick, workspace shared through a PVC, no per-kick Secret minting. A clone-inside-the-Job transport for clusters without ReadWriteMany storage is future work.
+- The Job runtime is a first slice: one Job per kick, workspace shared through a PVC, no per-kick Secret minting. Clusters without ReadWriteMany storage can use `workspace_transport: copy` (#19621), which has no relays yet.
 - Live Podman execution is covered by skip-when-absent tests; CI still needs a rootless-Podman runner lane for always-on integration coverage.
 - Sandboxed inference depends on an operator-provided restricted network/proxy policy. `none` is stronger but not yet usable for all model backends.
 - Stronger runtimes than plain containers ship opt-in: [ADR-0026](adr/0026-sandbox-runtime-selection.md) (Accepted) covers NVIDIA OpenShell (phase 1) and Agent Substrate (phase 2); both still need their prototype measurements and cluster preflights.

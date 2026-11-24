@@ -77,7 +77,14 @@ func retryJobName(first string, n int) string {
 func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, subPath, name string, relays *relayPlan, avoid []string) (sandbox.Result, error) {
 	var res sandbox.Result
 	manifest := l.jobManifest(ns, name, subPath, spec, relays)
-	setPullSecrets(manifest, l.resolvePullSecrets(ctx, ns, relays))
+	pullFrom := relays
+	if l.copyPlan != nil {
+		if err := l.copyPlan.apply(manifest); err != nil {
+			return res, err
+		}
+		pullFrom = l.copyPlan.image
+	}
+	setPullSecrets(manifest, l.resolvePullSecrets(ctx, ns, pullFrom))
 	if jobSpec, ok := manifest["spec"].(map[string]any); ok {
 		jobSpec["activeDeadlineSeconds"] = l.activeDeadline(ctx)
 	}
@@ -92,7 +99,11 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 		// The policy exists before any pod can: a Job created first could
 		// start its pod in the window before the policy lands.
 		policiesPath := fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies", ns)
-		policy, err := json.Marshal(denyAllPolicy(ns, name))
+		deny := denyAllPolicy(ns, name)
+		if l.copyPlan != nil {
+			l.copyPlan.allowBridgeIngress(deny)
+		}
+		policy, err := json.Marshal(deny)
 		if err != nil {
 			return res, err
 		}
@@ -109,7 +120,18 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 	}
 	jobPath := jobsPath + "/" + name
 
-	done, waitErr := l.waitJob(ctx, ns, name, jobPath)
+	waitCtx, abortWait := context.WithCancel(ctx)
+	defer abortWait()
+	var copying *copyRun
+	if l.copyPlan != nil {
+		copying = l.startCopy(ctx, abortWait, ns, name, spec.Workspace)
+	}
+	done, waitErr := l.waitJob(waitCtx, ns, name, jobPath)
+	copyErr := copying.finish()
+	if waitErr != nil && ctx.Err() == nil && copyErr != nil {
+		// The copy failed and stopped the wait: that is the error.
+		waitErr = copyErr
+	}
 	// Collect whatever the pod produced BEFORE deciding anything: a timed-out
 	// or failed kick with no transcript is the worst outcome for an operator.
 	// The caller's ctx may be dead already (kick timeout) or die between any
@@ -175,6 +197,12 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 			return res, &sandbox.FailError{Reason: res.FailReason, Node: res.Node, Message: msg}
 		}
 		return res, fmt.Errorf("kubejob: job %s failed: %s", name, done.reason)
+	}
+	if copyErr != nil {
+		// The kick finished but its workspace never came back.
+		_ = l.delete(live(), jobPath)
+		l.deletePolicy(live(), policyPath)
+		return res, copyErr
 	}
 	// When the Job reports Complete but the pod could not be read back
 	// (already GC'd, or RBAC on pods missing), res.ExitCode stays

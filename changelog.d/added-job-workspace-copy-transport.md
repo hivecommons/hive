@@ -1,0 +1,1 @@
+- Sandbox Jobs can now copy the workspace in and out with `agent_sandbox.job.workspace_transport: copy`, so `runtime: job` works without ReadWriteMany storage and the Job never mounts hive's data claim (#19621).

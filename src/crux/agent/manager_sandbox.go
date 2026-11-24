@@ -174,7 +174,7 @@ func (m *Manager) validateSandboxKickLocked(agent *AgentProcess) (string, error)
 	switch runtime {
 	case config.SandboxRuntimeJob:
 		job := agent.Config.SandboxJob(m.sandboxConfig)
-		if strings.TrimSpace(job.WorkspaceClaim) == "" {
+		if !job.CopiesWorkspace() && strings.TrimSpace(job.WorkspaceClaim) == "" {
 			return "", fmt.Errorf("agent %s sandbox job runtime requires job.workspace_claim — the PVC hive's sandbox workspace root lives on, mounted RWX so the Job can see it from another node", agent.Name)
 		}
 	case config.SandboxRuntimeOpenShell:
@@ -601,6 +601,7 @@ func JobOptionsFromConfig(job config.SandboxJobConfig) kubejob.Options {
 	opts := kubejob.Options{
 		WorkspaceClaim:      job.WorkspaceClaim,
 		WorkspaceClaimMount: job.WorkspaceClaimMount,
+		WorkspaceTransport:  job.WorkspaceTransport,
 		NodeSelector:        job.NodeSelector,
 		Affinity:            job.Affinity,
 		ServiceAccount:      job.ServiceAccount,

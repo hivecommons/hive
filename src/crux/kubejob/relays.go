@@ -87,6 +87,7 @@ func (p *relayPlan) initContainer() map[string]any {
 type selfPod struct {
 	Metadata struct {
 		Annotations map[string]string `json:"annotations"`
+		Labels      map[string]string `json:"labels"`
 	} `json:"metadata"`
 	Spec struct {
 		Containers []struct {

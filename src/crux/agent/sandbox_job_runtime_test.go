@@ -147,7 +147,11 @@ func TestJobOptionsFromConfig(t *testing.T) {
 		EnvFromSecrets:      []string{"artifact-registry"},
 		Volumes:             []config.SandboxJobVolume{{Name: "cache", Claim: "compile-cache", MountPath: "/cache", ReadOnly: true}},
 		TTLSeconds:          600,
+		WorkspaceTransport:  config.SandboxJobWorkspaceCopy,
 	})
+	if got.WorkspaceTransport != config.SandboxJobWorkspaceCopy {
+		t.Errorf("workspace_transport not carried: %q", got.WorkspaceTransport)
+	}
 	if got.WorkspaceClaim != "hive-data" || got.WorkspaceClaimMount != "/data" || got.ServiceAccount != "hive" || got.SchedulerName != "spyre-scheduler" || got.TTLSeconds != 600 {
 		t.Errorf("scalar fields not carried: %+v", got)
 	}

@@ -18,6 +18,9 @@ func TestSandboxBlockProblem(t *testing.T) {
 		{name: "bad runtime", global: AgentSandboxConfig{Image: "img", Runtime: "vm"}, want: `runtime "vm"`},
 		{name: "job without claim", global: AgentSandboxConfig{Image: "img", Runtime: SandboxRuntimeJob}, want: "workspace_claim"},
 		{name: "job with global claim", global: AgentSandboxConfig{Image: "img", Runtime: SandboxRuntimeJob, Job: &SandboxJobConfig{WorkspaceClaim: "data"}}},
+		{name: "job copy transport needs no claim", global: AgentSandboxConfig{Image: "img", Runtime: SandboxRuntimeJob, Job: &SandboxJobConfig{WorkspaceTransport: SandboxJobWorkspaceCopy}}},
+		{name: "agent job block inherits the copy transport", agent: AgentConfig{Sandbox: &AgentSandboxOverride{Job: &SandboxJobConfig{ServiceAccount: "sa"}}}, global: AgentSandboxConfig{Image: "img", Runtime: SandboxRuntimeJob, Job: &SandboxJobConfig{WorkspaceTransport: SandboxJobWorkspaceCopy}}},
+		{name: "job claim transport still needs a claim", global: AgentSandboxConfig{Image: "img", Runtime: SandboxRuntimeJob, Job: &SandboxJobConfig{WorkspaceTransport: SandboxJobWorkspaceClaim}}, want: "workspace_claim"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

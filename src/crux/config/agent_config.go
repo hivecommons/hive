@@ -62,6 +62,23 @@ type SandboxJobConfig struct {
 	// listeners, read from agent_sandbox.job only; a per-agent block cannot set them.
 	GitHubReadProxy *SandboxGitHubReadProxy `yaml:"github_read_proxy,omitempty" json:"github_read_proxy,omitempty"`
 	InferenceProxy  *SandboxInferenceProxy  `yaml:"inference_proxy,omitempty" json:"inference_proxy,omitempty"`
+	// WorkspaceTransport is how the Job gets the workspace (#19621): empty
+	// or "claim" mounts WorkspaceClaim at a subPath; "copy" copies the
+	// workspace into a pod-local emptyDir and back, so WorkspaceClaim is not
+	// needed and the Job never mounts hive's data volume.
+	WorkspaceTransport string `yaml:"workspace_transport,omitempty" json:"workspace_transport,omitempty"`
+}
+
+// Job workspace transports, SandboxJobConfig.WorkspaceTransport.
+const (
+	SandboxJobWorkspaceClaim = "claim"
+	SandboxJobWorkspaceCopy  = "copy"
+)
+
+// CopiesWorkspace reports whether the Job uses the copy transport, which
+// needs no workspace_claim.
+func (j SandboxJobConfig) CopiesWorkspace() bool {
+	return strings.TrimSpace(j.WorkspaceTransport) == SandboxJobWorkspaceCopy
 }
 
 // SandboxRuntime returns the per-agent runtime override, then the global
@@ -99,6 +116,9 @@ func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 	}
 	if strings.TrimSpace(out.WorkspaceClaimMount) == "" {
 		out.WorkspaceClaimMount = g.WorkspaceClaimMount
+	}
+	if strings.TrimSpace(out.WorkspaceTransport) == "" {
+		out.WorkspaceTransport = g.WorkspaceTransport
 	}
 	if out.TTLSeconds == 0 {
 		out.TTLSeconds = g.TTLSeconds
