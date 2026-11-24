@@ -10,13 +10,12 @@ AI agent orchestrator for connected work sources and source repositories. A sing
 git clone https://github.com/hivecommons/hive.git
 cd hive
 
-cp src/hive.yaml.example src/hive.yaml
-# REQUIRED: set project.org and project.repos (optionally primary_repo and
-# ai_author) in src/hive.yaml — the placeholders do not work as shipped. See
-# docs/operator-reference.md#minimum-required-configuration
-# REQUIRED: the example ships dashboard.port 3001 for local source runs; the
-# container healthcheck probes 3002, so keeping 3001 never becomes healthy.
-sed -i 's/^  port: 3001$/  port: 3002/' src/hive.yaml
+# Compose requires the Go API on 3002; generate this config before editing it.
+sed 's/^  port: 3001$/  port: 3002/' src/hive.yaml.example > src/hive.yaml
+# REQUIRED: set project.org and project.repos in src/hive.yaml.
+# Set project.primary_repo to one of those repos or remove the field.
+# You can also set project.ai_author. See
+# src/docs/operator-reference/README.md#minimum-required-configuration
 
 # src/.env, NOT ./.env — `-f src/docker-compose.yaml` makes `src/` the project
 # directory, so that is where Compose reads `.env`. A root `.env` is ignored
@@ -26,7 +25,7 @@ echo "HIVE_GITHUB_TOKEN=ghp_..." >> src/.env
 # REQUIRED: the dashboard's auth proxy refuses to start without it.
 printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> src/.env
 
-docker compose -f src/docker-compose.yaml up -d
+docker compose -f src/docker-compose.yaml up -d --wait
 
 # Dashboard at http://localhost:3001
 curl -sf http://127.0.0.1:3001/api/health     # -> {"status":"ok"}
@@ -38,8 +37,10 @@ curl -sf http://127.0.0.1:3001/api/health     # -> {"status":"ok"}
 git clone https://github.com/hivecommons/hive.git
 cd hive
 
-cp src/hive.yaml.example src/hive.yaml
-# Edit src/hive.yaml — set your org, repos, and agent config
+# Compose requires the Go API on 3002; generate this config before editing it.
+sed 's/^  port: 3001$/  port: 3002/' src/hive.yaml.example > src/hive.yaml
+# Edit src/hive.yaml to set project.org, project.repos, and your agent config.
+# Set project.primary_repo to one of those repos or remove the field.
 
 # src/.env, NOT ./.env — `-f src/docker-compose.yaml` makes `src/` the project
 # directory, so that is where Compose reads `.env`. A root `.env` is ignored
@@ -50,12 +51,12 @@ echo "HIVE_GITHUB_TOKEN=ghp_..." >> src/.env
 printf 'HIVE_DASHBOARD_TOKEN=%s\n' "$(openssl rand -hex 32)" >> src/.env
 
 docker compose -f src/docker-compose.yaml build
-docker compose -f src/docker-compose.yaml up -d
+docker compose -f src/docker-compose.yaml up -d --wait
 ```
 
 ### Pre-built image
 
-The default `src/docker-compose.yaml` uses the pre-built image `ghcr.io/hivecommons/hive:stable`, the operator-blessed release channel. To build from source instead, run `docker compose -f src/docker-compose.yaml build` before `docker compose -f src/docker-compose.yaml up -d`.
+The default `src/docker-compose.yaml` uses the pre-built image `ghcr.io/hivecommons/hive:stable`, the operator-blessed release channel. To build from source, see [Option B](#option-b-build-from-source).
 
 Every standalone image reference comes from one source of truth, [`deploy/standalone-images.sh`](deploy/standalone-images.sh), so the Docker assets and the Podman assets cannot drift apart. Change a reference there, not in an individual asset.
 

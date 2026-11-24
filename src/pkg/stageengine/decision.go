@@ -10,6 +10,10 @@ import (
 // None clears the built-in stage, including for an unnumbered model state.
 type Decision struct {
 	Stage stagelabels.Stage
+	// StageLabel is the selected model state's own spelling of Stage's
+	// label (StateLifecycle.StageLabel, hivecommons/hive#19611); empty
+	// means the built-in label. Label renders the one written.
+	StageLabel string
 	// ModelState is the selected custom workflow state, including states
 	// that do not have a built-in stage number.
 	ModelState string
@@ -52,10 +56,14 @@ type Decision struct {
 // Desired renders the Decision as the full hive-owned label set the writer
 // should make the item carry.
 func (d Decision) Desired() stagelabels.Desired {
-	want := stagelabels.Desired{Stage: d.Stage, Role: d.Role, Kind: d.Kind, KindLabels: d.KindLabels, Stalled: d.Stalled, DCO: d.DCO, MergeCommit: d.MergeCommit, Clear: d.Clear}
+	want := stagelabels.Desired{Stage: d.Stage, StageLabel: d.StageLabel, Role: d.Role, Kind: d.Kind, KindLabels: d.KindLabels, Stalled: d.Stalled, DCO: d.DCO, MergeCommit: d.MergeCommit, Clear: d.Clear}
 	modelDesired(&want, d.ModelProfile, d.ModelState)
 	return want
 }
+
+// Label is the stage label the writer puts on the item: the model state's
+// own spelling when it declares one, else the built-in label ("" for None).
+func (d Decision) Label() string { return d.Stage.LabelAs(d.StageLabel) }
 
 // abstain is the Decision for "no opinion" with a reason for the log.
 func abstain(reason string) Decision { return Decision{Abstain: true, Reason: reason} }

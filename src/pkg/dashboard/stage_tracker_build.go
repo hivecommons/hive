@@ -405,6 +405,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		if it.AuthorKind == authorKindHive || pr.AppAuthored {
 			it.Lane = laneHive
 		}
+		it.ChangesAddressedBy = stageTrackerChangesAddressedBy(pr)
 		finish(&it, pr.Labels, labelStage(pr.Labels), rec, ok, pr.Draft)
 		if it.Stage == stagelabels.ReturnedToContributor.Number() && it.AuthorKind == authorKindClanker {
 			var requesters []string

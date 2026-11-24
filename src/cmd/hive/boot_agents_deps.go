@@ -63,6 +63,9 @@ type bootAgentsDeps struct {
 	// exit terminates the process when no runtime can be built. os.Exit in
 	// production; fakes record it.
 	exit func(code int)
+	// startForgeRequestRelay runs the forge-only hive's request relay
+	// (hivecommons/hive#19670). nil starts none, which is what fakes get.
+	startForgeRequestRelay func(ctx context.Context, r *forgeRequestRelay) <-chan struct{}
 }
 
 // requestRelays is the authorization the five request watchers are started
@@ -134,5 +137,6 @@ func defaultBootAgentsDeps() bootAgentsDeps {
 		startHiveCallback:       startHiveCallback,
 		superviseRuntime:        func(ctx context.Context, s *cruxRuntimeSupervision) { s.start(ctx) },
 		exit:                    os.Exit,
+		startForgeRequestRelay:  startForgeRequestRelay,
 	}
 }

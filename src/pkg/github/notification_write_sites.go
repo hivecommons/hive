@@ -56,6 +56,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).SweepLegacyFleetReportIssues":           {Class: NotificationClassStatus},
 	"github.(*Client).closeDecomposedParent":                  {Class: NotificationClassStatus},
 	"github.(*Client).closeIssueForMergedPRClaimWithIssue":    {Class: NotificationClassStatus},
+	"forgesweep.(*Sweeper).closeOne":                          {Class: NotificationClassStatus},
 	"github.(*Client).closeDoneTracker":                       {Class: NotificationClassStatus},
 	"github.(*Client).closeVerified":                          {Class: NotificationClassStatus},
 	"github.(*Client).parkVerifiedForClose":                   {Class: NotificationClassStatus},
@@ -100,6 +101,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).resolveDuplicateFixGroup":           {Class: NotificationClassAttention},
 	"github.(*Client).upsertScannerNote":                  {Class: NotificationClassAttention},
 	"github.attentionDelivery.Post":                       {Class: NotificationClassAttention},
+	"main.(*forgeRequestRelay).handleIssue":               {Class: NotificationClassAttention},
 	"main.claimEscalationLookup":                          {Class: NotificationClassAttention},
 	"main.factCheckSweep.needsHuman":                      {Class: NotificationClassAttention},
 	"main.maintainHeldPRMergeability":                     {Class: NotificationClassAttention},
@@ -116,6 +118,8 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	// required_review: a review submission or request a merge depends on.
 	"github.(*Client).QueuePRAutoMergeWithNoteResultAtHead": {Class: NotificationClassRequiredReview},
 	"github.(*Client).handleOneReviewRequest":               {Class: NotificationClassRequiredReview},
+	"github.(*Client).RerequestReview":                      {Class: NotificationClassRequiredReview},
+	"main.reviewFeedbackSweep.rerequestAddressedReviews":    {Class: NotificationClassRequiredReview},
 
 	// protocol_command: machine-consumed comments.
 	"dashboard.postClaimComment":                         {Class: NotificationClassProtocolCommand},

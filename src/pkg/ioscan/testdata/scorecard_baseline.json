@@ -3,5 +3,8 @@
   "attack_blocked": 61,
   "block_rate_pct": 96.8,
   "benign_total": 12,
-  "benign_false_positives": 1
+  "benign_false_positives": 1,
+  "real_issue_dev_total": 173,
+  "real_issue_dev_false_positives": 0,
+  "real_issue_heldout_total": 147
 }

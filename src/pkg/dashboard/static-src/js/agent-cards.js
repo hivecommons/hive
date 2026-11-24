@@ -846,7 +846,7 @@
       const sr = agentSandboxRun(a);
       if (!sr) return '';
       if (sr.health === 'node_unhealthy') return 'node unhealthy';
-      if (sr.health === 'failed') return sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.timedOut ? 'last run timed out' : 'last run failed');
+      if (sr.health === 'failed') return sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.failReason === 'setup_failed' ? 'setup failed' : (sr.timedOut ? 'last run timed out' : 'last run failed'));
       if (sr.health === 'overdue') return 'run overdue';
       return '';
     }
@@ -855,7 +855,7 @@
       if (!sr || !sr.lastRunAt) return '';
       const ago = agentNowAgo((hiveNowMs || Date.now()) - Date.parse(sr.lastRunAt));
       const dur = sr.durationS >= 60 ? Math.round(sr.durationS / 60) + ' min' : (sr.durationS || 0) + ' s';
-      let text = (sr.succeeded ? 'last run succeeded' : (sr.failReason === 'node_unhealthy' ? 'node unhealthy' : (sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.timedOut ? 'last run timed out' : 'last run failed')))) + (sr.node ? ' on ' + sr.node : '') + ' \u00b7 ' + ago + ' \u00b7 ' + dur;
+      let text = (sr.succeeded ? 'last run succeeded' : (sr.failReason === 'node_unhealthy' ? 'node unhealthy' : (sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.failReason === 'setup_failed' ? 'setup failed' : (sr.timedOut ? 'last run timed out' : 'last run failed'))))) + (sr.node ? ' on ' + sr.node : '') + ' \u00b7 ' + ago + ' \u00b7 ' + dur;
       if (sr.commitCount) text += ' \u00b7 ' + sr.commitCount + (sr.commitCount === 1 ? ' commit' : ' commits');
       return text;
     }
@@ -887,7 +887,7 @@
         const rt = sandboxRun.runtime === 'job' ? 'Job' : 'sandbox';
         if (sandboxRun.health === 'running') { session = rt + ' running'; sessionCls = 'ab-ok'; sessionTip = 'A sandboxed kick is in flight.'; }
         else if (sandboxRun.health === 'waiting_for_node') { session = rt + ' waiting for a node'; sessionCls = 'ab-warn'; sessionTip = 'The Job is created but its pod is Pending and Unschedulable' + (sandboxRun.waitDetail ? ': ' + sandboxRun.waitDetail : '.'); }
-        else if (sandboxRun.health === 'node_unhealthy') { session = 'node unhealthy'; sessionCls = 'ab-bad'; sessionTip = 'The node preflight failed' + (sandboxRun.node ? ' on ' + sandboxRun.node : '') + ', also on the retry: ' + (sandboxRun.error || 'see the full log.'); }
+        else if (sandboxRun.health === 'node_unhealthy') { session = 'node unhealthy'; sessionCls = 'ab-bad'; sessionTip = 'The node preflight or a setup health check failed' + (sandboxRun.node ? ' on ' + sandboxRun.node : '') + ', also on the retry: ' + (sandboxRun.error || 'see the full log.'); }
         else if (sandboxRun.health === 'failed') { session = agentSandboxDownLabel(a); sessionCls = 'ab-bad'; sessionTip = 'The last sandboxed run failed: ' + (sandboxRun.error || 'see the full log.'); }
         else if (sandboxRun.health === 'overdue') { session = 'run overdue'; sessionCls = 'ab-bad'; sessionTip = 'A scheduled kick was due' + (sandboxRun.dueAt ? ' at ' + sandboxRun.dueAt : '') + ' and no run has started.'; }
         else { session = sandboxRun.lastRunAt ? rt + ' ok' : rt + ' ready'; sessionCls = 'ab-ok'; sessionTip = 'Sandboxed agent: each kick runs in its own container, so there is no session between kicks. ' + (agentSandboxRunText(a) || 'No run yet.'); }

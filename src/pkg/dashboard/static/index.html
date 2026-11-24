@@ -2685,12 +2685,23 @@
          one-line box so a card row stays under the #17161 height budget; the
          hit area is padded out to the tap target like .ham-pill (#17453). */
       #activity-monitor-section .ham-badge-mod.ham-decision-trigger { position: relative; }
-      /* Gate segments keep the one-line pill; each segment pads its hit area
-         out to the tap target so the phone harness sees ≥44×44. */
-      #activity-monitor-section .ham-human-gate { display: inline-flex; line-height: inherit; vertical-align: baseline; }
-      #activity-monitor-section .ham-human-gate > .ham-gate-act, #activity-monitor-section .ham-human-gate .ham-gate-more, #activity-monitor-section .ham-human-gate > button.ham-gate-status { position: relative; display: inline-flex; min-width: var(--tap-target); min-height: 0; height: auto; padding-block: 0; line-height: inherit; }
-
-      #activity-monitor-section .ham-human-gate > .ham-gate-act::before, #activity-monitor-section .ham-human-gate .ham-gate-more::before, #activity-monitor-section .ham-human-gate > button.ham-gate-status::before { content: ""; position: absolute; inset: calc((1lh - var(--tap-target)) / 2) 0; }
+      /* Gate segments keep the one-line pill (the #17161 card budget) and
+         pad their hit area out to the tap target with a ::before. The pill
+         used to clip that slop with overflow: hidden (it rounds the segment
+         fills), so the … took taps on its 16px painted line only. The pill
+         no longer clips; its end segments carry the pill radius instead. The
+         slop reaches --sp-1 above the pill and the rest of the tap target
+         below it, into the strip line beside the step pill, so it never
+         covers the title link above; z-index lifts it over the strip line,
+         which paints later. The … sits --sp-4 (8px) clear of the verb
+         before it, so a near miss on … never lands on Approve. */
+      #activity-monitor-section .ham-human-gate { display: inline-flex; overflow: visible; line-height: inherit; vertical-align: baseline; }
+      #activity-monitor-section .ham-human-gate > .ham-gate-act, #activity-monitor-section .ham-human-gate .ham-gate-more, #activity-monitor-section .ham-human-gate > button.ham-gate-status { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; min-width: var(--tap-target); min-height: 0; height: auto; padding-block: 0; line-height: inherit; }
+      #activity-monitor-section .ham-human-gate > .ham-gate-act::before, #activity-monitor-section .ham-human-gate .ham-gate-more::before, #activity-monitor-section .ham-human-gate > button.ham-gate-status::before { content: ""; position: absolute; left: 0; right: 0; top: calc(-1 * var(--sp-1)); bottom: calc(100% + var(--sp-1) - var(--tap-target)); }
+      #activity-monitor-section .ham-human-gate > :first-child { border-radius: var(--r-pill) 0 0 var(--r-pill); }
+      #activity-monitor-section .ham-human-gate > .ham-gate-act:last-child, #activity-monitor-section .ham-human-gate .ham-gate-more { --ham-gate-seg-radius: 0 var(--r-pill) var(--r-pill) 0; }
+      #activity-monitor-section .ham-human-gate .ham-gate-more-wrap { display: inline-flex; align-items: stretch; margin-left: var(--sp-4); }
+      #activity-monitor-section .ham-human-gate .ham-gate-more:focus-visible, #activity-monitor-section .ham-kebab:focus-visible { outline: calc(var(--line-width) * 2) solid var(--accent); outline-offset: calc(var(--line-width) * -2); }
       #activity-monitor-section .ham-badge-mod.ham-decision-trigger::before { content: ""; position: absolute; inset: calc((1lh - var(--tap-target)) / 2) calc((100% - var(--tap-target)) / 2); }
       /* A card keeps its two-line head and its density (#17161): the 🗒
          shows on a phone only once the item has notes; the row's ⋯ menu
@@ -2702,8 +2713,12 @@
       #activity-monitor-section .ham-repo-filter { min-height: var(--tap-target); align-items: center; }
       #activity-monitor-section .ham-header-tool { width: var(--tap-target); min-width: var(--tap-target); height: var(--tap-target); min-height: var(--tap-target); padding: 0; font-size: var(--tap-glyph); }
       #activity-monitor-panel { padding-left: 0; }
-      #activity-monitor-section .ham-row > .ham-row-tools, #activity-monitor-section .ham-sub > .ham-row-tools { left: auto; right: 0; top: 0; width: auto; flex-direction: row; align-items: flex-start; gap: var(--sp-2); z-index: 1; }
-      #activity-monitor-section .ham-row > .ham-row-head, #activity-monitor-section .ham-sub > .ham-row-head { padding-right: calc(2 * var(--tap-target) + var(--sp-2) + var(--sp-3)); min-height: var(--tap-target); }
+      #activity-monitor-section .ham-row > .ham-row-tools, #activity-monitor-section .ham-sub > .ham-row-tools { left: auto; right: 0; top: 0; width: auto; flex-direction: row; align-items: flex-start; gap: var(--sp-4); z-index: 1; }
+      #activity-monitor-section .ham-row > .ham-row-head, #activity-monitor-section .ham-sub > .ham-row-head { padding-right: calc(2 * var(--tap-target) + var(--sp-4) + var(--sp-4)); min-height: var(--tap-target); }
+      /* The decision popover's "More ⋯" (and its sibling verbs) is a sheet
+         on a phone, hosted outside the section: tap-sized and 8px apart. */
+      .ham-decision-acts { gap: var(--sp-4); }
+      .ham-decision-act { min-height: var(--tap-target-touch); min-width: var(--tap-target-touch); padding-inline: var(--sp-4); font-size: var(--fs-sm); }
       #activity-monitor-section .ham-sel, #activity-monitor-section .ham-kebab { width: var(--tap-target); height: var(--tap-target); min-width: var(--tap-target); min-height: var(--tap-target); font-size: var(--tap-glyph); opacity: 1; }
       .ham-menu.ham-menu-sheet { position: static; min-width: 0; max-width: none; padding: 0; border: 0; box-shadow: none; background: transparent; font-size: var(--fs-touch); }
       .ham-menu-sheet .ham-menu-head { display: none; }
@@ -7103,11 +7118,11 @@
          push the bar down over the first row. overflow:clip clips without
          creating a scroller, so the bar sticks to the viewport instead. */
       #activity-monitor-section .dash-card-body { overflow: clip; }
-      .ham-sticky { justify-content: flex-start; gap: var(--sp-2); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
+      .ham-sticky { justify-content: flex-start; gap: var(--sp-4); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
       .ham-sticky .ham-merged-sub { display: none; }
       .ham-sticky .ham-merged-count, .ham-sticky .ham-queue-chip { flex: 0 0 auto; min-height: var(--tap-target); }
-      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); }
-      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-4); }
+      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-4); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
       .ham-compact-scroll::-webkit-scrollbar { display: none; }
       .ham-compact .ham-chips { display: inline-flex; flex: 0 0 auto; }
       .ham-compact .ham-chip { flex: 0 0 auto; min-height: var(--tap-target); font-size: var(--fs-sm); white-space: nowrap; }
@@ -7889,11 +7904,11 @@
       #activity-monitor-meta > :not(.ham-count) { display: none; }
       #activity-monitor-section .dash-card-body { overflow: clip; }
       #activity-monitor-panel .ham-cols { display: none; }
-      .ham-sticky { justify-content: flex-start; gap: var(--sp-2); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
+      .ham-sticky { justify-content: flex-start; gap: var(--sp-4); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
       .ham-sticky .ham-merged-sub { display: none; }
       .ham-sticky .ham-merged-count, .ham-sticky .ham-queue-chip { flex: 0 0 auto; min-height: var(--tap-target); }
-      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); }
-      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-4); }
+      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-4); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
       .ham-compact-scroll::-webkit-scrollbar { display: none; }
       .ham-compact .ham-chips { display: inline-flex; flex: 0 0 auto; }
       .ham-compact .ham-chip { flex: 0 0 auto; min-height: var(--tap-target); font-size: var(--fs-sm); white-space: nowrap; }
@@ -8365,6 +8380,8 @@
     .sessions-pane-meta { color: var(--muted); font-size: var(--fs-sm); flex: 1 1 auto; }
     .sessions-menu { position: relative; }
     .sessions-menu > summary { list-style: none; cursor: pointer; }
+    /* The session ⋯ menu meets the coarse-pointer floor on touch screens. */
+    @media (pointer: coarse) { .sessions-menu > summary { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; min-width: var(--tap-target-touch); min-height: var(--tap-target-touch); font-size: var(--tap-glyph); } }
     .sessions-menu-items { position: absolute; right: 0; z-index: var(--z-sticky); display: flex; flex-direction: column; min-width: 12em; background: var(--panel); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow-raised); padding: var(--sp-2); }
     .sessions-menu-items button { background: none; border: 0; color: var(--fg); font: inherit; font-size: var(--fs-sm); text-align: left; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm); cursor: pointer; }
     .sessions-menu-items button:hover { background: color-mix(in srgb, var(--border) 30%, transparent); }
@@ -9399,10 +9416,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📜</span><span class="oc-nav-text">Audit log</span></a>
     </div>
     <!-- Help mirrors the top bar "? Help" menu (#oc-help-menu): same labels,
-         same targets. A future Ask AI entry goes right after Getting started. -->
+         same targets. Ask Hive starts hidden and is shown by askShowHelpItems()
+         only once the Ask panel is built (ask_enabled on). -->
     <div class="oc-nav-group" id="help-nav-group">
       <div class="oc-nav-label">Help</div>
       <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting started checklist: one-time setup steps for a new hive, with a link to the full guide"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting started</span></a>
+      <a class="oc-nav-item" id="ask-nav-item" style="display:none" role="button" tabindex="0" data-action="openAskFromHelp" data-keydown-action="openAskFromHelp" data-keys="Enter, " data-prevent="1" title="Ask a question about using the dashboard. Answers come from the Hive docs, with sources. AI generated, may be wrong."><span class="oc-nav-emoji">✨</span><span class="oc-nav-text">Ask Hive</span></a>
       <a class="oc-nav-item" data-section="faq-section" data-action="ocNavigate" data-arg0="faq-section" title="Short answers to the questions people ask once a hive is running: levels and holds, the Evidence card, release channels, the Model Gateway, pausing, cost, and where to get help"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
       <a class="oc-nav-item" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer" title="The Hive documentation, including the Getting Started guide"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Docs</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">🔌</span><span class="oc-nav-text">API reference</span></a>
@@ -9478,6 +9497,8 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <span id="agent-navbar-upnext" class="agent-navbar-upnext" hidden aria-label="Upcoming agent run order" title="Upcoming agent run order"></span>
     </div>
     <div class="oc-topbar-right">
+      <!-- Ask AI help opener (#19184): stays empty unless /api/config says ask is on. -->
+      <span id="hive-ask-slot"></span>
       <button type="button" class="nav-chip nav-chip--icon nav-chip--action feedback-bug-btn" id="feedback-bug-btn" data-action="openFeedbackModal" data-arg0="submit" title="Report a bug or request a feature" aria-label="Report a bug or request a feature"><span class="nav-chip__icon" aria-hidden="true">🐛</span><span class="feedback-pill" id="feedback-unread-pill" hidden>0</span></button>
       <button class="nav-chip nav-chip--icon nav-chip--action layout-toggle" data-action="toggleLayout" title="Switch to Dark Mode" aria-label="Switch to Dark Mode">☾</button>
       <a class="nav-chip nav-chip--action" id="oc-matrix-tab" href="?kiosk=1&amp;view=reader" target="_blank" rel="noopener" title="Code activity — published pushed changes as readable paragraphs (opens in a new tab)" aria-label="Code activity" hidden><span class="nav-chip__label">Code activity</span></a>
@@ -9492,11 +9513,13 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <!-- Help menu: mirrors the sidebar Help group (#help-nav-group) with the
            same labels and targets. It reuses the account menu's .avatar-menu
-           dropdown. A future Ask AI item goes right after Getting started. -->
+           dropdown. Ask Hive starts hidden and is shown by askShowHelpItems()
+           only once the Ask panel is built (ask_enabled on). -->
       <div id="oc-help-menu-wrap">
-        <button type="button" class="nav-chip nav-chip--primary" id="welcome-topbar-btn" data-action="toggleHelpMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="oc-help-menu" title="Help: Getting started, Docs, FAQ, Report an issue" aria-label="Help menu"><span class="nav-chip__icon" aria-hidden="true">?</span><span class="nav-chip__label">Help</span><span class="nav-chip__caret" aria-hidden="true">▾</span></button>
+        <button type="button" class="nav-chip nav-chip--primary" id="welcome-topbar-btn" data-action="toggleHelpMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="oc-help-menu" title="Help: Getting started, Ask Hive, Docs, FAQ, Report an issue" aria-label="Help menu"><span class="nav-chip__icon" aria-hidden="true">?</span><span class="nav-chip__label">Help</span><span class="nav-chip__caret" aria-hidden="true">▾</span></button>
         <div id="oc-help-menu" class="avatar-menu" role="menu" aria-label="Help" hidden>
           <button type="button" class="avatar-menu-item" role="menuitem" id="welcome-help-menu-item" style="display:none" data-action="openWelcomeDialog">🚀 Getting started</button>
+          <button type="button" class="avatar-menu-item" role="menuitem" id="ask-help-menu-item" style="display:none" data-action="openAskFromHelp" title="Ask a question about using the dashboard. Answers come from the Hive docs, with sources. AI generated, may be wrong.">✨ Ask Hive</button>
           <a class="avatar-menu-item" role="menuitem" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer">📖 Docs</a>
           <button type="button" class="avatar-menu-item" role="menuitem" data-action="ocNavigate" data-arg0="faq-section">❓ FAQ</button>
           <button type="button" class="avatar-menu-item" role="menuitem" data-action="openFeedbackModal" data-arg0="bug">🐛 Report an issue</button>
@@ -25961,11 +25984,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const enabled = !!decide.enabled && !!o.enabled;
         return Object.assign({}, o, { target: decide.target, enabled, why: enabled ? '' : (decide.enabled ? o.why : decide.why) });
       }
+      const fallback = stageTrackerFallbackLead(item, actions);
+      if (fallback) return fallback;
+      if (typeof stageTrackerDevWarn === 'function' && stageTrackerMaintainerMoved(item)) stageTrackerDevWarn('row ' + stageTrackerRefOf(item) + ' waits on the maintainer but offers no lead action');
+      return null;
+    }
+    // Pure: the lead when nothing else leads: Adopt, Adopt now or Let hive
+    // decide — all N PRs, from the row's ⋯ actions. Adopt now never leads on
+    // a person's PR (author_kind 'human', or takeover.person on a linked
+    // sub-row): taking over a person's work is an
+    // explicit operator choice, so it stays in the ⋯ menu only
+    // (hivecommons/hive#19645).
+    function stageTrackerFallbackLead(item, actions) {
+      const human = !!item && (item.author_kind === 'human' || !!(item.takeover && item.takeover.person));
       for (const id of ['decide:adopt', 'decide:adopt-now', 'decide:delegate-all']) {
-        const a = actions.find(x => x.id === id);
+        if (id === 'decide:adopt-now' && human) continue;
+        const a = (actions || []).find(x => x.id === id);
         if (a && (a.enabled || id !== 'decide:adopt-now')) return a;
       }
-      if (typeof stageTrackerDevWarn === 'function' && stageTrackerMaintainerMoved(item)) stageTrackerDevWarn('row ' + stageTrackerRefOf(item) + ' waits on the maintainer but offers no lead action');
       return null;
     }
     // Pure: whether the server says the next move is the maintainer's.
@@ -28364,6 +28400,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_GATE_SETTLING = 'settling…';
     const STAGE_TRACKER_GATE_VISIBLE = 3;
     const STAGE_TRACKER_GATE_FOLD_QUERY = '(max-width: 1100px)';
+    // The phone sheet's title for the folded verbs, before the row's ref.
+    const STAGE_TRACKER_GATE_SHEET_TITLE = 'More ways to settle';
     // Reason → verbs, in the order they stand on the pill. The same reason
     // always offers the same verbs (the maintainer's "consistent way").
     const STAGE_TRACKER_GATE_VERBS = {
@@ -28592,23 +28630,111 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (word) word.textContent = STAGE_TRACKER_GATE_SETTLING;
       gate.querySelectorAll('.ham-gate-act').forEach(b => b.setAttribute('aria-disabled', 'true'));
     }
-    // The `…` menu: open / close on its button, close on outside click or
-    // Escape, the same popover pattern the row's ⋯ menu uses.
+    // Whether the `…` menu opens as the phone sheet: the same query the
+    // row's ⋯ menu uses (STAGE_TRACKER_SHEET_QUERY, tracker-actions.js).
+    function stageTrackerHumanGateSheetOn() {
+      return typeof stageTrackerIsPhoneSheet === 'function' && stageTrackerIsPhoneSheet();
+    }
+    // Pure: one folded verb as a sheet item. The pill classes go (the sheet
+    // is not the row, so its taps are handled here, not by the row's lead
+    // listener) and the verb's hover text is written out under the label:
+    // what it posts, or why it is disabled. A phone has no hover, so a
+    // greyed verb otherwise never says why.
+    function stageTrackerHumanGateSheetItem(b) {
+      if (!b || !b.classList) return b;
+      b.classList.remove('ham-lead-act', 'ham-gate-act');
+      b.removeAttribute('tabindex');
+      const note = String(b.getAttribute('title') || '').trim();
+      if (note && typeof document !== 'undefined') {
+        const hint = document.createElement('span');
+        hint.className = 'ham-menu-hint';
+        hint.textContent = note;
+        b.classList.add('ham-menu-item-hinted');
+        b.appendChild(hint);
+      }
+      return b;
+    }
+    // Open the folded verbs as a full-screen sheet (phone tier,
+    // hivecommons/hive#19655): tap-sized items, ✕ / backdrop / Esc close,
+    // and a tap runs the verb on the row the `…` sits on, the same
+    // runRowAction path an inline verb takes.
+    function stageTrackerOpenHumanGateSheet(b, menu) {
+      if (typeof stageTrackerOpenSheet !== 'function') return false;
+      const sub = b.closest('[data-ham-sub-key]');
+      const row = b.closest('.ham-row[data-ham-key]');
+      const key = sub ? sub.dataset.hamSubKey : (row ? row.dataset.hamKey : '');
+      const find = () => key && typeof stageTrackerItemByKey === 'function' && typeof _stageTracker !== 'undefined' ? stageTrackerItemByKey(_stageTracker, key) : null;
+      const shown = find();
+      const ref = shown && typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(shown) : '';
+      const list = menu.cloneNode(true);
+      list.hidden = false;
+      list.classList.add('ham-menu-sheet');
+      list.querySelectorAll('[data-ham-act]').forEach(stageTrackerHumanGateSheetItem);
+      let host = null;
+      list.addEventListener('click', e => {
+        const i = e.target.closest ? e.target.closest('[data-ham-act]') : null;
+        if (!i) return;
+        e.preventDefault(); e.stopPropagation();
+        if (i.getAttribute('aria-disabled') === 'true') return;
+        const item = find();
+        if (host && host.hiveDialogClose) host.hiveDialogClose();
+        if (!item || typeof stageTrackerDecisionRun !== 'function') return;
+        const run = stageTrackerDecisionRun(item, i.dataset.hamAct);
+        if (run && typeof run.then === 'function') {
+          run.then(r => { if (r && !r.cancelled && Array.isArray(r.results) && r.results.length && r.results.every(x => x && x.ok) && document.contains(b)) stageTrackerHumanGateSettling(b); }, () => {});
+        }
+      });
+      b.setAttribute('aria-expanded', 'true');
+      host = stageTrackerOpenSheet(STAGE_TRACKER_GATE_SHEET_TITLE + (ref ? ' ' + ref : ''), list, 'ham-menu-dialog ham-gate-sheet', () => {
+        b.setAttribute('aria-expanded', 'false');
+        if (document.contains(b) && typeof b.focus === 'function') b.focus();
+      }, () => {
+        const f = document.activeElement && document.activeElement.closest ? document.activeElement.closest('[data-ham-act]') : null;
+        if (f && list.contains(f)) f.click();
+      });
+      const first = list.querySelector('[role="menuitem"]:not([aria-disabled="true"])') || list.querySelector('[role="menuitem"]');
+      if (first) setTimeout(() => first.focus(), 0);
+      return true;
+    }
+    // Anchor the popover under its button, clamped into the viewport. The
+    // menu is position: fixed; left unplaced it fell to its static spot,
+    // shifted by the page scroll, and opened off-screen (#19655).
+    function stageTrackerPlaceHumanGateMenu(b, menu) {
+      if (typeof stageTrackerMenuPosition !== 'function' || typeof b.getBoundingClientRect !== 'function') return;
+      const r = b.getBoundingClientRect();
+      const pos = stageTrackerMenuPosition(r.left, r.bottom, menu.offsetWidth, menu.offsetHeight, window.innerWidth, window.innerHeight);
+      menu.style.setProperty('left', pos.left + 'px');
+      menu.style.setProperty('top', pos.top + 'px');
+    }
+    // The `…` menu: open / close on its button, close on outside click,
+    // scroll, resize or Escape. On a phone it opens as the row menu's sheet;
+    // elsewhere as a popover anchored to the button.
     function stageTrackerWireHumanGate(el) {
       if (!el || el._hamGateWired) return;
       el._hamGateWired = true;
       const closeAll = () => el.querySelectorAll('.ham-gate-menu:not([hidden])').forEach(m => { m.hidden = true; const b = m.previousElementSibling; if (b) b.setAttribute('aria-expanded', 'false'); });
       el.addEventListener('click', e => {
         const b = e.target.closest ? e.target.closest('[data-ham-gate-more]') : null;
-        if (!b) { if (!(e.target.closest && e.target.closest('.ham-gate-menu'))) closeAll(); return; }
+        // Outside the menu, or a live verb picked in it: close.
+        if (!b) { if (!(e.target.closest && e.target.closest('.ham-gate-menu')) || e.target.closest('[data-ham-act]:not([aria-disabled="true"])')) closeAll(); return; }
         e.preventDefault(); e.stopPropagation();
         let menu = b.nextElementSibling;
         if (menu && menu.tagName === 'TEMPLATE') { const stamped = menu.content.firstElementChild.cloneNode(true); menu.replaceWith(stamped); menu = stamped; }
         const open = menu && menu.hidden;
         closeAll();
-        if (menu && open) { menu.hidden = false; b.setAttribute('aria-expanded', 'true'); const first = menu.querySelector('[role="menuitem"]'); if (first) first.focus(); }
+        if (!menu || !open) return;
+        if (stageTrackerHumanGateSheetOn() && stageTrackerOpenHumanGateSheet(b, menu)) return;
+        menu.hidden = false;
+        b.setAttribute('aria-expanded', 'true');
+        stageTrackerPlaceHumanGateMenu(b, menu);
+        const first = menu.querySelector('[role="menuitem"]');
+        if (first) first.focus({ preventScroll: true });
       });
       el.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('scroll', closeAll, true);
+        window.addEventListener('resize', closeAll);
+      }
     }
     /* ---- The human gate's one source of truth (hivecommons/hive#18769) ---
        The gate pill and its verbs used to read two different things: the
@@ -32848,7 +32974,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const sr = agentSandboxRun(a);
       if (!sr) return '';
       if (sr.health === 'node_unhealthy') return 'node unhealthy';
-      if (sr.health === 'failed') return sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.timedOut ? 'last run timed out' : 'last run failed');
+      if (sr.health === 'failed') return sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.failReason === 'setup_failed' ? 'setup failed' : (sr.timedOut ? 'last run timed out' : 'last run failed'));
       if (sr.health === 'overdue') return 'run overdue';
       return '';
     }
@@ -32857,7 +32983,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!sr || !sr.lastRunAt) return '';
       const ago = agentNowAgo((hiveNowMs || Date.now()) - Date.parse(sr.lastRunAt));
       const dur = sr.durationS >= 60 ? Math.round(sr.durationS / 60) + ' min' : (sr.durationS || 0) + ' s';
-      let text = (sr.succeeded ? 'last run succeeded' : (sr.failReason === 'node_unhealthy' ? 'node unhealthy' : (sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.timedOut ? 'last run timed out' : 'last run failed')))) + (sr.node ? ' on ' + sr.node : '') + ' \u00b7 ' + ago + ' \u00b7 ' + dur;
+      let text = (sr.succeeded ? 'last run succeeded' : (sr.failReason === 'node_unhealthy' ? 'node unhealthy' : (sr.failReason === 'waiting_for_node' ? 'no node available' : (sr.failReason === 'setup_failed' ? 'setup failed' : (sr.timedOut ? 'last run timed out' : 'last run failed'))))) + (sr.node ? ' on ' + sr.node : '') + ' \u00b7 ' + ago + ' \u00b7 ' + dur;
       if (sr.commitCount) text += ' \u00b7 ' + sr.commitCount + (sr.commitCount === 1 ? ' commit' : ' commits');
       return text;
     }
@@ -32889,7 +33015,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const rt = sandboxRun.runtime === 'job' ? 'Job' : 'sandbox';
         if (sandboxRun.health === 'running') { session = rt + ' running'; sessionCls = 'ab-ok'; sessionTip = 'A sandboxed kick is in flight.'; }
         else if (sandboxRun.health === 'waiting_for_node') { session = rt + ' waiting for a node'; sessionCls = 'ab-warn'; sessionTip = 'The Job is created but its pod is Pending and Unschedulable' + (sandboxRun.waitDetail ? ': ' + sandboxRun.waitDetail : '.'); }
-        else if (sandboxRun.health === 'node_unhealthy') { session = 'node unhealthy'; sessionCls = 'ab-bad'; sessionTip = 'The node preflight failed' + (sandboxRun.node ? ' on ' + sandboxRun.node : '') + ', also on the retry: ' + (sandboxRun.error || 'see the full log.'); }
+        else if (sandboxRun.health === 'node_unhealthy') { session = 'node unhealthy'; sessionCls = 'ab-bad'; sessionTip = 'The node preflight or a setup health check failed' + (sandboxRun.node ? ' on ' + sandboxRun.node : '') + ', also on the retry: ' + (sandboxRun.error || 'see the full log.'); }
         else if (sandboxRun.health === 'failed') { session = agentSandboxDownLabel(a); sessionCls = 'ab-bad'; sessionTip = 'The last sandboxed run failed: ' + (sandboxRun.error || 'see the full log.'); }
         else if (sandboxRun.health === 'overdue') { session = 'run overdue'; sessionCls = 'ab-bad'; sessionTip = 'A scheduled kick was due' + (sandboxRun.dueAt ? ' at ' + sandboxRun.dueAt : '') + ' and no run has started.'; }
         else { session = sandboxRun.lastRunAt ? rt + ' ok' : rt + ' ready'; sessionCls = 'ab-ok'; sessionTip = 'Sandboxed agent: each kick runs in its own container, so there is no session between kicks. ' + (agentSandboxRunText(a) || 'No run yet.'); }
@@ -35118,18 +35244,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const opts = [''].concat(REPO_WRITEBACK_MODES).map(m => `<option value="${esc(m)}" ${m === mode ? 'selected' : ''}>${esc(m || 'default')}</option>`).join('');
       return chip + `<select class="repo-writeback-select" data-change-action="setRepoWritebackMode" data-arg0="${esc(repo)}" data-arg-types="s,v,t" data-stop="1" aria-label="${esc('Write-back mode for ' + repo)}" title="${esc(tip)}">${opts}</select>`;
     }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(() => {
+      if (window._lastStatus) renderRepos(window._lastStatus.repos || []);
+    });
     async function setRepoWritebackMode(repo, mode, sel) {
       if (sel && sel.dataset.busy === '1') return;
       const st = repoWritebackState(repo, window._lastStatus || {});
-      const perRepo = {};
-      if (st && st.status && st.status.repos) {
-        for (const k of Object.keys(st.status.repos)) { const m = st.status.repos[k] && st.status.repos[k].mode; if (m) perRepo[k] = m; }
-      }
-      for (const k of Object.keys(perRepo)) { if (k.toLowerCase() === String(repo).toLowerCase()) delete perRepo[k]; }
-      if (mode) perRepo[repo] = mode;
       if (sel) sel.dataset.busy = '1';
       try {
-        const resp = await fetch('/api/config/governor/features', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writebackPerRepo: perRepo }) });
+        const resp = await fetch('/api/config/governor/features', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writebackRepo: { repo, mode } }) });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         showToast('Write-back for ' + repo + ': ' + (mode || 'default'), 'success');
@@ -38689,7 +38812,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const isPublic = hostLabel === 'github.com';
       // Each card carries its own forge (#14115), and repo_policies[].forge can
       // put one repo on a different forge from the rest. The badge names the
-      // hive's forge only when every card agrees; a GitLab or Gitea/Forgejo
+      // hive's forge only when every card agrees; a GitLab, Gitea or Forgejo
       // hive gets its own host here instead of the GitHub host the badge would
       // otherwise claim, and a mixed hive says so instead of claiming one host.
       const repoForges = (repos || []).map(r => repoForgeWeb(r, hostLabel));
@@ -39077,7 +39200,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
      * Where a repo card points and what it calls its host (#14115). r.forge is
      * the repo's forge kind from /api/status; GitHub (and an older hive that
      * reports no kind) keeps the GitHub host from /api/config, while GitLab and
-     * Gitea/Forgejo use r.forgeUrl and their own issue and change-request paths.
+     * Gitea and Forgejo use r.forgeUrl and their own issue and change-request paths.
      */
     function repoForgeWeb(r, githubHost) {
       const kind = String((r && r.forge) || 'github').toLowerCase();
@@ -39085,8 +39208,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (kind === 'gitlab' && base) {
         return { kind, icon: '🦊', name: 'GitLab', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/-/issues', changesPath: '/-/merge_requests', changePath: '/-/merge_requests' };
       }
+      if (kind === 'forgejo' && base) {
+        return { kind, icon: '🍵', name: 'Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
+      }
       if (kind === 'gitea' && base) {
-        return { kind, icon: '🍵', name: 'Gitea/Forgejo', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
+        return { kind, icon: '🍵', name: 'Gitea', host: base.replace(/^https?:\/\//, ''), base, issuesPath: '/issues', changesPath: '/pulls', changePath: '/pulls' };
       }
       return { kind: 'github', icon: '🐙', name: 'GitHub', host: githubHost, base: window._githubBaseUrl || 'https://github.com', issuesPath: '/issues', changesPath: '/pulls', changePath: '/pull' };
     }
@@ -42079,7 +42205,8 @@ function burnAreaChart() {
       const FORGE_META = {
         github: { icon: '🐙', name: 'GitHub' },
         gitlab: { icon: '🦊', name: 'GitLab' },
-        gitea:  { icon: '🍵', name: 'Gitea' }
+        gitea:  { icon: '🍵', name: 'Gitea' },
+        forgejo: { icon: '🍵', name: 'Forgejo' }
       };
       const fm = FORGE_META[forgeKind] || { icon: '🔀', name: forgeKind || 'Forge' };
       const repoCount = Number(forge.repoCount) || 0;
@@ -47572,6 +47699,17 @@ function burnAreaChart() {
         + '</ul></div>';
     }
 
+    // Why model calls got no answer (#17054): error classes and the most
+    // frequent redacted reasons (HTTP status, provider code, message).
+    function kbAdvisorErrorsHTML(errors) {
+      const e = errors || {};
+      const top = Array.isArray(e.top_reasons) ? e.top_reasons : [];
+      if (!top.length) return '';
+      return '<div class="section-label m-0" style="margin-top:var(--sp-4)">Top error reasons</div><ul class="kb-effective-list">'
+        + top.map(r => '<li class="kb-effective-item"><span>' + escapeHtml(String(r.class || 'unknown')) + ': ' + escapeHtml(String(r.reason || '')) + '</span><span class="kb-effective-meta">' + escapeHtml(String(r.count)) + '</span></li>').join('')
+        + '</ul>';
+    }
+
     function kbAdvisorArmRowHTML(a, note) {
       return '<tr><td>' + escapeHtml(a.arm) + (note ? ' <span class="kb-effective-meta">' + escapeHtml(note) + '</span>' : '') + '</td><td>' + escapeHtml(String(a.beads)) + '</td><td>'
         + kbAdvisorNum(a.mean_fix_attempts, 2) + '</td><td>' + kbAdvisorNum(a.mean_ci_failure_count, 2) + '</td><td>' + kbAdvisorNum(a.mean_kicks_received, 2) + '</td></tr>';
@@ -47592,6 +47730,7 @@ function burnAreaChart() {
         + ' · budget ' + escapeHtml(String(st.max_calls_per_day == null ? '–' : st.max_calls_per_day)) + '/day, '
         + escapeHtml(String(st.max_calls_per_agent_hour == null ? '–' : st.max_calls_per_agent_hour)) + '/agent/hour'
         + (st.enabled ? '' : ' · advisor is turned off') + '</div>';
+      if (st.problem) html += '<div class="kb-notice">Advisor misconfigured: ' + escapeHtml(String(st.problem)) + '</div>';
       html += '<div class="kb-effective-scope">' + escapeHtml(String(w.decisions || 0)) + ' decisions'
         + (w.first_decision ? ' from ' + escapeHtml(w.first_decision) + ' to ' + escapeHtml(w.last_decision || '') : '')
         + (w.rank_mode_start ? ' · rank mode since ' + escapeHtml(w.rank_mode_start) : '') + '</div>';
@@ -47600,6 +47739,7 @@ function burnAreaChart() {
         + kbAdvisorCountsHTML('Decisions by mode', counts.by_mode)
         + kbAdvisorCountsHTML('Decisions by arm', counts.by_arm)
         + kbAdvisorCountsHTML('Decisions by outcome', counts.by_outcome) + '</div>';
+      html += kbAdvisorErrorsHTML(d.errors);
       const arms = d.arms || [];
       html += '<div class="section-label m-0" style="margin-top:var(--sp-4)">Closed beads by arm</div>';
       if (!arms.length && !d.mixed && !d.none) {
@@ -54648,6 +54788,32 @@ function burnAreaChart() {
       { key: 'country', label: 'Country (code or name)', max: 120 }
     ];
 
+    // CUSTOMERS_REFRESH_RELOAD_MS: how long after "Refresh from profiles" for
+    // everyone the list is read again, so the first pass shows.
+    const CUSTOMERS_REFRESH_RELOAD_MS = 5000;
+
+    // CUSTOMERS_PROFILE_SOURCES: the forge a profile-fill value was read
+    // from, by the rule it carries (#19302).
+    const CUSTOMERS_PROFILE_SOURCES = { github_profile: 'GitHub', ghe_profile: 'GitHub Enterprise', gitlab_profile: 'GitLab', gitea_profile: 'Gitea', linear_profile: 'Linear' };
+
+    // customersFieldSourceLabel: the forge an automatic field came from, or
+    // '' for anything else.
+    function customersFieldSourceLabel(f) {
+      return (f && Object.prototype.hasOwnProperty.call(CUSTOMERS_PROFILE_SOURCES, f.rule)) ? CUSTOMERS_PROFILE_SOURCES[f.rule] : '';
+    }
+
+    // customersFieldProvenance: where an automatic field came from, for its
+    // tooltip: the source, the login it was read for and when.
+    function customersFieldProvenance(f) {
+      if (f && f.rule === 'location') return 'Derived from the location';
+      const label = customersFieldSourceLabel(f) || 'GitHub';
+      let t = 'From the public ' + label + ' profile';
+      if (f && f.login) t += ' of ' + f.login;
+      if (f && f.rule) t += ' (source=' + f.rule + ')';
+      if (f && typeof f.at === 'string' && f.at) t += ', fetched ' + f.at.slice(0, 10);
+      return t;
+    }
+
     function customersProfileValue(p, key) {
       const f = (p && p.profile && p.profile[key]) || {};
       return typeof f.value === 'string' ? f.value : '';
@@ -54674,7 +54840,7 @@ function burnAreaChart() {
       const v = customersProfileValue(p, 'organization');
       if (!v) return '';
       const f = p.profile.organization;
-      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? customersHubLabel(f) : 'From the public GitHub profile');
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? customersHubLabel(f) : customersFieldProvenance(f));
       const src = f.source === 'manual' || f.source === 'hub' ? f.source : 'auto';
       return '<span class="kc-pill customers-pill customers-org" data-source="' + src + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
     }
@@ -54703,7 +54869,9 @@ function burnAreaChart() {
       const code = customersProfileValue(p, 'country');
       if (!/^[A-Z]{2}$/.test(code)) return '';
       const name = customersCountryName(code);
-      return '<span class="kc-pill customers-pill customers-country" role="img" aria-label="' + escapeHtml('Country: ' + name) + '" title="' + escapeHtml(name) + '">' +
+      const f = p.profile.country;
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : (f.source === 'hub' ? 'From the hub' : customersFieldProvenance(f));
+      return '<span class="kc-pill customers-pill customers-country" role="img" aria-label="' + escapeHtml('Country: ' + name) + '" title="' + escapeHtml(name + ' - ' + why) + '">' +
         '<span aria-hidden="true">' + customersFlagEmoji(code) + '</span> ' + escapeHtml(code) + '</span>';
     }
 
@@ -54892,6 +55060,7 @@ function burnAreaChart() {
       const people = data.people || [];
       const suggestions = data.suggestions || [];
       out += customersAddFormHtml();
+      out += '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRefreshAllProfiles" title="Look every customer up again on their public forge profile, a few at a time">Refresh from profiles</button></div>';
       out += '<div class="customers-block"><div class="section-label m-0">Customers</div><div class="customers-list">' +
         (people.length ? people.map(p => customersRowHtml(p, false)).join('') : '<p class="empty-dashed">No other customers yet. Add one, or accept a suggestion.</p>') + '</div></div>';
       out += '<details class="customers-block customers-suggested" data-ui-key="suggested"' + (_customersUi.open.suggested ? ' open' : '') + '><summary class="customers-summary">Suggested (' + suggestions.length + ')</summary>' +
@@ -55032,16 +55201,19 @@ function burnAreaChart() {
         const manual = cur.source === 'manual';
         // A hub value carries its hub label (#19163, #19306); editing it
         // here makes it manual.
-        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from GitHub'))) : (manual ? 'cleared by hand' : 'not known');
-        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from ' + (customersFieldSourceLabel(cur) || 'GitHub')))) : (manual ? 'cleared by hand' : 'not known');
+        const tip = cur.value && cur.source === 'auto' ? ' title="' + escapeHtml(customersFieldProvenance(cur)) + '"' : '';
+        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs"' + tip + '>(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
-          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
+          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let the public profile fill this in again">Auto</button>' : '');
       }).join('');
       const cc = customersProfileValue(p, 'country');
       const ccLine = /^[A-Z]{2}$/.test(cc) ? '<div class="muted-xs" data-customers-field="country-line"><span aria-hidden="true">' + customersFlagEmoji(cc) + '</span> ' + escapeHtml(cc) + ' ' + escapeHtml(customersCountryName(cc)) + '</div>' : '';
       return '<div class="customers-block"><div class="section-label m-0">Details</div>' + ccLine +
         '<div class="customers-inline">' + rows + '</div>' + customersAffiliationHtml(p) +
-        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button>' +
+        (customersIsFull() ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRefreshProfile" title="Read this person\'s public forge profile now and fill the fields nobody set by hand">Refresh from profiles</button>' : '') +
+        '</div></div>' +
         customersPublicContributionsHtml(p);
     }
 
@@ -55536,7 +55708,34 @@ function burnAreaChart() {
       if (saved) showToast('Details saved', 'success');
     }
 
-    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to GitHub'); }
+    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to the public profile'); }
+
+    // customersRefreshProfile: "Refresh from profiles" on the open profile
+    // (#19302). The hive reads the public forge profile now and fills the
+    // fields nobody set by hand.
+    async function customersRefreshProfile() {
+      if (!_customersOpen) return;
+      const id = _customersOpen.me ? 'me' : _customersOpen.id;
+      try {
+        const out = await customersRequest('POST', '/api/customers/' + encodeURIComponent(id) + '/refresh-profile', {});
+        if (out.customer) _customersOpen = out.customer;
+        customersShow();
+        const fill = out.fill || {};
+        if (fill.skipped) showToast('Not refreshed: ' + String(fill.skipped).replace(/_/g, ' '), 'warning');
+        else showToast(fill.filled ? 'Details filled from public profiles' : 'Public profiles checked: nothing new', 'success');
+        fetchCustomers();
+      } catch (e) { customersProfileError(e.message); }
+    }
+
+    // customersRefreshAllProfiles: "Refresh from profiles" for everyone. The
+    // hive looks every customer up again in the background, a few per pass.
+    async function customersRefreshAllProfiles() {
+      try {
+        await customersRequest('POST', '/api/customers/refresh-profiles', {});
+        showToast('Refreshing every customer from public profiles, a few at a time', 'success');
+        setTimeout(fetchCustomers, CUSTOMERS_REFRESH_RELOAD_MS);
+      } catch (e) { showToast(e.message, 'error'); }
+    }
 
     function customersAffiliationAccept(value) { customersEdit({ op: 'profile', field: 'organization', value: value }, 'Organization set'); }
 
@@ -65018,6 +65217,8 @@ function burnAreaChart() {
       // standalone hive, which keeps the entry hidden.
       window._myHivesURL = cfg.my_hives_url || '';
       renderMyHivesMenuItem();
+      // Ask AI help (#19184): load the panel only when this hive has it on.
+      if (typeof loadAskPanel === 'function') loadAskPanel(cfg);
       const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')
         ? cfg.org + '/' + cfg.primaryRepo
         : (cfg.primaryRepo || '');
@@ -65089,6 +65290,90 @@ function burnAreaChart() {
       return fetch('/api/timeline').then(r => r.json()).then(d => { window._timelineData = d; }).catch(() => {});
     }
     const TIMELINE_REFRESH_MS = 60000;
+    // ── Ask AI help (#19184) ─────────────────────────────────────────
+    // Loads the shared panel component (pkg/askai/web, served from 'self'
+    // at /ask-panel.js) only when /api/config says ask is on. With ask off
+    // the page adds nothing and requests nothing. The panel sends only the
+    // question and an id from the closed section vocabulary to this hive's
+    // own /api/ask; the backend decides what, if anything, leaves.
+    const ASK_PANEL_SCRIPT = '/ask-panel.js';
+    const ASK_PANEL_STYLE = '/ask-panel.css';
+    const ASK_SLOT_ID = 'hive-ask-slot';
+    // The Ask Hive items in the top bar Help menu and the sidebar Help group.
+    // They start hidden and are shown only once the panel is built.
+    const ASK_HELP_ITEM_IDS = ['ask-help-menu-item', 'ask-nav-item'];
+    // A section counts as "current" once its top is above this fraction of
+    // the viewport height.
+    const ASK_SECTION_VIEWPORT_FRACTION = 3;
+    let askPanelRequested = false;
+
+    // askCurrentSection names where the person is, from our own ids only:
+    // the Settings tab when the dialog is open, else the dashboard section
+    // nearest the top of the viewport.
+    function askCurrentSection() {
+      const overlay = document.getElementById('config-overlay');
+      if (overlay && !overlay.classList.contains('hidden')) {
+        return (typeof _configState !== 'undefined' && _configState && _configState.tab === 'features') ? 'settings-features' : 'settings';
+      }
+      let best = '';
+      let bestTop = -Infinity;
+      const limit = window.innerHeight / ASK_SECTION_VIEWPORT_FRACTION;
+      Object.keys(DASHBOARD_SECTION_HELP).forEach(id => {
+        const el = document.getElementById(id);
+        if (!el || !el.offsetParent) return;
+        const top = el.getBoundingClientRect().top;
+        if (top <= limit && top > bestTop) { best = id; bestTop = top; }
+      });
+      return best;
+    }
+
+    // askCurrentDocsHref is the docs-link fallback for where the person is,
+    // built by the same function as every "?" help mark.
+    function askCurrentDocsHref() {
+      const section = askCurrentSection();
+      if (section === 'settings-features') return dashboardDocsHref('settings', 'features');
+      if (section === 'settings') return dashboardDocsHref('settings', '');
+      const entry = DASHBOARD_SECTION_HELP[section];
+      return dashboardDocsHref(DASHBOARD_HELP_PAGE, entry ? dashboardSectionHelpAnchor(entry.heading) : '');
+    }
+
+    // askShowHelpItems shows or hides the Ask Hive Help items. They follow the
+    // panel itself: shown only when ask_enabled loaded it and the backend
+    // built it for this person, so an item never opens nothing.
+    function askShowHelpItems(show) {
+      ASK_HELP_ITEM_IDS.forEach(id => {
+        const item = document.getElementById(id);
+        if (item) item.style.display = show ? '' : 'none';
+      });
+    }
+
+    // openAskFromHelp runs from either Ask Hive item (click, tap, or Enter
+    // and Space on the sidebar entry): it closes the Help menu and the phone
+    // navigation drawer, then opens the panel, which moves focus into it.
+    function openAskFromHelp() {
+      if (typeof closeHelpMenu === 'function') closeHelpMenu(false);
+      if (typeof window.hiveCloseMobileDrawer === 'function') window.hiveCloseMobileDrawer();
+      if (window.HiveAsk && typeof window.HiveAsk.open === 'function') window.HiveAsk.open();
+    }
+
+    function loadAskPanel(cfg) {
+      if (!cfg || cfg.ask_enabled !== true || askPanelRequested) return;
+      if (!document.getElementById(ASK_SLOT_ID)) return;
+      askPanelRequested = true;
+      const style = document.createElement('link');
+      style.rel = 'stylesheet';
+      style.href = ASK_PANEL_STYLE;
+      document.head.appendChild(style);
+      const script = document.createElement('script');
+      script.src = ASK_PANEL_SCRIPT;
+      script.addEventListener('load', () => {
+        if (window.HiveAsk && typeof window.HiveAsk.mount === 'function') {
+          Promise.resolve(window.HiveAsk.mount({ slot: ASK_SLOT_ID, base: '/api/ask', section: askCurrentSection, docsHref: askCurrentDocsHref }))
+            .then(panel => askShowHelpItems(!!panel));
+        }
+      });
+      document.head.appendChild(script);
+    }
     // ── Configuration Dialog ──────────────────────────────────────────
     let _configState = { type: null, agent: null, tab: null, data: {}, dirty: {} };
     const _configTabMemory = {};
@@ -65206,6 +65491,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer goal and satisfaction suggestions', key: 'customers.inference.enabled', text: 'customers inference infer suggest goals satisfaction model confirm HIVE_CUSTOMERS_INFERENCE_ENABLED customers.inference.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer avatars', key: 'customers.avatars.enabled', text: 'customers avatars avatar pictures photos github profile picture privacy HIVE_CUSTOMERS_AVATARS_ENABLED customers.avatars.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer hub import', key: 'customers.hub_import.enabled', text: 'customers hub import consent shared real name organization country from the hub privacy HIVE_CUSTOMERS_HUB_IMPORT_ENABLED customers.hub_import.enabled' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customer profile fill', key: 'customers.profile_fill.enabled', text: 'customers profile fill public profile github gitlab gitea forgejo enterprise ghe linear real name organization company location country flag backfill refresh HIVE_CUSTOMERS_PROFILE_FILL_ENABLED customers.profile_fill.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer GitHub search on accept', key: 'customers.mention_search.enabled', text: 'customers github search accept mention mentions comments history quota budget suggested person HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED customers.mention_search.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment', key: 'customers.enrichment.enabled', text: 'customers enrichment public affiliation activity employer company organization cncf colony HIVE_CUSTOMERS_ENRICHMENT_ENABLED customers.enrichment.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment: gitdm', key: 'customers.enrichment.gitdm.enabled', text: 'customers enrichment gitdm cncf affiliation affiliations employer company dates snapshot refresh interval HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED HIVE_CUSTOMERS_ENRICHMENT_GITDM_REFRESH_INTERVAL customers.enrichment.gitdm.enabled customers.enrichment.gitdm.refresh_interval' },
@@ -65217,7 +65503,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Review gate', label: 'Review gate: comments, dispatch and out-of-scope findings', key: 'review.post_comments', text: 'review swarm post comments fan out parallel perspectives combined all authors fix human prs acknowledge no findings confidence score priority labels fixer agent human decision label self authored decision policy reviews per head revise verdicts webhook event driven debounce pending ttl redispatch out of scope backlog issues recommendations review.post_comments review.self_authored_decision_policy review.event_driven review.event_debounce_s review.pending_ttl review.max_redispatch review.head_max_retries review.max_reviews_per_head review.revise_verdicts_before review.out_of_scope_backlog_disabled review.max_out_of_scope_backlog_issues review.recommendations.enabled review.recommendations.min_ready_to_open' },
       { tab: 'Features', section: 'Review gate', label: 'Review evidence bundles', key: 'evidence.enabled', text: 'review evidence bundles audit signing key ed25519 evidence.enabled evidence.signing_key_file' },
       { tab: 'Features', section: 'Review gate', label: 'Benchmarks', key: 'benchmarks.publish', text: 'benchmarks leaderboard publish anonymized hive hash repo consent benchmarks.publish benchmarks.repo_consent hivecommons.dev/benchmarks' },
-      { tab: 'Features', section: 'Integrations & observability', label: 'GitLab and Gitea forges', key: 'gitlab.gitlab_url', text: 'gitlab gitea forgejo codeberg forge instance url token env gitlab.gitlab_url gitlab.token_env gitea.gitea_url gitea.token_env' },
+      { tab: 'Features', section: 'Integrations & observability', label: 'GitLab, Gitea and Forgejo forges', key: 'gitlab.gitlab_url', text: 'gitlab gitea forgejo codeberg forge instance url token env gitlab.gitlab_url gitlab.token_env gitea.gitea_url gitea.token_env forgejo.forgejo_url forgejo.token_env' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Token mint key and TTL', key: 'mint.max_ttl_seconds', text: 'token mint signing key path max ttl lifetime jwt mint.key_path mint.max_ttl_seconds' },
       { tab: 'Features', section: 'Autonomy & ACMM', label: 'Design-first planning', key: 'planning.design_approved_label', text: 'planning design approved label architect revisions concurrent designs plan from label planning.design_approved_label planning.max_concurrent_designs planning.max_design_revisions planning.plan_from_label' },
       { tab: 'Features', section: 'Autonomy & ACMM', label: 'Write-back containment', key: 'writeback.unsolicited.min_level', text: 'write-back writeback containment unsolicited comments labels sentinel hold-gate stage labels opt-in label backfill per repo mode suppressed acmm level duplicate dedupe burst rate cap hourly writeback.unsolicited.min_level writeback.unsolicited.require_labels writeback.unsolicited.backfill writeback.per_repo writeback.kinds writeback.dedupe.enabled writeback.dedupe.same_item_ttl writeback.dedupe.burst_items writeback.dedupe.burst_window writeback.dedupe.hourly_cap' },
@@ -70260,6 +70546,7 @@ function burnAreaChart() {
     function renderAgentGeneral(g) {
       const agentName = _configState.agent || '';
       const isCreate = _configState.isCreate === true;
+      const onDemand = (_configState.dirty.general?.onDemand ?? g.onDemand) === true;
       // Model options must come from live discovery for THIS agent's backend, not
       // the frozen KNOWN_MODELS placeholder (#3319). Resolve the agent's actual
       // backend from the live agent list; fall back to its pinned backend or an
@@ -70391,7 +70678,7 @@ function burnAreaChart() {
           <span class="config-toggle-label">Clear on Kick ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Clear on Kick', `Send /clear before each governor kick to reset conversation context. Prevents stale context buildup across runs. On by default for all agents.`)}</span>
         </div>
         <div class="config-toggle">
-          <div class="config-toggle-switch ${g.onDemand === true ? 'on' : ''}" id="cfg-on-demand" data-action="toggleConfigSwitch" data-section="general" data-key="onDemand"></div>
+          <div class="config-toggle-switch ${onDemand ? 'on' : ''}" id="cfg-on-demand" data-action="toggleConfigSwitch" data-section="general" data-key="onDemand"></div>
           <span class="config-toggle-label">On Demand ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'On Demand', `When on, this agent is never started at boot and never kicked by the governor or by event (CEL) triggers — it only runs when something summons it explicitly. Turn it OFF to make the agent run on its cadence like a normal agent. Note: an agent also needs a cadence entry in the ACTIVE governor mode before it will actually be kicked. On-demand agents are also excluded from review fan-out, so a reviewer left on-demand cannot be dispatched.`)}${g.onDemand === true ? ' ' + statusBadgeHTML('on_demand', 'on demand', '', '') : ''}</span>
         </div>
         <div class="config-toggle">
@@ -74498,13 +74785,21 @@ function burnAreaChart() {
     // store (the model must exist and compile) and the tracker picks the new
     // columns up on its next poll.
     const WORKFLOW_DEFAULT_KEY = 'hive-default@1';
-    const _workflowState = { loaded: false, loading: false, enabled: false, workflows: [], bindings: [], dispatch: [], agents: [] };
+    const _workflowState = { loaded: false, loading: null, enabled: false, workflows: [], bindings: [], dispatch: [], agents: [] };
 
     function workflowKey(name, version) { return (name || '') + '@' + (version || ''); }
 
-    async function loadWorkflowLibrary(onDone) {
-      if (_workflowState.loading) return;
-      _workflowState.loading = true;
+    function loadWorkflowLibrary(onDone, options) {
+      const pending = _workflowState.loading;
+      if (pending) {
+        // An earlier request may have read the library before the write completed.
+        return options?.afterWrite ? pending.then(() => loadWorkflowLibrary(onDone)) : pending;
+      }
+      _workflowState.loading = fetchWorkflowLibrary().finally(() => { _workflowState.loading = null; });
+      return _workflowState.loading.then(onDone);
+    }
+
+    async function fetchWorkflowLibrary() {
       try {
         const res = await fetch('/api/workflows', { headers: _inceptionAuthHeaders() });
         if (res.status === 503) { _workflowState.loaded = true; _workflowState.workflows = []; return; }
@@ -74518,9 +74813,6 @@ function burnAreaChart() {
       } catch (err) {
         _workflowState.loaded = true;
         showToast('Could not load the workflow library: ' + err.message, 'error');
-      } finally {
-        _workflowState.loading = false;
-        if (typeof onDone === 'function') onDone();
       }
     }
 
@@ -76327,12 +76619,12 @@ function burnAreaChart() {
 
     function wfEdDefaultState() {
       return {
-        model: null, saved: null, source: null, readOnly: false, rev: 0,
+        model: null, saved: null, source: null, pendingSave: null, readOnly: false, rev: 0,
         history: [], future: [], selection: { type: '', ids: [] },
         view: { panX: 0, panY: 0, zoom: 1, laneWidths: {}, showLabels: false, fansOpen: {} },
         compile: { busy: false, rev: -1, profile: null, diags: [], compiled: null, error: '' },
         drawer: { tab: 'problems', open: true },
-        yaml: { text: '', rev: -1, error: '', busy: false, focused: false },
+        yaml: { text: '', base: null, rev: -1, error: '', busy: null, focused: false },
         diff: { versions: [], against: '', remote: null, error: '', busy: false, loadedFor: '' },
         sim: { kind: 'pr', facts: wfSimDefaultFacts(), result: null, error: '', busy: false, hit: '' },
         palette: { hiveDefault: null, loading: false, section: 'states' },
@@ -76478,6 +76770,7 @@ function burnAreaChart() {
       const name = (st.model.metadata || {}).name || 'untitled';
       const ver = st.source ? '@' + st.source.version : (st.model.spec.meta && st.model.spec.meta.version ? '@' + st.model.spec.meta.version + ' (unsaved)' : ' (unsaved)');
       const dirty = wfEdDirty();
+      const saving = !!st.pendingSave;
       const inferred = wfEdStates(st.model).filter(s => (s.lifecycle || {}).confidence === 'inferred').length;
       const btn = (action, label, title, extra) => `<button type="button" class="hv-btn btn-secondary btn-sm" data-action="${action}" title="${esc(title || '')}" ${extra || ''}>${label}</button>`;
       return '<div class="wf-ed-toolbar" role="toolbar" aria-label="Editor toolbar">' +
@@ -76503,8 +76796,8 @@ function burnAreaChart() {
         '<span class="wf-ed-grow"></span>' +
         (st.readOnly ? btn('wfEdEditCopy', 'Edit a copy', 'Duplicate under a new name and edit that') : '') +
         (can ? btn('wfEdRevert', 'Revert', 'Discard unsaved changes', dirty ? '' : 'disabled') : '') +
-        (can ? btn('wfEdSaveAs', 'Save as\u2026', 'Save under a new name as version 1') : '') +
-        (can ? `<button type="button" class="hv-btn btn-primary btn-sm" data-action="wfEdSave" title="Save as the next version" ${dirty || !st.source ? '' : 'disabled'}>Save</button>` : '') +
+        (can ? btn('wfEdSaveAs', 'Save as\u2026', 'Save under a new name as version 1', saving ? 'disabled' : '') : '') +
+        (can ? `<button type="button" class="hv-btn btn-primary btn-sm" data-action="wfEdSave" title="Save as the next version" ${saving || (!dirty && st.source) ? 'disabled' : ''}>${saving ? 'Saving\u2026' : 'Save'}</button>` : '') +
         btn('wfEdClose', 'Close', 'Back to the library') +
         '</div>';
     }
@@ -76805,7 +77098,9 @@ function burnAreaChart() {
         root.addEventListener('keydown', wfEdRootKey);
         root.addEventListener('keyup', ev => { if (ev.key === ' ') _wfEd.spaceHeld = false; });
         root.addEventListener('focusin', ev => { if (ev.target && ev.target.id === 'wf-ed-yaml') _wfEd.yaml.focused = true; });
-        root.addEventListener('focusout', ev => { if (ev.target && ev.target.id === 'wf-ed-yaml') _wfEd.yaml.focused = false; });
+        root.addEventListener('focusout', ev => {
+          if (ev.target && ev.target.id === 'wf-ed-yaml') { _wfEd.yaml.focused = false; wfEdYamlSync(); }
+        });
         root.addEventListener('click', ev => { if (_wfEd.exportMenu && !(ev.target.closest && ev.target.closest('.wf-ed-menu'))) { _wfEd.exportMenu = false; wfEdRefresh(['toolbar']); } });
       }
       if (!window._wfEdResizeWired) {
@@ -77317,26 +77612,69 @@ function burnAreaChart() {
 
     // --- Persistence ----------------------------------------------------------
 
+    // Carry forward save metadata for fields whose values still match the original draft.
+    function wfEdReconcileSavedMetadata(model, base, latest) {
+      let next = model;
+      const name = model.metadata?.name || '';
+      const latestName = latest.metadata?.name || '';
+      if (name === (base.metadata?.name || '') && name !== latestName) {
+        next = { ...next, metadata: { ...next.metadata, name: latestName } };
+      }
+      let meta = model.spec.meta;
+      for (const key of ['version', 'provenance']) {
+        const value = model.spec.meta?.[key] || '';
+        const latestValue = latest.spec.meta?.[key];
+        if (value === (base.spec.meta?.[key] || '') && value !== (latestValue || '')) {
+          meta = { ...meta, [key]: latestValue };
+        }
+      }
+      if (meta !== model.spec.meta) next = { ...next, spec: { ...next.spec, meta } };
+      return next;
+    }
+
     async function wfEdSave(asName) {
-      if (!wfEdCanEdit()) return;
-      const m = wfEdClone(_wfEd.model);
+      if (!wfEdCanEdit() || _wfEd.pendingSave) return;
+      const submitted = _wfEd.model;
+      const m = wfEdClone(submitted);
       if (asName) m.metadata = Object.assign({}, m.metadata, { name: asName });
       const name = (m.metadata || {}).name;
       if (!/^[a-z0-9][a-z0-9._-]*$/.test(name || '')) { showToast('Name must be lower-case letters, digits, dots, dashes or underscores.', 'error'); return; }
       m.spec.meta = Object.assign({}, m.spec.meta, { version: '' });
       if (!m.spec.meta.provenance || m.spec.meta.provenance === 'built-in') m.spec.meta.provenance = 'local';
+      _wfEd.pendingSave = m;
       try {
+        wfEdRefresh(['toolbar']);
         const res = await fetch('/api/workflows', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify(m) });
         if (!res.ok) throw new Error(await saveErrorMessage(res));
         const data = await res.json(), e = data.entry || {};
+        if (_wfEd.pendingSave === m && _wfEd.model) {
+          m.spec.meta.version = e.version;
+          const saved = wfEdNormalize(m);
+          _wfEd.saved = saved;
+          _wfEd.source = { name: e.name, version: e.version };
+          const reconcile = draft => wfEdReconcileSavedMetadata(draft, submitted, saved);
+          _wfEd.model = reconcile(_wfEd.model);
+          _wfEd.history = _wfEd.history.map(reconcile);
+          _wfEd.future = _wfEd.future.map(reconcile);
+          _wfEd.pendingSave = null;
+          _wfEd.diff.loadedFor = ''; _wfEd.rev++; wfEdScheduleCompile(0);
+          // Inspector inputs commit on change, so keep any text the user is still typing.
+          const field = document.activeElement;
+          const editing = field?.closest('#wf-ed-inspector') && typeof field.defaultValue === 'string' && field.value !== field.defaultValue;
+          wfEdRefresh(editing ? ['toolbar', 'canvas', 'drawer'] : undefined);
+          wfEdLoadVersions();
+        }
         showToast('Saved ' + e.name + '@' + e.version + (e.compiled ? '' : ' (does not compile)'), e.compiled ? 'success' : 'info');
-        _workflowState.loaded = false; await loadWorkflowLibrary();
-        m.spec.meta.version = e.version;
-        _wfEd.model = wfEdNormalize(m); _wfEd.saved = wfEdClone(_wfEd.model); _wfEd.source = { name: e.name, version: e.version }; _wfEd.readOnly = false;
-        _wfEd.diff.loadedFor = ''; _wfEd.rev++; wfEdScheduleCompile(0);
-        wfEdRefresh(); wfEdLoadVersions();
+        loadWorkflowLibrary(() => {
+          if (_wfLib.view === 'library' || (_wfLib.view === 'editor' && !_wfEd.model)) wfLibRerender();
+        }, { afterWrite: true });
       } catch (err) {
         showToast('Save failed: ' + err.message, 'error');
+      } finally {
+        if (_wfEd.pendingSave === m) {
+          _wfEd.pendingSave = null;
+          if (_wfEd.model) wfEdRefresh(['toolbar']);
+        }
       }
     }
     async function wfEdSaveAs() {
@@ -77403,36 +77741,55 @@ function burnAreaChart() {
       clearTimeout(_wfEd.timers.yaml);
       _wfEd.timers.yaml = setTimeout(wfEdYamlRefresh, WF_ED_YAML_DEBOUNCE_MS);
     }
+    function wfEdFinishYamlRequest(y, request) {
+      if (y.busy !== request) return;
+      y.busy = null;
+      if (y === _wfEd.yaml && _wfEd.model && _wfEd.drawer.tab === 'yaml') wfEdRefresh(['drawer']);
+    }
     async function wfEdYamlRefresh() {
-      const y = _wfEd.yaml, rev = _wfEd.rev;
-      if (!_wfEd.model) return;
-      y.busy = true;
+      const y = _wfEd.yaml, rev = _wfEd.rev, model = _wfEd.model, source = _wfEd.source;
+      if (!model || y.focused || y.busy) return;
+      const request = {};
+      y.busy = request;
       try {
-        const res = await fetch('/api/workflows/yaml', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ model: _wfEd.model }) });
+        const res = await fetch('/api/workflows/yaml', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ model }) });
         if (!res.ok) throw new Error(await saveErrorMessage(res));
         const data = await res.json();
-        if (rev !== _wfEd.rev) return;
+        if (y !== _wfEd.yaml || y.busy !== request || rev !== _wfEd.rev || y.focused) return;
+        y.base = { model, source };
         y.text = data.yaml || ''; y.rev = rev; y.error = '';
-      } catch (err) { y.error = 'YAML render failed: ' + err.message; }
-      y.busy = false; y.focused = false;
-      if (_wfEd.drawer.tab === 'yaml') wfEdRefresh(['drawer']);
+      } catch (err) {
+        if (y.busy === request) y.error = 'YAML render failed: ' + err.message;
+      } finally {
+        wfEdFinishYamlRequest(y, request);
+      }
     }
     async function wfEdYamlApply() {
       const y = _wfEd.yaml, el = document.getElementById('wf-ed-yaml');
       if (!el || !wfEdCanEdit()) return;
       const text = el.value;
-      if (text === y.text) return;
-      y.busy = true; y.error = ''; y.focused = false;
+      if (text === y.text || text === y.busy?.text) return;
+      const request = { text }, base = y.base;
+      y.busy = request; y.error = '';
       try {
         const res = await fetch('/api/workflows/yaml', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ yaml: text }) });
         if (!res.ok) throw new Error(await saveErrorMessage(res));
         const data = await res.json();
-        if (data.error) { y.error = data.error; y.text = text; y.busy = false; wfEdRefresh(['drawer']); return; }
-        y.text = text; y.busy = false;
+        if (y !== _wfEd.yaml || y.busy !== request || !_wfEd.model) return;
+        y.text = text;
+        if (data.error) { y.error = data.error; y.rev = _wfEd.rev; return; }
+        const model = base && base.source !== _wfEd.source
+          ? wfEdReconcileSavedMetadata(data.model, base.model, _wfEd.model) : data.model;
         wfEdPruneSelection();
-        wfEdCommit(data.model);
-        y.rev = _wfEd.rev;
-      } catch (err) { y.error = 'YAML apply failed: ' + err.message; y.busy = false; wfEdRefresh(['drawer']); }
+        wfEdCommit(model);
+        const rebased = model !== data.model;
+        y.base = { model: data.model, source: rebased ? base.source : _wfEd.source };
+        y.rev = rebased ? -1 : _wfEd.rev;
+      } catch (err) {
+        if (y.busy === request) y.error = 'YAML apply failed: ' + err.message;
+      } finally {
+        wfEdFinishYamlRequest(y, request);
+      }
     }
 
     // --- Simulate drawer ------------------------------------------------------
@@ -78949,6 +79306,9 @@ function burnAreaChart() {
         <div class="config-field"><label>Job secrets (names) ${yamlHint('agent_sandbox.job.env_from_secrets[]')} ${settingHelpMark('settings', 'security-and-access', 'Job secrets', `Names of Kubernetes Secrets whose keys become environment variables in the sandbox Job. One name per line. Names only: never paste a secret value here.`)}</label><textarea rows="2" class="mono" placeholder="one Secret name per line" data-change-action="markSecurityLines" data-arg0="agentSandboxJobEnvFromSecrets" data-arg-types="s,v">${esc((sec.agentSandboxJobEnvFromSecrets || []).join('\n'))}</textarea></div>
         <div class="config-field"><label>Job workspace claim ${yamlHint('agent_sandbox.job.workspace_claim')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim', `PVC holding the workspace for the job runtime. Required for runtime job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaim || '')}" placeholder="PersistentVolumeClaim name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaim" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job workspace claim mount ${yamlHint('agent_sandbox.job.workspace_claim_mount')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim mount', `Where the workspace claim is mounted in the Job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaimMount || '')}" placeholder="mount path" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaimMount" data-arg-types="s,s,v"></div>
+        <details class="settings-subsection-details" id="gov-sandbox-job-scheduling"><summary class="settings-subsection-summary">Job scheduling, resources, preflight, setup and GitHub read relay</summary>
+        ${sandboxSchedulingHtml('hive', sec)}
+        </details>
         <details class="settings-subsection-details"><summary class="settings-subsection-summary">Substrate sandbox</summary>
         ${substrateSandboxFields('security', sec.agentSandboxSubstrate)}
         </details>
@@ -80348,6 +80708,11 @@ function burnAreaChart() {
           </div>
           ${f.customersSearchEffective !== f.customersSearch ? `<p class="config-help">HIVE_CUSTOMERS_MENTION_SEARCH_ENABLED (or turning Customers off) overrides this setting: the search is currently <b>${f.customersSearchEffective ? 'on' : 'off'}</b>.</p>` : ''}
           <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersProfileFill ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersProfileFillEnabled"></div>
+            <span class="config-toggle-label">Fill customer details from public profiles ${yamlHint('customers.profile_fill.enabled')} ${settingHelpMark('settings', 'features', 'Customer profile fill', `OFF by default. When on, the hive reads each confirmed customer's own public profile on this hive's forge (GitHub, GitHub Enterprise, GitLab or Gitea/Forgejo) by their login, and, when a Linear workspace is connected, their workspace member name by an email address the profile already holds. It fills the real name, organization (the company field, a GitHub @org shown by its public name) and location, and the country is derived from the location. Only empty fields are filled, plus fields an earlier fill wrote: a value set by hand or shared from the hub is never changed. Each field shows where it came from. Suggested people are never looked up. Existing customers are filled within a few passes after it is turned on, then refreshed about weekly; "Refresh from profiles" on the Customers section runs it now. It spends at most customers.profile_fill.max_requests_per_hour requests an hour (default 60), stands down while the shared GitHub quota is low and backs off when a forge rate-limits it. Needs Customers on. Independent of the GitHub search on accept. HIVE_CUSTOMERS_PROFILE_FILL_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersProfileFillEffective !== f.customersProfileFill ? `<p class="config-help">HIVE_CUSTOMERS_PROFILE_FILL_ENABLED (or turning Customers off) overrides this setting: the profile fill is currently <b>${f.customersProfileFillEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
             <div class="config-toggle-switch ${f.customersEnrichmentEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnrichmentEnabled"></div>
             <span class="config-toggle-label">Public affiliation and activity (enrichment) ${yamlHint('customers.enrichment.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment', `OFF by default. The master switch for adding public facts about confirmed customers from CNCF sources: who they work for (cncf/gitdm, crowd.dev) and their public contributions (devstats). Each source below has its own switch and stays off until you turn it on too. Suggested people are never looked up, and nothing found ever replaces an organization a person set by hand or shared from the hub: an affiliation only appears as a suggestion you accept or dismiss. Forgetting a person deletes what was found for them. Needs Customers on. HIVE_CUSTOMERS_ENRICHMENT_ENABLED overrides it. See src/docs/customers-enrichment.md.`)}</span>
           </div>
@@ -80374,6 +80739,19 @@ function burnAreaChart() {
               <div class="config-field"><label>crowd.dev API token ${yamlHint('customers.enrichment.crowddev.token_file')} ${settingHelpMark('settings', 'features', 'crowd.dev API token', `Saved straight away, owner only, sealed in the keystore at customers.enrichment.crowddev.token_file. It is never shown again; this field only says whether one is set. Clear removes it. HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN, when set, wins over the saved token.`)}</label><input type="password" id="customers-crowddev-token" autocomplete="new-password" placeholder="${f.customersEnrichmentCrowdDevTokenSet ? 'A token is set' : 'No token set'}"><div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-3)"><button type="button" class="hv-btn btn-secondary btn" data-action="saveCustomersCrowdDevToken" data-arg0="save">Save token</button><button type="button" class="hv-btn btn-secondary btn" data-action="saveCustomersCrowdDevToken" data-arg0="clear">Clear</button></div><div class="config-help" id="customers-crowddev-token-status">${f.customersEnrichmentCrowdDevTokenSet ? 'A token is set.' : 'No token set.'}</div></div>
             </div>
           </details>
+        </div>
+        <div class="settings-subsection">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.askEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="askEnabled"></div>
+            <span class="config-toggle-label">Ask AI help ${yamlHint('ask.enabled')} ${settingHelpMark('settings', 'features', 'Ask AI help', `OFF by default. Shows an Ask panel that answers questions about using this dashboard from the Hive docs. What is sent: the question a person types, and the label of the dashboard section they are in (from a fixed list, never anything on screen), to Kapa.ai, an AI service; the project's Kapa administrators can read questions in their analytics. Nothing else leaves: no login, email, page content, URL, repo, hive or agent name. Each person confirms a notice before their first question and can withdraw. Questions that look like a password, token or key are refused and not sent. Answers show their sources and an "AI generated, may be wrong" label. Needs a mode: hub (hosted hives, through the hub relay; no key on this hive) or direct (this hive calls Kapa.ai with its own key, set as ask.kapa.project_id, ask.kapa.integration_id and ask.kapa.api_key_file in hive.yaml or HIVE_ASK_* env). Limits: ask.limits.person_per_minute, ask.limits.person_per_hour, ask.limits.hive_per_hour, ask.limits.global_per_minute, ask.limits.in_flight, ask.limits.daily. HIVE_ASK_ENABLED overrides the switch. See src/docs/design/dashboard-ask-ai-help.md.`)}</span>
+          </div>
+          ${f.askEnabled && !f.askEffective ? `<p class="config-help">Ask stays off: ${esc(f.askProblem || 'HIVE_ASK_ENABLED overrides this setting')}.</p>` : ''}
+          ${!f.askEnabled && f.askEffective ? `<p class="config-help">HIVE_ASK_ENABLED overrides this setting: Ask is currently <b>on</b>.</p>` : ''}
+          <div class="config-field"><label>Ask mode ${yamlHint('ask.mode')} ${settingHelpMark('settings', 'features', 'Ask mode', `off does nothing. hub (hosted hives) asks through the hub relay with this hive's existing hub credential, so no Kapa key is kept here. direct calls Kapa.ai with this hive's own key file. HIVE_ASK_MODE overrides it.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="askMode" data-arg-types="s,s,v">${['off', 'hub', 'direct'].map(m => `<option value="${esc(m)}"${(f.askMode || 'off') === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.askSendSectionLabel ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="askSendSectionLabel"></div>
+            <span class="config-toggle-label">Send the section label with questions ${yamlHint('ask.send_section_label')} ${settingHelpMark('settings', 'features', 'Ask section label', `ON by default. Adds the name of the dashboard section the person is in, taken from a fixed list of section names, so "where is this button" finds the right page. Off sends the question alone. HIVE_ASK_SEND_SECTION_LABEL overrides it.`)}</span>
+          </div>
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">
@@ -80588,7 +80966,7 @@ function burnAreaChart() {
         ${renderGovFleetReportSection((_configState.data || {}).fleet_report || {})}
 
         <div class="settings-subsection">
-          <div class="settings-subsection-title">GitLab and Gitea forges ${settingHelpMark('settings', 'features', 'GitLab and Gitea forges', `Used only when the project forge is set to gitlab or gitea. Tokens are never stored in config: each forge names the environment variable that holds its token.`)}</div>
+          <div class="settings-subsection-title">GitLab, Gitea and Forgejo forges ${settingHelpMark('settings', 'features', 'GitLab, Gitea and Forgejo forges', `Used only when the project forge is set to gitlab, gitea or forgejo. Tokens are never stored in config: each forge names the environment variable that holds its token.`)}</div>
           <div class="config-field-row">
             <div class="config-field"><label>GitLab URL ${yamlHint('gitlab.gitlab_url')} ${settingHelpMark('settings', 'features', 'GitLab URL', `GitLab instance root, e.g. https://gitlab.example.com. Empty uses ${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}.`)}</label><input type="text" value="${esc(f.gitlabUrl || '')}" placeholder="${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabUrl" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>GitLab token env var ${yamlHint('gitlab.token_env')} ${settingHelpMark('settings', 'features', 'GitLab token env var', `The NAME of the environment variable holding the GitLab token, never the token itself.`)}</label><input type="text" value="${esc(f.gitlabTokenEnv || '')}" placeholder="${esc(platformDefaults.gitlabTokenEnv || 'GITLAB_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabTokenEnv" data-arg-types="s,s,w"></div>
@@ -80596,6 +80974,10 @@ function burnAreaChart() {
           <div class="config-field-row">
             <div class="config-field"><label>Gitea URL ${yamlHint('gitea.gitea_url')} ${settingHelpMark('settings', 'features', 'Gitea URL', `Gitea or Forgejo instance root, e.g. https://codeberg.org. There is no default; it is required for the Gitea forge.`)}</label><input type="text" value="${esc(f.giteaUrl || '')}" placeholder="https://gitea.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="giteaUrl" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>Gitea token env var ${yamlHint('gitea.token_env')} ${settingHelpMark('settings', 'features', 'Gitea token env var', `The NAME of the environment variable holding the Gitea token, never the token itself.`)}</label><input type="text" value="${esc(f.giteaTokenEnv || '')}" placeholder="${esc(platformDefaults.giteaTokenEnv || 'GITEA_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="giteaTokenEnv" data-arg-types="s,s,w"></div>
+          </div>
+          <div class="config-field-row">
+            <div class="config-field"><label>Forgejo URL ${yamlHint('forgejo.forgejo_url')} ${settingHelpMark('settings', 'features', 'Forgejo URL', `Forgejo instance root, e.g. https://codeberg.org. There is no default; it is required for the Forgejo forge.`)}</label><input type="text" value="${esc(f.forgejoUrl || '')}" placeholder="https://forgejo.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="forgejoUrl" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Forgejo token env var ${yamlHint('forgejo.token_env')} ${settingHelpMark('settings', 'features', 'Forgejo token env var', `The NAME of the environment variable holding the Forgejo token, never the token itself.`)}</label><input type="text" value="${esc(f.forgejoTokenEnv || '')}" placeholder="${esc(platformDefaults.forgejoTokenEnv || 'FORGEJO_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="forgejoTokenEnv" data-arg-types="s,s,w"></div>
           </div>
           <div class="config-help">Requires restart: the forge client is built at boot.</div>
         </div>
@@ -80944,6 +81326,7 @@ function burnAreaChart() {
           <div class="config-field"><label for="cfg-agent-sandbox-job-envFromSecrets">Job secrets (names) ${yamlHint('sandbox.job.env_from_secrets[]')}</label>
             <textarea id="cfg-agent-sandbox-job-envFromSecrets" rows="2" class="mono" placeholder="one Secret name per line" data-change-action="markDirtySandboxJob" data-arg0="envFromSecrets" data-arg-types="s,v">${esc((job.envFromSecrets || []).join('\n'))}</textarea>
             <div class="config-field-hint">Secret names only. Never paste a value.</div></div>
+          ${sandboxSchedulingHtml('agent', f)}
         </details>`;
     }
 
@@ -80974,6 +81357,431 @@ function burnAreaChart() {
         renderConfigTab('General');
       } catch (err) {
         showToast('Failed to copy sandbox settings: ' + err.message, 'error');
+      }
+    }
+
+    // ── Sandbox Job scheduling, resources, preflight, read relay (#19553) ──
+    // Workspace setup (sandbox.setup, #19574) shares the renderer and stager.
+    // One renderer and one stager for both places these live: the hive-wide
+    // agent_sandbox block (Settings, Security, scope 'hive') and one agent's
+    // sandbox block (agent General tab, scope 'agent'). The server validates
+    // every value again (api_sandbox_job_scheduling.go); the checks here only
+    // explain a mistake before Save. A field with an error is left out of the
+    // save, so a typo never saves half a map.
+
+    const SANDBOX_TAINT_EFFECTS = ['NoSchedule', 'PreferNoSchedule', 'NoExecute'];
+    const SANDBOX_K8S_NAME_MAX = 63;
+    const SANDBOX_K8S_PREFIX_MAX = 253;
+    const SANDBOX_MAP_MAX_ENTRIES = 64;
+    const SANDBOX_TOLERATIONS_MAX = 32;
+    const SANDBOX_PULL_SECRETS_MAX = 32;
+    const SANDBOX_PREFLIGHT_COMMANDS_MAX = 32;
+    const SANDBOX_PREFLIGHT_COMMAND_BYTES_MAX = 4096;
+    const SANDBOX_K8S_NAME_RE = /^([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]$/;
+    const SANDBOX_DNS_NAME_RE = /^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/;
+    const SANDBOX_QUANTITY_RE = /^([0-9]+(\.[0-9]*)?|\.[0-9]+)([KMGTPE]i|[numkMGTPE]|[eE][+-]?[0-9]+)?$/;
+    const SANDBOX_SOURCE_LABELS = { agent: "this agent's override", agent_sandbox: 'from agent_sandbox defaults', '': 'not set' };
+    const SANDBOX_PREFLIGHT_FIELDS = ['preflightCommands', 'preflightTimeoutS', 'preflightTotalTimeoutS', 'preflightRetryDelayS'];
+    const SANDBOX_SETUP_FIELDS = ['setupCommands', 'setupHealthCommands', 'setupTimeoutS', 'setupTotalTimeoutS'];
+
+    /* The hive.yaml path behind each control, spelled out in full so the
+       settings parity guard (settings_parity_test.go) finds every leaf. */
+    const SANDBOX_SCHED_YAML = {
+      hive: {
+        nodeSelector: 'agent_sandbox.job.node_selector.<key>',
+        limits: 'agent_sandbox.job.resources.limits.<key>',
+        requests: 'agent_sandbox.job.resources.requests.<key>',
+        tolerations: 'agent_sandbox.job.tolerations[].key',
+        tolerationParts: ['agent_sandbox.job.tolerations[].operator', 'agent_sandbox.job.tolerations[].value', 'agent_sandbox.job.tolerations[].effect'],
+        imagePullSecrets: 'agent_sandbox.job.image_pull_secrets[]',
+        scheduleTimeoutS: 'agent_sandbox.job.schedule_timeout_s',
+        preflightCommands: 'agent_sandbox.preflight.commands[]',
+        preflightTimeoutS: 'agent_sandbox.preflight.timeout_s',
+        preflightTotalTimeoutS: 'agent_sandbox.preflight.total_timeout_s',
+        preflightRetryDelayS: 'agent_sandbox.preflight.retry_delay_s',
+        setupCommands: 'agent_sandbox.setup.commands[]',
+        setupHealthCommands: 'agent_sandbox.setup.health_commands[]',
+        setupTimeoutS: 'agent_sandbox.setup.timeout_s',
+        setupTotalTimeoutS: 'agent_sandbox.setup.total_timeout_s',
+      },
+      agent: {
+        nodeSelector: 'agents.<key>.sandbox.job.node_selector.<key>',
+        limits: 'agents.<key>.sandbox.job.resources.limits.<key>',
+        requests: 'agents.<key>.sandbox.job.resources.requests.<key>',
+        tolerations: 'agents.<key>.sandbox.job.tolerations[].key',
+        tolerationParts: ['agents.<key>.sandbox.job.tolerations[].operator', 'agents.<key>.sandbox.job.tolerations[].value', 'agents.<key>.sandbox.job.tolerations[].effect'],
+        imagePullSecrets: 'agents.<key>.sandbox.job.image_pull_secrets[]',
+        scheduleTimeoutS: 'agents.<key>.sandbox.job.schedule_timeout_s',
+        preflightCommands: 'agents.<key>.sandbox.preflight.commands[]',
+        preflightTimeoutS: 'agents.<key>.sandbox.preflight.timeout_s',
+        preflightTotalTimeoutS: 'agents.<key>.sandbox.preflight.total_timeout_s',
+        preflightRetryDelayS: 'agents.<key>.sandbox.preflight.retry_delay_s',
+        setupCommands: 'agents.<key>.sandbox.setup.commands[]',
+        setupHealthCommands: 'agents.<key>.sandbox.setup.health_commands[]',
+        setupTimeoutS: 'agents.<key>.sandbox.setup.timeout_s',
+        setupTotalTimeoutS: 'agents.<key>.sandbox.setup.total_timeout_s',
+      },
+    };
+
+    function sandboxQualifiedNameError(s) {
+      const slash = s.lastIndexOf('/');
+      const name = slash >= 0 ? s.slice(slash + 1) : s;
+      if (slash >= 0) {
+        const prefix = s.slice(0, slash);
+        if (!prefix || prefix.length > SANDBOX_K8S_PREFIX_MAX || !SANDBOX_DNS_NAME_RE.test(prefix)) return `"${s}" has an invalid prefix (a lowercase DNS name such as example.com)`;
+      }
+      if (!name || name.length > SANDBOX_K8S_NAME_MAX || !SANDBOX_K8S_NAME_RE.test(name)) return `"${s}" is not a valid Kubernetes name`;
+      return '';
+    }
+
+    /* key=value lines into a map. kind 'label' takes label values (may be
+       empty), kind 'quantity' takes resource quantities like 2, 500m, 16Gi. */
+    function sandboxParseMapLines(text, kind) {
+      const value = {};
+      const errors = [];
+      String(text || '').split(/\r?\n/).forEach((raw, i) => {
+        const line = raw.trim();
+        if (!line) return;
+        const idx = line.indexOf('=');
+        if (idx <= 0) { errors.push(`line ${i + 1}: write key=value`); return; }
+        const k = line.slice(0, idx).trim();
+        const v = line.slice(idx + 1).trim();
+        const keyErr = sandboxQualifiedNameError(k);
+        if (keyErr) { errors.push(`line ${i + 1}: ${keyErr}`); return; }
+        if (kind === 'quantity' && !SANDBOX_QUANTITY_RE.test(v)) { errors.push(`line ${i + 1}: "${v}" is not a quantity (for example 2, 500m, 16Gi)`); return; }
+        if (kind !== 'quantity' && v && (v.length > SANDBOX_K8S_NAME_MAX || !SANDBOX_K8S_NAME_RE.test(v))) { errors.push(`line ${i + 1}: "${v}" is not a valid label value`); return; }
+        value[k] = v;
+      });
+      if (Object.keys(value).length > SANDBOX_MAP_MAX_ENTRIES) errors.push(`at most ${SANDBOX_MAP_MAX_ENTRIES} entries`);
+      return { value, errors };
+    }
+
+    function sandboxMapText(map) {
+      return Object.keys(map || {}).sort().map(k => k + '=' + map[k]).join('\n');
+    }
+
+    /* Toleration lines in taint syntax: key=value:Effect (operator Equal),
+       key:Effect or key (operator Exists), * or *:Effect (every taint). An
+       omitted effect matches every effect. */
+    function sandboxParseTolerationLines(text) {
+      const value = [];
+      const errors = [];
+      String(text || '').split(/\r?\n/).forEach((raw, i) => {
+        const line = raw.trim();
+        if (!line) return;
+        let spec = line;
+        let effect = '';
+        const colon = line.lastIndexOf(':');
+        if (colon >= 0) {
+          effect = line.slice(colon + 1).trim();
+          spec = line.slice(0, colon).trim();
+          if (!SANDBOX_TAINT_EFFECTS.includes(effect)) { errors.push(`line ${i + 1}: effect must be ${SANDBOX_TAINT_EFFECTS.join(', ')} or left out`); return; }
+        }
+        if (spec === '*') { value.push({ key: '', operator: 'Exists', value: '', effect }); return; }
+        const eq = spec.indexOf('=');
+        const key = (eq >= 0 ? spec.slice(0, eq) : spec).trim();
+        const val = eq >= 0 ? spec.slice(eq + 1).trim() : '';
+        const keyErr = sandboxQualifiedNameError(key);
+        if (keyErr) { errors.push(`line ${i + 1}: ${keyErr}`); return; }
+        if (val && (val.length > SANDBOX_K8S_NAME_MAX || !SANDBOX_K8S_NAME_RE.test(val))) { errors.push(`line ${i + 1}: "${val}" is not a valid taint value`); return; }
+        value.push({ key, operator: eq >= 0 ? 'Equal' : 'Exists', value: val, effect });
+      });
+      if (value.length > SANDBOX_TOLERATIONS_MAX) errors.push(`at most ${SANDBOX_TOLERATIONS_MAX} tolerations`);
+      return { value, errors };
+    }
+
+    function sandboxTolerationText(list) {
+      return (list || []).map(t => {
+        const op = t.operator || (t.value ? 'Equal' : '');
+        let spec = t.key || '';
+        if (!spec && op === 'Exists') spec = '*';
+        else if (op !== 'Exists') spec += '=' + (t.value || '');
+        return spec + (t.effect ? ':' + t.effect : '');
+      }).join('\n');
+    }
+
+    function sandboxParseNameLines(text) {
+      const value = [];
+      const errors = [];
+      String(text || '').split(/\r?\n/).forEach((raw, i) => {
+        const s = raw.trim();
+        if (!s) return;
+        if (s.length > SANDBOX_K8S_PREFIX_MAX || !SANDBOX_DNS_NAME_RE.test(s)) { errors.push(`line ${i + 1}: "${s}" is not a Secret name. Names only, never a value`); return; }
+        value.push(s);
+      });
+      if (value.length > SANDBOX_PULL_SECRETS_MAX) errors.push(`at most ${SANDBOX_PULL_SECRETS_MAX} names`);
+      return { value, errors };
+    }
+
+    function sandboxParseCommandLines(text) {
+      const value = String(text || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      const errors = [];
+      if (value.length > SANDBOX_PREFLIGHT_COMMANDS_MAX) errors.push(`at most ${SANDBOX_PREFLIGHT_COMMANDS_MAX} commands`);
+      value.forEach((c, i) => { if (c.length > SANDBOX_PREFLIGHT_COMMAND_BYTES_MAX) errors.push(`command ${i + 1} is longer than ${SANDBOX_PREFLIGHT_COMMAND_BYTES_MAX} characters`); });
+      return { value, errors };
+    }
+
+    function sandboxParseSeconds(text) {
+      const s = String(text == null ? '' : text).trim();
+      if (!s) return { value: 0, errors: [] };
+      const n = Number(s);
+      if (!Number.isInteger(n) || n < 0) return { value: 0, errors: ['a whole number of seconds, 0 or more'] };
+      return { value: n, errors: [] };
+    }
+
+    function sandboxParseListenAddr(text) {
+      const s = String(text || '').trim();
+      if (s && !/^(\[[0-9A-Fa-f:.]+\]|[^:\s]*):[0-9]+$/.test(s)) return { value: s, errors: ['host:port, for example :8443'] };
+      return { value: s, errors: [] };
+    }
+
+    function sandboxParseEndpoint(text) {
+      const s = String(text || '').trim();
+      if (!s) return { value: s, errors: [] };
+      if (!/^https:\/\/[^\s/@]+(\/.*)?$/.test(s)) return { value: s, errors: ['an https://host:port URL with no user or password'] };
+      return { value: s, errors: [] };
+    }
+
+    function sandboxSchedId(scope, field) { return 'sbx-' + scope + '-' + field; }
+
+    function sandboxSchedInputValue(scope, field) {
+      const el = document.getElementById(sandboxSchedId(scope, field));
+      if (!el) return null;
+      return el.type === 'checkbox' ? !!el.checked : el.value;
+    }
+
+    function sandboxSchedShowErrors(scope, field, errors) {
+      const el = document.getElementById(sandboxSchedId(scope, field) + '-error');
+      if (el) el.textContent = errors.length ? 'Not saved until fixed: ' + errors.join('; ') : '';
+    }
+
+    function sandboxSchedTextarea(scope, field, label, yaml, text, placeholder, help, rows, disabled) {
+      const id = sandboxSchedId(scope, field);
+      return `<div class="config-field" data-setting-key="${esc(yaml)}"><label for="${id}">${label} ${yamlHint(yaml)}</label>`
+        + `<textarea id="${id}" rows="${rows || 2}" class="mono" spellcheck="false" placeholder="${esc(placeholder)}"${disabled ? ' disabled' : ''} data-change-action="markSandboxScheduling" data-arg0="${scope}" data-arg-types="s">${esc(text)}</textarea>`
+        + `<div class="config-field-hint">${help}</div>`
+        + `<div class="config-field-hint" id="${id}-error" role="alert" style="color:var(--red)"></div></div>`;
+    }
+
+    function sandboxSchedInput(scope, field, label, yaml, value, placeholder, help, type, disabled) {
+      const id = sandboxSchedId(scope, field);
+      const t = type || 'text';
+      const extra = (t === 'number' ? ' min="0" step="1"' : ' spellcheck="false" autocomplete="off"') + (disabled ? ' disabled' : '');
+      return `<div class="config-field" data-setting-key="${esc(yaml)}"><label for="${id}">${label} ${yamlHint(yaml)}</label>`
+        + `<input type="${t}" id="${id}"${extra} value="${esc(value == null ? '' : String(value))}" placeholder="${esc(placeholder)}" data-change-action="markSandboxScheduling" data-arg0="${scope}" data-arg-types="s">`
+        + `<div class="config-field-hint">${help}</div>`
+        + `<div class="config-field-hint" id="${id}-error" role="alert" style="color:var(--red)"></div></div>`;
+    }
+
+    function sandboxSchedCheckbox(scope, field, label, yaml, checked, help) {
+      const id = sandboxSchedId(scope, field);
+      return `<div class="config-field" data-setting-key="${esc(yaml)}"><label for="${id}"><input type="checkbox" id="${id}"${checked ? ' checked' : ''} data-change-action="markSandboxScheduling" data-arg0="${scope}" data-arg-types="s"> ${label} ${yamlHint(yaml)}</label>`
+        + `<div class="config-field-hint">${help}</div>`
+        + `<div class="config-field-hint" id="${id}-error" role="alert" style="color:var(--red)"></div></div>`;
+    }
+
+    function sandboxEffectiveText(field, v) {
+      if (field === 'nodeSelector') return sandboxMapText(v).split('\n').filter(Boolean).join(', ');
+      if (field === 'resources') {
+        const parts = [];
+        const lim = sandboxMapText((v || {}).limits).split('\n').filter(Boolean).join(', ');
+        const req = sandboxMapText((v || {}).requests).split('\n').filter(Boolean).join(', ');
+        if (lim) parts.push('limits ' + lim);
+        if (req) parts.push('requests ' + req);
+        return parts.join('; ');
+      }
+      if (field === 'tolerations') return sandboxTolerationText(v).split('\n').filter(Boolean).join(', ');
+      if (Array.isArray(v)) return v.join(', ');
+      if (field === 'ttlSeconds' || field === 'scheduleTimeoutS') return v ? String(v) + ' s' : '';
+      return v == null ? '' : String(v);
+    }
+
+    /* "In effect for this agent": the resolved value of every Job field and
+       where it comes from, plus a warning when the agent's own job block hides
+       hive-wide pod-template settings (a per-agent block replaces them whole). */
+    function sandboxEffectiveHtml(f) {
+      const eff = f.sandboxEffective || {};
+      const job = eff.job || {};
+      const src = eff.sources || {};
+      const rows = [
+        ['Node selector', 'nodeSelector'], ['Resources', 'resources'], ['Tolerations', 'tolerations'],
+        ['Service account', 'serviceAccount'], ['Scheduler name', 'schedulerName'], ['Image pull secrets', 'imagePullSecrets'],
+        ['Job TTL', 'ttlSeconds'], ['Schedule timeout', 'scheduleTimeoutS'],
+      ].map(([label, key]) => {
+        const text = sandboxEffectiveText(key, job[key]);
+        const from = key === 'scheduleTimeoutS' && !src[key] ? 'built-in default' : (SANDBOX_SOURCE_LABELS[src[key] || ''] || src[key]);
+        return `<li data-effective-field="${key}"><strong>${label}:</strong> ${text ? `<code>${esc(text)}</code>` : 'none'} <span class="config-field-hint">(${esc(from)})</span></li>`;
+      });
+      const pre = eff.preflight || {};
+      const cmds = (pre.commands || []).length;
+      const preFrom = SANDBOX_SOURCE_LABELS[eff.preflightSource || ''] || eff.preflightSource;
+      rows.push(`<li data-effective-field="preflight"><strong>Node preflight:</strong> ${cmds ? `${cmds} command${cmds === 1 ? '' : 's'}, ${Number(pre.timeoutS || 0)} s each, ${Number(pre.totalTimeoutS || 0)} s total` : 'off'} <span class="config-field-hint">(${esc(preFrom)})</span></li>`);
+      const setup = eff.setup || {};
+      const setupCmds = (setup.commands || []).length;
+      const setupHealth = (setup.healthCommands || []).length;
+      const setupFrom = SANDBOX_SOURCE_LABELS[eff.setupSource || ''] || eff.setupSource;
+      const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+      rows.push(`<li data-effective-field="setup"><strong>Workspace setup:</strong> ${setupCmds || setupHealth ? `${plural(setupCmds, 'setup command')}, ${plural(setupHealth, 'health check')}, ${Number(setup.timeoutS || 0)} s each, ${Number(setup.totalTimeoutS || 0)} s total` : 'off'} <span class="config-field-hint">(${esc(setupFrom)})</span></li>`);
+      const hidden = Array.isArray(eff.hiddenDefaults) ? eff.hiddenDefaults : [];
+      const hiddenHtml = hidden.length
+        ? `<div class="config-field-hint" id="cfg-agent-sandbox-hidden-defaults" role="status" style="color:var(--yellow)">&#9888; This agent has its own Job block, so these hive-wide settings do not apply to it: ${hidden.map(h => `<code>agent_sandbox.job.${esc(h)}</code>`).join(', ')}. Set them below if this agent needs them.</div>`
+        : '';
+      return `<div class="config-field" id="cfg-agent-sandbox-effective"><label>In effect for this agent</label><ul class="config-help">${rows.join('')}</ul>${hiddenHtml}</div>`;
+    }
+
+    /* The Job scheduling, resources, pull secrets and preflight fields, plus
+       (hive scope only) the GitHub read relay. scope 'hive' reads the Security
+       section (agentSandbox* keys); scope 'agent' reads the General tab's
+       sandboxFields. */
+    function sandboxSchedulingHtml(scope, d) {
+      d = d || {};
+      const agent = scope === 'agent';
+      const y = SANDBOX_SCHED_YAML[agent ? 'agent' : 'hive'];
+      const own = agent ? (d.sandboxJob || {}) : {
+        nodeSelector: d.agentSandboxJobNodeSelector, resources: d.agentSandboxJobResources, tolerations: d.agentSandboxJobTolerations,
+        imagePullSecrets: d.agentSandboxJobImagePullSecrets, scheduleTimeoutS: d.agentSandboxJobScheduleTimeoutS,
+      };
+      const defaults = (agent ? d.sandboxPreflightDefaults : d.agentSandboxPreflightDefaults) || {};
+      const eff = agent ? ((d.sandboxEffective || {}).job || {}) : {};
+      const src = agent ? ((d.sandboxEffective || {}).sources || {}) : {};
+      const inherited = (key, text) => (agent && src[key] === 'agent_sandbox' && text ? 'inherits ' + text.split('\n').join(', ') : '');
+      const res = own.resources || {};
+      const effRes = eff.resources || {};
+      const pre = agent ? d.sandboxPreflight : d.agentSandboxPreflight;
+      const preOverride = agent && pre != null;
+      const preShown = pre || (agent ? (d.sandboxEffective || {}).preflight : null) || {};
+      const preLocked = agent && !preOverride;
+      const setupDefaults = (agent ? d.sandboxSetupDefaults : d.agentSandboxSetupDefaults) || {};
+      const setup = agent ? d.sandboxSetup : d.agentSandboxSetup;
+      const setupOverride = agent && setup != null;
+      const setupShown = setup || (agent ? (d.sandboxEffective || {}).setup : null) || {};
+      const setupLocked = agent && !setupOverride;
+      const wholesaleNote = agent
+        ? "An agent with any Job setting of its own uses its own node selector, resources, tolerations and service account instead of the hive-wide ones."
+        : 'An agent with its own Job block uses its own node selector, resources, tolerations and service account instead of these.';
+      let html = `<div class="settings-subsection-title mt-4">Job scheduling and resources</div>
+          <p class="config-help">Where the sandbox Job may run and what it asks the cluster for (runtime <code>job</code> only). ${wholesaleNote}</p>
+          ${agent ? sandboxEffectiveHtml(d) : ''}
+          ${sandboxSchedTextarea(scope, 'nodeSelector', 'Node selector', y.nodeSelector, sandboxMapText(own.nodeSelector), inherited('nodeSelector', sandboxMapText(eff.nodeSelector)) || 'accelerator=spyre', 'One Kubernetes node label per line, <code>key=value</code>. The Job only runs on nodes carrying every label. Avoid <code>kubernetes.io/hostname</code>: it pins one node and defeats the preflight retry.', 3)}
+          ${sandboxSchedTextarea(scope, 'limits', 'Resource limits', y.limits, sandboxMapText(res.limits), inherited('resources', sandboxMapText(effRes.limits)) || 'ibm.com/spyre_pf=1\nmemory=32Gi', 'One <code>resource=quantity</code> per line, for example <code>cpu=4</code>, <code>memory=32Gi</code>, or a device such as <code>ibm.com/spyre_pf=1</code>. Device (extended) resources are requested through limits.', 3)}
+          ${sandboxSchedTextarea(scope, 'requests', 'Resource requests', y.requests, sandboxMapText(res.requests), inherited('resources', sandboxMapText(effRes.requests)) || 'cpu=500m', 'One <code>resource=quantity</code> per line. Leave empty to request what the limits say.', 2)}
+          ${sandboxSchedTextarea(scope, 'tolerations', 'Tolerations', y.tolerations, sandboxTolerationText(own.tolerations), inherited('tolerations', sandboxTolerationText(eff.tolerations)) || 'accelerator:NoSchedule', 'One per line in taint syntax: <code>key=value:Effect</code> (operator Equal), <code>key:Effect</code> or <code>key</code> (operator Exists), <code>*</code> for every taint. Effect is NoSchedule, PreferNoSchedule or NoExecute; leave it out to match all. Also sets ' + y.tolerationParts.map(k => '<code>' + esc(k) + '</code>').join(', ') + '.', 2)}
+          ${sandboxSchedTextarea(scope, 'imagePullSecrets', 'Image pull secrets (names)', y.imagePullSecrets, (own.imagePullSecrets || []).join('\n'), inherited('imagePullSecrets', (eff.imagePullSecrets || []).join('\n')) || 'one Secret name per line', 'Names of <code>kubernetes.io/dockerconfigjson</code> Secrets in the hive namespace, for a private registry. Names only, never a value.' + (agent ? ' Empty inherits the hive-wide list.' : ''), 2)}
+          ${sandboxSchedInput(scope, 'scheduleTimeoutS', 'Schedule timeout (seconds)', y.scheduleTimeoutS, own.scheduleTimeoutS || '', agent && eff.scheduleTimeoutS ? 'in effect: ' + eff.scheduleTimeoutS : String(defaults.scheduleTimeoutS || ''), 'How long the pod may stay Unschedulable before the kick fails as <code>waiting_for_node</code>. 0 or empty ' + (agent ? 'inherits the hive-wide value, then ' : 'uses ') + 'the default of ' + Number(defaults.scheduleTimeoutS || 0) + ' s.', 'number')}
+          <div class="settings-subsection-title mt-4">Node preflight</div>
+          <p class="config-help">Shell commands run in the Job before the agent starts, each as <code>sh -lc</code> in the same image and workspace. A failing command marks the node <code>node_unhealthy</code> and hive retries the kick once on another node. They are written to the Job manifest and the pod log, so never put a credential on a command line.</p>`;
+      if (agent) {
+        html += sandboxSchedCheckbox(scope, 'preflightOverride', 'Use this agent\'s own preflight', y.preflightCommands, preOverride,
+          'Off: this agent uses the hive-wide <code>agent_sandbox.preflight</code>. On: it uses the list below instead; an empty list turns preflight off for this agent.');
+      }
+      html += sandboxSchedTextarea(scope, 'preflightCommands', 'Preflight commands', y.preflightCommands, (preShown.commands || []).join('\n'), "python -c 'import torch; torch.ones(1).to(\"spyre\")'", 'One command per line, at most ' + Number(defaults.maxCommands || SANDBOX_PREFLIGHT_COMMANDS_MAX) + '.' + (agent && !preOverride ? ' Showing the hive-wide list; turn on the override above to edit it for this agent.' : ''), 3, preLocked);
+      html += sandboxSchedInput(scope, 'preflightTimeoutS', 'Per-command timeout (seconds)', y.preflightTimeoutS, (pre || {}).timeoutS || '', String(defaults.timeoutS || ''), '0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(defaults.timeoutS || 0) + ' s.', 'number', preLocked);
+      html += sandboxSchedInput(scope, 'preflightTotalTimeoutS', 'Total timeout (seconds)', y.preflightTotalTimeoutS, (pre || {}).totalTimeoutS || '', String(defaults.totalTimeoutS || ''), 'Bounds all commands together. 0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(defaults.totalTimeoutS || 0) + ' s.', 'number', preLocked);
+      html += sandboxSchedInput(scope, 'preflightRetryDelayS', 'Retry delay (seconds)', y.preflightRetryDelayS, (pre || {}).retryDelayS || '', '0', 'Wait before re-creating the Job on another node after <code>node_unhealthy</code>. 0 retries at once.', 'number', preLocked);
+      html += `<div class="settings-subsection-title mt-4">Workspace setup</div>
+          <p class="config-help">Shell commands run in the Job after the node preflight and before the agent, each as <code>sh -lc</code> in the checked-out workspace with the agent's own environment, for example a repo script that installs a pinned toolchain from a package mirror. A failing setup command fails the kick as <code>setup_failed</code>, with no retry. A failing health check marks the node <code>node_unhealthy</code> and hive retries the kick once on another node, after the preflight retry delay, running setup again. Setup time counts toward the kick timeout. Commands are written to the Job manifest and the pod log, so never put a credential on a command line.</p>`;
+      if (agent) {
+        html += sandboxSchedCheckbox(scope, 'setupOverride', 'Use this agent\'s own setup', y.setupCommands, setupOverride,
+          'Off: this agent uses the hive-wide <code>agent_sandbox.setup</code>. On: it uses the lists below instead; empty lists turn setup off for this agent.');
+      }
+      const setupMax = Number(setupDefaults.maxCommands || SANDBOX_PREFLIGHT_COMMANDS_MAX);
+      const setupLockedNote = agent && !setupOverride ? ' Showing the hive-wide list; turn on the override above to edit it for this agent.' : '';
+      html += sandboxSchedTextarea(scope, 'setupCommands', 'Setup commands', y.setupCommands, (setupShown.commands || []).join('\n'), './scripts/install-toolchain.sh', 'One command per line, run in order, at most ' + setupMax + '. Each must be safe to run again: a node retry repeats the whole step on the same workspace.' + setupLockedNote, 3, setupLocked);
+      html += sandboxSchedTextarea(scope, 'setupHealthCommands', 'Health checks', y.setupHealthCommands, (setupShown.healthCommands || []).join('\n'), "python -c 'import torch; torch.ones(1)'", 'One command per line, run after the setup commands, at most ' + setupMax + '. A failure means the node cannot run what was installed.' + setupLockedNote, 2, setupLocked);
+      html += sandboxSchedInput(scope, 'setupTimeoutS', 'Per-command timeout (seconds)', y.setupTimeoutS, (setup || {}).timeoutS || '', String(setupDefaults.timeoutS || ''), '0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(setupDefaults.timeoutS || 0) + ' s.', 'number', setupLocked);
+      html += sandboxSchedInput(scope, 'setupTotalTimeoutS', 'Total timeout (seconds)', y.setupTotalTimeoutS, (setup || {}).totalTimeoutS || '', String(setupDefaults.totalTimeoutS || ''), 'Bounds setup commands and health checks together. 0 or empty uses ' + (agent ? 'the hive-wide value, then ' : '') + 'the default of ' + Number(setupDefaults.totalTimeoutS || 0) + ' s.', 'number', setupLocked);
+      if (!agent) {
+        const rp = d.agentSandboxJobGithubReadProxy || {};
+        html += `<div class="settings-subsection-title mt-4">GitHub read relay</div>
+          <p class="config-help">Off by default. When on, hive serves a TLS relay that adds a read-only, repo-scoped GitHub token to each Job's GitHub reads; writes are refused and the token never enters the Job. Hive-wide only: an agent's Job block cannot change it. Takes effect when hive restarts. You expose the listener to the Job pods yourself (a Service and a NetworkPolicy).</p>
+          ${sandboxSchedCheckbox(scope, 'rpEnabled', 'Enable the GitHub read relay', 'agent_sandbox.job.github_read_proxy.enabled', !!rp.enabled, 'Needs a listen address and an https endpoint.')}
+          ${sandboxSchedInput(scope, 'rpListenAddr', 'Listen address', 'agent_sandbox.job.github_read_proxy.listen_addr', rp.listenAddr || '', ':8443', 'The host:port hive binds. There is no default, so hive never opens a port you did not name.')}
+          ${sandboxSchedInput(scope, 'rpEndpoint', 'Endpoint', 'agent_sandbox.job.github_read_proxy.endpoint', rp.endpoint || '', 'https://hive-read-relay:8443', 'The <code>https://host:port</code> Job pods use to reach the relay, for example the in-namespace Service. No user or password: hive adds a per-kick key itself.')}
+          ${sandboxSchedTextarea(scope, 'rpNoProxy', 'Bypass hosts', 'agent_sandbox.job.github_read_proxy.no_proxy[]', (rp.noProxy || []).join('\n'), 'registry.internal', 'Extra hosts or domains a Job reaches directly, one per line, on top of localhost, .svc and .cluster.local.', 2)}`;
+      }
+      return html;
+    }
+
+    /* Reads every scheduling input of the scope and stages the valid ones.
+       An input with an error shows it and is left out of the save. */
+    function markSandboxScheduling(scope) {
+      const agent = scope === 'agent';
+      const staged = {};
+      const take = (field, parsed, put) => {
+        sandboxSchedShowErrors(scope, field, parsed.errors);
+        if (!parsed.errors.length) put(parsed.value);
+        return parsed.errors.length === 0;
+      };
+      const read = field => sandboxSchedInputValue(scope, field);
+      if (read('nodeSelector') != null) take('nodeSelector', sandboxParseMapLines(read('nodeSelector'), 'label'), v => { staged.nodeSelector = v; });
+      const resources = {};
+      if (read('limits') != null) take('limits', sandboxParseMapLines(read('limits'), 'quantity'), v => { resources.limits = v; });
+      if (read('requests') != null) take('requests', sandboxParseMapLines(read('requests'), 'quantity'), v => { resources.requests = v; });
+      if (Object.keys(resources).length) staged.resources = resources;
+      if (read('tolerations') != null) take('tolerations', sandboxParseTolerationLines(read('tolerations')), v => { staged.tolerations = v; });
+      if (read('imagePullSecrets') != null) take('imagePullSecrets', sandboxParseNameLines(read('imagePullSecrets')), v => { staged.imagePullSecrets = v; });
+      if (read('scheduleTimeoutS') != null) take('scheduleTimeoutS', sandboxParseSeconds(read('scheduleTimeoutS')), v => { staged.scheduleTimeoutS = v; });
+
+      let preflight;
+      let preflightOk = true;
+      const override = agent ? read('preflightOverride') : true;
+      if (agent) {
+        SANDBOX_PREFLIGHT_FIELDS.forEach(field => {
+          const el = document.getElementById(sandboxSchedId(scope, field));
+          if (el) el.disabled = !override;
+        });
+      }
+      if (read('preflightCommands') != null) {
+        const block = {};
+        preflightOk = take('preflightCommands', sandboxParseCommandLines(read('preflightCommands')), v => { block.commands = v; });
+        [['preflightTimeoutS', 'timeoutS'], ['preflightTotalTimeoutS', 'totalTimeoutS'], ['preflightRetryDelayS', 'retryDelayS']].forEach(([field, key]) => {
+          if (read(field) == null) return;
+          if (!take(field, sandboxParseSeconds(read(field)), v => { block[key] = v; })) preflightOk = false;
+        });
+        preflight = override ? block : null;
+      }
+
+      let setup;
+      let setupOk = true;
+      const setupOverride = agent ? read('setupOverride') : true;
+      if (agent) {
+        SANDBOX_SETUP_FIELDS.forEach(field => {
+          const el = document.getElementById(sandboxSchedId(scope, field));
+          if (el) el.disabled = !setupOverride;
+        });
+      }
+      if (read('setupCommands') != null) {
+        const block = {};
+        setupOk = take('setupCommands', sandboxParseCommandLines(read('setupCommands')), v => { block.commands = v; });
+        if (read('setupHealthCommands') != null && !take('setupHealthCommands', sandboxParseCommandLines(read('setupHealthCommands')), v => { block.healthCommands = v; })) setupOk = false;
+        [['setupTimeoutS', 'timeoutS'], ['setupTotalTimeoutS', 'totalTimeoutS']].forEach(([field, key]) => {
+          if (read(field) == null) return;
+          if (!take(field, sandboxParseSeconds(read(field)), v => { block[key] = v; })) setupOk = false;
+        });
+        setup = setupOverride ? block : null;
+      }
+
+      if (agent) {
+        const prev = (_configState.dirty.general || {}).sandboxJob || {};
+        markDirty('general', 'sandboxJob', Object.assign({}, prev, staged));
+        if (preflight !== undefined && preflightOk) markDirty('general', 'sandboxPreflight', preflight);
+        if (setup !== undefined && setupOk) markDirty('general', 'sandboxSetup', setup);
+        return;
+      }
+      const keys = { nodeSelector: 'agentSandboxJobNodeSelector', resources: 'agentSandboxJobResources', tolerations: 'agentSandboxJobTolerations', imagePullSecrets: 'agentSandboxJobImagePullSecrets', scheduleTimeoutS: 'agentSandboxJobScheduleTimeoutS' };
+      Object.keys(staged).forEach(k => markDirty('security', keys[k], staged[k]));
+      if (preflight !== undefined && preflightOk) markDirty('security', 'agentSandboxPreflight', preflight);
+      if (setup !== undefined && setupOk) markDirty('security', 'agentSandboxSetup', setup);
+      if (read('rpEnabled') != null) {
+        const rp = { enabled: !!read('rpEnabled') };
+        let ok = take('rpListenAddr', sandboxParseListenAddr(read('rpListenAddr')), v => { rp.listenAddr = v; });
+        ok = take('rpEndpoint', sandboxParseEndpoint(read('rpEndpoint')), v => { rp.endpoint = v; }) && ok;
+        ok = take('rpNoProxy', { value: String(read('rpNoProxy') || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean), errors: [] }, v => { rp.noProxy = v; }) && ok;
+        if (rp.enabled && (!rp.listenAddr || !rp.endpoint)) {
+          sandboxSchedShowErrors(scope, 'rpEnabled', ['the relay needs a listen address and an endpoint']);
+          ok = false;
+        }
+        if (ok) markDirty('security', 'agentSandboxJobGithubReadProxy', rp);
       }
     }
     async function prepareIntegrationExecutionIdentity() {
@@ -81326,7 +82134,6 @@ function burnAreaChart() {
       f = f || {}; platformDefaults = platformDefaults || {};
       const defMin = platformDefaults.writebackMinLevel || 5;
       const optIn = (f.writebackOptInLabels || []).join(', ') || 'hive-review';
-      const modes = f.writebackRepoModes || ['off', 'issues-only', 'labels-only', 'full'];
       const perRepo = f.writebackPerRepo || {};
       const perRepoText = Object.keys(perRepo).sort().map(r => r + '=' + perRepo[r]).join('\n');
       const matrix = f.writebackKindMatrix || [];
@@ -81352,7 +82159,7 @@ function burnAreaChart() {
           </div>
           <div class="config-toggle" data-setting-key="writeback.unsolicited.require_labels"><div class="config-toggle-switch ${f.writebackRequireLabels !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="writebackRequireLabels"></div><span class="config-toggle-label">Only PRs carrying the review opt-in label ${settingHelpMark('settings', 'features', 'Write-back requires opt-in label', `When on (default), unsolicited write-backs on a foreign PR also need the review opt-in label (${esc(optIn)}, from review.require_labels). Turning it off lets each kind's level floor alone decide.`)}</span></div>
           <div class="config-toggle" data-setting-key="writeback.unsolicited.backfill"><div class="config-toggle-switch ${f.writebackBackfill ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="writebackBackfill"></div><span class="config-toggle-label">Backfill pre-existing items ${settingHelpMark('settings', 'features', 'Write-back backfill', `Off (default): when hive first sees a repo, or first gains write access to one, PRs and issues created before that moment are never written to unsolicited. On: process them like new items.`)}</span></div>
-          <div class="config-field"><label>Per-repo mode ${yamlHint('writeback.per_repo')} ${settingHelpMark('settings', 'features', 'Write-back per-repo mode', `One <code>owner/name=mode</code> per line. Modes: ${esc(modes.join(', '))}. <code>off</code> writes nothing unsolicited there; <code>issues-only</code> allows only hive-filed issues (e.g. a repo listed so the deps agent can file regressions); <code>labels-only</code> allows labels but no comments; <code>full</code> skips the level and label gates for that repo. Empty lines clear.`)}</label><textarea rows="3" spellcheck="false" data-setting-key="writeback.per_repo.<key>.mode" placeholder="torch-spyre/torch-spyre=issues-only" data-change-action="markDirtyWritebackPerRepo" data-arg-types="v">${esc(perRepoText)}</textarea></div>
+          <div class="config-field"><label>Per-repo mode ${yamlHint('writeback.per_repo')} ${settingHelpMark('settings', 'features', 'Write-back per-repo mode', `One <code>owner/name=mode</code> per line. <code>default</code> uses the per-kind policy for that repo, even if it inherits a bare-name override. <code>off</code> writes nothing unsolicited there; <code>issues-only</code> allows only hive-filed issues (e.g. a repo listed so the deps agent can file regressions); <code>labels-only</code> allows labels but no comments; <code>full</code> skips the level and label gates for that repo. Empty lines clear.`)}</label><textarea rows="3" spellcheck="false" data-setting-key="writeback.per_repo.<key>.mode" placeholder="torch-spyre/torch-spyre=issues-only" data-change-action="markDirtyWritebackPerRepo" data-arg-types="v">${esc(perRepoText)}</textarea></div>
           <details class="config-field"><summary>Per-kind matrix ${yamlHint('writeback.kinds.<kind>.{min_level,require_label}')} ${settingHelpMark('settings', 'features', 'Write-back per-kind matrix', `What hive will say on GitHub at each ACMM level. Each kind has a minimum level and whether the opt-in label is required; leave a cell empty to keep the default shown as placeholder.`)}</summary>
             <table class="qa-table" id="wb-kind-table"><thead><tr><th>Kind</th><th>Scope</th><th>Min level</th><th>Opt-in label</th></tr></thead><tbody>${rows}</tbody></table>
           </details>
@@ -84026,7 +84833,8 @@ function burnAreaChart() {
         const agent = {
           backend: generalData.cliPinValue || 'copilot',
           model: generalData.model || '',
-          enabled: true,
+          enabled: generalData.enabled !== false,
+          on_demand: generalData.onDemand,
           display_name: generalData.displayName || '',
           description: generalData.description || '',
           emoji: generalData.emoji || '',

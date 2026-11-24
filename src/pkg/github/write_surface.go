@@ -46,6 +46,9 @@ const (
 	// WriteOpRequestReview asks users and/or teams to review an existing PR
 	// (issue-request watcher, kind "request_review").
 	WriteOpRequestReview = "request_review"
+	// WriteOpEditPR replaces the title and/or body of a PR one of this hive's
+	// accounts opened (issue-request watcher, kind "edit_pr", #19399).
+	WriteOpEditPR = "edit_pr"
 	// WriteOpReview submits a PR review, replies in a review thread, or
 	// records a verdict (review-request watcher).
 	WriteOpReview = "review"
@@ -70,6 +73,7 @@ func WriteOps() []string {
 		WriteOpCloseIssue,
 		WriteOpLabel,
 		WriteOpRequestReview,
+		WriteOpEditPR,
 		WriteOpReview,
 		WriteOpResolveThread,
 		WriteOpMergePR,

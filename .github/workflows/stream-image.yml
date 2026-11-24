@@ -4,7 +4,7 @@
 #
 # ── Why a sibling of docker.yml, not a row in it ────────────────────────────
 #
-# docker.yml builds the hive binary image: multi-arch, cosign-signed, release
+# docker.yml builds the hive binary image: multi-arch, keyless cosign-signed, release
 # channels, a test-image lane. The streamer is Xvfb + Chromium + ffmpeg plus a
 # 100-line Go proxy — none of that machinery applies, and bolting a second
 # Dockerfile onto docker.yml's matrix would make the hive image's publish gate

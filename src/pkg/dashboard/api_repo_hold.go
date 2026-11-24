@@ -602,7 +602,7 @@ func (s *Server) applyRepoHoldToStatus(repoFull string, number int, itemType str
 		status.TimeZone = dashboardTimeZoneName()
 	}
 	s.lastFullBroadcast = time.Now()
-	data, err := json.Marshal(s.statusWithOverviewBands(status, time.Now().UTC()))
+	data, err := json.Marshal(s.statusForDashboard(status, time.Now().UTC()))
 	s.statusMu.Unlock()
 
 	if err != nil {

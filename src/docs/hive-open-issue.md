@@ -10,6 +10,8 @@ server-side, retried with backoff, and deduplicated against open issues by
 title — exact match first, canonical subject as the fallback (see
 [Idempotency](#idempotency)).
 
+The watcher only runs when the hive has a usable GitHub App. On a PAT-only hive, requests stay queued on disk, unprocessed. See [GitHub App setup](github-app-setup.md).
+
 ## Why it exists
 
 The direct path rode the agent's own shell tool, and that path lost work
@@ -33,13 +35,14 @@ enforces the same per-agent mode gate (`CanCreateIssues`, mode ≥
 this shim **adds no privilege**. The same `CanCreateIssues` gate covers all
 kinds (issue, comment, claim, close, label, request-review): commenting,
 claiming, labeling and requesting review are all issue-writes under the same
-tier.
+tier. `edit-pr` is a PR write and needs `CanCreatePRs` (`ISSUES_AND_PRS`),
+the tier of the direct `PATCH /pulls/{n}`.
 
 ## Usage
 
 Shapes are selected by an optional leading positional keyword (`comment`,
-`claim`, `close`, `label` or `request-review`; the default with no keyword is
-`issue`):
+`claim`, `close`, `label`, `request-review` or `edit-pr`; the default with no
+keyword is `issue`):
 
 ```sh
 hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n|owner/repo#n>] [--blocked-by <n[,n]>] [--needs-decision] [--no-consolidate <reason>] [--claim]
@@ -47,14 +50,15 @@ hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--blocked
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
 hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b] [--team-reviewer t]
+hive-open-issue edit-pr --repo <owner/repo> <number|url> [--title "<t>"] [--body "<b>"|--body-file f]
 ```
 
 | Flag | Aliases | Applies to | Notes |
 | --- | --- | --- | --- |
 | `--repo` | `-R` | all | required |
-| `--title` | `-t` | issue | required for `issue`; must start with `[<your agent name>]` (`[scanner] …`) — the watcher and the proxy's `gh issue create` path both add the tag when it is missing and never double it |
-| `--body` | `-b` | issue, comment | required for `issue` and `comment`; not used by `claim` |
-| `--body-file` | `-F` | issue, comment | reads body from a file; `-` reads stdin |
+| `--title` | `-t` | issue, edit-pr | for `edit-pr`, the PR's new title (omit to keep it); required for `issue`; must start with `[<your agent name>]` (`[scanner] …`) — the watcher and the proxy's `gh issue create` path both add the tag when it is missing and never double it |
+| `--body` | `-b` | issue, comment, edit-pr | required for `issue` and `comment`; for `edit-pr`, the PR's whole new description (omit to keep it); not used by `claim` |
+| `--body-file` | `-F` | issue, comment, edit-pr | reads body from a file; `-` reads stdin |
 | `--label` | `-l`, `--add-label` | issue, label | repeatable; comma-separated values are split |
 | `--remove-label` | — | label | repeatable; labels to take off the item |
 | `--reviewer` | `--add-reviewer` | request-review | repeatable; comma-separated GitHub logins to ask for a review |
@@ -66,7 +70,7 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--no-consolidate` | — | issue | requires a non-empty reason; the watcher skips open-issue consolidation (same-subject, file-set and component folds) and files a new issue, echoing the reason as `consolidation_skipped_reason` in the result and logging it. Use it for unrelated work that only shares a file or component with an open issue ([#14360](https://github.com/hivecommons/hive/issues/14360)). The request carries `"no_consolidate_reason"`. A request that declares `--parent` or `--blocked-by` needs no reason: it is a distinct DAG node and never takes the file-set, component or canonical-subject folds, and a genuine create reports `consolidation_skipped_reason` as `parent` or `blocked_by` ([#16065](https://github.com/hivecommons/hive/issues/16065)) |
 | `--blocked-on-pr` | — | comment | park the issue on open PR `<n>` in the same repo: the watcher prefixes the note with `<!-- hive:blocked-on pr=owner/repo#n -->`, strips `@`-mentions from it, adds the `blocked` label and removes `help wanted` (see [Blocked on an unmerged PR](#blocked-on-an-unmerged-pr)) |
 | `--not-agent-work` | — | comment | record a triage verdict that the issue is not agent work (`not-a-defect`, `needs-human` or `needs-environment`, hivecommons/hive#18675): the watcher posts the note once with `<!-- hive:not-agent-work verdict=<v> -->` and adds `needs-human`, so the issue leaves the Actionable lane and the scanner's work list; the same verdict with no human comment since is dropped (`already_existed`), and a person's later comment re-queues the issue |
-| `--number` | — | comment, claim, close, label, request-review | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
+| `--number` | — | comment, claim, close, label, request-review, edit-pr | the issue/PR number; a bare positional number or a `.../issues/N` or `.../pull/N` URL is also accepted |
 | `--dry-run` | `-n` | all | validate the arguments and print the exact request that would be written, then exit `0` **without writing it** — nothing is created, commented, claimed, or closed. **This is how you test the tool.** A live call creates a real GitHub issue/comment/label change under the hive's App identity |
 
 ### `--repo` is validated before anything is written
@@ -375,6 +379,25 @@ listed in the `.result.json` as `reviewers_already_pending` /
 `team_reviewers_already_pending`, and when everyone named is already pending
 no GitHub call is made (see
 [notifications.md › Review requests](notifications.md#review-requests)).
+
+### `edit-pr`
+
+`--repo`, a PR number or URL, and a non-empty `--title` and/or
+`--body`/`--body-file` are required. The hive replaces the PR's title and/or
+body and audits it as `agent_pr_edited`, naming the fields edited
+([#19399](https://github.com/hivecommons/hive/issues/19399)). A field you
+leave out stays as it is. Use it whenever a follow-up commit makes the PR's
+description stale, for example after answering review, instead of asking a
+maintainer to fix the text; it works whichever lane opened the PR. The body
+replaces the whole description, so start from the current one
+(`gh pr view <n> --json body -q .body`), change only the stale parts, and
+keep the closing keyword and the `-- hive:` trailer.
+
+The watcher edits only a PR one of this hive's accounts opened (the App bot or
+`project.ai_author`), and never a merged one. A person's PR, another bot's PR,
+or one whose author cannot be read is refused as a policy denial: leave a
+comment there instead. The result reports `edited` (`["title", "body"]`). See
+[github-write-surface.md](github-write-surface.md#edit_pr-edits-the-hives-own-pull-requests-only).
 
 ## It is asynchronous, by design
 

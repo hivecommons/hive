@@ -1,8 +1,21 @@
 package retro
 
 import (
+	"sort"
 	"time"
 )
+
+// AdvisorTopErrorReasons is how many distinct error reasons the summary
+// lists, most frequent first.
+const AdvisorTopErrorReasons = 5
+
+// AdvisorErrorReason is one distinct (class, reason) pair and how many
+// decisions in the window recorded it.
+type AdvisorErrorReason struct {
+	Class  string
+	Reason string
+	Count  int
+}
 
 // AdvisorDecisionSummary is the aggregate of the knowledge-advisor decision
 // log: counts and means only. It never carries a slug, ref, agent or kick id
@@ -27,13 +40,26 @@ type AdvisorDecisionSummary struct {
 	TokenSamples         int
 	MeanPromptTokens     float64
 	MeanCompletionTokens float64
+	// ByVerdict counts the model verdicts across both arms (a held-out
+	// decision's outcome hides it); ByBudget counts over-budget decisions by
+	// the budget that was exhausted; ByErrorClass counts error decisions by
+	// class. Records written before these fields existed are not counted.
+	ByVerdict    map[string]int
+	ByBudget     map[string]int
+	ByErrorClass map[string]int
+	// TopErrorReasons is the AdvisorTopErrorReasons most frequent redacted
+	// error reasons, most frequent first (ties by class, then reason).
+	TopErrorReasons []AdvisorErrorReason
 }
 
 // Summarize aggregates the stored decisions at or after since (a zero since
 // takes them all). Records whose timestamp does not parse are counted only
 // when since is zero.
 func (s *AdvisorDecisionStore) Summarize(since time.Time) AdvisorDecisionSummary {
-	out := AdvisorDecisionSummary{ByMode: map[string]int{}, ByArm: map[string]int{}, ByOutcome: map[string]int{}}
+	out := AdvisorDecisionSummary{
+		ByMode: map[string]int{}, ByArm: map[string]int{}, ByOutcome: map[string]int{},
+		ByVerdict: map[string]int{}, ByBudget: map[string]int{}, ByErrorClass: map[string]int{},
+	}
 	if s == nil {
 		return out
 	}
@@ -42,6 +68,7 @@ func (s *AdvisorDecisionStore) Summarize(since time.Time) AdvisorDecisionSummary
 	var latSum int64
 	var promptSum, completionSum int
 	var first, last, rank time.Time
+	reasons := map[AdvisorErrorReason]int{}
 	for _, rec := range s.ring {
 		ts, err := time.Parse(time.RFC3339, rec.Timestamp)
 		if err != nil {
@@ -55,6 +82,16 @@ func (s *AdvisorDecisionStore) Summarize(since time.Time) AdvisorDecisionSummary
 		out.ByMode[rec.Mode]++
 		out.ByArm[rec.Arm]++
 		out.ByOutcome[rec.Outcome]++
+		if rec.Verdict != "" {
+			out.ByVerdict[rec.Verdict]++
+		}
+		if rec.Budget != "" {
+			out.ByBudget[rec.Budget]++
+		}
+		if rec.ErrorClass != "" {
+			out.ByErrorClass[rec.ErrorClass]++
+			reasons[AdvisorErrorReason{Class: rec.ErrorClass, Reason: rec.ErrorReason}]++
+		}
 		if rec.LatencyMS > 0 {
 			out.LatencySamples++
 			latSum += rec.LatencyMS
@@ -84,6 +121,7 @@ func (s *AdvisorDecisionStore) Summarize(since time.Time) AdvisorDecisionSummary
 		out.MeanPromptTokens = float64(promptSum) / float64(out.TokenSamples)
 		out.MeanCompletionTokens = float64(completionSum) / float64(out.TokenSamples)
 	}
+	out.TopErrorReasons = topAdvisorErrorReasons(reasons, AdvisorTopErrorReasons)
 	out.FirstDecision = formatAdvisorTime(first)
 	out.LastDecision = formatAdvisorTime(last)
 	out.RankModeStart = formatAdvisorTime(rank)
@@ -95,4 +133,27 @@ func formatAdvisorTime(t time.Time) string {
 		return ""
 	}
 	return t.UTC().Format(time.RFC3339)
+}
+
+// topAdvisorErrorReasons ranks the (class, reason) counts, most frequent
+// first, and keeps at most limit.
+func topAdvisorErrorReasons(counts map[AdvisorErrorReason]int, limit int) []AdvisorErrorReason {
+	out := make([]AdvisorErrorReason, 0, len(counts))
+	for k, n := range counts {
+		k.Count = n
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		if out[i].Class != out[j].Class {
+			return out[i].Class < out[j].Class
+		}
+		return out[i].Reason < out[j].Reason
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
 }

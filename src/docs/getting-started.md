@@ -52,7 +52,7 @@ None of the level guidance below works until your hive is connected to your git 
 
 **Self-hosted with an already configured PAT?** Verify repository access using
 your runtime guide and the [required scopes](github-app-setup.md#personal-access-token-pat-scopes);
-do not install a second App just to follow this checklist. The App instructions
+do not install a second App just to follow this checklist. A PAT is enough only for L1-L2: **L3 and above need a GitHub App**, because agent issues and PRs go through request relays that start only with a usable App. The App instructions
 below are the normal hosted path. The reclaim warning applies to hosted hives,
 not an unmanaged standalone deployment.
 

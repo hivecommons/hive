@@ -347,8 +347,7 @@ type DedupeCounters struct {
 	SameItemTTLS int  `json:"same_item_ttl_s"`
 }
 
-func (g *Gate) dedupeCountersLocked(now time.Time) DedupeCounters {
-	cfg := g.cfgLocked().Dedupe
+func (g *Gate) dedupeCountersLocked(now time.Time, cfg DedupeConfig) DedupeCounters {
 	c := DedupeCounters{
 		Enabled:      cfg.EnabledOrDefault(),
 		HourlyCap:    cfg.HourlyCapOrDefault(),

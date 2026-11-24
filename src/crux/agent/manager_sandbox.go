@@ -214,6 +214,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 		Runtime:       runtime,
 		EnvAllowlist:  agent.Config.SandboxEnvAllowlist(m.sandboxConfig),
 		NetworkMode:   agent.Config.SandboxNetworkMode(m.sandboxConfig),
+		PidsLimit:     m.sandboxConfig.PidsLimit,
 		Timeout:       time.Duration(agent.Config.SandboxTimeoutS(m.sandboxConfig)) * time.Second,
 		PublishVerify: agent.Config.SandboxPublishVerify(m.sandboxConfig),
 		VerifyTimeout: time.Duration(agent.Config.SandboxPublishVerifyTimeoutS(m.sandboxConfig)) * time.Second,
@@ -223,6 +224,10 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 		// A review kick names its PR(s) in its hive-written header; the
 		// sandbox gets them checked out (hivecommons/hive#18513).
 		ReviewPRs: reviewTargetsFromKickMessage(message, m.project.Org+"/"+repo),
+		// The hardware the Job requests and the setup step it runs, read
+		// from config only (hivecommons/hive#19549, #19574).
+		Environment: sandboxEnvironmentForLauncher(launcher, runtime, agent.Config.SandboxJob(m.sandboxConfig), agent.Config.SandboxPreflight(m.sandboxConfig)).
+			withSetup(launcher, agent.Config.SandboxSetup(m.sandboxConfig)),
 	}
 	if spec.AgentConfig.Backend == "cline" {
 		spec.AgentConfig.Model = agent.effectiveModel()

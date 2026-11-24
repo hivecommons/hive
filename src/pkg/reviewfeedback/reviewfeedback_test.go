@@ -171,7 +171,7 @@ func TestBuildBrief_CarriesWholeThreadAndLatestPositionRules(t *testing.T) {
 	}
 	for _, want := range []string{
 		"(the hive, your earlier reply)", "NEW id inline:3", "apply the LATEST position", "Wrong facts about people first",
-		"re-verify the source the reviewer cites", "too positive on one point and too negative", "hivectl knowledge create",
+		"re-verify the source the reviewer cites", "too positive on one point and too negative", "a person needs to record it",
 		"do NOT write there", "what you verified, what you changed",
 	} {
 		if !strings.Contains(brief, want) {
@@ -208,6 +208,22 @@ func TestBuildBrief_RequiredInstructionsAndDataFencing(t *testing.T) {
 	}
 	if strings.Count(brief, "```") != 4 {
 		t.Errorf("a comment broke out of its fence: %d fence markers", strings.Count(brief, "```"))
+	}
+}
+
+// A follow-up commit that answers review can leave the PR description stale;
+// the brief tells the agent to refresh it itself through the edit_pr relay
+// rather than ask a maintainer (#19399).
+func TestBuildBrief_RefreshesStaleDescriptionThroughRelay(t *testing.T) {
+	brief := BuildBrief("o/r", 12, "fix/x", "", []github.FeedbackItem{item("inline:1")})
+	for _, want := range []string{
+		"re-read the PR title and body against the new diff",
+		"hive-open-issue edit-pr --repo OWNER/REPO N --body-file FILE",
+		"Do not ask a maintainer or another lane to fix the description",
+	} {
+		if !strings.Contains(brief, want) {
+			t.Errorf("brief missing %q", want)
+		}
 	}
 }
 

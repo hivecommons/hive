@@ -37,6 +37,7 @@ const (
 // issues, list open pull requests) and the write path (comment, add/remove
 // labels, hold gate). Gitea and Forgejo share this API surface.
 type giteaForge struct {
+	label   string
 	baseURL string // instance root, no trailing slash, no /api/v1
 	token   string
 	org     string
@@ -51,18 +52,27 @@ type giteaForge struct {
 // Unlike GitHub/GitLab there is no single public Gitea SaaS host, so a BaseURL
 // is required — an empty BaseURL is an error rather than a silent default.
 func newGiteaForge(token string, opts Options) (*giteaForge, error) {
+	return newGiteaFamilyForge(KindGitea, token, opts)
+}
+
+// newGiteaFamilyForge builds the REST client shared by the gitea and forgejo
+// kinds. kind names the adapter in error messages and display text.
+func newGiteaFamilyForge(kind Kind, token string, opts Options) (*giteaForge, error) {
+	label := string(kind)
+	display := strings.ToUpper(label[:1]) + label[1:]
 	base := strings.TrimRight(opts.BaseURL, "/")
 	if base == "" {
-		return nil, fmt.Errorf("gitea: BaseURL is required (no public Gitea default)")
+		return nil, fmt.Errorf("%s: BaseURL is required (no public %s default)", label, display)
 	}
 	u, err := url.Parse(base)
 	if err != nil {
-		return nil, fmt.Errorf("gitea: invalid base URL %q: %w", base, err)
+		return nil, fmt.Errorf("%s: invalid base URL %q: %w", label, base, err)
 	}
 	if u.Scheme == "" || u.Host == "" {
-		return nil, fmt.Errorf("gitea: base URL %q must be absolute (scheme + host)", base)
+		return nil, fmt.Errorf("%s: base URL %q must be absolute (scheme + host)", label, base)
 	}
 	return &giteaForge{
+		label:   label,
 		baseURL: base,
 		token:   token,
 		org:     opts.Org,
@@ -100,10 +110,12 @@ type gtLabel struct {
 type gtIssue struct {
 	Number      int       `json:"number"`
 	Title       string    `json:"title"`
+	Body        string    `json:"body"`
 	State       string    `json:"state"`
 	Labels      []gtLabel `json:"labels"`
 	HTMLURL     string    `json:"html_url"`
 	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 	User        gtUser    `json:"user"`
 	Assignees   []gtUser  `json:"assignees"`
 	PullRequest *gtPRStub `json:"pull_request"`
@@ -153,7 +165,7 @@ func (f *giteaForge) GetRepo(ctx context.Context, repo string) (*Repo, error) {
 	endpoint := fmt.Sprintf("/repos/%s/%s", url.PathEscape(owner), url.PathEscape(name))
 	var r gtRepo
 	if err := f.getJSON(ctx, endpoint, nil, &r); err != nil {
-		return nil, fmt.Errorf("gitea: get repo %s/%s: %w", owner, name, err)
+		return nil, fmt.Errorf("%s: get repo %s/%s: %w", f.label, owner, name, err)
 	}
 	full := r.FullName
 	if full == "" {
@@ -207,12 +219,14 @@ func (f *giteaForge) ListOpenIssues(ctx context.Context, repo string) ([]Issue, 
 				State:     it.State,
 				CreatedAt: it.CreatedAt,
 				URL:       it.HTMLURL,
+				Body:      it.Body,
+				UpdatedAt: it.UpdatedAt,
 			})
 		}
 		return len(page), nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gitea: list issues for %q: %w", slug, err)
+		return nil, fmt.Errorf("%s: list issues for %q: %w", f.label, slug, err)
 	}
 	return out, nil
 }
@@ -249,7 +263,7 @@ func (f *giteaForge) ListOpenChangeRequests(ctx context.Context, repo string) ([
 		return len(page), nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("gitea: list pull requests for %q: %w", slug, err)
+		return nil, fmt.Errorf("%s: list pull requests for %q: %w", f.label, slug, err)
 	}
 	return out, nil
 }
@@ -265,7 +279,7 @@ func (f *giteaForge) CreateIssueComment(ctx context.Context, repo string, number
 	endpoint := fmt.Sprintf("/repos/%s/%s/issues/%d/comments", url.PathEscape(owner), url.PathEscape(name), number)
 	payload := map[string]string{"body": body}
 	if err := f.doWrite(ctx, http.MethodPost, endpoint, payload, nil); err != nil {
-		return fmt.Errorf("gitea: comment on %s/%s#%d: %w", owner, name, number, err)
+		return fmt.Errorf("%s: comment on %s/%s#%d: %w", f.label, owner, name, number, err)
 	}
 	return nil
 }
@@ -281,7 +295,7 @@ func (f *giteaForge) AddLabels(ctx context.Context, repo string, number int, lab
 	endpoint := fmt.Sprintf("/repos/%s/%s/issues/%d/labels", url.PathEscape(owner), url.PathEscape(name), number)
 	payload := map[string]any{"labels": labels}
 	if err := f.doWrite(ctx, http.MethodPost, endpoint, payload, nil); err != nil {
-		return fmt.Errorf("gitea: add labels to %s/%s#%d: %w", owner, name, number, err)
+		return fmt.Errorf("%s: add labels to %s/%s#%d: %w", f.label, owner, name, number, err)
 	}
 	return nil
 }
@@ -296,7 +310,7 @@ func (f *giteaForge) RemoveLabel(ctx context.Context, repo string, number int, l
 		url.PathEscape(owner), url.PathEscape(name), number, url.PathEscape(label))
 	okNotFound := func(status int) bool { return status == http.StatusNotFound }
 	if err := f.doWrite(ctx, http.MethodDelete, endpoint, nil, okNotFound); err != nil {
-		return fmt.Errorf("gitea: remove label from %s/%s#%d: %w", owner, name, number, err)
+		return fmt.Errorf("%s: remove label from %s/%s#%d: %w", f.label, owner, name, number, err)
 	}
 	return nil
 }
@@ -347,20 +361,20 @@ func (f *giteaForge) getPull(ctx context.Context, owner, name string, number int
 // is called — and Gitea's own refusals map onto the same sentinels.
 func (f *giteaForge) Merge(ctx context.Context, repo string, number int, opts MergeOptions) error {
 	if strings.TrimSpace(repo) == "" {
-		return fmt.Errorf("gitea: merge: repo is required")
+		return fmt.Errorf("%s: merge: repo is required", f.label)
 	}
 	if number <= 0 {
-		return fmt.Errorf("gitea: merge: change number must be > 0 (got %d)", number)
+		return fmt.Errorf("%s: merge: change number must be > 0 (got %d)", f.label, number)
 	}
 	style, ok := giteaMergeStyles[strings.ToLower(strings.TrimSpace(opts.Strategy))]
 	if !ok {
-		return fmt.Errorf("gitea: unsupported merge strategy %q", opts.Strategy)
+		return fmt.Errorf("%s: unsupported merge strategy %q", f.label, opts.Strategy)
 	}
 	owner, name := f.ownerRepo(repo)
 	slug := owner + "/" + name
 	pr, err := f.getPull(ctx, owner, name, number)
 	if err != nil {
-		return fmt.Errorf("gitea: check pull request %s#%d: %w", slug, number, err)
+		return fmt.Errorf("%s: check pull request %s#%d: %w", f.label, slug, number, err)
 	}
 	if pr.Merged {
 		return fmt.Errorf("%w: %s#%d", ErrAlreadyMerged, slug, number)
@@ -383,12 +397,12 @@ func (f *giteaForge) Merge(ctx context.Context, repo string, number int, opts Me
 	}
 	buf, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("gitea: encoding merge request: %w", err)
+		return fmt.Errorf("%s: encoding merge request: %w", f.label, err)
 	}
 	u := f.baseURL + giteaAPIPath + endpoint
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(buf))
 	if err != nil {
-		return fmt.Errorf("gitea: building merge request: %w", err)
+		return fmt.Errorf("%s: building merge request: %w", f.label, err)
 	}
 	f.setAuth(req)
 	req.Header.Set("Content-Type", "application/json")
@@ -396,7 +410,7 @@ func (f *giteaForge) Merge(ctx context.Context, repo string, number int, opts Me
 
 	resp, err := f.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("gitea: request to %s: %w", endpoint, err)
+		return fmt.Errorf("%s: request to %s: %w", f.label, endpoint, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -455,7 +469,7 @@ func (f *giteaForge) Merge(ctx context.Context, repo string, number int, opts Me
 		return fmt.Errorf("%w: %s#%d: %s", ErrNotMergeable, slug, number, msg)
 	}
 
-	return fmt.Errorf("gitea: API %s returned status %d: %s", endpoint, resp.StatusCode, truncate(string(data), 200))
+	return fmt.Errorf("%s: API %s returned status %d: %s", f.label, endpoint, resp.StatusCode, truncate(string(data), 200))
 }
 
 // giteaPageFunc processes one page body and returns the number of items it
@@ -519,7 +533,7 @@ func (f *giteaForge) getRaw(ctx context.Context, endpoint string, q url.Values) 
 
 	data, readErr := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("gitea API %s returned status %d: %s", endpoint, resp.StatusCode, truncate(string(data), 200))
+		return nil, fmt.Errorf("%s API %s returned status %d: %s", f.label, endpoint, resp.StatusCode, truncate(string(data), 200))
 	}
 	if readErr != nil {
 		return nil, fmt.Errorf("reading body from %s: %w", endpoint, readErr)
@@ -563,7 +577,7 @@ func (f *giteaForge) doWrite(ctx context.Context, method, endpoint string, paylo
 	if okStatus != nil && okStatus(resp.StatusCode) {
 		return nil
 	}
-	return fmt.Errorf("gitea API %s returned status %d: %s", endpoint, resp.StatusCode, truncate(string(data), 200))
+	return fmt.Errorf("%s API %s returned status %d: %s", f.label, endpoint, resp.StatusCode, truncate(string(data), 200))
 }
 
 // setAuth sets the token Authorization header when a token is configured.

@@ -25,8 +25,9 @@ func (b *boot) knowledgeAdvisorDecisions() *retro.AdvisorDecisionStore {
 }
 
 // recordDecision writes the compact decision record: agent, kick, the kick's
-// primed refs, mode, arm, outcome and slug. The model's reason and the pane
-// text are never stored. slug is the delivered entry, or the model's valid
+// primed refs, mode, arm, outcome, slug, and for a failed or refused call
+// the verdict, budget and redacted error class and reason. The model's reason
+// and the pane text are never stored. slug is the delivered entry, or the model's valid
 // pick when nothing was delivered (a holdout keeps what it withheld).
 func (d *knowledgeAdviserLLM) recordDecision(agent string, kick scheduler.KickSummary, r config.ResolvedAdvisorLLM, dec knowledgeAdviserLLMDecision, outcome string, out []crux.KnowledgeAdvice) {
 	if d.decisions == nil {
@@ -51,5 +52,10 @@ func (d *knowledgeAdviserLLM) recordDecision(agent string, kick scheduler.KickSu
 		LatencyMS:        dec.latency.Milliseconds(),
 		PromptTokens:     dec.promptTokens,
 		CompletionTokens: dec.completionTokens,
+
+		Verdict:     dec.verdict,
+		Budget:      dec.budget,
+		ErrorClass:  dec.errClass,
+		ErrorReason: dec.errReason,
 	})
 }

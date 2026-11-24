@@ -121,8 +121,12 @@ Agents (and external tools) can fetch what the primer did not push:
 `GET /api/knowledge/toc` and `/api/knowledge/entry/{id}` (pass `agent=` to
 apply that agent's scope), `GET /api/knowledge/effective?agent=` to see what
 a given agent is allowed to see and why entries are excluded, the public
-`POST /mcp/knowledge` MCP (`knowledge_toc`, `knowledge_get`), `hivectl
-knowledge search|list`, and `bd kb search` inside the pod. See
+`POST /mcp/knowledge` MCP (`knowledge_toc`, `knowledge_get`), and `bd kb
+search` inside the pod. Operators and external tools can also use `hivectl
+knowledge search|list`; `hivectl` is not installed in agent sandboxes, so
+agent-facing prompts do not name it. An agent records a reviewer-stated rule
+with the `hive:review-rules` reply block instead (see
+[review-feedback-rules.md](review-feedback-rules.md#the-agents-structured-block)). See
 [knowledge-toc.md](knowledge-toc.md) and
 [public-knowledge-mcp.md](public-knowledge-mcp.md).
 
@@ -188,7 +192,31 @@ flowchart LR
   counter (`max_calls_per_day`, default and ceiling 300). An exhausted budget
   makes no request and is handled like an error. A call the endpoint answered
   with 429 is handed back to both budgets: a throttled hour must not also
-  become an over-budget hour.
+  become an over-budget hour. A call the endpoint refused without running a
+  completion (any other non-200 status, or no HTTP response at all) is also
+  handed back, and charged instead to a separate error ledger with the same
+  shape: at most 6 refused calls per agent per hour and 300 per UTC day
+  (never more, even with `budget_override`, and never more than the
+  configured call budget). When the error ledger is full the decision is
+  `over-budget` with `budget=error-agent-hour` or `budget=error-fleet-day`
+  and no request is made, so a broken endpoint is still asked only a bounded
+  number of times. A timeout and a 200 that does not decode stay charged:
+  the upstream may have run the completion.
+- **Errors.** An `error` decision carries `error_class` (`auth` for 401/403,
+  `rejected` for any other 4xx, `upstream` for 5xx, `transport` when no HTTP
+  response came back, `config` when nothing was sent, `decode` for a 200
+  that was not a completion) and `error_reason`: the HTTP status, the
+  provider's error code and its message, scrubbed of credential-shaped text
+  and capped at 160 characters. Both are on the decision log line, in the
+  decision store and in the summary route's `errors` block.
+- **Key files.** `api_key_file` is read through the keystore, so a file
+  sealed at rest (`/data/copilot-user-token` once `HIVE_SECRETS_KEY` is set)
+  yields the token, not the envelope. Before this, the advisor sent the
+  sealed envelope as its bearer token and every call was refused with a 400.
+  When shadow or rank cannot make a call (no model, endpoint or key, or a key
+  file that cannot be read or opened), boot logs `knowledge advisor: ranking
+  pass is misconfigured` at WARN and the summary route returns the reason as
+  `settings.problem`.
 - **Pacing (429s).** The advisor usually shares its upstream quota with the
   agents (on the Copilot API, the same user token every `copilot` agent
   spends), and holdout kicks make the call too, so N agents entering scopes
@@ -218,12 +246,15 @@ flowchart LR
   `timeout`, `over-budget`, `rate-limited`, `error`); `outcome` is what
   happened to delivery (`delivered`, `held-out`, `gated` when the kick moved
   during the call, `fallback-matcher`, or the verdict when nothing was typed).
-  Over-budget lines also carry `budget=agent-hour|fleet-day`; rate-limited
-  lines carry `retry_after_s` and `retried`. Delivered lines still land in
+  Over-budget lines also carry
+  `budget=agent-hour|fleet-day|error-agent-hour|error-fleet-day`; rate-limited
+  lines carry `retry_after_s` and `retried`; error lines carry `error_class`
+  and `error_reason`. Delivered lines still land in
   the prompt history under trigger `knowledge-advisor`.
 - **Decision store.** Each decision, held-out ones included, also appends one
   compact record (agent, kick id, the kick's primed issue/PR refs, mode, arm
-  `shadow|deliver|holdout`, outcome, slug; never the reason or pane text) to
+  `shadow|deliver|holdout`, outcome, slug, and the verdict, exhausted budget
+  and redacted error class and reason; never the model's reason or pane text) to
   `/data/knowledge-advisor-decisions.jsonl`, which the retro lane reads to
   assign each bead its advisor arm (see
   [retro-lane.md](retro-lane.md#knowledge-advisor-arm)). The record schema is

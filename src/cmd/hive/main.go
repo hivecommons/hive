@@ -19,6 +19,7 @@ import (
 	"time"
 
 	cruxconfig "github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/posture"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 
 	gh "github.com/google/go-github/v72/github"
@@ -543,6 +544,14 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	// fleetreport.ClassUnclassifiedRepeated).
 	b.logger = slog.New(slogfeed.New(logscrub.NewHandler(slog.NewJSONHandler(deps.stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))))
 	slog.SetDefault(b.logger)
+
+	// Containment posture (#19458): warn on every gap; HIVE_REQUIRE_HARDENED
+	// turns any gap into a startup failure.
+	if err := posture.Boot(b.logger, deps.getenv); err != nil {
+		b.logger.Error("refusing to start without required containment", "error", err.Error())
+		deps.exit(1)
+		return false
+	}
 
 	// Process singleton: refuse to become a second hive process in this
 	// container (#2453, #2496). Two concurrent processes beat as the same pod,
@@ -2435,6 +2444,26 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		return joinDone(relaysDone, sweepDone)
 	}, b.logger)
 	b.armRequestRelays(b.ghClient)
+	// A forge-only hive has no GitHub client, so the relays above never
+	// start; its PR and issue requests are served through the forge instead
+	// (hivecommons/hive#19670), with the same manager authorizers. The relay
+	// idles on each scan unless every repo is off GitHub, so a reload either
+	// way hands the queues to the right relays. It stops with b.ctx, which
+	// is all shutdown needs, so its done channel is not joined.
+	if deps.startForgeRequestRelay != nil {
+		_ = deps.startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
+			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger))
+	}
+	// Forgejo repos (#19671): the GitHub sweeps above skip them
+	// (RepoOnGitHub), so they get their own automerge and close-on-merge
+	// sweeps. These need no GitHub client, so a Forgejo-only hive runs them.
+	if b.ctx != nil {
+		startForgejoSweeps(b.ctx, func() *config.Config { return b.cfg }, forgejoSweepDeps{
+			Mutation: b.mutationBoundary,
+			Gate:     b.writebackGate(),
+			Logger:   b.logger,
+		}, forgejoSweepInterval)
+	}
 	b.integrationEligibility = func(ctx context.Context, repo, base string, number int, head string) (*gh.PullRequest, string, error) {
 		client := b.currentGitHubClient()
 		if client == nil {
@@ -3666,6 +3695,17 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		svc.hubImport = func(ctx context.Context, person string) {
 			b.runCustomersHubImport(ctx, b.customersMentionConfig(), person)
 		}
+		// #19302: fill profile fields from each customer's public forge
+		// profile (backfill, periodic refresh, on accept and on demand).
+		// Off unless customers.profile_fill.enabled.
+		svc.profileFill = newCustomersProfileFill(svc.svc.Store(), customersProfileFillDeps{
+			cfg:         b.customersMentionConfig,
+			client:      b.currentGitHubClient,
+			linearToken: b.dashSrv.LinearAgentAccessToken,
+			orgs:        newCustomersOrgNames(),
+			logger:      b.logger,
+		})
+		b.cleanup.push(svc.startCustomersProfileFill(b.ctx))
 		// Customers enrichment: public affiliation from cncf/gitdm, off
 		// unless customers.enrichment and its gitdm switch are on.
 		wireCustomersEnrichment(svc.svc, customersDataDir, b.customersMentionConfig, b.logger)
@@ -3947,7 +3987,7 @@ func (b *boot) bootPoliciesWith(deps bootPoliciesDeps) {
 func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 
 func syncForgeCredentialEnv(cfg *config.Config) {
-	cruxconfig.AddExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName())
+	cruxconfig.AddExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName(), cfg.Forgejo.TokenEnvName())
 }
 
 // bootWatchersWith is bootWatchers with its long-lived effects injected; see
@@ -4004,7 +4044,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		prevGitHub := b.cfg.GitHub
 
 		// Swap the in-memory config pointer contents
-		*b.cfg = *newCfg
+		b.cfg.ReplaceFromReload(newCfg)
 		nextACMMLevel = b.cfg.ACMMLevelOrZero()
 
 		// Re-sync subsystems that cache config values
@@ -4134,12 +4174,27 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 			}
 		}
 
+		// Rebuild the PAT client when github.token was rotated in hive.yaml
+		// (hivecommons/hive#19633). The PAT client is built once at boot, so
+		// without this the old token kept being used until a restart. App mode
+		// is untouched: it rebuilds above on App identity changes.
+		if !b.cfg.GitHub.HasApp() && b.cfg.GitHub.Token != "" && prevGitHub.Token != b.cfg.GitHub.Token {
+			newClient := b.newConfiguredGitHubPATClient(b.cfg.GitHub.Token)
+			b.adoptGitHubClient(newClient, nil)
+			deps.refreshAgentTokens(b.ctx, b.agentMgr)
+			b.logger.Info("github token client rebuilt after config reload")
+		}
+
 		b.refreshDashboard()
 		return prevACMMLevel, nextACMMLevel
 	}
 	b.configWatcher = deps.newConfigWatcher(b.configPath, b.submitConfigReload, b.logger)
 	config.SetSaveObserver(b.configWatcher.SkipNext)
 	b.dashSrv.SetSkipReloadFunc(b.configWatcher.SkipNext)
+	// A save that refuses to overwrite a file edited on disk asks for a
+	// reload, so the edit reaches memory even if no watch event arrived
+	// (hivecommons/hive#19561).
+	config.SetExternalChangeObserver(func(string) { b.configWatcher.Trigger() })
 	deps.startConfigWatcher(b.ctx, b.configWatcher)
 
 	// Persist operator pause/resume into the on-disk config so it survives
@@ -4177,6 +4232,12 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	var knowledgeAdviserImpl crux.KnowledgeAdviser = knowledgeMatcher
 	if _, ok := b.cfg.KnowledgeAdvisorLLM(); ok {
 		knowledgeAdviserImpl = newKnowledgeAdviserLLM(b, knowledgeMatcher)
+	}
+	if problem := b.cfg.KnowledgeAdvisorLLMProblem(); problem != "" {
+		// Shadow or rank is asked for but cannot make a model call; say so
+		// instead of resolving silently to the phase-1 matcher or to a call
+		// the endpoint refuses every time (#17054 evidence pass 2).
+		b.logger.Warn("knowledge advisor: ranking pass is misconfigured", "problem", problem)
 	}
 	b.agentMgr.SetKnowledgeAdviser(knowledgeAdviserImpl)
 
@@ -5896,7 +5957,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					"was_org", b.cfg.Project.Org, "now_org", pc.Org,
 					"repos", pc.Repos, "primary_repo", pc.PrimaryRepo,
 					"acmm_level", pc.ACMMLevel)
-				b.cfg.Project.Org = pc.Org
+				b.cfg.SetProjectOrg(pc.Org)
 				b.cfg.Project.Repos = pc.Repos
 				b.cfg.Project.PrimaryRepo = pc.PrimaryRepo
 				// Only adopt a non-empty author. The hub echoes this struct back on
@@ -6210,12 +6271,17 @@ func (b *boot) bootLanes() {
 	}
 	if b.dashSrv != nil {
 		// Read-only rank-versus-holdout summary route (#18897). The arm
-		// comparison needs the retro lane; the decision counts do not.
-		var armSummary func() []retro.ArmSummary
+		// attribution makes no model call, so it runs whether or not the
+		// retro findings lane is enabled (#19577).
+		var armReport func() retro.AdvisorArmReport
 		if b.retroLane != nil {
-			armSummary = b.retroLane.AdvisorArmSummary
+			armReport = b.retroLane.AdvisorArmReport
+		} else if len(b.beadStores) > 0 {
+			attribution := retro.NewAdvisorAttribution(b.beadStores, b.beadStores[retro.Actor], b.dashSrv.LifecycleTimeline(), getEscalationStore(), b.logger)
+			attribution.SetAdvisorDecisions(b.knowledgeAdvisorDecisions())
+			armReport = attribution.Report
 		}
-		b.dashSrv.SetKnowledgeAdvisorSummary(b.knowledgeAdvisorDecisions(), armSummary)
+		b.dashSrv.SetKnowledgeAdvisorSummary(b.knowledgeAdvisorDecisions(), armReport)
 	}
 }
 

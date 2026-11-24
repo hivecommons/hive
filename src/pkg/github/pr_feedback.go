@@ -115,6 +115,10 @@ type PRFeedback struct {
 	// resolved or addressed state, oldest first. Rule capture reads these
 	// (hivecommons/hive#19136); kick routing reads Items.
 	RuleCandidates []FeedbackItem
+	// AddressedChangeRequests are the people's standing CHANGES_REQUESTED
+	// reviews whose every point the hive has handled
+	// (hivecommons/hive#19538): the sweep re-requests those reviewers.
+	AddressedChangeRequests []AddressedChangeRequest
 }
 
 // Open reports whether the PR can still take a revision.
@@ -185,16 +189,17 @@ func (c *Client) FetchPRFeedback(ctx context.Context, repo string, number int) (
 		state = "closed"
 	}
 	return PRFeedback{
-		State:           state,
-		Draft:           raw.IsDraft,
-		HeadRef:         raw.HeadRefName,
-		HeadSHA:         raw.HeadRefOid,
-		LastHiveReplyAt: LastHiveReplyAt(raw.rawPRConversation, c.isHiveAuthor),
-		Items:           UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.addressesHive),
-		Source:          source,
-		HiveReplies:     HiveRuleReplies(raw.rawPRConversation, c.isHiveAuthor),
-		AgentReplies:    HiveFeedbackReplies(raw.rawPRConversation, c.isHiveAuthor),
-		RuleCandidates:  RuleCandidates(raw.rawPRConversation, c.isHumanFeedbackAuthor),
+		State:                   state,
+		Draft:                   raw.IsDraft,
+		HeadRef:                 raw.HeadRefName,
+		HeadSHA:                 raw.HeadRefOid,
+		LastHiveReplyAt:         LastHiveReplyAt(raw.rawPRConversation, c.isHiveAuthor),
+		Items:                   UnansweredFeedback(raw.rawPRConversation, c.isHumanFeedbackAuthor, c.isAgentCommentAuthor, c.isHiveIdentityComment, c.addressesHive),
+		Source:                  source,
+		HiveReplies:             HiveRuleReplies(raw.rawPRConversation, c.isHiveAuthor),
+		AgentReplies:            HiveFeedbackReplies(raw.rawPRConversation, c.isHiveAuthor),
+		RuleCandidates:          RuleCandidates(raw.rawPRConversation, c.isHumanFeedbackAuthor),
+		AddressedChangeRequests: AddressedChangeRequests(raw.rawPRConversation, raw.HeadRefOid, c.isHumanFeedbackAuthor, c.isHiveIdentityComment),
 	}, nil
 }
 
@@ -338,15 +343,19 @@ func handledIDsIn(body string) []string {
 // A review with an empty body (inline threads only) contributes nothing
 // itself; its inline comments are the feedback. The draft state, labels and
 // repo lane of the PR play no part. isHive says whether a comment is the
-// hive's own; addressed says whether a conversation comment is aimed at it.
-func UnansweredFeedback(raw rawPRConversation, isHuman func(*rawPRCommentAuthor) bool, isHive func(*rawPRCommentAuthor, string) bool, addressed func(string) bool) []FeedbackItem {
+// hive's own (a thread reply); isHiveIdentity says whether a comment was
+// posted by the hive's own login, and only such a comment's handled marker
+// counts: the marker is a plain hidden comment anyone can paste, and it
+// carries the "-- hive:" trailer prefix isHive accepts (hivecommons/hive#19547).
+// addressed says whether a conversation comment is aimed at the hive.
+func UnansweredFeedback(raw rawPRConversation, isHuman func(*rawPRCommentAuthor) bool, isHive, isHiveIdentity func(*rawPRCommentAuthor, string) bool, addressed func(string) bool) []FeedbackItem {
 	handled := map[string]bool{}
 	hiveComments := append(append([]rawPRComment{}, raw.Comments.Nodes...), raw.Reviews.Nodes...)
 	for _, th := range raw.ReviewThreads.Nodes {
 		hiveComments = append(hiveComments, th.Comments.Nodes...)
 	}
 	for _, rc := range hiveComments {
-		if rc.Author != nil && isHive != nil && isHive(rc.Author, rc.Body) {
+		if rc.Author != nil && isHiveIdentity != nil && isHiveIdentity(rc.Author, rc.Body) {
 			for _, id := range handledIDsIn(rc.Body) {
 				handled[id] = true
 			}

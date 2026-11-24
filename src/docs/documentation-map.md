@@ -17,6 +17,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 ### First installation
 
 - [Hosted Hive Hub onboarding](hosted-hub.md) — signing in at `https://hive.hivecommons.dev`, requesting a hosted hive, installing the GitHub App, configuring model gateways and Copilot login, reading `/fleet`, and fixing common setup problems.
+- [Ask AI help](ask-ai-help.md) — the optional Ask panel on the hub and hive dashboards: what leaves, consent, hub relay and direct modes, configuration keys and the docs-link fallback (#19177).
 - [Hub Fleet activity page](hub-fleet-activity.md) — the read-only `/activity` board of open issues and PRs across the hives you can see: per-viewer scoping, hive chips, group-by-hive freshness headers, always-visible truncation and stale-source disclosures, 15-second ETag polling, and display mode (`?kiosk=1`, `?display=1`, `am.*` views and `hub-activity` playlists).
 - [Docker Compose quick start](quickstart-docker-compose.md) — default standalone installation, prerequisites, and verification.
 - [Podman quick start](quickstart-podman.md) — standalone Quadlet/systemd installation, with rootless/rootful prerequisites.
@@ -59,6 +60,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 
 - [Work source providers](integrations/work-source-providers.md) — **Developer:** implement an adapter. To configure an existing tracker, use [Work sources](work-sources.md).
 - [Forges: GitLab, Gitea and Forgejo](integrations/forges.md) — `project.forge`, the `gitlab:`/`gitea:` keys, which `pkg/forge` operations each adapter supports, which governor writes already use them, and how the dashboard shows the forge.
+- [Forgejo](integrations/forgejo.md): what Hive does with a Forgejo repository on v5 today (partial, in progress), the `forgejo:` config keys, and the open work in [#19494](https://github.com/hivecommons/hive/issues/19494).
 - [OpenBao Transit as the spoke keystore](integrations/openbao.md) — **Opt-in:** `HIVE_KEYSTORE_PROVIDER=openbao` seals the spoke's secrets at rest through an OpenBao transit engine; the `HIVE_OPENBAO_*` variables, token and Kubernetes auth, rotation, the refuse-to-boot failure mode and a dev-mode walkthrough.
 - [Hive Labels and Control Signals](labels-and-control-signals.md) — authoritative operator reference for labels, holds, approvals, contributor skip labels, planning labels, and dashboard bands. The old [Hive issue labels](issue-labels.md) page redirects here.
 - [GitHub webhooks: cadence, patch and reconcile](webhooks.md) — configure event-driven updates, understand snapshot accuracy, and diagnose fallback to polling.
@@ -252,6 +254,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [CNCF reference architecture](cncf-reference-architecture.md) — CNCF submission/reference template.
 - [Podman CI runner map](podman-ci-runner-map.md) — measured hosted-runner capabilities and which Podman lane goes where; SELinux is the only lane needing non-hosted infrastructure.
 - [CI runner labels](ci-runner-labels.md) — how `runs-on:` picks the self-hosted fleet, why a fork must degrade to a GitHub-hosted runner, and the one variable `hivecommons` sets.
+- [Contributing drift gate](contributing-drift-gate.md) - the reusable workflow that fails a repo's CI when a command it runs is not mentioned in its CONTRIBUTING.md or README.md, its exemptions file, and how a sibling repo pins it by SHA.
 - [Refresh-only heads](ci-refresh-only-heads.md) - which heavy CI jobs (Docker multi-arch, FOSSA, Mutation) skip a verified hive App base refresh that leaves the PR diff unchanged, and the fail-safe proof behind the skip.
 - [Session taint design](design/session-taint.md) - **design/proposal:** a session-level record of what an agent has read and the rules that would hold or deny later pushes, comments and PRs against it, off by default with an observe-only first phase (RFC #18987).
 - [Gate-integrity invariants for agent lanes](design/gate-integrity-invariants.md) — proposed write-gate rules for agent lanes: no history rewrites on branches a lane did not create, no sign-off on other authors' commits, and hold-gated demotion for gate manipulation.

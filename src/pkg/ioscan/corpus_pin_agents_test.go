@@ -1,7 +1,7 @@
 package ioscan_test
 
 // Drift guard for the pinned coding-agent injection corpus (RepoGuardBench) and
-// the held-out benign corpus of real GitHub issue text (#19515). Hashes live in
+// the benign corpus of real GitHub issue text (#19515, grown in #19461). Hashes live in
 // each directory's MANIFEST.json; changing a file means updating its pin on purpose.
 
 import (
@@ -112,5 +112,5 @@ func TestRealIssueBenignCorpusMatchesPinnedHashes(t *testing.T) {
 }
 
 func TestRealIssueBenignCorpusRowsAreWellFormed(t *testing.T) {
-	checkCorpusRows(t, filepath.Join(realIssuesDir, "github-issues.jsonl"), "benign", 40)
+	checkCorpusRows(t, filepath.Join(realIssuesDir, "github-issues.jsonl"), "benign", 300)
 }

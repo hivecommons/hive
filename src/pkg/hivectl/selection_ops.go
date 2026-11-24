@@ -293,7 +293,7 @@ func (set *ProfileSet) SelectionSummary(name string) string {
 // defaults. A bare display name can never identify a repository.
 func RepositoryInput(repository, forge, host string) (string, error) {
 	lower := strings.ToLower(repository)
-	if strings.Count(lower, "/") >= 3 && (strings.HasPrefix(lower, "github/") || strings.HasPrefix(lower, "gitlab/") || strings.HasPrefix(lower, "gitea/")) {
+	if strings.Count(lower, "/") >= 3 && (strings.HasPrefix(lower, "github/") || strings.HasPrefix(lower, "gitlab/") || strings.HasPrefix(lower, "gitea/") || strings.HasPrefix(lower, "forgejo/")) {
 		return NormalizeRepositoryID(repository)
 	}
 	return NormalizeRepositoryID(forge + "/" + host + "/" + repository)

@@ -122,6 +122,7 @@ func TestSidebarGroupOrderAndMembership(t *testing.T) {
 		},
 		"Help": {
 			{"🚀 Getting started", "action:openWelcomeDialog:"},
+			{"✨ Ask Hive", "action:openAskFromHelp:"},
 			{"❓ FAQ", "section:faq-section"},
 			{"📖 Docs", "href:https://docs.hivecommons.dev"},
 			{"🔌 API reference", "href:/api/docs"},
@@ -195,6 +196,8 @@ func TestSidebarAgentPagesOutsideCollapsibleTree(t *testing.T) {
 // accessible menu button that reuses the .avatar-menu dropdown, whose items
 // carry the same labels and targets as the sidebar Help group, and that keeps
 // the Getting started checklist (what the old Guide chip opened) reachable.
+// Ask Hive sits right after Getting started in both, hidden until the Ask
+// panel is built (#19688).
 func TestTopbarHelpMenuMirrorsSidebarHelp(t *testing.T) {
 	page := indexHTML(t)
 	topbar := dashboardTopbarHTML(t)
@@ -230,12 +233,15 @@ func TestTopbarHelpMenuMirrorsSidebarHelp(t *testing.T) {
 			t.Errorf("Help menu item %q opens %q, sidebar Help opens %q", label, mt, target)
 		}
 	}
-	want := []string{"🚀 Getting started", "📖 Docs", "❓ FAQ", "🐛 Report an issue"}
+	want := []string{"🚀 Getting started", "✨ Ask Hive", "📖 Docs", "❓ FAQ", "🐛 Report an issue"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Help menu items = %v, want %v", got, want)
 	}
 	if !strings.Contains(menu, `id="welcome-help-menu-item" style="display:none" data-action="openWelcomeDialog"`) {
 		t.Error("Getting started must open the welcome checklist and start hidden until write access is known")
+	}
+	if !strings.Contains(menu, `id="ask-help-menu-item" style="display:none" data-action="openAskFromHelp"`) {
+		t.Error("Ask Hive must open the Ask panel and start hidden until the panel is built")
 	}
 	for _, want := range []string{
 		"const helpItem = document.getElementById('welcome-help-menu-item');",

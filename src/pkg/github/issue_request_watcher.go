@@ -97,14 +97,16 @@ const issueReconcileMaxAttempts = 3
 // removes plain labels on an existing issue or PR (Number required), refusing
 // the hive-controlled labels listed in issue_request_label.go;
 // "request_review" asks users and/or teams to review an existing PR (Number
-// required), validated in issue_request_review.go.
+// required), validated in issue_request_review.go; "edit_pr" replaces the
+// title and/or body of a PR one of this hive's accounts opened (Number
+// required), gated in issue_request_edit_pr.go.
 type IssueRequest struct {
-	Kind   string   `json:"kind,omitempty"` // "issue" (default) | "comment" | "claim" | "close" | "label" | "request_review"
+	Kind   string   `json:"kind,omitempty"` // "issue" (default) | "comment" | "claim" | "close" | "label" | "request_review" | "edit_pr"
 	Repo   string   `json:"repo"`
-	Title  string   `json:"title,omitempty"` // issue only
+	Title  string   `json:"title,omitempty"` // issue; edit_pr: the new PR title (empty leaves it)
 	Body   string   `json:"body,omitempty"`
 	Labels []string `json:"labels,omitempty"` // issue: labels to create with; label: labels to add
-	Number int      `json:"number,omitempty"` // comment/claim/close/label/request_review: issue/PR number
+	Number int      `json:"number,omitempty"` // comment/claim/close/label/request_review/edit_pr: issue/PR number
 	Agent  string   `json:"agent,omitempty"`
 	// RemoveLabels are the labels a "label" request takes OFF the item. It may
 	// be combined with Labels in one request (an add and a remove of the same
@@ -220,6 +222,9 @@ type IssueResponse struct {
 	// asking again would only re-ping them for the same ask.
 	ReviewersAlreadyPending     []string `json:"reviewers_already_pending,omitempty"`
 	TeamReviewersAlreadyPending []string `json:"team_reviewers_already_pending,omitempty"`
+	// Edited reports which fields an "edit_pr" request replaced ("title",
+	// "body"), so the agent can confirm the edit without re-reading the PR.
+	Edited []string `json:"edited,omitempty"`
 	// ParentLinked reports that the created issue was linked as a GitHub
 	// sub-issue of req.Parent. ParentLinkError carries the (non-fatal) reason
 	// when a requested link did not succeed; the issue is still created OK.
@@ -527,6 +532,8 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 		} else {
 			shapeErr = reviewRequestShapeError(normalizeReviewers(req.Reviewers), normalizeTeamReviewers(req.TeamReviewers))
 		}
+	case "edit_pr":
+		shapeErr = editPRShapeError(req)
 	default:
 		shapeErr = "unknown kind " + strconv.Quote(kind)
 	}
@@ -719,6 +726,7 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 		}
 	}
 	closedPR := false
+	editPRBodySHA := "" // edit_pr: digest of the body written, for the audit entry
 	switch kind {
 	case "claim":
 		var reason string
@@ -920,6 +928,52 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 			resp.ReviewersAlreadyPending = pendingUsers
 			resp.TeamReviewersAlreadyPending = pendingTeams
 		}
+	case "edit_pr":
+		// Authorship gate (#19399): only a PR one of this hive's accounts
+		// opened, and not a merged one. A failed lookup takes the retry
+		// path; it is never read as permission to edit.
+		var currentBody, reason string
+		var refused bool
+		currentBody, reason, refused, err = c.editPRRefusal(ctx, req.Repo, req.Number)
+		if err != nil {
+			break
+		}
+		if refused {
+			c.denyIssueRequest(path, req, reason, nowFn)
+			return
+		}
+		var titlePtr, bodyPtr *string
+		var edited []string
+		if title := strings.TrimSpace(req.Title); title != "" {
+			titlePtr = &title
+			edited = append(edited, "title")
+		}
+		if strings.TrimSpace(req.Body) != "" {
+			// body is the relay-filtered text plus the attribution trailer
+			// (AppendTrailer is a no-op when the agent kept the PR's own).
+			// A carried-fence marker the current body holds is re-added
+			// when the rewrite dropped it: it is the only thing keeping an
+			// adopted contributor PR out of unattended merge. A rewrite that
+			// adds a marker the current body lacks is refused: only the
+			// adoption path writes them, and a decoy placed ahead of the
+			// real one must never reach the merge lanes.
+			if introducesCarriedFenceMarker(currentBody, body) {
+				c.denyIssueRequest(path, req, fmt.Sprintf("edit_pr refused: the new body of %s#%d carries a `%s` marker the current body does not; only the hive's adoption path writes these markers. Keep the existing markers verbatim and add none", req.Repo, req.Number, CarriedFenceMarkerPrefix), nowFn)
+				return
+			}
+			body = preserveCarriedFenceMarkers(currentBody, body)
+			bodyPtr = &body
+			edited = append(edited, "body")
+		}
+		err = c.EditPullRequest(ctx, req.Repo, req.Number, titlePtr, bodyPtr)
+		if err == nil {
+			resp.OK = true
+			resp.Number = req.Number
+			resp.Edited = edited
+			if bodyPtr != nil {
+				editPRBodySHA = editPRBodyDigest(*bodyPtr)
+			}
+		}
 	case "close":
 		closedPR, err = c.closeIssue(ctx, req.Repo, req.Number, IssueCloseOptions{OverrideReason: req.OverrideReason})
 		if err == nil {
@@ -1063,6 +1117,8 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 		action = AuditActionAgentLabelApplied
 	case "request_review":
 		action = AuditActionAgentReviewRequested
+	case "edit_pr":
+		action = AuditActionAgentPREdited
 	}
 	extra := []string{
 		"url", resp.URL,
@@ -1081,6 +1137,12 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 			"reviewers", strings.Join(resp.ReviewersRequested, " "),
 			"team_reviewers", strings.Join(resp.TeamReviewersRequested, " "),
 			"already_pending", strings.Join(append(append([]string{}, resp.ReviewersAlreadyPending...), resp.TeamReviewersAlreadyPending...), " "),
+		}
+	}
+	if kind == "edit_pr" {
+		extra = []string{"edited", strings.Join(resp.Edited, " ")}
+		if editPRBodySHA != "" {
+			extra = append(extra, "body_sha256", editPRBodySHA)
 		}
 	}
 	if closedPR {
@@ -1383,6 +1445,8 @@ func issueRequestWriteOp(kind string) string {
 		return WriteOpLabel
 	case "request_review":
 		return WriteOpRequestReview
+	case "edit_pr":
+		return WriteOpEditPR
 	default:
 		return WriteOpCreateIssue
 	}

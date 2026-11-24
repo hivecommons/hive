@@ -1,0 +1,391 @@
+name: Contributing drift
+
+# Reusable gate: fail when a command a repository's CI runs is not mentioned in
+# that repository's CONTRIBUTING.md or README.md (#19487).
+#
+# WHY THIS EXISTS: the same drift was found by hand in six sibling repos
+# (hotshot, pluk, promptargs, docs, rationguard, benchmarks): CI ran a test,
+# lint or guard script the contributor docs never mentioned, so a contributor
+# could pass every documented local step and still fail CI. Fixing each one as
+# a one-off doc finding did not stop the next one; this check does.
+#
+# What it does, deterministically and offline (stdlib python3 only, no
+# network, no token):
+#   1. reads every .github/workflows/*.yml|*.yaml file of the CALLER repo;
+#   2. takes each `run:` step, skipping steps with `continue-on-error: true`;
+#   3. pulls out the script and test commands it runs: a repo script path
+#      (scripts/check-no-temp-artifacts.sh, python3 tools/x.py, ./ci.sh),
+#      a module run (python3 -m unittest, python -m pytest), a task runner
+#      target (make test, just lint, npm test, npm run lint), or a known test
+#      or lint tool (go test, cargo clippy, pytest, ruff, eslint, vitest, ...).
+#      Setup commands are not candidates: package installs (npm ci, pip
+#      install, apt-get), mkdir, cp, git, curl, echo and other plumbing.
+#      `uses:` steps (checkout, artifact upload) carry no `run:` and are never
+#      read;
+#   4. fails, with one annotation per command, when a command is mentioned in
+#      none of CONTRIBUTING.md, .github/CONTRIBUTING.md, docs/CONTRIBUTING.md
+#      or README.md.
+#
+# Exemptions: a repo lists further skips in a checked-in file (default
+# .github/contributing-drift-exemptions.txt), one per line, each with a reason:
+#
+#     scripts/publish.sh            # release-only, run by the release workflow
+#     workflow:nightly-bench.yml    # scheduled benchmark job, not a PR check
+#
+# An entry exempts every finding whose command line contains its text, or
+# with the `workflow:` prefix, every finding in that workflow file. An entry
+# without a `# reason` fails the check.
+#
+# Caller (pin by commit SHA, never by branch; roll out as a non-required job
+# first, and make it required in a repo only once it is green there):
+#
+#     jobs:
+#       contributing-drift:
+#         uses: hivecommons/hive/.github/workflows/contributing-drift.yml@<sha> # v5
+#
+# The checker is inline below, not a checkout of this repo, so the pinned SHA
+# pins the checker too and the job needs no second ref. Self-test:
+# .github/scripts/test-contributing-drift.py (run by contributing-drift-test.yml).
+# Reference: src/docs/contributing-drift-gate.md.
+
+on:
+  workflow_call:
+    inputs:
+      exemptions:
+        description: Path, in the caller repo, of the exemptions file. A missing file means no exemptions.
+        type: string
+        default: .github/contributing-drift-exemptions.txt
+
+permissions:
+  contents: read
+
+jobs:
+  contributing-drift:
+    name: contributing-drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Every command CI runs is mentioned in CONTRIBUTING.md or README.md
+        env:
+          EXEMPTIONS: ${{ inputs.exemptions }}
+        run: |
+          python3 - --root . --exemptions "$EXEMPTIONS" <<'CONTRIBUTING_DRIFT_PY'
+          # BEGIN contributing-drift checker
+          import argparse
+          import os
+          import re
+          import shlex
+          import sys
+
+          DOCS = ("CONTRIBUTING.md", ".github/CONTRIBUTING.md", "docs/CONTRIBUTING.md", "README.md")
+          SCRIPT_EXT = (".sh", ".bash", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl", ".ps1")
+          INTERPRETERS = {"bash", "sh", "zsh", "python", "python3", "node", "ruby", "perl", "pwsh", "deno", "tsx", "ts-node", "uv"}
+          WRAPPERS = {"sudo", "env", "time", "exec", "command", "nice", "timeout", "xvfb-run"}
+          PKG_RUNNERS = {"npm", "pnpm", "yarn", "bun", "aube"}
+          # Tools whose bare invocation is a test or lint command worth documenting.
+          TOOLS = {
+              "pytest", "tox", "nox", "ruff", "mypy", "pyright", "black", "flake8", "pylint", "isort",
+              "eslint", "prettier", "vitest", "jest", "mocha", "tsc", "biome", "playwright", "stylelint",
+              "golangci-lint", "gofmt", "staticcheck", "govulncheck", "gosec",
+              "shellcheck", "shfmt", "actionlint", "yamllint", "markdownlint", "markdownlint-cli2",
+              "hadolint", "codespell", "typos", "lychee", "rubocop", "rspec", "bats", "pre-commit",
+          }
+          GO_SUBS = {"test", "vet"}
+          CARGO_SUBS = {"test", "clippy", "fmt", "check", "nextest"}
+          PKG_SETUP = {"install", "ci", "i", "add", "set", "config", "cache", "audit", "publish", "pack", "version", "exec", "dlx", "x"}
+          SHELL_SPLIT = re.compile(r"\s*(?:&&|\|\||;|\|(?!\|))\s*")
+          ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+          KEY = re.compile(r"^(\s*)(?:-\s+)?([A-Za-z0-9_-]+):(?:\s+(.*))?$")
+
+
+          def unquote(v):
+              v = v.strip()
+              if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+                  return v[1:-1]
+              return re.sub(r"\s+#.*$", "", v)
+
+
+          def run_steps(path):
+              """Yield (line, script, continue_on_error) for each `run:` step.
+
+              A deliberately small YAML reader: a `run:` key at column C belongs to
+              the step whose keys sit at column C; the step ends at the next
+              non-blank line indented less than C, or at the next `- ` item at C-2.
+              """
+              with open(path, encoding="utf-8") as f:
+                  lines = f.read().split("\n")
+              for i, line in enumerate(lines):
+                  m = KEY.match(line)
+                  if not m or m.group(2) != "run":
+                      continue
+                  col = line.index("run:")
+                  value = (m.group(3) or "").strip()
+                  body = []
+                  j = i + 1
+                  while j < len(lines) and (not lines[j].strip() or len(lines[j]) - len(lines[j].lstrip()) > col):
+                      body.append(lines[j])
+                      j += 1
+                  if re.match(r"^[|>][-+0-9]*\s*(#.*)?$", value):
+                      ind = min((len(b) - len(b.lstrip()) for b in body if b.strip()), default=0)
+                      script = "\n".join(b[ind:] for b in body)
+                  elif value:
+                      script = " ".join([unquote(value)] + [b.strip() for b in body if b.strip()])
+                  else:
+                      continue  # `defaults: run:` mapping, not a step
+                  start, end = step_extent(lines, i, col)
+                  coe = False
+                  for k in range(start, end):
+                      km = KEY.match(lines[k])
+                      if km and km.group(2) == "continue-on-error" and lines[k].find("continue-on-error:") == col:
+                          coe = unquote(km.group(3) or "").lower() == "true"
+                  yield i + 1, script, coe
+
+
+          def step_extent(lines, i, col):
+              """Lines [start, end) of the step whose keys sit at column `col`."""
+
+              def shape(s):
+                  if not s.strip() or s.lstrip().startswith("#"):
+                      return None
+                  ind = len(s) - len(s.lstrip())
+                  dash = re.match(r"^(\s*)-\s+", s)
+                  return ind, (len(dash.group(0)) if dash else None)
+
+              start = i
+              if not re.match(r"^\s*-\s", lines[i]):
+                  k = i - 1
+                  while k >= 0:
+                      sh = shape(lines[k])
+                      if sh is not None:
+                          ind, keycol = sh
+                          if keycol == col:
+                              start = k
+                              break
+                          if ind < col:
+                              break
+                      k -= 1
+              end = i + 1
+              while end < len(lines):
+                  sh = shape(lines[end])
+                  if sh is not None:
+                      ind, keycol = sh
+                      if ind < col or (ind == col and keycol is not None):
+                          break
+                  end += 1
+              return start, end
+
+
+          def logical_lines(script):
+              out, buf = [], ""
+              heredoc = None
+              for raw in script.split("\n"):
+                  if heredoc is not None:
+                      if raw.strip() == heredoc:
+                          heredoc = None
+                      continue
+                  s = raw.strip()
+                  if not s or s.startswith("#"):
+                      continue
+                  hd = re.search(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?", s)
+                  if hd:
+                      heredoc = hd.group(1)
+                  if s.endswith("\\"):
+                      buf += s[:-1] + " "
+                      continue
+                  out.append(buf + s)
+                  buf = ""
+              if buf:
+                  out.append(buf)
+              return out
+
+
+          def is_script_path(tok):
+              if "$" in tok or tok.startswith(("/", "~", "-")) or "://" in tok:
+                  return False
+              return tok.endswith(SCRIPT_EXT) or tok.startswith("./")
+
+
+          def norm_path(tok):
+              while tok.startswith("./"):
+                  tok = tok[2:]
+              return tok
+
+
+          def candidates(cmd):
+              """Return (label, [needle regexes]) for one simple command, or None."""
+              try:
+                  toks = shlex.split(cmd, comments=True)
+              except ValueError:
+                  toks = cmd.split()
+              # Redirections are not arguments: `npm test >log 2>&1`.
+              toks = [t for t in toks if not re.match(r"^(?:\d*|&)[<>]", t)]
+              while toks:
+                  t = toks[0]
+                  if ASSIGN.match(t) or t == "!":
+                      toks = toks[1:]
+                  elif t in WRAPPERS:
+                      if t == "command" and toks[1:2] and toks[1] in ("-v", "-V"):
+                          return None  # a lookup, not a run
+                      toks = toks[1:]
+                      while toks and (toks[0].startswith("-") or ASSIGN.match(toks[0]) or re.fullmatch(r"\d+[smhd]?", toks[0])):
+                          toks = toks[1:]
+                  else:
+                      break
+              if not toks:
+                  return None
+              head = os.path.basename(toks[0])
+              rest = toks[1:]
+              if is_script_path(toks[0]):
+                  p = norm_path(toks[0])
+                  return p, [re.escape(p)]
+              if head in ("uv", "poetry", "pipenv", "hatch") and rest[:1] == ["run"]:
+                  args = rest[1:]
+                  while args and args[0].startswith("-"):
+                      args = args[1:]
+                  return candidates(shlex.join(args)) if args else None
+              if head in INTERPRETERS:
+                  args = rest
+                  if head == "deno" and args[:1] == ["run"]:
+                      args = args[1:]
+                  k = 0
+                  while k < len(args):
+                      a = args[k]
+                      if a == "-m" and k + 1 < len(args):
+                          mod = args[k + 1]
+                          if mod in ("pip", "venv", "ensurepip", "http.server", "json.tool"):
+                              return None
+                          needles = [r"python3?\s+-m\s+" + re.escape(mod) + r"\b"]
+                          if mod in TOOLS:
+                              needles.append(r"\b" + re.escape(mod) + r"\b")
+                          return f"python -m {mod}", needles
+                      if a in ("-c", "-e", "--eval", "-") or (head in ("bash", "sh", "zsh") and a == "-n"):
+                          return None  # inline code, stdin, or a syntax check only
+                      if a.startswith("-"):
+                          k += 1
+                          continue
+                      if is_script_path(a):
+                          p = norm_path(a)
+                          return p, [re.escape(p)]
+                      return None
+                  return None
+              if head in ("make", "just", "task", "mage"):
+                  targets, k = [], 0
+                  while k < len(rest):
+                      a = rest[k]
+                      if a in ("-C", "-f", "--file", "--directory", "--justfile", "--taskfile"):
+                          k += 2
+                          continue
+                      if not a.startswith("-") and "=" not in a:
+                          targets.append(a)
+                      k += 1
+                  if not targets:
+                      return head, [r"\b" + re.escape(head) + r"\b"]
+                  t = targets[0]
+                  return f"{head} {t}", [r"\b" + re.escape(head) + r"\s+" + re.escape(t) + r"\b"]
+              if head in PKG_RUNNERS:
+                  args = [a for a in rest if not a.startswith("-")]
+                  if not args or args[0] in PKG_SETUP:
+                      return None
+                  name = args[1] if args[0] in ("run", "run-script") and len(args) > 1 else args[0]
+                  if name in PKG_SETUP or name in ("run", "run-script"):
+                      return None
+                  if name in ("test", "t", "tst"):
+                      return f"{head} test", [r"\b(?:npm|pnpm|yarn|bun|aube)\s+(?:run\s+)?(?:test|t)\b"]
+                  return f"{head} run {name}", [r"\b(?:npm|pnpm|yarn|bun|aube)\s+(?:run\s+)?" + re.escape(name) + r"\b"]
+              if head in ("npx", "pnpx", "bunx", "aubx"):
+                  args = [a for a in rest if not a.startswith("-")]
+                  if not args:
+                      return None
+                  tool = re.sub(r"(?<=.)@.*$", "", args[0])
+                  return tool, [r"\b" + re.escape(tool) + r"\b"]
+              if head == "go":
+                  if rest and rest[0] in GO_SUBS:
+                      return f"go {rest[0]}", [r"\bgo\s+" + rest[0] + r"\b"]
+                  return None
+              if head == "cargo":
+                  if rest and rest[0] in CARGO_SUBS:
+                      return f"cargo {rest[0]}", [r"\bcargo\s+" + rest[0] + r"\b"]
+                  return None
+              if head in TOOLS:
+                  return head, [r"\b" + re.escape(head) + r"\b"]
+              return None
+
+
+          def load_exemptions(path):
+              entries, errors = [], []
+              if not path or not os.path.exists(path):
+                  return entries, errors
+              with open(path, encoding="utf-8") as f:
+                  for n, raw in enumerate(f, 1):
+                      s = raw.strip()
+                      if not s or s.startswith("#"):
+                          continue
+                      text, sep, reason = s.partition(" #")
+                      if not sep or not reason.strip() or not text.strip():
+                          errors.append(f"{path}:{n}: exemption needs a reason: `<command>  # <why CI may run it undocumented>`")
+                          continue
+                      entries.append(text.strip())
+              return entries, errors
+
+
+          def check(root, exemptions_path):
+              docs = ""
+              for d in DOCS:
+                  p = os.path.join(root, d)
+                  if os.path.isfile(p):
+                      with open(p, encoding="utf-8", errors="replace") as f:
+                          docs += f.read() + "\n"
+              ex_path = os.path.join(root, exemptions_path) if exemptions_path else ""
+              exempt, errors = load_exemptions(ex_path)
+              wfdir = os.path.join(root, ".github", "workflows")
+              findings = []
+              files = sorted(f for f in os.listdir(wfdir) if f.endswith((".yml", ".yaml"))) if os.path.isdir(wfdir) else []
+              for name in files:
+                  rel = f".github/workflows/{name}"
+                  if f"workflow:{name}" in exempt:
+                      continue
+                  seen = set()
+                  for line, script, coe in run_steps(os.path.join(wfdir, name)):
+                      if coe:
+                          continue
+                      for ll in logical_lines(script):
+                          for cmd in SHELL_SPLIT.split(ll):
+                              cmd = re.sub(r"^\s*(?:if|then|else|elif|do|while|until|!|\{|\()\s+", "", cmd)
+                              c = candidates(cmd)
+                              if not c:
+                                  continue
+                              label, needles = c
+                              if label in seen or any(re.search(n, docs) for n in needles):
+                                  continue
+                              if any(e in ll or e == label for e in exempt):
+                                  continue
+                              seen.add(label)
+                              findings.append((rel, line, label, ll))
+              return findings, errors
+
+
+          def main(argv=None):
+              ap = argparse.ArgumentParser(description=__doc__)
+              ap.add_argument("--root", default=".")
+              ap.add_argument("--exemptions", default=".github/contributing-drift-exemptions.txt")
+              a = ap.parse_args(argv)
+              findings, errors = check(a.root, a.exemptions)
+              gha = os.environ.get("GITHUB_ACTIONS") == "true"
+              for e in errors:
+                  print(f"::error::{e}" if gha else e)
+              for rel, line, label, ll in findings:
+                  msg = f"CI runs `{label}` (from `{ll}`) but CONTRIBUTING.md and README.md never mention it. Document it, or exempt it with a reason in the exemptions file."
+                  print(f"::error file={rel},line={line},title=Contributing drift::{msg}" if gha else f"{rel}:{line}: {msg}")
+              if findings or errors:
+                  return 1
+              print("contributing-drift: every command CI runs is mentioned in CONTRIBUTING.md or README.md")
+              return 0
+
+
+          if __name__ == "__main__":
+              sys.exit(main())
+          # END contributing-drift checker
+          CONTRIBUTING_DRIFT_PY

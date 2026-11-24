@@ -83,6 +83,14 @@ The notifier accepts `http://` and `https://` URLs in the Go sender, but product
 
 Use a Discord **webhook URL**, not a bot token, for notification delivery.
 
+For `notifications.slack.webhook` and `notifications.discord.webhook`, a
+rejection warning includes the provider and HTTP status and omits the webhook
+URL and response body. Hive follows valid HTTP(S) 307 and 308 redirects that
+stay on the webhook's host and do not downgrade `https` to `http`; these
+preserve the POST and its payload. Hive logs 301, 302, and 303 responses,
+redirects to another host or to plain `http`, and redirects with invalid URLs
+as rejections.
+
 ### GitHub activity feed
 
 `notifications.github_activity` enables the hub's org-wide issue/PR activity
@@ -494,6 +502,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).closeVerified` | `status` |  |
 | `github.(*Client).parkVerifiedForClose` | `status` |  |
 | `github.(*Client).closeIssueForMergedPRClaimWithIssue` | `status` |  |
+| `forgesweep.(*Sweeper).closeOne` | `status` | Forgejo close-on-merge comment |
 | `github.(*Client).closeSupersededPRDecision` | `status` |  |
 | `github.(*Client).fileReviewBacklog` | `status` |  |
 | `github.(*Client).foldReviewFollowUps` | `status` | review Follow-ups checklist folded into the PR status card (quiet mode) |
@@ -535,6 +544,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).resolveDuplicateFixGroup` | `attention` |  |
 | `github.(*Client).upsertScannerNote` | `attention` | one scanner note per PR; a new comment only for the first note or when the author must act on a new head (#18451) |
 | `github.attentionDelivery.Post` | `attention` | condition-episode page; live write-back policy rechecked before the write |
+| `main.(*forgeRequestRelay).handleIssue` | `attention` | an agent's comment request on a forge-only hive (#19670) |
 | `main.(*repoForgeRouter).CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.claimEscalationLookup` | `attention` |  |
 | `main.factCheckSweep.needsHuman` | `attention` | one note per PR when the analysis fact-check loop stops without a passing verdict (#19074) |
@@ -551,7 +561,9 @@ without a class. Review submissions and review requests are always counted as
 | `scheduler.(*Scheduler).postTriageClarifyComment` | `attention` |  |
 | `github.(*Client).QueuePRAutoMergeWithNoteResultAtHead` | `required_review` |  |
 | `github.(*Client).RequestReviewers` | `required_review` | passthrough wrapper; attributed to its caller |
+| `github.(*Client).RerequestReview` | `required_review` | re-requests a reviewer whose change request the hive addressed ([#19538](https://github.com/hivecommons/hive/issues/19538)) |
 | `github.(*Client).handleOneReviewRequest` | `required_review` |  |
+| `main.reviewFeedbackSweep.rerequestAddressedReviews` | `required_review` | the note listing what changed, posted with the re-request ([#19538](https://github.com/hivecommons/hive/issues/19538)) |
 | `dashboard.postClaimComment` | `protocol_command` |  |
 | `github.(*Client).PostClaimNote` | `protocol_command` |  |
 | `github.(*Client).reportOperatorPullRequestApproval` | `protocol_command` |  |
@@ -570,7 +582,6 @@ Go client; listed for completeness):
 | `issue-closed-reopen-hint.yml`, `issue-reopen-command.yml` | `status` | Reopen hint on closed issues; reply to a reopen command. |
 | `backend-smoke.yml`, `ci-runner-canary.yml`, `coverage-hourly.yml`, `dco-post-merge.yml`, `flue-smoke.yml`, `omp-smoke.yml`, `wavefront-smoke.yml`, `v2-ci.yml`, `v2-tests.yml` | `attention` | "Still failing" comments on an open failure-tracking issue. |
 | `promote-stable.yml` | `attention` | Emergency stable-promotion exception note. |
-| `weekly-competitor-report.md` (`.lock.yml`) | `status` | Weekly report comment on the tracking issue. |
 | `hive-ok-to-test.yml` | `protocol_command` | The `/ok-to-test` command that releases held workflow runs. |
 
 ## Attention pilot and the issue status card (`github.notifications.attention_pilot`)

@@ -242,6 +242,36 @@ func TestBootWatchersWith_ReloadWithChangedIdentityRebuildsAuth(t *testing.T) {
 	}
 }
 
+func TestBootWatchersWith_ReloadWithRotatedTokenRebuildsPATClient(t *testing.T) {
+	f := newBootWatchersFake()
+	cfg := bootWatchersConfig()
+	cfg.GitHub.Token = "old-token"
+	b, _ := newBootWatchersBoot(t, f, cfg)
+	b.bootWatchersWith(f.deps)
+
+	newCfg := *cfg
+	newCfg.Agents = map[string]config.AgentConfig{}
+	newCfg.GitHub.Token = "new-token"
+	f.onReload(&newCfg)
+
+	if b.ghClient == nil {
+		t.Fatalf("PAT client not rebuilt after github.token changed:\n%s", f.log.String())
+	}
+	if f.tokenRefreshes != 1 {
+		t.Fatalf("token refreshes = %d after rotation, want 1", f.tokenRefreshes)
+	}
+	if strings.Contains(f.log.String(), "new-token") {
+		t.Fatal("token value leaked into the log")
+	}
+
+	// The same token on the next reload must not rebuild again.
+	same := newCfg
+	f.onReload(&same)
+	if f.tokenRefreshes != 1 {
+		t.Fatal("unchanged token triggered another rebuild")
+	}
+}
+
 // A config reload runs on the watcher's timer goroutine and mutates *cfg
 // (including the cfg.Agents map) that the governor loop's ticks read. It must
 // not touch cfg while the loop holds cfgReloadMu, or a reload racing the fast

@@ -79,6 +79,8 @@ Where rolling log files are written, when they rotate, how long rotated files ar
 
 Input/output scanning, the agent sandbox runner, and suspicious-activity alerts. See [ioscan](ioscan.md), [Credential-free sandbox isolation](sandbox-isolation.md), [Suspicious-activity alerts](operator-reference.md#suspicious-activity-alerts-sentinel), and the [Security Model](security-model.md).
 
+"Advanced sandbox: default image and Job settings", then "Job scheduling, resources, preflight, setup and GitHub read relay", holds the hive-wide Kubernetes Job defaults: node selector, resource limits and requests (including device resources such as `ibm.com/spyre_pf`), tolerations, image pull secret names, schedule timeout, the node preflight commands and timeouts (`agent_sandbox.preflight`), the workspace setup step (`agent_sandbox.setup`: setup commands and health checks run in the checked-out workspace after the preflight and before the agent, and their two timeouts), and the opt-in GitHub read relay (`agent_sandbox.job.github_read_proxy`, applied when hive restarts). Maps take one `key=value` per line and tolerations one taint per line. See [Setting up a sandbox from the dashboard](sandbox-isolation.md#setting-up-a-sandbox-from-the-dashboard).
+
 ## Features
 
 Optional capabilities, each off or inert until you turn it on. Where a feature has its own guide, its **?** mark opens that guide:
@@ -94,6 +96,7 @@ Optional capabilities, each off or inert until you turn it on. Where a feature h
 - Reviewer-stated rules: [Reviewer-stated rules from review feedback](review-feedback-rules.md#settings). A card under Review (owner only, `review_feedback.rules.*`) turns capture on or off, picks whose rules are recorded at once, adds phrases that count, and switches built-in signals off; each control shows its default and where the current value comes from.
 - Linear agent: [Linear agent integration](linear-agent.md).
 - Upstream watch: [Upstream watch](upstream-watch.md#configuration).
+- Ask AI help: [Ask AI help](ask-ai-help.md).
 
 The other features on this tab (OpenTelemetry export, external execution, auto-plan, issue claims, PR follow-up, long-running runs, provider rotation, merge recommendations, convergence rollout, stall replan, and question auto-close) are explained by their **?** tooltips, and their configuration keys are listed in the [Hive operator reference](operator-reference.md#configuration-blocks).
 
@@ -179,6 +182,8 @@ How your configuration maps to SOC 2, FedRAMP, and ISO 27001 controls. See [The 
 ## Agent: General
 
 One agent's identity, engine, model, and behaviour: name, role, kick template, operating mode, sandbox, CLI pin, caveman, Jev, and explain modes, and the repos and keywords it works on. See [Agent Configuration](agent-configuration.md#anatomy-of-an-agent).
+
+"Sandbox settings: image, runtime and Job" also has the agent's own Job scheduling (node selector, resource limits and requests, tolerations, image pull secrets, schedule timeout) and "Node preflight" with an override switch: off inherits `agent_sandbox.preflight`, on uses this agent's list, and an empty list turns preflight off for it. "Workspace setup" works the same way with "Use this agent's own setup" (`sandbox.setup`; empty lists turn it off). "In effect for this agent" shows each resolved value, including the preflight and the setup step, and whether it comes from this agent or from `agent_sandbox` defaults, and warns when the agent's own Job block hides hive-wide scheduling fields. See [Setting up a sandbox from the dashboard](sandbox-isolation.md#setting-up-a-sandbox-from-the-dashboard).
 
 ## Agent: Pipeline
 

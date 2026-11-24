@@ -23,13 +23,14 @@ type advisorDecisionSummarizer interface {
 
 type knowledgeAdvisorSource struct {
 	decisions advisorDecisionSummarizer
-	// arms is retro.Lane.AdvisorArmSummary; nil when the retro lane is off.
-	arms func() []retro.ArmSummary
+	// arms is retro.AdvisorAttribution.Report (or retro.Lane.AdvisorArmReport);
+	// nil when no bead stores are wired.
+	arms func() retro.AdvisorArmReport
 }
 
 // SetKnowledgeAdvisorSummary installs the sources behind
-// GET /api/knowledge/advisor/summary. arms may be nil (retro lane disabled).
-func (s *Server) SetKnowledgeAdvisorSummary(decisions advisorDecisionSummarizer, arms func() []retro.ArmSummary) {
+// GET /api/knowledge/advisor/summary. arms may be nil (no bead stores).
+func (s *Server) SetKnowledgeAdvisorSummary(decisions advisorDecisionSummarizer, arms func() retro.AdvisorArmReport) {
 	if decisions == nil && arms == nil {
 		s.advisorSummary.Store(nil)
 		return
@@ -45,6 +46,12 @@ type advisorArmJSON struct {
 	MeanKicksReceived  float64 `json:"mean_kicks_received"`
 }
 
+type advisorErrorReasonJSON struct {
+	Class  string `json:"class"`
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+}
+
 func toAdvisorArmJSON(a retro.ArmSummary) advisorArmJSON {
 	return advisorArmJSON{Arm: a.Arm, Beads: a.Beads, MeanFixAttempts: a.MeanFixAttempts, MeanCIFailureCount: a.MeanCIFailureCount, MeanKicksReceived: a.MeanKicksReceived}
 }
@@ -53,8 +60,10 @@ func toAdvisorArmJSON(a retro.ArmSummary) advisorArmJSON {
 // read-only rank-versus-holdout comparison for the knowledge advisor
 // (hivecommons/hive#18897). Counts and means only; it never returns a slug,
 // ref, agent, kick id or any content. ?since=<RFC3339> narrows the decision
-// counts and cost means; the per-arm bead means always cover every closed bead
-// (retro.Lane.AdvisorArmSummary has no window).
+// counts and cost means; the per-arm bead means always cover every closed work
+// bead (the attribution has no window). coverage says how many closed beads
+// had no ref or no matching decision, so an empty arms list is distinguishable
+// from no closed beads (hivecommons/hive#19577).
 func (s *Server) handleKnowledgeAdvisorSummary(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if role := r.Header.Get("X-Hive-Role"); role != "" && !config.RoleAtLeast(role, config.RoleRead) {
@@ -92,19 +101,24 @@ func (s *Server) handleKnowledgeAdvisorSummary(w http.ResponseWriter, r *http.Re
 			"max_calls_per_agent_hour": orDefaultInt(a.MaxCallsPerAgentHour, config.AdvisorLLMMaxCallsPerAgentHourCap),
 			"candidates":               orDefaultInt(a.Candidates, config.DefaultAdvisorLLMCandidates),
 			"on_error":                 firstNonEmptyString(strings.TrimSpace(a.OnError), config.AdvisorLLMOnErrorSilence),
+			// problem says why shadow/rank cannot make a model call (no
+			// model, endpoint or key, or an unreadable key file); null when
+			// it can. Config keys and paths only, never a key value.
+			"problem": nilIfEmpty(s.deps.Config.KnowledgeAdvisorLLMProblem()),
 		}
 	}
 
 	var sum retro.AdvisorDecisionSummary
-	var arms []retro.ArmSummary
+	var report retro.AdvisorArmReport
 	if src := s.advisorSummary.Load(); src != nil {
 		if src.decisions != nil {
 			sum = src.decisions.Summarize(since)
 		}
 		if src.arms != nil {
-			arms = src.arms()
+			report = src.arms()
 		}
 	}
+	arms := report.Arms
 	byMode, byArm, byOutcome := sum.ByMode, sum.ByArm, sum.ByOutcome
 	if byMode == nil {
 		byMode = map[string]int{}
@@ -114,6 +128,20 @@ func (s *Server) handleKnowledgeAdvisorSummary(w http.ResponseWriter, r *http.Re
 	}
 	if byOutcome == nil {
 		byOutcome = map[string]int{}
+	}
+	byVerdict, byBudget, byErrorClass := sum.ByVerdict, sum.ByBudget, sum.ByErrorClass
+	if byVerdict == nil {
+		byVerdict = map[string]int{}
+	}
+	if byBudget == nil {
+		byBudget = map[string]int{}
+	}
+	if byErrorClass == nil {
+		byErrorClass = map[string]int{}
+	}
+	topReasons := make([]advisorErrorReasonJSON, 0, len(sum.TopErrorReasons))
+	for _, e := range sum.TopErrorReasons {
+		topReasons = append(topReasons, advisorErrorReasonJSON{Class: e.Class, Reason: e.Reason, Count: e.Count})
 	}
 
 	armRows := []advisorArmJSON{}
@@ -149,13 +177,29 @@ func (s *Server) handleKnowledgeAdvisorSummary(w http.ResponseWriter, r *http.Re
 		window["since"] = since.UTC().Format(time.RFC3339)
 	}
 	resp := map[string]interface{}{
-		"window":     window,
-		"settings":   settings,
-		"counts":     map[string]interface{}{"by_mode": byMode, "by_arm": byArm, "by_outcome": byOutcome},
+		"window":   window,
+		"settings": settings,
+		"counts": map[string]interface{}{
+			"by_mode": byMode, "by_arm": byArm, "by_outcome": byOutcome,
+			"by_verdict": byVerdict, "by_budget": byBudget,
+		},
+		// errors: why model calls got no answer, by class and the most
+		// frequent redacted reasons (HTTP status, provider error code,
+		// scrubbed message), across both arms.
+		"errors": map[string]interface{}{
+			"by_class":    byErrorClass,
+			"top_reasons": topReasons,
+		},
 		"arms":       armRows,
 		"mixed":      mixed,
 		"none":       none,
-		"arms_scope": "all closed beads with an associated closed PR (not narrowed by since)",
+		"arms_scope": "all closed work beads, advisory beads excluded (not narrowed by since)",
+		"coverage": map[string]interface{}{
+			"closed_beads":   report.Coverage.ClosedBeads,
+			"with_closed_pr": report.Coverage.WithClosedPR,
+			"no_ref":         report.Coverage.NoRef,
+			"no_decision":    report.Coverage.NoDecision,
+		},
 		"cost": map[string]interface{}{
 			"latency_samples":        sum.LatencySamples,
 			"mean_latency_ms":        sum.MeanLatencyMS,

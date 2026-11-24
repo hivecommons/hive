@@ -44,7 +44,8 @@
       const FORGE_META = {
         github: { icon: '🐙', name: 'GitHub' },
         gitlab: { icon: '🦊', name: 'GitLab' },
-        gitea:  { icon: '🍵', name: 'Gitea' }
+        gitea:  { icon: '🍵', name: 'Gitea' },
+        forgejo: { icon: '🍵', name: 'Forgejo' }
       };
       const fm = FORGE_META[forgeKind] || { icon: '🔀', name: forgeKind || 'Forge' };
       const repoCount = Number(forge.repoCount) || 0;

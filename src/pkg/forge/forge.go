@@ -6,7 +6,7 @@
 //
 // The read path (enumerate open issues / merge requests, get a repo) and the
 // core write path (comment on an issue/CR, add/remove labels, set a hold gate)
-// are implemented and tested for GitHub, GitLab and Gitea/Forgejo. The optional
+// are implemented and tested for GitHub, GitLab, Gitea and Forgejo. The optional
 // Merger extension interface defines the merge primitive; concrete adapters
 // implement it as their forge-specific merge semantics are integrated.
 package forge
@@ -26,8 +26,11 @@ const (
 	KindGitHub Kind = "github"
 	// KindGitLab selects the GitLab adapter (REST API v4 over net/http).
 	KindGitLab Kind = "gitlab"
-	// KindGitea selects the Gitea/Forgejo adapter (REST API v1 over net/http).
+	// KindGitea selects the Gitea adapter (REST API v1 over net/http).
 	KindGitea Kind = "gitea"
+	// KindForgejo selects the Forgejo adapter. It shares the Gitea REST client
+	// but is its own kind.
+	KindForgejo Kind = "forgejo"
 )
 
 const (
@@ -83,6 +86,10 @@ type Issue struct {
 	State     string    `json:"state"`
 	CreatedAt time.Time `json:"created_at"`
 	URL       string    `json:"url"`
+	// Body and UpdatedAt are filled by the GitLab, Gitea and Forgejo
+	// adapters; the GitHub adapter leaves them empty.
+	Body      string    `json:"body,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
 }
 
 // ChangeRequest is a forge-neutral pull request (GitHub) / merge request
@@ -221,8 +228,9 @@ type IssueRef struct {
 
 // IssueCreator is the OPTIONAL forge-neutral issue-create seam the audit
 // campaign's authorized publisher (#8353) files through. It is kept off the
-// core Forge interface because only the GitHub adapter implements it today;
-// a caller that needs it type-asserts and refuses cleanly when absent.
+// core Forge interface because the GitHub, Gitea and Forgejo adapters
+// implement it and GitLab does not; a caller that needs it type-asserts and
+// refuses cleanly when absent.
 type IssueCreator interface {
 	// CreateIssue files a new issue in repo and returns its reference. The
 	// publisher's mutation journal and marker lookup are its idempotency
@@ -289,8 +297,10 @@ func NewForge(kind Kind, token string, opts Options) (Forge, error) {
 		return newGitLabForge(token, opts)
 	case KindGitea:
 		return newGiteaForge(token, opts)
+	case KindForgejo:
+		return newForgejoForge(token, opts)
 	default:
-		return nil, fmt.Errorf("unknown forge kind %q (want %q, %q or %q)", kind, KindGitHub, KindGitLab, KindGitea)
+		return nil, fmt.Errorf("unknown forge kind %q (want %q, %q, %q or %q)", kind, KindGitHub, KindGitLab, KindGitea, KindForgejo)
 	}
 }
 

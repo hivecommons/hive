@@ -2531,6 +2531,99 @@
         }
       }
     },
+    "/api/customers/{id}/refresh-profile": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Refresh one customer from public profiles",
+        "description": "Runs the profile fill for one customer now: reads the person's own public profile on the hive's forge (GitHub, GitHub Enterprise, GitLab or Gitea/Forgejo) by login, and the connected Linear workspace's member name by a confirmed email, ignoring the weekly refresh age but within the hourly budget. Fills only empty fields or fields an earlier fill wrote; never a value set by hand or one the person entered on the hub. Owner or read-write. Audited as customer_profile_refresh.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The customer after the lookup and the pass counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "customer": {
+                      "type": "object",
+                      "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                    },
+                    "fill": {
+                      "type": "object",
+                      "description": "Pass counts only: skipped (a fixed word), due, people, requests, filled, not_found, failed, stood_down, truncated"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers or the profile fill (customers.profile_fill.enabled) is off"
+          }
+        }
+      }
+    },
+    "/api/customers/refresh-profiles": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Refresh every customer from public profiles",
+        "description": "Makes every customer due for the profile fill and starts a pass in the background; later passes continue, at most 20 people a pass, within the hourly budget. Owner or read-write. Audited as customer_profile_refresh_all.",
+        "responses": {
+          "200": {
+            "description": "The refresh was queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "queued": {
+                      "type": "boolean"
+                    },
+                    "reset": {
+                      "type": "integer",
+                      "description": "Customers whose last lookup was forgotten"
+                    },
+                    "max_per_pass": {
+                      "type": "integer"
+                    },
+                    "interval_minutes": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "503": {
+            "description": "Customers or the profile fill (customers.profile_fill.enabled) is off"
+          }
+        }
+      }
+    },
     "/api/customers/{id}/export": {
       "get": {
         "tags": [
@@ -12130,6 +12223,149 @@
                   "sandboxEnabled": {
                     "type": "boolean"
                   },
+                  "sandboxJob": {
+                    "type": "object",
+                    "description": "The agent's own sandbox.job fields; keys left out are unchanged",
+                    "properties": {
+                      "workspaceClaim": {
+                        "type": "string"
+                      },
+                      "workspaceClaimMount": {
+                        "type": "string"
+                      },
+                      "serviceAccount": {
+                        "type": "string"
+                      },
+                      "schedulerName": {
+                        "type": "string"
+                      },
+                      "ttlSeconds": {
+                        "type": "integer"
+                      },
+                      "envFromSecrets": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Kubernetes Secret names only, never values"
+                      },
+                      "imagePullSecrets": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Kubernetes Secret names only, never values"
+                      },
+                      "nodeSelector": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "resources": {
+                        "type": "object",
+                        "description": "limits and requests maps of resource name to Kubernetes quantity; a key left out is unchanged, null clears both",
+                        "properties": {
+                          "limits": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "requests": {
+                            "type": "object",
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      },
+                      "tolerations": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "key": {
+                              "type": "string"
+                            },
+                            "operator": {
+                              "type": "string",
+                              "enum": [
+                                "",
+                                "Equal",
+                                "Exists"
+                              ]
+                            },
+                            "value": {
+                              "type": "string"
+                            },
+                            "effect": {
+                              "type": "string",
+                              "enum": [
+                                "",
+                                "NoSchedule",
+                                "PreferNoSchedule",
+                                "NoExecute"
+                              ]
+                            }
+                          }
+                        }
+                      },
+                      "scheduleTimeoutS": {
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "sandboxPreflight": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run in the Job before the agent; at most 32"
+                      },
+                      "timeoutS": {
+                        "type": "integer"
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer"
+                      },
+                      "retryDelayS": {
+                        "type": "integer"
+                      }
+                    },
+                    "description": "The agent's own sandbox.preflight; null inherits agent_sandbox.preflight, an empty commands list turns it off for this agent"
+                  },
+                  "sandboxSetup": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run in the Job after the node preflight and before the agent, in the workspace; a failure fails the kick as setup_failed; at most 32"
+                      },
+                      "healthCommands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run after commands; a failure marks the node node_unhealthy and retries once on another node; at most 32"
+                      },
+                      "timeoutS": {
+                        "type": "integer"
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer"
+                      }
+                    },
+                    "description": "The agent's own sandbox.setup; null inherits agent_sandbox.setup, empty commands and healthCommands lists turn it off for this agent"
+                  },
                   "cavemanMode": {
                     "type": "string",
                     "enum": [
@@ -16780,6 +17016,145 @@
                   },
                   "agentSandboxEnabled": {
                     "type": "boolean"
+                  },
+                  "agentSandboxJobNodeSelector": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "description": "agent_sandbox.job.node_selector: Kubernetes node labels"
+                  },
+                  "agentSandboxJobResources": {
+                    "type": "object",
+                    "description": "limits and requests maps of resource name to Kubernetes quantity; a key left out is unchanged, null clears both",
+                    "properties": {
+                      "limits": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      },
+                      "requests": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "agentSandboxJobTolerations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "key": {
+                          "type": "string"
+                        },
+                        "operator": {
+                          "type": "string",
+                          "enum": [
+                            "",
+                            "Equal",
+                            "Exists"
+                          ]
+                        },
+                        "value": {
+                          "type": "string"
+                        },
+                        "effect": {
+                          "type": "string",
+                          "enum": [
+                            "",
+                            "NoSchedule",
+                            "PreferNoSchedule",
+                            "NoExecute"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "agentSandboxJobImagePullSecrets": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Kubernetes Secret names only, never values"
+                  },
+                  "agentSandboxJobScheduleTimeoutS": {
+                    "type": "integer",
+                    "description": "agent_sandbox.job.schedule_timeout_s; 0 uses the default"
+                  },
+                  "agentSandboxPreflight": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run in the Job before the agent; at most 32"
+                      },
+                      "timeoutS": {
+                        "type": "integer"
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer"
+                      },
+                      "retryDelayS": {
+                        "type": "integer"
+                      }
+                    },
+                    "description": "agent_sandbox.preflight; an empty commands list or null removes it"
+                  },
+                  "agentSandboxSetup": {
+                    "type": "object",
+                    "nullable": true,
+                    "properties": {
+                      "commands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run in the Job after the node preflight and before the agent, in the workspace; a failure fails the kick as setup_failed; at most 32"
+                      },
+                      "healthCommands": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        },
+                        "description": "Shell commands run after commands; a failure marks the node node_unhealthy and retries once on another node; at most 32"
+                      },
+                      "timeoutS": {
+                        "type": "integer"
+                      },
+                      "totalTimeoutS": {
+                        "type": "integer"
+                      }
+                    },
+                    "description": "agent_sandbox.setup; empty lists or null remove it"
+                  },
+                  "agentSandboxJobGithubReadProxy": {
+                    "type": "object",
+                    "description": "agent_sandbox.job.github_read_proxy; takes effect when hive restarts",
+                    "properties": {
+                      "enabled": {
+                        "type": "boolean"
+                      },
+                      "listenAddr": {
+                        "type": "string"
+                      },
+                      "endpoint": {
+                        "type": "string",
+                        "description": "https://host:port with no credentials"
+                      },
+                      "noProxy": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
                   }
                 }
               }
@@ -20693,6 +21068,11 @@
                         },
                         "on_error": {
                           "type": "string"
+                        },
+                        "problem": {
+                          "type": "string",
+                          "nullable": true,
+                          "description": "Why shadow or rank cannot make a model call (no model, endpoint or key, or an unreadable key file); config keys and paths only"
                         }
                       }
                     },
@@ -20715,6 +21095,47 @@
                           "type": "object",
                           "additionalProperties": {
                             "type": "integer"
+                          }
+                        },
+                        "by_verdict": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "by_budget": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    },
+                    "errors": {
+                      "type": "object",
+                      "description": "Error decisions by class (auth, rejected, upstream, transport, config, decode) and the five most frequent redacted reasons",
+                      "properties": {
+                        "by_class": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "top_reasons": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "class": {
+                                "type": "string"
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "count": {
+                                "type": "integer"
+                              }
+                            }
                           }
                         }
                       }
@@ -20786,6 +21207,23 @@
                     },
                     "arms_scope": {
                       "type": "string"
+                    },
+                    "coverage": {
+                      "type": "object",
+                      "properties": {
+                        "closed_beads": {
+                          "type": "integer"
+                        },
+                        "with_closed_pr": {
+                          "type": "integer"
+                        },
+                        "no_ref": {
+                          "type": "integer"
+                        },
+                        "no_decision": {
+                          "type": "integer"
+                        }
+                      }
                     },
                     "cost": {
                       "type": "object",
@@ -30016,6 +30454,223 @@
           },
           "403": {
             "description": "Owner access required"
+          }
+        }
+      }
+    },
+    "/api/ask/status": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Ask AI help status",
+        "description": "Whether the optional Ask AI help panel is on for the signed-in person, the disclosure they must confirm and whether they have. Answers 404 unless ask.enabled is on and fully configured (see src/docs/design/dashboard-ask-ai-help.md, #19183). Never returns the vendor key, project id or integration id.",
+        "responses": {
+          "200": {
+            "description": "Status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "text_version": {
+                      "type": "string"
+                    },
+                    "disclosure": {
+                      "type": "string"
+                    },
+                    "consented": {
+                      "type": "boolean"
+                    },
+                    "docs_url": {
+                      "type": "string"
+                    },
+                    "ai_label": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "404": {
+            "description": "Ask is off"
+          }
+        }
+      }
+    },
+    "/api/ask/consent": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Confirm the Ask disclosure",
+        "description": "Records the signed-in person's consent to the disclosure version the page showed. One audit line, no text. Answers 404 unless ask.enabled is on and fully configured (see src/docs/design/dashboard-ask-ai-help.md, #19183).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text_version": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "text_version"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Recorded"
+          },
+          "400": {
+            "description": "Invalid JSON"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "404": {
+            "description": "Ask is off"
+          },
+          "409": {
+            "description": "The disclosure text changed; reload and confirm again"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Withdraw Ask consent",
+        "description": "Withdraws the signed-in person's consent; takes effect on the next question. Answers 404 unless ask.enabled is on and fully configured (see src/docs/design/dashboard-ask-ai-help.md, #19183).",
+        "responses": {
+          "204": {
+            "description": "Withdrawn (or nothing to withdraw)"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "404": {
+            "description": "Ask is off"
+          }
+        }
+      }
+    },
+    "/api/ask": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Ask a docs-help question",
+        "description": "Validates the question (length cap; credential-shaped input is refused and nothing is sent), checks consent and limits, then asks Kapa.ai directly (ask.mode direct) or through the hub relay (ask.mode hub, hosted hives). Only the question and, when on, the label of the dashboard section from a closed list of ids leave the hive. Answers without an allowlisted source come back as no_cited_answer. Always 200 with an outcome. Answers 404 unless ask.enabled is on and fully configured (see src/docs/design/dashboard-ask-ai-help.md, #19183).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "question": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "section": {
+                    "type": "string"
+                  },
+                  "conversation": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "question"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "no_cited_answer",
+                        "refused_secret_shape",
+                        "rate_limited",
+                        "breaker_open",
+                        "upstream_error",
+                        "not_consented",
+                        "invalid_question",
+                        "relay_disabled"
+                      ]
+                    },
+                    "answer": {
+                      "type": "string",
+                      "description": "Plain text; render as text, never as HTML."
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "title": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "uncertain": {
+                      "type": "boolean"
+                    },
+                    "conversation": {
+                      "type": "string",
+                      "description": "Opaque follow-up handle bound to this person; the vendor thread id never leaves the server."
+                    },
+                    "retry_after_seconds": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "ai_generated": {
+                      "type": "boolean"
+                    },
+                    "docs_url": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "404": {
+            "description": "Ask is off"
           }
         }
       }

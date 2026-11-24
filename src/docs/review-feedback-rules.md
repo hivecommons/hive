@@ -47,7 +47,11 @@ debounce, cap, routing or thread behavior.
 
 ## The agent's structured block
 
-The kicked agent may end its reply with one hidden line to sharpen a rule, or to state one the classifier missed:
+The kicked agent may end its reply with one hidden line to sharpen a rule, or to state one the classifier missed. This is the only way an
+agent records a rule: when the hive captured nothing from the burst, the brief still tells the agent to use this block with `evidence_url`
+set to the comment that states the rule, and the hive captures it and posts the usual acknowledgement. The brief never asks an agent to run
+`hivectl knowledge create`, which is not installed in agent sandboxes and needs a wiki endpoint the default deployment lacks (#19605). With
+the rule store off, the brief asks the agent to quote the rule in its reply for a person to record instead.
 
 ```text
 <!-- hive:review-rules {"rules":[{"text":"...","scope":"agent","applies_to":"quality","evidence_url":"https://github.com/o/r/pull/1#discussion_r1"}]} -->

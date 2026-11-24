@@ -455,6 +455,10 @@
     "URL": "",
     "TokenEnv": ""
   },
+  "Forgejo": {
+    "URL": "",
+    "TokenEnv": ""
+  },
   "Notifications": {
     "Ntfy": null,
     "Slack": null,
@@ -792,12 +796,17 @@
     "inference": {},
     "avatars": {},
     "hub_import": {},
+    "profile_fill": {},
     "enrichment": {
       "gitdm": {},
       "devstats": {},
       "crowddev": {}
     },
     "mention_search": {}
+  },
+  "ask": {
+    "kapa": {},
+    "limits": {}
   },
   "duplicate_sweep": {},
   "good_first_issue": {},

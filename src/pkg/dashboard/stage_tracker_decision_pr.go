@@ -54,6 +54,12 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Blocker = strings.TrimSpace(it.Unauthorized)
 		delegateOK, delegateWhy = false, decisionWhyNoPermission
 		approveOK, approveWhy = false, decisionWhyApproveNoGrant
+	case len(it.ChangesAddressedBy) > 0:
+		// hivecommons/hive#19538: the reviewer's change request is
+		// addressed and their review re-requested; only their (or an
+		// owner's) approval is missing.
+		d.AskedBy = decisionAskedByLane
+		d.Question = changesAddressedQuestion(it.ChangesAddressedBy, sha)
 	case hiveSupersederStop != "":
 		// The owner's superseder rule (hive-authored superseding PRs
 		// auto-merge with no decision) was overridden by its one exception

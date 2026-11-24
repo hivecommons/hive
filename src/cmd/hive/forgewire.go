@@ -20,8 +20,9 @@ import (
 //
 //   - "github" (and unset, the default): ghClient itself. No adapter is
 //     interposed, so the GitHub path is byte-for-byte what it was before.
-//   - "gitlab" / "gitea": the corresponding pkg/forge adapter, built from the
-//     already-present config (instance URL + the env var named by token_env).
+//   - "gitlab" / "gitea" / "forgejo": the corresponding pkg/forge adapter,
+//     built from the already-present config (instance URL + the env var
+//     named by token_env).
 //
 // It falls back to ghClient on any construction failure — a Gitea forge with no
 // URL set, an unparseable instance URL, a forge kind this build does not know.
@@ -73,10 +74,21 @@ func forgeForRepo(cfg *config.Config, repo string, ghClient *github.Client, logg
 		kind, baseURL, tokenID = forge.KindGitLab, cfg.ForgeURLForRepo(repo), cfg.GitLab.TokenEnvName()
 	case config.ForgeGitea:
 		kind, baseURL, tokenID = forge.KindGitea, cfg.ForgeURLForRepo(repo), cfg.Gitea.TokenEnvName()
+	case config.ForgeForgejo:
+		kind, baseURL, tokenID = forge.KindForgejo, cfg.ForgeURLForRepo(repo), cfg.Forgejo.TokenEnvName()
 	default:
 		logger.Warn("unknown project.forge; falling back to the GitHub client",
 			"forge", k, "repo", repo, "known", config.KnownForgeKinds)
 		return fallback()
+	}
+
+	// A forge token goes only to its own block's host. A repo_policies
+	// forge_url elsewhere is a config error (Validate rejects it at load); this
+	// covers a config built without Validate. No writer is returned, and no
+	// request is made.
+	if err := cfg.CheckForgeTokenHost(repo); err != nil {
+		logger.Error("forge token withheld; no writer built", "forge", kind, "repo", repo, "error", err)
+		return nil
 	}
 
 	// The token is read from the environment by name, never from config: the
@@ -157,8 +169,14 @@ func forgeMergerForRepo(cfg *config.Config, repo string) (forge.Merger, error) {
 		kind, tokenID = forge.KindGitLab, cfg.GitLab.TokenEnvName()
 	case config.ForgeGitea:
 		kind, tokenID = forge.KindGitea, cfg.Gitea.TokenEnvName()
+	case config.ForgeForgejo:
+		kind, tokenID = forge.KindForgejo, cfg.Forgejo.TokenEnvName()
 	default:
 		return nil, nil
+	}
+	// A forge token goes only to its own block's host; see CheckForgeTokenHost.
+	if err := cfg.CheckForgeTokenHost(repo); err != nil {
+		return nil, err
 	}
 	return newForgeMerger(kind, os.Getenv(tokenID), forge.Options{
 		BaseURL: cfg.ForgeURLForRepo(repo),
@@ -179,7 +197,7 @@ func forgeMergeSelector(cfgFn func() *config.Config, logger *slog.Logger) github
 			return nil
 		}
 		kind := cfg.ForgeKindForRepo(repo)
-		if kind != config.ForgeGitLab && kind != config.ForgeGitea {
+		if kind != config.ForgeGitLab && kind != config.ForgeGitea && kind != config.ForgeForgejo {
 			return nil
 		}
 		return func(ctx context.Context, repo string, number int, method, expectSHA string) error {

@@ -7,13 +7,14 @@ const path = require('node:path');
 const src = fs.readFileSync(path.join(__dirname, 'static-src', 'js', 'config-sandbox-source.js'), 'utf8');
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 const yamlHint = k => `<code>${k}</code>`;
-const names = ['reviewPerspectivesSourceHtml', 'agentSandboxSettingsHtml', 'markDirtySandboxJob', 'markDirtyPerspectivesSource'];
+const names = ['reviewPerspectivesSourceHtml', 'agentSandboxSettingsHtml', 'markDirtySandboxJob', 'markDirtyPerspectivesSource',
+  'sandboxSchedulingHtml', 'markSandboxScheduling', 'sandboxParseMapLines', 'sandboxParseTolerationLines', 'sandboxTolerationText'];
 
 function load(extra) {
   const state = { dirty: {} };
   const markDirty = (section, key, value) => { (state.dirty[section] = state.dirty[section] || {})[key] = value; };
   const inputs = (extra && extra.inputs) || {};
-  const document = { getElementById: id => (id in inputs ? { value: inputs[id] } : null) };
+  const document = { getElementById: id => (id in inputs ? (typeof inputs[id] === 'object' ? inputs[id] : { value: inputs[id] }) : null) };
   const body = src + '\nreturn {' + names.join(',') + '};';
   const api = new Function('esc', 'yamlHint', 'markDirty', '_configState', 'document', body)(esc, yamlHint, markDirty, { dirty: state.dirty }, document);
   return { api, state, markDirty };
@@ -88,4 +89,213 @@ test('shipped index.html carries the controls', () => {
   const html = fs.readFileSync(path.join(__dirname, 'static', 'index.html'), 'utf8');
   assert.ok(html.includes('${reviewPerspectivesSourceHtml(rv, rvCanEdit)}') || html.includes('reviewPerspectivesSourceHtml(rv, rvCanEdit)'));
   assert.ok(html.includes('${agentSandboxSettingsHtml(g)}'));
+});
+
+// ── Job scheduling, resources, preflight and read relay (#19553) ──
+
+test('map lines parse labels and quantities and report bad lines', () => {
+  const { api } = load();
+  assert.deepStrictEqual(api.sandboxParseMapLines('accelerator=spyre\n\ntopology.kubernetes.io/zone = z1', 'label'),
+    { value: { accelerator: 'spyre', 'topology.kubernetes.io/zone': 'z1' }, errors: [] });
+  assert.deepStrictEqual(api.sandboxParseMapLines('ibm.com/spyre_pf=2\nmemory=32Gi\ncpu=500m', 'quantity').value,
+    { 'ibm.com/spyre_pf': '2', memory: '32Gi', cpu: '500m' });
+  assert.strictEqual(api.sandboxParseMapLines('nokey', 'label').errors.length, 1);
+  assert.strictEqual(api.sandboxParseMapLines('bad key=x', 'label').errors.length, 1);
+  assert.strictEqual(api.sandboxParseMapLines('cpu=lots', 'quantity').errors.length, 1);
+  assert.strictEqual(api.sandboxParseMapLines('cpu=-1', 'quantity').errors.length, 1);
+});
+
+test('toleration lines round-trip through taint syntax', () => {
+  const { api } = load();
+  const parsed = api.sandboxParseTolerationLines('accelerator:NoSchedule\nteam=ml:NoExecute\n*\nlone');
+  assert.deepStrictEqual(parsed.errors, []);
+  assert.deepStrictEqual(parsed.value, [
+    { key: 'accelerator', operator: 'Exists', value: '', effect: 'NoSchedule' },
+    { key: 'team', operator: 'Equal', value: 'ml', effect: 'NoExecute' },
+    { key: '', operator: 'Exists', value: '', effect: '' },
+    { key: 'lone', operator: 'Exists', value: '', effect: '' },
+  ]);
+  assert.strictEqual(api.sandboxTolerationText(parsed.value), 'accelerator:NoSchedule\nteam=ml:NoExecute\n*\nlone');
+  assert.strictEqual(api.sandboxParseTolerationLines('a:Sometimes').errors.length, 1);
+});
+
+test('agent scheduling block shows the fields, full YAML paths and effective values', () => {
+  const { api } = load();
+  const f = {
+    sandboxJob: { nodeSelector: {}, resources: { limits: { 'ibm.com/spyre_pf': '1' } }, tolerations: [], imagePullSecrets: [] },
+    sandboxPreflight: null,
+    sandboxPreflightDefaults: { timeoutS: 120, totalTimeoutS: 300, scheduleTimeoutS: 600, maxCommands: 32 },
+    sandboxEffective: {
+      job: { nodeSelector: { accelerator: 'spyre' }, resources: {}, tolerations: [], imagePullSecrets: ['reg'], serviceAccount: '', ttlSeconds: 0, scheduleTimeoutS: 600 },
+      sources: { nodeSelector: 'agent', resources: 'agent', imagePullSecrets: 'agent_sandbox' },
+      hiddenDefaults: ['node_selector'],
+      preflight: { commands: ['true'], timeoutS: 120, totalTimeoutS: 300 },
+      preflightSource: 'agent_sandbox',
+    },
+  };
+  const html = api.sandboxSchedulingHtml('agent', f);
+  for (const id of ['nodeSelector', 'limits', 'requests', 'tolerations', 'imagePullSecrets', 'scheduleTimeoutS', 'preflightOverride', 'preflightCommands']) {
+    assert.ok(html.includes(`id="sbx-agent-${id}"`), id);
+  }
+  assert.ok(html.includes('agents.<key>.sandbox.job.node_selector.<key>'));
+  assert.ok(html.includes('agents.<key>.sandbox.preflight.commands[]'));
+  assert.ok(html.includes('ibm.com/spyre_pf=1'));
+  assert.ok(html.includes('from agent_sandbox defaults'));
+  assert.ok(html.includes('cfg-agent-sandbox-hidden-defaults'));
+  assert.ok(html.includes('agent_sandbox.job.node_selector'));
+  // Without an override the preflight inputs show the hive-wide list, locked.
+  assert.match(html, /id="sbx-agent-preflightCommands"[^>]*disabled/);
+  assert.ok(!html.includes('github_read_proxy'), 'the read relay is hive-wide only');
+  assert.ok(api.agentSandboxSettingsHtml({ sandboxFields: f }).includes('id="sbx-agent-nodeSelector"'));
+});
+
+test('hive scheduling block carries the read relay controls', () => {
+  const { api } = load();
+  const html = api.sandboxSchedulingHtml('hive', {
+    agentSandboxJobNodeSelector: { accelerator: 'spyre' },
+    agentSandboxJobGithubReadProxy: { enabled: true, listenAddr: ':8443', endpoint: 'https://relay:8443', noProxy: [] },
+  });
+  for (const id of ['rpEnabled', 'rpListenAddr', 'rpEndpoint', 'rpNoProxy', 'nodeSelector', 'preflightCommands']) assert.ok(html.includes(`id="sbx-hive-${id}"`), id);
+  assert.ok(html.includes('agent_sandbox.job.github_read_proxy.listen_addr'));
+  assert.ok(html.includes('agent_sandbox.job.resources.limits.<key>'));
+  assert.ok(!html.includes('preflightOverride'));
+});
+
+test('agent scheduling edits stage typed sandboxJob and sandboxPreflight values', () => {
+  const t = load({ inputs: {
+    'sbx-agent-nodeSelector': 'accelerator=spyre',
+    'sbx-agent-limits': 'ibm.com/spyre_pf=2',
+    'sbx-agent-requests': '',
+    'sbx-agent-tolerations': 'accelerator:NoSchedule',
+    'sbx-agent-imagePullSecrets': 'reg',
+    'sbx-agent-scheduleTimeoutS': '900',
+    'sbx-agent-preflightOverride': { type: 'checkbox', checked: true },
+    'sbx-agent-preflightCommands': 'nvidia-smi\n',
+    'sbx-agent-preflightTimeoutS': '60',
+    'sbx-agent-preflightTotalTimeoutS': '',
+    'sbx-agent-preflightRetryDelayS': '',
+  } });
+  t.api.markSandboxScheduling('agent');
+  assert.deepStrictEqual(t.state.dirty.general.sandboxJob, {
+    nodeSelector: { accelerator: 'spyre' },
+    resources: { limits: { 'ibm.com/spyre_pf': '2' }, requests: {} },
+    tolerations: [{ key: 'accelerator', operator: 'Exists', value: '', effect: 'NoSchedule' }],
+    imagePullSecrets: ['reg'],
+    scheduleTimeoutS: 900,
+  });
+  assert.deepStrictEqual(t.state.dirty.general.sandboxPreflight, { commands: ['nvidia-smi'], timeoutS: 60, totalTimeoutS: 0, retryDelayS: 0 });
+});
+
+test('a field with an error is left out of the save; no override stages null', () => {
+  const t = load({ inputs: {
+    'sbx-agent-nodeSelector': 'bad key=x',
+    'sbx-agent-limits': 'cpu=2',
+    'sbx-agent-preflightOverride': { type: 'checkbox', checked: false },
+    'sbx-agent-preflightCommands': 'true',
+  } });
+  t.api.markSandboxScheduling('agent');
+  assert.ok(!('nodeSelector' in t.state.dirty.general.sandboxJob));
+  assert.deepStrictEqual(t.state.dirty.general.sandboxJob.resources, { limits: { cpu: '2' } });
+  assert.strictEqual(t.state.dirty.general.sandboxPreflight, null);
+});
+
+test('hive scheduling edits stage agentSandbox keys and refuse an incomplete relay', () => {
+  let t = load({ inputs: {
+    'sbx-hive-nodeSelector': 'accelerator=spyre',
+    'sbx-hive-preflightCommands': '',
+    'sbx-hive-rpEnabled': { type: 'checkbox', checked: true },
+    'sbx-hive-rpListenAddr': ':8443',
+    'sbx-hive-rpEndpoint': 'https://relay:8443',
+    'sbx-hive-rpNoProxy': 'registry.internal',
+  } });
+  t.api.markSandboxScheduling('hive');
+  assert.deepStrictEqual(t.state.dirty.security.agentSandboxJobNodeSelector, { accelerator: 'spyre' });
+  assert.deepStrictEqual(t.state.dirty.security.agentSandboxPreflight, { commands: [] });
+  assert.deepStrictEqual(t.state.dirty.security.agentSandboxJobGithubReadProxy, { enabled: true, listenAddr: ':8443', endpoint: 'https://relay:8443', noProxy: ['registry.internal'] });
+  t = load({ inputs: {
+    'sbx-hive-rpEnabled': { type: 'checkbox', checked: true },
+    'sbx-hive-rpListenAddr': '',
+    'sbx-hive-rpEndpoint': 'http://relay:8443',
+    'sbx-hive-rpNoProxy': '',
+  } });
+  t.api.markSandboxScheduling('hive');
+  assert.ok(!t.state.dirty.security || !('agentSandboxJobGithubReadProxy' in t.state.dirty.security));
+});
+
+// sandbox.setup (#19574) shares the renderer and the stager.
+test('setup block renders next to the preflight with full YAML paths and the effective row', () => {
+  const { api } = load();
+  const f = {
+    sandboxJob: {},
+    sandboxSetup: null,
+    sandboxSetupDefaults: { timeoutS: 900, totalTimeoutS: 1800, maxCommands: 32 },
+    sandboxEffective: {
+      job: {}, sources: {}, hiddenDefaults: [],
+      preflight: { commands: [] }, preflightSource: '',
+      setup: { commands: ['./install.sh'], healthCommands: ['smoke', 'smoke2'], timeoutS: 900, totalTimeoutS: 1800 },
+      setupSource: 'agent_sandbox',
+    },
+  };
+  const html = api.sandboxSchedulingHtml('agent', f);
+  for (const id of ['setupOverride', 'setupCommands', 'setupHealthCommands', 'setupTimeoutS', 'setupTotalTimeoutS']) {
+    assert.ok(html.includes(`id="sbx-agent-${id}"`), id);
+  }
+  for (const yaml of ['agents.<key>.sandbox.setup.commands[]', 'agents.<key>.sandbox.setup.health_commands[]', 'agents.<key>.sandbox.setup.timeout_s', 'agents.<key>.sandbox.setup.total_timeout_s']) {
+    assert.ok(html.includes(yaml), yaml);
+  }
+  assert.ok(html.indexOf('Node preflight') < html.indexOf('Workspace setup'), 'setup follows the preflight');
+  assert.ok(html.includes('setup_failed'));
+  // Without an override the inputs show the hive-wide lists, locked.
+  assert.match(html, /id="sbx-agent-setupCommands"[^>]*disabled/);
+  assert.ok(html.includes('./install.sh'));
+  const eff = api.agentSandboxSettingsHtml({ sandboxFields: Object.assign({}, f, { sandboxEffective: Object.assign({}, f.sandboxEffective) }) });
+  assert.ok(eff.includes('data-effective-field="setup"'));
+  assert.ok(eff.includes('1 setup command, 2 health checks'));
+  const hive = api.sandboxSchedulingHtml('hive', { agentSandboxSetup: { commands: ['./install.sh'], healthCommands: [] } });
+  for (const yaml of ['agent_sandbox.setup.commands[]', 'agent_sandbox.setup.health_commands[]', 'agent_sandbox.setup.timeout_s', 'agent_sandbox.setup.total_timeout_s']) {
+    assert.ok(hive.includes(yaml), yaml);
+  }
+  assert.ok(!hive.includes('setupOverride'));
+  assert.doesNotMatch(hive, /id="sbx-hive-setupCommands"[^>]*disabled/);
+});
+
+test('setup edits stage sandboxSetup and agentSandboxSetup; no override stages null; an error is left out', () => {
+  let t = load({ inputs: {
+    'sbx-agent-setupOverride': { type: 'checkbox', checked: true },
+    'sbx-agent-setupCommands': './install.sh\n\n',
+    'sbx-agent-setupHealthCommands': 'python -c smoke',
+    'sbx-agent-setupTimeoutS': '600',
+    'sbx-agent-setupTotalTimeoutS': '',
+  } });
+  t.api.markSandboxScheduling('agent');
+  assert.deepStrictEqual(t.state.dirty.general.sandboxSetup, { commands: ['./install.sh'], healthCommands: ['python -c smoke'], timeoutS: 600, totalTimeoutS: 0 });
+  t = load({ inputs: {
+    'sbx-agent-setupOverride': { type: 'checkbox', checked: false },
+    'sbx-agent-setupCommands': './install.sh',
+    'sbx-agent-setupHealthCommands': '',
+  } });
+  t.api.markSandboxScheduling('agent');
+  assert.strictEqual(t.state.dirty.general.sandboxSetup, null);
+  t = load({ inputs: {
+    'sbx-agent-setupOverride': { type: 'checkbox', checked: true },
+    'sbx-agent-setupCommands': 'true',
+    'sbx-agent-setupHealthCommands': '',
+    'sbx-agent-setupTimeoutS': '-3',
+  } });
+  t.api.markSandboxScheduling('agent');
+  assert.ok(!('sandboxSetup' in t.state.dirty.general), 'a bad timeout keeps the block out of the save');
+  t = load({ inputs: {
+    'sbx-hive-setupCommands': './install.sh',
+    'sbx-hive-setupHealthCommands': 'smoke',
+    'sbx-hive-setupTimeoutS': '',
+    'sbx-hive-setupTotalTimeoutS': '1200',
+  } });
+  t.api.markSandboxScheduling('hive');
+  assert.deepStrictEqual(t.state.dirty.security.agentSandboxSetup, { commands: ['./install.sh'], healthCommands: ['smoke'], timeoutS: 0, totalTimeoutS: 1200 });
+});
+
+test('shipped index.html carries the scheduling controls in both places', () => {
+  const html = fs.readFileSync(path.join(__dirname, 'static', 'index.html'), 'utf8');
+  assert.ok(html.includes("${sandboxSchedulingHtml('agent', f)}"));
+  assert.ok(html.includes("${sandboxSchedulingHtml('hive', sec)}"));
 });

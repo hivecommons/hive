@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/jsonextract"
 )
@@ -443,7 +444,7 @@ func (r *AlignmentReviewer) reviewUncached(ctx context.Context, ac AlignmentCont
 	}
 	reqCtx, cancel := context.WithTimeout(ctx, alignmentReviewTimeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, r.endpoint+"/v1/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, config.LiteLLMChatCompletionsURL(r.endpoint), bytes.NewReader(body))
 	if err != nil {
 		return ModelAlignmentVerdict{}, fmt.Errorf("build alignment review request: %w", err)
 	}

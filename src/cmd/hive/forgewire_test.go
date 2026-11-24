@@ -2,6 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -84,6 +89,17 @@ func TestGovernorForgeSelectsAdapters(t *testing.T) {
 		}
 	})
 
+	t.Run("forgejo uses the configured instance", func(t *testing.T) {
+		cfg := &config.Config{}
+		cfg.Project.Org = "acme"
+		cfg.Project.Forge = config.ForgeForgejo
+		cfg.Forgejo.URL = "https://forgejo.example.com"
+
+		if got := forgeKindOf(t, governorForge(cfg, gh, discardLogger())); got != forge.KindForgejo {
+			t.Fatalf("want the Forgejo adapter, got kind %q", got)
+		}
+	})
+
 	t.Run("gitea uses the configured instance", func(t *testing.T) {
 		cfg := &config.Config{}
 		cfg.Project.Org = "acme"
@@ -129,7 +145,7 @@ func TestGovernorForgeFallsBackOnUnusableConfig(t *testing.T) {
 // config's forge names and pkg/forge.Kind: config cannot import pkg/forge, so
 // a rename on either side must fail here rather than silently fall back.
 func TestConfigForgeKindsMatchForgeKinds(t *testing.T) {
-	want := []forge.Kind{forge.KindGitHub, forge.KindGitLab, forge.KindGitea}
+	want := []forge.Kind{forge.KindGitHub, forge.KindGitLab, forge.KindGitea, forge.KindForgejo}
 	if len(config.KnownForgeKinds) != len(want) {
 		t.Fatalf("config.KnownForgeKinds = %v, want %v", config.KnownForgeKinds, want)
 	}
@@ -148,6 +164,7 @@ func TestGovernorForgeRoutesPerRepo(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Project.Org = "acme"
 	cfg.Project.Repos = []string{"app", "lab", "tea"}
+	cfg.GitLab.URL = "https://gitlab.example.com"
 	cfg.Project.RepoPolicies = []config.RepoPolicy{
 		{Repo: "lab", Forge: config.ForgeGitLab, ForgeURL: "https://gitlab.example.com"},
 		{Repo: "tea", Forge: config.ForgeGitea, ForgeURL: "https://codeberg.org"},
@@ -179,5 +196,73 @@ func TestGovernorForgeRoutesPerRepo(t *testing.T) {
 	noGH := &repoForgeRouter{cfg: cfg, logger: discardLogger()}
 	if err := noGH.AddLabels(context.Background(), "acme/app", 1, []string{"x"}); err == nil {
 		t.Fatal("want an error for a GitHub repo with no GitHub client")
+	}
+}
+
+// TestForgeTokenGoesOnlyToItsBlocksHost: a repo_policies forge_url on another
+// host than the forge block's own URL must not receive the block's token. The
+// fake server stands for that other host; it must see no request.
+func TestForgeTokenGoesOnlyToItsBlocksHost(t *testing.T) {
+	for _, kind := range []string{config.ForgeGitea, config.ForgeForgejo} {
+		for _, matching := range []bool{false, true} {
+			name := kind + "/other host"
+			if matching {
+				name = kind + "/matching host"
+			}
+			t.Run(name, func(t *testing.T) {
+				var mu sync.Mutex
+				var auths []string
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					mu.Lock()
+					auths = append(auths, r.Header.Get("Authorization"))
+					mu.Unlock()
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write([]byte(`{}`))
+				}))
+				defer srv.Close()
+
+				t.Setenv("HIVE_TEST_HOST_TOKEN", "secret-token")
+				blockURL := "https://git.example.com"
+				if matching {
+					blockURL = srv.URL
+				}
+				cfg := &config.Config{}
+				cfg.Project.Org = "acme"
+				cfg.Project.Repos = []string{"app"}
+				cfg.Project.RepoPolicies = []config.RepoPolicy{{Repo: "app", Forge: kind, ForgeURL: srv.URL}}
+				if kind == config.ForgeGitea {
+					cfg.Gitea.URL, cfg.Gitea.TokenEnv = blockURL, "HIVE_TEST_HOST_TOKEN"
+				} else {
+					cfg.Forgejo.URL, cfg.Forgejo.TokenEnv = blockURL, "HIVE_TEST_HOST_TOKEN"
+				}
+
+				w := governorForge(cfg, nil, discardLogger())
+				var err error
+				if w == nil {
+					err = errors.New("no writer")
+				} else {
+					err = w.CreateIssueComment(context.Background(), "acme/app", 1, "hi")
+				}
+				_, mergeErr := forgeMergerForRepo(cfg, "acme/app")
+
+				mu.Lock()
+				defer mu.Unlock()
+				if matching {
+					if err != nil || mergeErr != nil {
+						t.Fatalf("matching host: comment err %v, merger err %v", err, mergeErr)
+					}
+					if len(auths) != 1 || !strings.Contains(auths[0], "secret-token") {
+						t.Fatalf("matching host: requests = %q, want one carrying the token", auths)
+					}
+					return
+				}
+				if err == nil || mergeErr == nil {
+					t.Fatalf("other host: comment err %v, merger err %v, want both errors", err, mergeErr)
+				}
+				if len(auths) != 0 {
+					t.Fatalf("other host received %d requests, want 0", len(auths))
+				}
+			})
+		}
 	}
 }

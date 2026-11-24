@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/jsonextract"
 )
 
@@ -74,8 +75,8 @@ type Reviewer struct {
 }
 
 // Config is the resolved subset the Reviewer needs. The caller resolves the
-// endpoint/key/model from the hive's LiteLLM config so this package has no
-// dependency on the config package.
+// endpoint/key/model from the hive's LiteLLM config so this package reads no
+// hive configuration.
 type Config struct {
 	Endpoint        string
 	APIKey          string
@@ -190,7 +191,7 @@ func (r *Reviewer) Review(ctx context.Context, agentName, intent, transcript str
 	reqCtx, cancel := context.WithTimeout(ctx, reviewTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost,
-		r.endpoint+"/v1/chat/completions", bytes.NewReader(body))
+		config.LiteLLMChatCompletionsURL(r.endpoint), bytes.NewReader(body))
 	if err != nil {
 		return Verdict{}, fmt.Errorf("build review request: %w", err)
 	}

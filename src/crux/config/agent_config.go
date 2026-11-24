@@ -507,9 +507,10 @@ type AgentSandboxConfig struct {
 	Substrate *SandboxSubstrateConfig `yaml:"substrate,omitempty" json:"substrate,omitempty"`
 	// Publish gates what a sandboxed run may publish; see SandboxPublishConfig.
 	Publish *SandboxPublishConfig `yaml:"publish,omitempty" json:"publish,omitempty"`
-	// Preflight is the node health check run before the agent starts on the
-	// job runtime; see SandboxPreflightConfig.
+	// Preflight (node health) and Setup (workspace setup) run before the agent on the job runtime.
 	Preflight *SandboxPreflightConfig `yaml:"preflight,omitempty" json:"preflight,omitempty"`
+	Setup     *SandboxSetupConfig     `yaml:"setup,omitempty" json:"setup,omitempty"`
+	PidsLimit int                     `yaml:"pids_limit,omitempty" json:"pids_limit,omitempty"` // Podman --pids-limit; <=0 keeps the 4096 default (#19479)
 }
 
 // SandboxPublishConfig is the deterministic preflight hive runs before it
@@ -555,9 +556,9 @@ type AgentSandboxOverride struct {
 	// Publish, when set, replaces the global publish preflight for this
 	// agent; an empty verify list here turns the preflight off for it.
 	Publish *SandboxPublishConfig `yaml:"publish,omitempty" json:"publish,omitempty"`
-	// Preflight, when set, replaces the global preflight for this agent; an
-	// empty commands list here turns it off for the agent.
+	// Preflight and Setup, when set, replace the global block for this agent; empty lists turn it off.
 	Preflight *SandboxPreflightConfig `yaml:"preflight,omitempty" json:"preflight,omitempty"`
+	Setup     *SandboxSetupConfig     `yaml:"setup,omitempty" json:"setup,omitempty"`
 }
 
 // BobConfig configures the IBM bobshell ("bob") CLI backend. Only the

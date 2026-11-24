@@ -113,13 +113,55 @@ func (b *boot) applyPendingReloadLocked() {
 	}
 }
 
-// persistCycleLocked is a governor tick's persist. persistState writes the
-// governor snapshot and reach counters and ends in
+// persistCycleLocked is a governor tick's persist, and the shutdown persist.
+// persistState writes the governor snapshot and reach counters and ends in
 // Config.ReconcilePausedAndSave, which rewrites hive.yaml from the in-memory
 // config. Any parked reload is applied first, so the save writes the
 // reloaded config rather than the one the tick started from, and the
 // governor state is still saved this tick. Caller holds cfgReloadMu.
+//
+// A config file edited on disk that no reload has delivered yet (the watcher
+// missed it, or its debounce has not fired) is reloaded here too, before the
+// save (hivecommons/hive#19561). If it does not load, Save's own guard
+// refuses to overwrite it, so the persist never reverts a hand edit.
 func (b *boot) persistCycleLocked(persist func(*boot)) {
 	b.applyPendingReloadLocked()
+	b.reloadIfChangedOnDiskLocked()
 	persist(b)
+}
+
+// reloadIfChangedOnDiskLocked reloads the config from disk when one of its
+// layer files was changed by someone other than this process since it was
+// last loaded or saved. Caller holds cfgReloadMu.
+func (b *boot) reloadIfChangedOnDiskLocked() {
+	if b.reloadApply == nil || b.cfg == nil {
+		return
+	}
+	path, changed := b.cfg.ChangedOnDisk()
+	if !changed {
+		return
+	}
+	newCfg, err := b.loadConfigFromDisk()
+	if err != nil {
+		if b.logger != nil {
+			b.logger.Warn("config file changed on disk but does not load; the persist will not overwrite it",
+				"path", path, "error", err)
+		}
+		return
+	}
+	if b.logger != nil {
+		b.logger.Info("config file changed on disk since the last load or save; reloading it before the persist instead of overwriting it",
+			"path", path)
+	}
+	prev, next := b.reloadApply(newCfg)
+	if prev != next {
+		b.pendingACMM = append(b.pendingACMM, [2]int{prev, next})
+	}
+}
+
+func (b *boot) loadConfigFromDisk() (*config.Config, error) {
+	if b.loadConfigForReload != nil {
+		return b.loadConfigForReload()
+	}
+	return config.LoadWithDashboardOverlay(b.configPath)
 }

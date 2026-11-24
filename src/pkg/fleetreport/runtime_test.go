@@ -278,8 +278,9 @@ func TestEvaluateGitHubAppNotInstalledSkippedOnUnclaimedHive(t *testing.T) {
 		{name: "legacy placeholder org counts as unclaimed", org: "placeholder-org", evidence: []Evidence{appEv}, wantClasses: nil},
 		{name: "placeholder org still reports other classes", org: "available-lke648397-260827-boq9", evidence: []Evidence{appEv, panicEv}, wantClasses: []string{ClassPanicRecovered}},
 		{name: "unclaimed hive still reports other classes", org: "", evidence: []Evidence{appEv, panicEv}, wantClasses: []string{ClassPanicRecovered}},
-		{name: "org configured still reports app-not-installed", org: "acme", evidence: []Evidence{appEv}, wantClasses: []string{ClassGitHubAppNotInstalled}},
-		{name: "real org merely containing the prefix is still reported", org: "unavailable-corp", evidence: []Evidence{appEv}, wantClasses: []string{ClassGitHubAppNotInstalled}},
+		{name: "org configured self-hosted spoke skips app-not-installed (#19614)", org: "acme", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "real org merely containing the prefix skips app-not-installed", org: "unavailable-corp", evidence: []Evidence{appEv}, wantClasses: nil},
+		{name: "real org still reports other classes", org: "acme", evidence: []Evidence{appEv, panicEv}, wantClasses: []string{ClassPanicRecovered}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -329,6 +330,43 @@ func TestEvaluateGitHubAppNotInstalledOpenTrackerRetiresOnUnclaimedHive(t *testi
 	again := Evaluate(obs, st, false)
 	if len(again.Reports) != 0 || len(again.Recoveries) != 0 {
 		t.Fatalf("second pass = reports %#v recoveries %#v", again.Reports, again.Recoveries)
+	}
+}
+
+// agent_login_required means the operator must re-authenticate an agent's
+// backend on that spoke: the login scanner pauses only after its credential
+// probe found no valid credential, and the watchdog logs only a False auth
+// verdict. The pause notification and the dashboard alert already reach the
+// operator, so the class is never filed upstream (#19628). Other classes in
+// the same pass still are, and a tracker a pre-fix release opened retires
+// through the ordinary recovery path.
+func TestEvaluateAgentLoginRequiredStaysLocal(t *testing.T) {
+	now := time.Date(2026, 11, 24, 4, 13, 0, 0, time.UTC)
+	loginEv := Evidence{Class: ClassAgentLoginRequired, Component: "agent-runtime", Severity: "medium", Count: 5, Message: "login required detected", Attributable: true}
+	watchdogEv := Evidence{Class: ClassAgentLoginRequired, Component: "agent-runtime", Severity: "medium", Count: 5, Message: "watchdog: agent credential failure", Attributable: true}
+	panicEv := Evidence{Class: ClassPanicRecovered, Component: "dashboard", Severity: "high", Count: 1, Message: "panic in handler: nil deref", Attributable: true}
+	obs := Observation{EpochStart: now, HiveID: "hive-a", Version: "v5.349.1", HiveSlug: "marinatedconcrete", ProjectOrg: "acme", Evidence: []Evidence{loginEv, watchdogEv, panicEv}, Now: now}
+
+	res := Evaluate(obs, State{}, false)
+	var got []string
+	for _, r := range res.Reports {
+		got = append(got, r.Class)
+	}
+	if fmt.Sprint(got) != fmt.Sprint([]string{ClassPanicRecovered}) {
+		t.Fatalf("report classes = %v, want only %s", got, ClassPanicRecovered)
+	}
+
+	fp := RuntimeFingerprint(loginEv.Class, loginEv.Message)
+	prev := State{Open: map[string]OpenIssue{
+		fp: {Number: 19628, PostedAt: now.Add(-time.Hour), Trigger: TriggerRuntimeError, Class: ClassAgentLoginRequired, Component: loginEv.Component},
+	}}
+	obs.Evidence = []Evidence{loginEv}
+	res = Evaluate(obs, prev, false)
+	if len(res.Reports) != 0 {
+		t.Fatalf("local-only class still reported: %#v", res.Reports)
+	}
+	if len(res.Recoveries) != 1 || res.Recoveries[0].Fingerprint != fp || res.Recoveries[0].Class != ClassAgentLoginRequired {
+		t.Fatalf("recoveries = %#v, want one retiring the pre-fix #19628 tracker", res.Recoveries)
 	}
 }
 

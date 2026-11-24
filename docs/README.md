@@ -19,7 +19,6 @@ there unless you are looking for one of the pages below.
 - [Hive Hub — Backup & Disaster Recovery](HUB_DISASTER_RECOVERY.md)
 - [Runs](runs.md) — how a run is represented as a staged task lease.
 - [Readiness-first preparation](readiness-preparation.md)
-- [Weekly competitor report grounding](weekly-competitor-report.md)
 - [Outreach anti-spam and deduplication ruleset](outreach-antispam.md)
 
 ## Design records and RFCs

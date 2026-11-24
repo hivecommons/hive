@@ -1,11 +1,14 @@
 package askai
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 )
@@ -29,6 +32,27 @@ const (
 
 // consentStemPattern bounds a person key to a single safe path segment.
 var consentStemPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$`)
+
+// personKeyHashPrefix marks a stem derived by hashing an identity that is not
+// itself a safe file name (an email, say).
+const (
+	personKeyHashPrefix = "h-"
+	personKeyHashHexLen = 40
+)
+
+// PersonKey maps a dashboard identity to a consent stem: the identity itself
+// when it is already a safe stem, else a hash of it. "" stays "".
+func PersonKey(identity string) string {
+	identity = strings.TrimSpace(identity)
+	if identity == "" {
+		return ""
+	}
+	if consentStemPattern.MatchString(identity) {
+		return identity
+	}
+	sum := sha256.Sum256([]byte(identity))
+	return personKeyHashPrefix + hex.EncodeToString(sum[:])[:personKeyHashHexLen]
+}
 
 // ErrInvalidPerson is returned for a person key that is not a safe stem.
 var ErrInvalidPerson = errors.New("ask: invalid person key")

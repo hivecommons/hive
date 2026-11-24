@@ -151,6 +151,11 @@ func sweepWorkspaces(logger *slog.Logger, audit *AuditLog) {
 		// mid-rewrite index, detached worktrees); the sweep exists for
 		// scratch-dir hygiene, and a git clone is not scratch.
 		if isGitClone(agentPath) {
+			// Agent-written kick notes are still removed: they are never
+			// working-tree content, and a workspace the agent turned into a
+			// clone must not become a place where a stale note survives
+			// forever (#19559).
+			removedFiles += sweepAgentNotes(logger, agentPath, agentName, now, maxAge, &failed)
 			logger.Info("workspace cleanup: workspace is a git clone; skipping sweep",
 				"agent", agentName)
 			continue
@@ -359,7 +364,57 @@ func isPermError(err error) bool {
 	return false
 }
 
+// isAgentNoteFile reports whether name is an agent-authored session note the
+// hive does not own: ".kick" and its variants (".kick.fixed", ".kick.bak", …).
+// Nothing in the hive reads or writes these, yet agents on some models write
+// their conclusions there and `cat .kick` at the start of every later session,
+// so one session's wrong belief ("GitHub is unavailable") became permanent
+// behaviour across restarts (#19559). They are swept like any other stale
+// artifact even though they are dotfiles.
+func isAgentNoteFile(name string) bool {
+	return name == ".kick" || strings.HasPrefix(name, ".kick.")
+}
+
+// sweepAgentNotes removes stale agent note files (isAgentNoteFile) from the
+// top level of agentPath. Used for git-clone workspaces, which the main sweep
+// otherwise leaves untouched. Only regular files are removed. Returns the
+// number of files removed and adds removal failures to *failed.
+func sweepAgentNotes(logger *slog.Logger, agentPath, agentName string, now time.Time, maxAge time.Duration, failed *int) int {
+	entries, err := os.ReadDir(agentPath)
+	if err != nil {
+		return 0
+	}
+	removed := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if !isAgentNoteFile(name) || !entry.Type().IsRegular() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		age := now.Sub(info.ModTime())
+		if age < maxAge {
+			continue
+		}
+		if err := removeTree(filepath.Join(agentPath, name)); err != nil {
+			logger.Warn("workspace cleanup: failed to remove stale agent note",
+				"agent", agentName, "file", name, "error", err)
+			*failed++
+			continue
+		}
+		logger.Info("workspace cleanup: removed stale agent note",
+			"agent", agentName, "file", name, "age", age.Round(time.Minute))
+		removed++
+	}
+	return removed
+}
+
 func isSkippedEntry(name string) bool {
+	if isAgentNoteFile(name) {
+		return false
+	}
 	switch name {
 	// Agent infrastructure dirs — never remove
 	case ".cache", ".config", ".npm-cache", "bin":

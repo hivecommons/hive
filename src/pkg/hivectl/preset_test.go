@@ -43,7 +43,7 @@ hubs:
 `
 
 func TestPresetForgeKindsMatchForgePackage(t *testing.T) {
-	if presetForgeGitHub != string(forge.KindGitHub) || presetForgeGitLab != string(forge.KindGitLab) || presetForgeGitea != string(forge.KindGitea) {
+	if presetForgeGitHub != string(forge.KindGitHub) || presetForgeGitLab != string(forge.KindGitLab) || presetForgeGitea != string(forge.KindGitea) || presetForgeForgejo != string(forge.KindForgejo) {
 		t.Fatal("preset forge kinds drifted from pkg/forge")
 	}
 }
@@ -386,5 +386,27 @@ func TestLoadPresetLoopbackHTTPRedirectPolicy(t *testing.T) {
 	}
 	if _, err := loadPreset(ctx, srv.URL+"/scheme", client); err == nil {
 		t.Error("redirect to another scheme should be refused")
+	}
+}
+
+func TestPresetAcceptsEveryGiteaFamilyKind(t *testing.T) {
+	for _, kind := range []string{"gitea", "forgejo"} {
+		t.Run(kind, func(t *testing.T) {
+			r := PresetRepo{Repo: "org/thing", Forge: kind, Host: "codeberg.org"}
+			if err := normalizePresetRepo("repo", &r); err != nil {
+				t.Fatalf("normalizePresetRepo: %v", err)
+			}
+			if r.Forge != kind {
+				t.Errorf("Forge = %q, want %q", r.Forge, kind)
+			}
+			id, err := NormalizeRepositoryID(kind + "/codeberg.org/org/thing")
+			if err != nil {
+				t.Fatalf("NormalizeRepositoryID: %v", err)
+			}
+			got, err := RepositoryInput(id, "github", "github.com")
+			if err != nil || got != id {
+				t.Errorf("RepositoryInput(%q) = %q, %v; want the id unchanged", id, got, err)
+			}
+		})
 	}
 }

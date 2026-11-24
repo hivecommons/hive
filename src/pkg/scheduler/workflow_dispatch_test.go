@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/hub/marketplace/curated"
 	"github.com/hivecommons/hive/pkg/workflowmodel"
 )
 
@@ -234,5 +235,47 @@ func TestBuildWorkflowDispatchPrompt(t *testing.T) {
 	custom := BuildWorkflowDispatchPrompt(c, "Draft ${REF} as ${PROFILE} for ${AGENT}")
 	if custom != "Draft cncf/techdocs#395 as techdocs-drafter for writer" {
 		t.Fatalf("template %q", custom)
+	}
+}
+
+// The curated-2026.11.4 whose-turn labels are the hive's (hivecommons/hive#19609):
+// both TechDocs profiles are told to leave them alone, and the gate labels
+// keep their own "a person's gate" line instead.
+func TestWorkflowDispatchPromptStatusLabels(t *testing.T) {
+	entries, errs := curated.Load()
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	var p *workflowmodel.Profile
+	for _, e := range entries {
+		if e.Model.Metadata.Name == "cncf-techdocs-assessment" && e.Model.Spec.Meta.Version == "curated-2026.11.4" {
+			var err error
+			if p, _, err = workflowmodel.Compile(e.Model); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if p == nil {
+		t.Fatal("cncf-techdocs-assessment@curated-2026.11.4 not embedded")
+	}
+	const line = "Do not add or remove `ready-for-techdocs-review`, `ready-for-stakeholder-review`, `ready-for-approver`: the hive sets those status labels from the item's state."
+	for _, state := range []string{"accepted", "drafting"} {
+		target, ok := p.DispatchFor(state)
+		if !ok {
+			t.Fatalf("no dispatch in %s", state)
+		}
+		d := drafterDispatch()
+		d.Model, d.State, d.Target, d.Profile = "cncf-techdocs-assessment@curated-2026.11.4", state, target, p
+		msg := BuildWorkflowDispatchPrompt(WorkflowDispatchCandidate{Dispatch: d, Agent: "writer"}, "")
+		if !strings.Contains(msg, line) {
+			t.Errorf("%s (%s) prompt missing the status-label line:\n%s", target.Profile, state, msg)
+		}
+		if !strings.Contains(msg, "`verified`") || strings.Contains(msg, "`verified`: the hive sets") {
+			t.Errorf("%s: the verified gate must stay a person's gate, not a status label:\n%s", target.Profile, msg)
+		}
+	}
+	// A model without status labels says nothing about them.
+	if msg := BuildWorkflowDispatchPrompt(WorkflowDispatchCandidate{Dispatch: drafterDispatch(), Agent: "writer"}, ""); strings.Contains(msg, "status labels") {
+		t.Errorf("status-label line without status labels:\n%s", msg)
 	}
 }

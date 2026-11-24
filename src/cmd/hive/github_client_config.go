@@ -69,6 +69,15 @@ func (b *boot) newConfiguredGitHubAppClient(auth *github.AppAuth) *github.Client
 	return client
 }
 
+// newConfiguredGitHubPATClient is the PAT counterpart of
+// newConfiguredGitHubAppClient: the boot constructor plus configureGitHubClient,
+// used when a config reload delivers a rotated github.token.
+func (b *boot) newConfiguredGitHubPATClient(token string) *github.Client {
+	client := github.NewClient(token, b.cfg.Project.Org, b.cfg.Project.Repos, b.logger, b.cfg.GitHub.ResolvedAPIURL())
+	b.configureGitHubClient(client)
+	return client
+}
+
 // githubHoldLabels is the hold-label set every client carries: the canonical
 // per-hive hold label (hive-pause/<id>), the configured sentinel alert label,
 // plus the clanker-requested label while reporter_trust.clanker_requested is
@@ -538,9 +547,8 @@ func evictHiveClosedPR(srv *dashboard.Server, rec github.AuditRecord, now time.T
 func (b *boot) writebackGate() *writeback.Gate {
 	b.writebackOnce.Do(func() {
 		deps := b.cfg.WritebackGateDeps()
-		deps.Config = func() writeback.Config { return b.cfg.Writeback }
 		deps.Logger = b.logger
-		b.writeback = writeback.New(b.cfg.Writeback, deps, writebackStatePath())
+		b.writeback = writeback.New(b.cfg.WritebackPolicy(), deps, writebackStatePath())
 		for _, repo := range b.cfg.Project.Repos {
 			b.writeback.ObserveRepo(repo)
 		}

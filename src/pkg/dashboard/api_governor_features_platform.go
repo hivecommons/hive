@@ -13,7 +13,7 @@ import (
 )
 
 // featuresPlatformBody is the part of the Features PUT that covers the small
-// platform blocks data.*, deployment.*, evidence.*, gitea.*, gitlab.*, mint.*,
+// platform blocks data.*, deployment.*, evidence.*, forgejo.*, gitea.*, gitlab.*, mint.*,
 // supersession_sweep.*, compliance.posture_checks.*, planning.*,
 // swarm.* and tool_approval.inbox_path. Every field is a pointer so an absent
 // key leaves the config untouched.
@@ -39,10 +39,12 @@ type featuresPlatformBody struct {
 	BenchmarksPublish     *bool `json:"benchmarksPublish"`
 	BenchmarksRepoConsent *bool `json:"benchmarksRepoConsent"`
 
-	GiteaURL       *string `json:"giteaUrl"`
-	GiteaTokenEnv  *string `json:"giteaTokenEnv"`
-	GitLabURL      *string `json:"gitlabUrl"`
-	GitLabTokenEnv *string `json:"gitlabTokenEnv"`
+	ForgejoURL      *string `json:"forgejoUrl"`
+	ForgejoTokenEnv *string `json:"forgejoTokenEnv"`
+	GiteaURL        *string `json:"giteaUrl"`
+	GiteaTokenEnv   *string `json:"giteaTokenEnv"`
+	GitLabURL       *string `json:"gitlabUrl"`
+	GitLabTokenEnv  *string `json:"gitlabTokenEnv"`
 
 	MintMaxTTLSeconds *int `json:"mintMaxTtlSeconds"`
 
@@ -60,15 +62,22 @@ type featuresPlatformBody struct {
 	SwarmLeaderboardTitle *string `json:"swarmLeaderboardTitle"`
 
 	ToolApprovalInboxPath *string `json:"toolApprovalInboxPath"`
+}
 
+type featuresWritebackBody struct {
 	// Write-back containment (writeback.Config): the three unsolicited
-	// knobs, the per-repo mode map (repo → mode, "" clears) and per-kind
+	// knobs, the per-repo mode map (repo → mode) and per-kind
 	// overrides (kind → {min_level, require_label}; null clears).
-	WritebackMinLevel      *int                                     `json:"writebackMinLevel"`
-	WritebackRequireLabels *bool                                    `json:"writebackRequireLabels"`
-	WritebackBackfill      *bool                                    `json:"writebackBackfill"`
-	WritebackPerRepo       map[string]string                        `json:"writebackPerRepo"`
-	WritebackKinds         map[string]*writeback.KindPolicyOverride `json:"writebackKinds"`
+	WritebackMinLevel      *int  `json:"writebackMinLevel"`
+	WritebackRequireLabels *bool `json:"writebackRequireLabels"`
+	WritebackBackfill      *bool `json:"writebackBackfill"`
+	// WritebackRepo changes one card without replacing the Settings map.
+	WritebackRepo *struct {
+		Repo string  `json:"repo"`
+		Mode *string `json:"mode"`
+	} `json:"writebackRepo"`
+	WritebackPerRepo map[string]string                        `json:"writebackPerRepo"`
+	WritebackKinds   map[string]*writeback.KindPolicyOverride `json:"writebackKinds"`
 }
 
 // maxSwarmTextLen bounds the swarm banner strings shown on the dashboard.
@@ -191,6 +200,7 @@ func (b featuresPlatformBody) prepare() (func(*config.Config), error) {
 		name string
 		dst  func(*config.Config) *string
 	}{
+		{b.ForgejoURL, "forgejo forgejo_url", func(c *config.Config) *string { return &c.Forgejo.URL }},
 		{b.GiteaURL, "gitea gitea_url", func(c *config.Config) *string { return &c.Gitea.URL }},
 		{b.GitLabURL, "gitlab gitlab_url", func(c *config.Config) *string { return &c.GitLab.URL }},
 	} {
@@ -209,6 +219,7 @@ func (b featuresPlatformBody) prepare() (func(*config.Config), error) {
 		name string
 		dst  func(*config.Config) *string
 	}{
+		{b.ForgejoTokenEnv, "forgejo token_env", func(c *config.Config) *string { return &c.Forgejo.TokenEnv }},
 		{b.GiteaTokenEnv, "gitea token_env", func(c *config.Config) *string { return &c.Gitea.TokenEnv }},
 		{b.GitLabTokenEnv, "gitlab token_env", func(c *config.Config) *string { return &c.GitLab.TokenEnv }},
 	} {
@@ -229,74 +240,6 @@ func (b featuresPlatformBody) prepare() (func(*config.Config), error) {
 			return nil, fmt.Errorf("mint max_ttl_seconds must be 0 (default) to %d", config.MintHardCapTTLSeconds)
 		}
 		steps = append(steps, func(c *config.Config) { c.Mint.MaxTTLSeconds = v })
-	}
-
-	if b.WritebackMinLevel != nil {
-		v := *b.WritebackMinLevel
-		if v < 0 || v > config.MaxACMMLevel {
-			return nil, fmt.Errorf("writeback unsolicited.min_level must be 0 to %d", config.MaxACMMLevel)
-		}
-		steps = append(steps, func(c *config.Config) {
-			if v == 0 {
-				c.Writeback.Unsolicited.MinLevel = nil
-				return
-			}
-			c.Writeback.Unsolicited.MinLevel = &v
-		})
-	}
-	if b.WritebackRequireLabels != nil {
-		v := *b.WritebackRequireLabels
-		steps = append(steps, func(c *config.Config) { c.Writeback.Unsolicited.RequireLabels = &v })
-	}
-	if b.WritebackBackfill != nil {
-		v := *b.WritebackBackfill
-		steps = append(steps, func(c *config.Config) { c.Writeback.Unsolicited.Backfill = &v })
-	}
-	if b.WritebackPerRepo != nil {
-		per := map[string]writeback.RepoOverride{}
-		for repo, mode := range b.WritebackPerRepo {
-			repo = strings.TrimSpace(repo)
-			m := writeback.RepoMode(strings.ToLower(strings.TrimSpace(mode)))
-			if repo == "" || m == writeback.RepoModeDefault {
-				continue
-			}
-			if !m.Valid() {
-				return nil, fmt.Errorf("writeback per_repo.%s.mode %q must be one of off, issues-only, labels-only, full", repo, mode)
-			}
-			per[repo] = writeback.RepoOverride{Mode: m}
-		}
-		steps = append(steps, func(c *config.Config) {
-			if len(per) == 0 {
-				c.Writeback.PerRepo = nil
-				return
-			}
-			c.Writeback.PerRepo = per
-		})
-	}
-	if b.WritebackKinds != nil {
-		kinds := map[string]writeback.KindPolicyOverride{}
-		for kind, ov := range b.WritebackKinds {
-			kind = strings.ToLower(strings.TrimSpace(kind))
-			if !writeback.IsKind(kind) {
-				return nil, fmt.Errorf("writeback kinds.%s: unknown write-back kind", kind)
-			}
-			if ov == nil || (ov.MinLevel == nil && ov.RequireLabel == nil && ov.UnlabeledMinLevel == nil && ov.OwnOnly == nil) {
-				continue
-			}
-			for _, lv := range []*int{ov.MinLevel, ov.UnlabeledMinLevel} {
-				if lv != nil && (*lv < 0 || *lv > config.MaxACMMLevel) {
-					return nil, fmt.Errorf("writeback kinds.%s: level must be 0 to %d", kind, config.MaxACMMLevel)
-				}
-			}
-			kinds[kind] = *ov
-		}
-		steps = append(steps, func(c *config.Config) {
-			if len(kinds) == 0 {
-				c.Writeback.Kinds = nil
-				return
-			}
-			c.Writeback.Kinds = kinds
-		})
 	}
 
 	if b.SupersessionGracePeriod != nil {
@@ -376,6 +319,96 @@ func (b featuresPlatformBody) prepare() (func(*config.Config), error) {
 	}, nil
 }
 
+// prepare validates the write-back settings before the handler applies any edit.
+func (b featuresWritebackBody) prepare() (func(*writeback.Config, string), error) {
+	var steps []func(*writeback.Config, string)
+	if b.WritebackMinLevel != nil {
+		v := *b.WritebackMinLevel
+		if v < 0 || v > config.MaxACMMLevel {
+			return nil, fmt.Errorf("writeback unsolicited.min_level must be 0 to %d", config.MaxACMMLevel)
+		}
+		steps = append(steps, func(c *writeback.Config, _ string) {
+			c.Unsolicited.MinLevel = nil
+			if v != 0 {
+				c.Unsolicited.MinLevel = &v
+			}
+		})
+	}
+	if b.WritebackRequireLabels != nil {
+		steps = append(steps, func(c *writeback.Config, _ string) { c.Unsolicited.RequireLabels = b.WritebackRequireLabels })
+	}
+	if b.WritebackBackfill != nil {
+		steps = append(steps, func(c *writeback.Config, _ string) { c.Unsolicited.Backfill = b.WritebackBackfill })
+	}
+	if b.WritebackRepo != nil {
+		if b.WritebackPerRepo != nil {
+			return nil, fmt.Errorf("writebackRepo and writebackPerRepo cannot be updated together")
+		}
+		repo := strings.TrimSpace(b.WritebackRepo.Repo)
+		if repo == "" || b.WritebackRepo.Mode == nil {
+			return nil, fmt.Errorf("writebackRepo requires a repo and mode (empty mode selects default)")
+		}
+		mode := writeback.RepoMode(strings.ToLower(strings.TrimSpace(*b.WritebackRepo.Mode)))
+		if !mode.Valid() {
+			return nil, fmt.Errorf("writeback repo mode %q must be empty, off, issues-only, labels-only, or full", *b.WritebackRepo.Mode)
+		}
+		steps = append(steps, func(c *writeback.Config, org string) {
+			c.SetRepoMode(config.QualifyRepo(org, repo), mode)
+		})
+	}
+	if b.WritebackPerRepo != nil {
+		per := map[string]writeback.RepoOverride{}
+		for repo, mode := range b.WritebackPerRepo {
+			repo = strings.TrimSpace(repo)
+			m := writeback.RepoMode(strings.ToLower(strings.TrimSpace(mode)))
+			if repo == "" || m == writeback.RepoModeDefault {
+				continue
+			}
+			if m == "default" {
+				m = writeback.RepoModeDefault
+			}
+			if !m.Valid() {
+				return nil, fmt.Errorf("writeback per_repo.%s.mode %q must be one of default, off, issues-only, labels-only, full", repo, mode)
+			}
+			per[repo] = writeback.RepoOverride{Mode: m}
+		}
+		if len(per) == 0 {
+			per = nil
+		}
+		steps = append(steps, func(c *writeback.Config, _ string) { c.PerRepo = per })
+	}
+	if b.WritebackKinds != nil {
+		kinds := map[string]writeback.KindPolicyOverride{}
+		for kind, ov := range b.WritebackKinds {
+			kind = strings.ToLower(strings.TrimSpace(kind))
+			if !writeback.IsKind(kind) {
+				return nil, fmt.Errorf("writeback kinds.%s: unknown write-back kind", kind)
+			}
+			if ov == nil || (ov.MinLevel == nil && ov.RequireLabel == nil && ov.UnlabeledMinLevel == nil && ov.OwnOnly == nil) {
+				continue
+			}
+			for _, lv := range []*int{ov.MinLevel, ov.UnlabeledMinLevel} {
+				if lv != nil && (*lv < 0 || *lv > config.MaxACMMLevel) {
+					return nil, fmt.Errorf("writeback kinds.%s: level must be 0 to %d", kind, config.MaxACMMLevel)
+				}
+			}
+			kinds[kind] = *ov
+		}
+		if len(kinds) == 0 {
+			kinds = nil
+		}
+		steps = append(steps, func(c *writeback.Config, _ string) { c.Kinds = kinds })
+	}
+	if len(steps) == 0 {
+		return nil, nil
+	}
+	return func(c *writeback.Config, org string) {
+		for _, step := range steps {
+			step(c, org)
+		}
+	}, nil
+}
+
 // featuresPlatformResponse is the GET side of featuresPlatformBody. The
 // *Defaults maps carry what an empty or zero field falls back to so the
 // dialog can show it as a placeholder. Token settings return only the
@@ -385,6 +418,7 @@ func featuresPlatformResponse(cfg *config.Config) map[string]interface{} {
 	if cfg.Data.SessionRetentionDays != nil {
 		retention = strconv.Itoa(*cfg.Data.SessionRetentionDays)
 	}
+	wb := cfg.WritebackPolicy()
 	return map[string]interface{}{
 		"dataAgentsDir":            cfg.Data.AgentsDir,
 		"dataBobSessionsDir":       cfg.Data.BobSessionsDir,
@@ -401,10 +435,12 @@ func featuresPlatformResponse(cfg *config.Config) map[string]interface{} {
 		"evidenceEnabled":        cfg.Evidence.IsEnabled(),
 		"evidenceSigningKeyFile": cfg.Evidence.SigningKeyPath(),
 
-		"giteaUrl":       cfg.Gitea.URL,
-		"giteaTokenEnv":  cfg.Gitea.TokenEnv,
-		"gitlabUrl":      cfg.GitLab.URL,
-		"gitlabTokenEnv": cfg.GitLab.TokenEnv,
+		"forgejoUrl":      cfg.Forgejo.URL,
+		"forgejoTokenEnv": cfg.Forgejo.TokenEnv,
+		"giteaUrl":        cfg.Gitea.URL,
+		"giteaTokenEnv":   cfg.Gitea.TokenEnv,
+		"gitlabUrl":       cfg.GitLab.URL,
+		"gitlabTokenEnv":  cfg.GitLab.TokenEnv,
 
 		"mintKeyPath":       cfg.Mint.KeyPath,
 		"mintMaxTtlSeconds": cfg.Mint.MaxTTLSeconds,
@@ -424,12 +460,12 @@ func featuresPlatformResponse(cfg *config.Config) map[string]interface{} {
 
 		"toolApprovalInboxPath": cfg.ToolApproval.InboxPath,
 
-		"writebackMinLevel":      cfg.Writeback.MinLevelOrDefault(),
-		"writebackRequireLabels": cfg.Writeback.RequireLabelsEnabled(),
-		"writebackBackfill":      cfg.Writeback.BackfillEnabled(),
-		"writebackPerRepo":       writebackPerRepoResponse(cfg.Writeback),
-		"writebackKinds":         cfg.Writeback.Kinds,
-		"writebackKindMatrix":    cfg.Writeback.EffectiveKinds(),
+		"writebackMinLevel":      wb.MinLevelOrDefault(),
+		"writebackRequireLabels": wb.RequireLabelsEnabled(),
+		"writebackBackfill":      wb.BackfillEnabled(),
+		"writebackPerRepo":       writebackPerRepoResponse(wb),
+		"writebackKinds":         wb.Kinds,
+		"writebackKindMatrix":    wb.EffectiveKinds(),
 		"writebackRepoModes":     writeback.RepoModes(),
 		"writebackOptInLabels":   cfg.WritebackOptInLabels(""),
 
@@ -439,6 +475,7 @@ func featuresPlatformResponse(cfg *config.Config) map[string]interface{} {
 			"writebackBackfill":            false,
 			"writebackKindMatrix":          writeback.Config{}.EffectiveKinds(),
 			"dataSessionRetentionDays":     config.DefaultSessionRetentionDays,
+			"forgejoTokenEnv":              config.DefaultForgejoTokenEnv,
 			"giteaTokenEnv":                config.DefaultGiteaTokenEnv,
 			"gitlabUrl":                    config.DefaultGitLabURL,
 			"gitlabTokenEnv":               config.DefaultGitLabTokenEnv,
@@ -463,6 +500,9 @@ func writebackPerRepoResponse(c writeback.Config) map[string]string {
 	out := map[string]string{}
 	for repo, ov := range c.PerRepo {
 		out[repo] = string(ov.Mode)
+		if ov.Mode == writeback.RepoModeDefault {
+			out[repo] = "default"
+		}
 	}
 	return out
 }

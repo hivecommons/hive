@@ -227,7 +227,10 @@ identity it ended up with. Audit the rest of the fleet the same way:
    regenerates its `*-listener-config` from the new secret. App traffic lands
    in the installation's own 15,000 req/h bucket.
 3. **Remove the PAT from the hub.** With the three App variables set, unset
-   `HIVE_HUB_GITHUB_TOKEN` on `deploy/hive-hub`; the startup log then reads
+   `HIVE_HUB_GITHUB_TOKEN` on `deploy/hive-hub` (scope it to the hub
+   container: `kubectl -n hive-hub set env deploy/hive-hub -c hub
+   HIVE_HUB_GITHUB_TOKEN-`; without `-c hub` it writes to every container in
+   the pod); the startup log then reads
    `hub GitHub API identity selected mode=app` instead of the `WARN`, and
    `GET /api/gh-rate-limits` reports the App installation's `core.limit`.
 4. **Rotate.** Once no cluster holds it, revoke the leaked user token
