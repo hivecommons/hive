@@ -1114,6 +1114,7 @@ func newOwnershipEnv(cfg *config.Config, agentStatuses map[string]*crux.Process,
 	env.unparkCommandsRefused = func(repo string) bool { return labelDrivenRefusesUnparkCommands(cfg, repo) }
 	env.releaseOnApprove = cfg.RepoReleaseOnApprove
 	env.admitLabels = cfg.Project.IssueFilter.RequireLabelsForNotice()
+	env.reviewSwarm.selfLogins, env.reviewSwarm.ownerLogins = reviewDeciderLoginsFor(cfg)
 	env.laneCanOpenPR = laneCanOpenPRAt(env, agentStatuses)
 	return env
 }

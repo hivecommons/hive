@@ -428,6 +428,30 @@ func extractMentionLogins(body string) []string {
 	return out
 }
 
+// MentionLogins returns the distinct logins (or org/team slugs) @-mentioned
+// in body by extractMentionLogins' rule, in order of first appearance and
+// spelled as first written. A mention written as "@name[bot]" keeps its
+// "[bot]" suffix so a caller can tell a bot account apart. It reads text
+// only; nothing is posted or notified.
+func MentionLogins(body string) []string {
+	if !strings.Contains(body, "@") {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range mentionLoginRe.FindAllStringSubmatchIndex(body, -1) {
+		login := body[m[2]:m[3]]
+		if strings.HasPrefix(body[m[3]:], "[bot]") {
+			login += "[bot]"
+		}
+		if key := strings.ToLower(login); !seen[key] {
+			seen[key] = true
+			out = append(out, login)
+		}
+	}
+	return out
+}
+
 // attributeNotificationWrite walks the caller's stack to the first
 // inventoried producer. Passthrough wrappers (CreateIssueCommentBudgeted,
 // PostNoteOrFold, forge routers) are skipped in favour of their caller; if

@@ -89,7 +89,7 @@ var (
 	cardPRBandOrder = []string{
 		cardBandInspect, cardBandDecide, cardBandApprove, cardBandHandMerge, cardBandReview,
 		cardBandTriage, cardBandAdmit, cardBandTurnOther, cardBandToClose, cardBandUnexplained,
-		cardBandHumanHold, cardBandAuthorUpdate, cardBandBotRebase,
+		cardBandWaitingOnItem, cardBandHumanHold, cardBandAuthorUpdate, cardBandBotRebase,
 		cardBandWorking, cardBandWillMerge, cardBandHeld, cardBandDraft,
 	}
 	// cardGroupOrder is the tile order.
@@ -129,7 +129,7 @@ var cardBandDefs = map[string]cardBandDef{
 	cardBandCoveredByPR: {label: "Covered by an open PR", group: cardGroupWaiting,
 		rule: "A PR is doing the work. Follow the PR."},
 	cardBandWaitingOnItem: {label: "Waiting on another item", group: cardGroupWaiting,
-		rule: "Another issue or PR must finish first. Check that the blocker is still real and moving."},
+		rule: "Another issue or PR must finish first, or a person who was asked must answer. Check that the blocker is still real and moving."},
 	cardBandHumanHold: {label: "Human placed on hold", group: cardGroupWaiting,
 		rule: "A person put a hold on it or paused it from the dashboard."},
 	cardBandReporterConfirm: {label: "Reporter to confirm the fix", group: cardGroupWaiting,
@@ -1092,6 +1092,10 @@ func cardPRWaitingBand(row cardPRRow, o *Ownership) OverviewCardBand {
 		return cardBand(cardBandHumanHold, "wait:hold", "A person put a hold on it or paused it from the dashboard.")
 	case cardWaitAdjudicator:
 		return cardBand(cardBandWorking, "wait:adjudicator", nonEmpty(o.Reason, "Waiting for the adjudicator."))
+	}
+	if reviewDeciderWaiting(o) {
+		// The hive's review asked a named person; the reason says who.
+		return cardBand(cardBandWaitingOnItem, "wait:review_decider", o.Reason)
 	}
 	kind := cardPRAuthorKind(row.pr)
 	code := "wait:answered:" + kind
