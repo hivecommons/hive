@@ -538,9 +538,8 @@ func evictHiveClosedPR(srv *dashboard.Server, rec github.AuditRecord, now time.T
 func (b *boot) writebackGate() *writeback.Gate {
 	b.writebackOnce.Do(func() {
 		deps := b.cfg.WritebackGateDeps()
-		deps.Config = func() writeback.Config { return b.cfg.Writeback }
 		deps.Logger = b.logger
-		b.writeback = writeback.New(b.cfg.Writeback, deps, writebackStatePath())
+		b.writeback = writeback.New(b.cfg.WritebackPolicy(), deps, writebackStatePath())
 		for _, repo := range b.cfg.Project.Repos {
 			b.writeback.ObserveRepo(repo)
 		}

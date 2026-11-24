@@ -36,18 +36,15 @@
       const opts = [''].concat(REPO_WRITEBACK_MODES).map(m => `<option value="${esc(m)}" ${m === mode ? 'selected' : ''}>${esc(m || 'default')}</option>`).join('');
       return chip + `<select class="repo-writeback-select" data-change-action="setRepoWritebackMode" data-arg0="${esc(repo)}" data-arg-types="s,v,t" data-stop="1" aria-label="${esc('Write-back mode for ' + repo)}" title="${esc(tip)}">${opts}</select>`;
     }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(() => {
+      if (window._lastStatus) renderRepos(window._lastStatus.repos || []);
+    });
     async function setRepoWritebackMode(repo, mode, sel) {
       if (sel && sel.dataset.busy === '1') return;
       const st = repoWritebackState(repo, window._lastStatus || {});
-      const perRepo = {};
-      if (st && st.status && st.status.repos) {
-        for (const k of Object.keys(st.status.repos)) { const m = st.status.repos[k] && st.status.repos[k].mode; if (m) perRepo[k] = m; }
-      }
-      for (const k of Object.keys(perRepo)) { if (k.toLowerCase() === String(repo).toLowerCase()) delete perRepo[k]; }
-      if (mode) perRepo[repo] = mode;
       if (sel) sel.dataset.busy = '1';
       try {
-        const resp = await fetch('/api/config/governor/features', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writebackPerRepo: perRepo }) });
+        const resp = await fetch('/api/config/governor/features', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writebackRepo: { repo, mode } }) });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
         showToast('Write-back for ' + repo + ': ' + (mode || 'default'), 'success');

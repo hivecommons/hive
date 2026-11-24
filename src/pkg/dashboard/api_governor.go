@@ -3038,7 +3038,7 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 	if adoptOrg != org {
 		s.logger.Info("project org changed from repo paste", "from", org, "to", adoptOrg)
 		org = adoptOrg
-		s.deps.Config.Project.Org = adoptOrg
+		s.deps.Config.SetProjectOrg(adoptOrg)
 		if s.deps.GHClient != nil {
 			s.deps.GHClient.SetOrg(adoptOrg)
 		}
@@ -3065,7 +3065,7 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 				if len(parts) >= 2 {
 					if parts[0] != "" {
 						org = parts[0]
-						s.deps.Config.Project.Org = org
+						s.deps.Config.SetProjectOrg(org)
 					}
 					repo = parts[1]
 					if parsed.Host != "github.com" {
@@ -3122,7 +3122,7 @@ func (s *Server) handleGovernorRepos(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if primary == "" || !inList {
-			s.deps.Config.Project.Org = prevOrg
+			s.deps.Config.SetProjectOrg(prevOrg)
 			s.deps.Config.Project.Repos = prevRepos
 			s.deps.Config.Project.PrimaryRepo = prevPrimary
 			s.deps.Config.GitHub.BaseURL = prevBaseURL
