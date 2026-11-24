@@ -478,7 +478,9 @@ func cardOwnershipBand(o *Ownership, kind string) (OverviewCardBand, bool) {
 // cardTurnBand is the Your turn band of a stored decision: what the person
 // has to do, read from its verb. Two PR review gates get their own band (a
 // person's approval, a hand merge); on an issue they stay Review, so an
-// issue never lands on a band the issue donut does not plot. A verb the card
+// issue never lands on a band the issue donut does not plot. Another bot's
+// PR the review returned for changes (bot_pr_review_changes) is Other: there
+// is nothing to review, only to close it or wait for the bot. A verb the card
 // does not know is Other, never dropped: every your-turn decision is in the
 // Your turn group.
 func cardTurnBand(verb, reasonCode, kind string) string {
@@ -494,6 +496,8 @@ func cardTurnBand(verb, reasonCode, kind string) string {
 				return cardBandApprove
 			case OwnershipReasonHandMerge:
 				return cardBandHandMerge
+			case OwnershipReasonBotPRReviewChanges:
+				return cardBandTurnOther
 			}
 		}
 		return cardBandReview
@@ -1228,6 +1232,15 @@ func cardPRNoStageBand(row cardPRRow, in cardInputs) OverviewCardBand {
 			return cardBotPRBand(row, pr.UpdatedAt, "flags:no_stage:bot", in)
 		default:
 			return cardBand(cardBandAuthorUpdate, "flags:no_stage:author", "Blocked; it waits until its author pushes.")
+		}
+	}
+	// The hive's review returned the head for changes (the merge verdict's
+	// flag): a person's or a contributor agent's PR waits on its author, not
+	// on the hive.
+	if v := row.verdict; v != nil && v.ReviewChangesRequested {
+		switch cardPRAuthorKind(pr) {
+		case cardAuthorPerson, cardAuthorClanker:
+			return cardBand(cardBandAuthorUpdate, "flags:no_stage:review_changes", "The hive's review asked for changes; it waits until its author pushes.")
 		}
 	}
 	var overrides map[string]time.Duration

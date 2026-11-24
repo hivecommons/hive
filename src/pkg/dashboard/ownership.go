@@ -812,6 +812,13 @@ func decidePROwnership(pr github.PullRequest, held bool, env ownershipEnv) Owner
 	if o, ok := env.reviewHoldOwnership(pr, withinAdjudicatorWait); ok {
 		return o
 	}
+	// Another bot's PR the review returned for changes: the hive withheld
+	// the fix because that bot owns the branch, so only a person moves it.
+	if !hive {
+		if o, ok := env.botPRReviewChangesOwnership(pr); ok {
+			return o
+		}
+	}
 	// (11) otherwise not your turn; the safety net covers non-draft, unheld
 	// hive PRs at L3 and above that no lane has claimed.
 	if hive && !pr.Draft && env.levelFor(pr.Repo) >= ownershipLanePRMinLevel && !prClaimed(pr, env) && env.stale(pr.CreatedAt, pr.UpdatedAt) {

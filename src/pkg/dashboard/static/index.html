@@ -20187,7 +20187,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerActorKind(item) {
       // Guarded: test harnesses lift this function by name without the 000-new helpers.
       const fresh = typeof stageTrackerNewState === 'function' ? stageTrackerNewState(item) : null;
-      if (fresh) return fresh.next_mover === 'maintainer' ? 'human' : 'hive';
+      if (fresh) {
+        if (fresh.next_mover === 'maintainer') return 'human';
+        // The PR's author pushes next (the hive's review returned the head).
+        if (fresh.next_mover === 'author') return item.author_kind || 'human';
+        return 'hive';
+      }
       const sa = stageTrackerStageActor(item);
       if (sa) return sa.kind === STAGE_TRACKER_ACTOR_NONE ? '' : String(sa.kind);
       const role = STAGE_TRACKER_ACTOR[Number(item.stage) || 0] || '';

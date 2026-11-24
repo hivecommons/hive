@@ -28,8 +28,9 @@ func TestCardTurnBandFromTheStoredDecision(t *testing.T) {
 		OwnershipVerbClose:   cardBandToClose,
 	}
 	prOnly := map[string]string{
-		OwnershipReasonReviewDecision: cardBandApprove,
-		OwnershipReasonHandMerge:      cardBandHandMerge,
+		OwnershipReasonReviewDecision:     cardBandApprove,
+		OwnershipReasonHandMerge:          cardBandHandMerge,
+		OwnershipReasonBotPRReviewChanges: cardBandTurnOther,
 	}
 	inOrder := func(order []string, key string) bool {
 		for _, k := range order {
