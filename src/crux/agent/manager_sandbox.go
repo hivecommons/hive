@@ -296,11 +296,18 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	mutationBoundary := m.sandboxMutation
 	tier := TokenTierForRole(m.agentMode(agent), agent.Config.Role)
 	cloneMinter := m.tieredSandboxMinterLocked(tier)
+	// ghPRClient is the hive's GitHub client, which opens, reads and targets
+	// PRs. It only knows github.com, so a repo on another forge gets none:
+	// the kick pushes its branch there and opens no PR until a forge PR
+	// client is wired (#19494).
+	ghPRClient := m.sandboxPRClient
 	if onForge {
 		// The GitHub App minter must never be used for another forge: its
 		// token would be sent to that forge's host.
 		spec.ForgeBaseURL = forgeRemote.BaseURL
 		cloneMinter = pushbroker.WithTier(forgeRemote.Minter, tier)
+		ghPRClient = nil
+		m.logger.Info("sandbox kick on a non-GitHub forge: the branch is pushed there, and no PR is opened through the GitHub client", "name", agent.Name, "forge", forgeRemote.BaseURL)
 	}
 	var pushMinter pushbroker.TokenMinter
 	var prClient PRCreator
@@ -308,14 +315,14 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	// Review-only kicks never get the push broker or the PR client.
 	if m.agentMode(agent).CanPush() && m.project.PRsAllowed && !spec.reviewOnly() {
 		pushMinter = cloneMinter
-		prClient = m.sandboxPRClient
+		prClient = ghPRClient
 		pushEnabled = true
 	}
 	// The PR reader is the hive's GitHub client when it offers one; it is
 	// read-only and needed whether or not the kick may push.
 	var prReader crux.PRReviewContextReader
 	if spec.reviewOnly() {
-		prReader, _ = m.sandboxPRClient.(crux.PRReviewContextReader)
+		prReader, _ = ghPRClient.(crux.PRReviewContextReader)
 	}
 	// A fix kick that names one of the agent's PRs adds its commits to that
 	// PR (hivecommons/hive#18574). Only a kick that may push, through a PR
@@ -325,7 +332,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	var targetReader crux.PRPushTargetReader
 	if pushEnabled {
 		if n, source := sandboxTargetPRFromKickMessage(message, m.project.Org+"/"+repo); n > 0 {
-			if r, ok := m.sandboxPRClient.(crux.PRPushTargetReader); ok {
+			if r, ok := ghPRClient.(crux.PRPushTargetReader); ok {
 				spec.TargetPR, spec.TargetPRSource, targetReader = n, source, r
 			} else {
 				m.logger.Warn("sandbox kick names an existing PR but the PR client cannot read PR targets; the kick opens a new PR instead",

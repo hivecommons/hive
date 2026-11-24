@@ -21,6 +21,8 @@ func TestNormalizeForgeBaseURL(t *testing.T) {
 		"https://Forgejo.Example.com/":     "https://forgejo.example.com",
 		"HTTPS://forgejo.example.com/git/": "https://forgejo.example.com/git",
 		"http://127.0.0.1:3000":            "http://127.0.0.1:3000",
+		"http://localhost:3000/":           "http://localhost:3000",
+		"http://[::1]:3000":                "http://[::1]:3000",
 	} {
 		got, err := NormalizeForgeBaseURL(in)
 		if err != nil || got != want {
@@ -29,6 +31,8 @@ func TestNormalizeForgeBaseURL(t *testing.T) {
 	}
 	for _, bad := range []string{
 		"forgejo.example.com",
+		"http://forgejo.example.com",
+		"http://10.0.0.5:3000",
 		"ssh://forgejo.example.com",
 		"https://user:pass@forgejo.example.com",
 		"https://forgejo.example.com?x=1",

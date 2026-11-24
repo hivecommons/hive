@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 )
@@ -84,11 +85,25 @@ func NormalizeForgeBaseURL(raw string) (string, error) {
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
 		return "", fmt.Errorf("pushbroker: forge URL %q must be a bare instance root (no credentials, query or fragment)", raw)
 	}
+	// A token sent over plain http can be read on the wire. Only a loopback
+	// forge (a local test instance) may use it.
+	if strings.EqualFold(u.Scheme, "http") && !isLoopbackHost(u.Hostname()) {
+		return "", fmt.Errorf("pushbroker: forge URL %q must use https; plain http is allowed only for a loopback host", raw)
+	}
 	u.Scheme = strings.ToLower(u.Scheme)
 	u.Host = strings.ToLower(u.Host)
 	u.Path = strings.TrimRight(u.Path, "/")
 	u.RawPath = ""
 	return u.String(), nil
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // ForgeRepoURL is the clone and push URL of an "owner/name" repo on the forge

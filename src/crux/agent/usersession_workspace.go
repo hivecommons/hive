@@ -280,9 +280,8 @@ func (r *UserSessionRuntime) ensureWorkspace(spec crux.UserSessionSpec, uid int)
 }
 
 // cloneWorkspace clones <forge>/<org>/<name>.git (github.com unless the forge
-// resolver places the repo elsewhere) into a staging
-// directory as the hive, then has root hand it to the sessions group and move
-// it to ws. The token travels only in a one-shot `git -c credential.helper`
+// resolver places the repo elsewhere) into a staging directory as the hive,
+// then has root hand it to the sessions group and move it to ws. The token travels only in a one-shot `git -c credential.helper`
 // (before the subcommand, so git does not persist it) and its file is removed
 // before this returns; `core.sharedRepository=group` is the ONLY config
 // written into the clone, and the lock that follows

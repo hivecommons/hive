@@ -45,12 +45,19 @@ func forgeRemoteResolver(cfgFn func() *config.Config) pushbroker.ForgeRemoteReso
 
 func forgejoRemote(cfg *config.Config, repo string) (pushbroker.ForgeRemote, bool, error) {
 	// A forge token goes only to its own block's host; see CheckForgeTokenHost.
+	// That check has nothing to compare when the block names no URL, so git
+	// additionally requires forgejo.forgejo_url: without it a repo_policies
+	// forge_url alone, on any host, would receive the token.
+	if strings.TrimSpace(cfg.Forgejo.URL) == "" {
+		return pushbroker.ForgeRemote{}, false, fmt.Errorf("repo %s is on forgejo but forgejo.forgejo_url is not set; git sends the forgejo token only to that block's host", repo)
+	}
 	if err := cfg.CheckForgeTokenHost(repo); err != nil {
 		return pushbroker.ForgeRemote{}, false, err
 	}
-	base, err := pushbroker.NormalizeForgeBaseURL(cfg.ForgeURLForRepo(repo))
-	if err != nil || strings.TrimSpace(cfg.ForgeURLForRepo(repo)) == "" {
-		return pushbroker.ForgeRemote{}, false, fmt.Errorf("repo %s is on forgejo but has no usable forge URL (forgejo.forgejo_url or repo_policies forge_url)", repo)
+	raw := cfg.ForgeURLForRepo(repo)
+	base, err := pushbroker.NormalizeForgeBaseURL(raw)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return pushbroker.ForgeRemote{}, false, fmt.Errorf("repo %s is on forgejo but has no usable forge URL: %v", repo, err)
 	}
 	// The agents' proxy inspects this host from now on, in case it was added
 	// by a reload after boot.

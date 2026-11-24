@@ -65,6 +65,31 @@ func TestForgeRemoteResolverRefusesAForeignForgeURL(t *testing.T) {
 	}
 }
 
+// With no forgejo block URL the host check has nothing to compare, so a
+// policy forge_url alone must not receive the token.
+func TestForgeRemoteResolverRefusesAPolicyURLWithoutABlockURL(t *testing.T) {
+	t.Cleanup(func() { proxy.SetForgeHosts(nil) })
+	cfg := forgejoTestConfig()
+	cfg.Forgejo.URL = ""
+	cfg.Project.RepoPolicies = []config.RepoPolicy{{Repo: "app", Forge: config.ForgeForgejo, ForgeURL: "https://other.example"}}
+	_, ok, err := forgeRemoteResolver(func() *config.Config { return cfg })("team/app")
+	if err == nil || ok || !strings.Contains(err.Error(), "forgejo.forgejo_url is not set") {
+		t.Fatalf("ok=%v err=%v, want the policy-only URL refused", ok, err)
+	}
+	if proxy.IsForgeHost("other.example") {
+		t.Fatal("a refused host was registered with the proxy")
+	}
+}
+
+// Plain http would expose the token on the wire.
+func TestForgeRemoteResolverRefusesPlainHTTP(t *testing.T) {
+	cfg := forgejoTestConfig()
+	cfg.Forgejo.URL = "http://forgejo.example.com"
+	if _, ok, err := forgeRemoteResolver(func() *config.Config { return cfg })("team/app"); err == nil || ok {
+		t.Fatalf("ok=%v err=%v, want http refused", ok, err)
+	}
+}
+
 func TestForgeRemoteResolverRefusesForgejoWithoutURL(t *testing.T) {
 	cfg := forgejoTestConfig()
 	cfg.Forgejo.URL = ""
