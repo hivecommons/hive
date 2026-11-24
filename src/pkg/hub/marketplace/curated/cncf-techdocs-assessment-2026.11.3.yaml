@@ -504,7 +504,7 @@ spec:
     - {name: ready-for-techdocs-review, color: FEF2C0, description: "Draft is open. TechDocs reviewer: run /verify, refine, then /ready.", state: drafting}
     - {name: ready-for-techdocs-review, color: FEF2C0, description: "Draft is open. TechDocs reviewer: run /verify, refine, then /ready.", state: in-review}
     - {name: ready-for-stakeholder-review, color: FBCA04, description: "Ready for the project. Named stakeholders: review for accuracy and comment /confirm.", state: stakeholder-review}
-    - {name: ready-for-approver, color: 5319E7, description: "Stakeholder confirmed and checks green. An independent approver merges.", state: awaiting-merge}
+    - {name: ready-for-approver, color: "5319E7", description: "Stakeholder confirmed and checks green. An independent approver merges.", state: awaiting-merge}
   transitions:
   # issues
   - {from: requested, to: accepted, on: accepted, gateRef: accept, note: "spec §12 Accept"}
