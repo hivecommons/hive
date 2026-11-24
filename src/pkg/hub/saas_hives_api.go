@@ -19,7 +19,13 @@ import (
 
 type MyHiveEntry struct {
 	RegistryEntry
-	Role        string `json:"role"`
+	Role string `json:"role"`
+	// AccessRole is the role the hub's Manage Access endpoints honor for the
+	// viewer on this hive (hubAccessRole). It differs from Role on a
+	// self-registered spoke, whose heartbeat-reported owner shows as "owner"
+	// but holds no hub access rights (#19653). Always sent, so "" means no
+	// access rather than an older hub that never set it.
+	AccessRole  string `json:"accessRole"`
 	ProvError   string `json:"provError,omitempty"`
 	ProvStatus  string `json:"provStatus,omitempty"`
 	AutoUpgrade bool   `json:"autoUpgrade"`
@@ -799,7 +805,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 			// OWN hives (#4081).
 			if role != "owner" && canonicalEqual(h.Owner, username) {
 				role = "owner"
-				ownerRepairs = append(ownerRepairs, h.ID)
+				ownerRepairs = appendOwnerRepair(ownerRepairs, h.ID, saasByID)
 			}
 			if isAdmin && role != "owner" {
 				role = "owner"
@@ -813,7 +819,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 			entry := MyHiveEntry{RegistryEntry: h, Role: "owner", AutoUpgrade: autoUpgradeMap[h.ID], AutoUpgradeMode: autoUpgradeModeMap[h.ID]}
 			enrichFromSaaSMeta(&entry)
 			result = append(result, entry)
-			ownerRepairs = append(ownerRepairs, h.ID)
+			ownerRepairs = appendOwnerRepair(ownerRepairs, h.ID, saasByID)
 			continue
 		}
 		if isAdmin {
@@ -903,13 +909,20 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		}
 		customerProfileMu.Unlock()
 	}
+	repaired := make(map[string]bool, len(ownerRepairs))
+	for _, id := range ownerRepairs {
+		repaired[id] = true
+	}
+	for i := range result {
+		result[i].AccessRole = hubAccessRole(username, user.Hives, result[i].ID, isAdmin, saasByID[result[i].ID], repaired)
+	}
 
 	// Read the user roster ONCE for the access hover rather than per row —
 	// listAllSaaSUsers hits the filesystem for every user record, and My Hives
 	// can carry dozens of rows.
 	var allSaaSUsers []SaaSUser
 	for _, h := range result {
-		if h.Role == "owner" || isAdmin {
+		if h.AccessRole == roleOwner || isAdmin {
 			allSaaSUsers = listAllSaaSUsers()
 			break
 		}
@@ -942,20 +955,23 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 			result[i].Compliance = nil
 		}
 		// Who-has-access is shown only to owners (and admin), matching
-		// handleAccessList's rule. A read/read-write member is deliberately not
-		// told who else shares the hive.
-		if h.Role == "owner" || isAdmin {
+		// handleAccessList's rule (AccessRole, so a self-registered spoke's
+		// heartbeat owner is not an owner here). A read/read-write member is
+		// deliberately not told who else shares the hive.
+		if h.AccessRole == roleOwner || isAdmin {
 			// Notes is admin-only CRM text; a non-admin owner gets name+Slack only.
 			result[i].Access = accessForHive(h.ID, allSaaSUsers, isAdmin)
+		}
+		if h.Role == "owner" || isAdmin {
 			// Recent activity for the status hover, same owner/admin rule as
-			// the access list and as handleHiveTimeline itself. s.timeline is
+			// handleHiveTimeline itself. s.timeline is
 			// nil in tests that construct a bare HubServer, and recent() is a
 			// read under the store's own leaf mutex — no s.mu is held here.
 			if s.timeline != nil {
 				result[i].RecentEvents = s.timeline.recent(h.ID, myHivesRecentEventCount)
 			}
 		}
-		if config.RoleAtLeast(h.Role, config.RoleReadWrite) || isAdmin {
+		if config.RoleAtLeast(h.AccessRole, config.RoleReadWrite) || isAdmin {
 			reqs := loadAccessRequests(h.ID)
 			var pending []PendingAccessRequest
 			for _, req := range reqs {
