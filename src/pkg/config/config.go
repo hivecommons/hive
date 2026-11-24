@@ -4244,9 +4244,10 @@ type GitLabConfig struct {
 	// self-managed instance "https://gitlab.example.com". The "/api/v4" path is
 	// appended by the client.
 	URL string `yaml:"gitlab_url,omitempty"`
-	// ForgeTokens names the environment variable holding the GitLab access
-	// token (token_env, default DefaultGitLabTokenEnv). The token value is resolved at runtime and
-	// never persisted in config.
+	// ForgeTokens names where the GitLab access token is read from: the env
+	// var token_env (default DefaultGitLabTokenEnv) or the file
+	// token_file, which must sit under an allowed secret dir. The token value
+	// is never persisted in config.
 	cruxconfig.ForgeTokens `yaml:",inline"`
 }
 
@@ -4283,9 +4284,10 @@ type GiteaConfig struct {
 	// URL is the Gitea instance root, e.g. "https://gitea.example.com". The "/api/v1" path is appended by
 	// the client. There is no default; it must be supplied for the Gitea forge.
 	URL string `yaml:"gitea_url,omitempty"`
-	// ForgeTokens names the environment variable holding the Gitea access
-	// token (token_env, default DefaultGiteaTokenEnv). The token value is resolved at runtime and
-	// never persisted in config.
+	// ForgeTokens names where the Gitea access token is read from: the env
+	// var token_env (default DefaultGiteaTokenEnv) or the file
+	// token_file, which must sit under an allowed secret dir. The token value
+	// is never persisted in config.
 	cruxconfig.ForgeTokens `yaml:",inline"`
 }
 
@@ -4315,9 +4317,10 @@ type ForgejoConfig struct {
 	// URL is the Forgejo instance root, e.g. "https://codeberg.org". The
 	// "/api/v1" path is appended by the client. There is no default.
 	URL string `yaml:"forgejo_url,omitempty"`
-	// ForgeTokens names the environment variable holding the Forgejo access
-	// token (token_env, default DefaultForgejoTokenEnv). The token value is resolved at runtime and
-	// never persisted in config.
+	// ForgeTokens names where the Forgejo access token is read from: the env
+	// var token_env (default DefaultForgejoTokenEnv) or the file
+	// token_file, which must sit under an allowed secret dir. The token value
+	// is never persisted in config.
 	cruxconfig.ForgeTokens `yaml:",inline"`
 	// Integration, when set, makes git clone and push on Forgejo repos use a
 	// short-lived JWT per token tier, signed by an operator-held key, instead

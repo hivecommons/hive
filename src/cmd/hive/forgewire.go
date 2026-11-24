@@ -21,8 +21,8 @@ import (
 //   - "github" (and unset, the default): ghClient itself. No adapter is
 //     interposed, so the GitHub path is byte-for-byte what it was before.
 //   - "gitlab" / "gitea" / "forgejo": the corresponding pkg/forge adapter,
-//     built from the already-present config (instance URL + the env var
-//     named by token_env).
+//     built from the already-present config (instance URL + the token
+//     from token_env or token_file).
 //
 // It falls back to ghClient on any construction failure — a Gitea forge with no
 // URL set, an unparseable instance URL, a forge kind this build does not know.
@@ -91,19 +91,25 @@ func forgeForRepo(cfg *config.Config, repo string, ghClient *github.Client, logg
 		return nil
 	}
 
-	// The token is read from the environment by name, never from config: the
-	// no-hardcoded-secrets rule is why config carries token_env rather than the
-	// secret itself. An empty value is passed through — the forge will reject it
-	// with a 401 whose message names the real problem, which beats a local error
-	// that cannot distinguish "unset" from "set but wrong".
-	token, _ := gov.Resolve()
+	// The token is read from the environment by name or from token_file, never
+	// from config itself: the no-hardcoded-secrets rule is why config carries
+	// token_env and token_file rather than the secret. An unset env var passes
+	// an empty token through, because the forge rejects it with a 401 whose
+	// message names the real problem, which beats a local error that cannot
+	// distinguish "unset" from "set but wrong". A bad token_file is a config
+	// error and builds no writer.
+	token, tokenSource, err := gov.Resolve()
+	if err != nil {
+		logger.Error("forge token unavailable; no writer built", "forge", kind, "repo", repo, "error", err)
+		return nil
+	}
 	f, err := forge.NewForge(kind, token, forge.Options{
 		BaseURL: baseURL,
 		Org:     cfg.Project.Org,
 	})
 	if err != nil {
 		logger.Warn("forge adapter unavailable; falling back to the GitHub client",
-			"forge", kind, "repo", repo, "token_env", gov.TokenEnv, "error", err)
+			"forge", kind, "repo", repo, "token_source", tokenSource, "error", err)
 		return fallback()
 	}
 	return f
@@ -179,7 +185,10 @@ func forgeMergerForRepo(cfg *config.Config, repo string) (forge.Merger, error) {
 	if err := cfg.CheckForgeTokenHost(repo); err != nil {
 		return nil, err
 	}
-	token, _ := gov.Resolve()
+	token, _, err := gov.Resolve()
+	if err != nil {
+		return nil, fmt.Errorf("forge %s: %w", kind, err)
+	}
 	return newForgeMerger(kind, token, forge.Options{
 		BaseURL: cfg.ForgeURLForRepo(repo),
 		Org:     cfg.Project.Org,

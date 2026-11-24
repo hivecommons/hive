@@ -237,7 +237,13 @@ func customersProfileSources(d customersProfileFillDeps) []customers.ProfileLook
 		if newForge == nil {
 			newForge = forge.NewForge
 		}
-		token, _ := gov.Resolve()
+		token, _, err := gov.Resolve()
+		if err != nil {
+			if d.logger != nil {
+				d.logger.Warn("[customers] profile fill: forge token unavailable", "forge", kind, "error", err)
+			}
+			break
+		}
 		f, err := newForge(fk, token, forge.Options{BaseURL: cfg.ForgeURLForRepo(""), Org: cfg.Project.Org})
 		if err != nil {
 			if d.logger != nil {

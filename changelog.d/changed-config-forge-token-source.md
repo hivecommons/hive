@@ -1,0 +1,1 @@
+- Forge blocks (gitlab, gitea, forgejo) share one token source and accept an optional `token_file` under /secrets or /data/secrets, also settable in Settings; configs with only `token_env` behave as before.

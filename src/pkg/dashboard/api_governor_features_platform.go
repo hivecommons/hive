@@ -41,10 +41,14 @@ type featuresPlatformBody struct {
 
 	ForgejoURL      *string `json:"forgejoUrl"`
 	ForgejoTokenEnv *string `json:"forgejoTokenEnv"`
-	GiteaURL        *string `json:"giteaUrl"`
-	GiteaTokenEnv   *string `json:"giteaTokenEnv"`
-	GitLabURL       *string `json:"gitlabUrl"`
-	GitLabTokenEnv  *string `json:"gitlabTokenEnv"`
+	// The token_file fields name a file under an allowed secret dir, never a token.
+	ForgejoTokenFile *string `json:"forgejoTokenFile"`
+	GiteaURL         *string `json:"giteaUrl"`
+	GiteaTokenEnv    *string `json:"giteaTokenEnv"`
+	GiteaTokenFile   *string `json:"giteaTokenFile"`
+	GitLabURL        *string `json:"gitlabUrl"`
+	GitLabTokenEnv   *string `json:"gitlabTokenEnv"`
+	GitLabTokenFile  *string `json:"gitlabTokenFile"`
 
 	MintMaxTTLSeconds *int `json:"mintMaxTtlSeconds"`
 
@@ -232,6 +236,26 @@ func (b featuresPlatformBody) prepare() (func(*config.Config), error) {
 		}
 		dst := f.dst
 		steps = append(steps, func(c *config.Config) { *dst(c) = name })
+	}
+
+	for _, f := range []struct {
+		raw  *string
+		name string
+		dst  func(*config.Config) *string
+	}{
+		{b.ForgejoTokenFile, "forgejo.token_file", func(c *config.Config) *string { return &c.Forgejo.TokenFile }},
+		{b.GiteaTokenFile, "gitea.token_file", func(c *config.Config) *string { return &c.Gitea.TokenFile }},
+		{b.GitLabTokenFile, "gitlab.token_file", func(c *config.Config) *string { return &c.GitLab.TokenFile }},
+	} {
+		if f.raw == nil {
+			continue
+		}
+		path := strings.TrimSpace(*f.raw)
+		if msg := config.SecretFilePathRejection(f.name, path); msg != "" {
+			return nil, fmt.Errorf("%s", msg)
+		}
+		dst := f.dst
+		steps = append(steps, func(c *config.Config) { *dst(c) = path })
 	}
 
 	if b.MintMaxTTLSeconds != nil {
@@ -435,12 +459,15 @@ func featuresPlatformResponse(cfg *config.Config) map[string]interface{} {
 		"evidenceEnabled":        cfg.Evidence.IsEnabled(),
 		"evidenceSigningKeyFile": cfg.Evidence.SigningKeyPath(),
 
-		"forgejoUrl":      cfg.Forgejo.URL,
-		"forgejoTokenEnv": cfg.Forgejo.TokenEnv,
-		"giteaUrl":        cfg.Gitea.URL,
-		"giteaTokenEnv":   cfg.Gitea.TokenEnv,
-		"gitlabUrl":       cfg.GitLab.URL,
-		"gitlabTokenEnv":  cfg.GitLab.TokenEnv,
+		"forgejoUrl":       cfg.Forgejo.URL,
+		"forgejoTokenEnv":  cfg.Forgejo.TokenEnv,
+		"forgejoTokenFile": cfg.Forgejo.TokenFile,
+		"giteaUrl":         cfg.Gitea.URL,
+		"giteaTokenEnv":    cfg.Gitea.TokenEnv,
+		"giteaTokenFile":   cfg.Gitea.TokenFile,
+		"gitlabUrl":        cfg.GitLab.URL,
+		"gitlabTokenEnv":   cfg.GitLab.TokenEnv,
+		"gitlabTokenFile":  cfg.GitLab.TokenFile,
 
 		"mintKeyPath":       cfg.Mint.KeyPath,
 		"mintMaxTtlSeconds": cfg.Mint.MaxTTLSeconds,

@@ -449,15 +449,18 @@
   },
   "GitLab": {
     "URL": "",
-    "TokenEnv": ""
+    "TokenEnv": "",
+    "TokenFile": ""
   },
   "Gitea": {
     "URL": "",
-    "TokenEnv": ""
+    "TokenEnv": "",
+    "TokenFile": ""
   },
   "Forgejo": {
     "URL": "",
-    "TokenEnv": ""
+    "TokenEnv": "",
+    "TokenFile": ""
   },
   "Notifications": {
     "Ntfy": null,

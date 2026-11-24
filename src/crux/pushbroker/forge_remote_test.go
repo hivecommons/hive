@@ -119,7 +119,7 @@ func TestWithTier(t *testing.T) {
 	if tok != "t-advisor" {
 		t.Fatalf("tiered minter token = %q", tok)
 	}
-	static := StaticTokenMinter{Token: func() string { return "s" }}
+	static := StaticTokenMinter{Token: func() (string, error) { return "s", nil }}
 	got, ok := WithTier(static, "advisor").(StaticTokenMinter)
 	if !ok {
 		t.Fatal("a minter that cannot narrow must be returned unchanged")
@@ -133,10 +133,14 @@ func TestStaticTokenMinter(t *testing.T) {
 	if _, err := (StaticTokenMinter{}).MintPushToken(context.Background(), "o/r"); err == nil {
 		t.Fatal("nil token source must error")
 	}
-	if _, err := (StaticTokenMinter{Token: func() string { return "  " }}).MintPushToken(context.Background(), "o/r"); err == nil {
+	if _, err := (StaticTokenMinter{Token: func() (string, error) { return "  ", nil }}).MintPushToken(context.Background(), "o/r"); err == nil {
 		t.Fatal("empty token must error")
 	}
-	tok, err := (StaticTokenMinter{Token: func() string { return " fj \n" }}).MintPushToken(context.Background(), "o/r")
+	failing := StaticTokenMinter{Token: func() (string, error) { return "leaked", errors.New("token_file is unreadable") }}
+	if tok, err := failing.MintPushToken(context.Background(), "o/r"); err == nil || tok != "" {
+		t.Fatalf("a token source error must fail the mint with no token, got %q, %v", tok, err)
+	}
+	tok, err := (StaticTokenMinter{Token: func() (string, error) { return " fj \n", nil }}).MintPushToken(context.Background(), "o/r")
 	if err != nil || tok != "fj" {
 		t.Fatalf("token = %q, %v", tok, err)
 	}

@@ -85,9 +85,9 @@ func forgejoMinter(cfg *config.Config) pushbroker.TokenMinter {
 		}
 	}
 	gov := cfg.Forgejo.Credentials().Governor()
-	return pushbroker.StaticTokenMinter{Token: func() string {
-		token, _ := gov.Resolve()
-		return token
+	return pushbroker.StaticTokenMinter{Token: func() (string, error) {
+		token, _, err := gov.Resolve()
+		return token, err
 	}}
 }
 

@@ -103,3 +103,39 @@ func TestForgeGiteaConfigDefaults(t *testing.T) {
 		t.Errorf("default token env = %q, want %q", g.Credentials().Governor().TokenEnv, DefaultGiteaTokenEnv)
 	}
 }
+
+// A block written with only token_env (every config before token_file existed)
+// keeps its env var, its default, and no file.
+func TestForgeBlocksTokenSourceFromYAML(t *testing.T) {
+	const doc = `
+gitlab:
+  token_env: GL_TOKEN
+gitea:
+  token_file: /secrets/gitea/token
+forgejo:
+  token_env: FJ_TOKEN
+  token_file: /data/secrets/forgejo-token
+`
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(doc), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	cases := []struct {
+		name     string
+		creds    func() (env, file string)
+		wantEnv  string
+		wantFile string
+	}{
+		{"gitlab env only", func() (string, string) { g := cfg.GitLab.Credentials().Governor(); return g.TokenEnv, g.TokenFile }, "GL_TOKEN", ""},
+		{"gitea file only keeps the default env", func() (string, string) { g := cfg.Gitea.Credentials().Governor(); return g.TokenEnv, g.TokenFile }, DefaultGiteaTokenEnv, "/secrets/gitea/token"},
+		{"forgejo both", func() (string, string) { g := cfg.Forgejo.Credentials().Governor(); return g.TokenEnv, g.TokenFile }, "FJ_TOKEN", "/data/secrets/forgejo-token"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env, file := tc.creds()
+			if env != tc.wantEnv || file != tc.wantFile {
+				t.Fatalf("got env=%q file=%q, want env=%q file=%q", env, file, tc.wantEnv, tc.wantFile)
+			}
+		})
+	}
+}

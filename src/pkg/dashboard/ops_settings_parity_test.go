@@ -240,6 +240,7 @@ func TestOpsSettingsRenderEveryKey(t *testing.T) {
 func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 	s := covApiServer(t)
 	root := t.TempDir()
+	defer cruxconfig.AllowSecretFileRoot(root)()
 	s.deps.Config.Mint.KeyPath = "/keys/mint.pem"
 	s.deps.Config.Evidence.SigningKeyFile = "/keys/evidence.key"
 	s.deps.Config.Deployment.UpgradeHelper = "/usr/local/libexec/helper"
@@ -263,6 +264,9 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 		{"forgejoTokenEnv": "glpat-not-a-name"},
 		{"giteaTokenEnv": "glpat-not-a-name"},
 		{"gitlabTokenEnv": "has space"},
+		{"forgejoTokenFile": "/etc/passwd"},
+		{"giteaTokenFile": "token"},
+		{"gitlabTokenFile": "/data/secrets"},
 		{"mintMaxTtlSeconds": -1},
 		{"mintMaxTtlSeconds": 7200},
 		{"supersessionGracePeriod": "-1h"},
@@ -299,12 +303,15 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 		"evidenceEnabled":        false,
 		"evidenceSigningKeyFile": "/elsewhere/other.key",
 
-		"forgejoUrl":      "https://codeberg.org/",
-		"forgejoTokenEnv": "MY_FORGEJO_TOKEN",
-		"giteaUrl":        "https://codeberg.org/",
-		"giteaTokenEnv":   "MY_GITEA_TOKEN",
-		"gitlabUrl":       "https://gitlab.example.com",
-		"gitlabTokenEnv":  "MY_GITLAB_TOKEN",
+		"forgejoUrl":       "https://codeberg.org/",
+		"forgejoTokenEnv":  "MY_FORGEJO_TOKEN",
+		"giteaUrl":         "https://codeberg.org/",
+		"giteaTokenEnv":    "MY_GITEA_TOKEN",
+		"gitlabUrl":        "https://gitlab.example.com",
+		"gitlabTokenEnv":   "MY_GITLAB_TOKEN",
+		"forgejoTokenFile": root + "/forgejo-token",
+		"giteaTokenFile":   "/secrets/gitea-token",
+		"gitlabTokenFile":  "/data/secrets/gitlab-token",
 
 		"mintKeyPath":       "/elsewhere/other.pem",
 		"mintMaxTtlSeconds": 1800,
@@ -340,11 +347,11 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 	if c.Evidence.IsEnabled() || c.Evidence.SigningKeyFile != "/keys/evidence.key" {
 		t.Fatalf("evidence not applied (or signing_key_file written): %+v", c.Evidence)
 	}
-	if c.Forgejo != (config.ForgejoConfig{URL: "https://codeberg.org", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_FORGEJO_TOKEN"}}}) {
+	if c.Forgejo != (config.ForgejoConfig{URL: "https://codeberg.org", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_FORGEJO_TOKEN", TokenFile: root + "/forgejo-token"}}}) {
 		t.Fatalf("forgejo not applied: %+v", c.Forgejo)
 	}
-	if c.Gitea != (config.GiteaConfig{URL: "https://codeberg.org", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_GITEA_TOKEN"}}}) ||
-		c.GitLab != (config.GitLabConfig{URL: "https://gitlab.example.com", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_GITLAB_TOKEN"}}}) {
+	if c.Gitea != (config.GiteaConfig{URL: "https://codeberg.org", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_GITEA_TOKEN", TokenFile: "/secrets/gitea-token"}}}) ||
+		c.GitLab != (config.GitLabConfig{URL: "https://gitlab.example.com", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_GITLAB_TOKEN", TokenFile: "/data/secrets/gitlab-token"}}}) {
 		t.Fatalf("forges not applied: gitea=%+v gitlab=%+v", c.Gitea, c.GitLab)
 	}
 	if c.Mint.MaxTTLSeconds != 1800 || c.Mint.KeyPath != "/keys/mint.pem" {
@@ -405,6 +412,9 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 			GiteaTokenEnv                string         `json:"giteaTokenEnv"`
 			GitLabURL                    string         `json:"gitlabUrl"`
 			GitLabTokenEnv               string         `json:"gitlabTokenEnv"`
+			ForgejoTokenFile             string         `json:"forgejoTokenFile"`
+			GiteaTokenFile               string         `json:"giteaTokenFile"`
+			GitLabTokenFile              string         `json:"gitlabTokenFile"`
 			MintKeyPath                  string         `json:"mintKeyPath"`
 			MintMaxTTLSeconds            int            `json:"mintMaxTtlSeconds"`
 			SupersessionGracePeriod      string         `json:"supersessionGracePeriod"`
@@ -438,6 +448,9 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 	}
 	if f.GiteaURL != "https://codeberg.org" || f.GiteaTokenEnv != "MY_GITEA_TOKEN" || f.GitLabURL != "" || f.GitLabTokenEnv != "MY_GITLAB_TOKEN" {
 		t.Fatalf("forge payload = %+v", f)
+	}
+	if f.ForgejoTokenFile != root+"/forgejo-token" || f.GiteaTokenFile != "/secrets/gitea-token" || f.GitLabTokenFile != "/data/secrets/gitlab-token" {
+		t.Fatalf("token file payload = %+v", f)
 	}
 	if f.SupersessionGracePeriod != "" || f.CompliancePostureWindowDays != 60 || f.CompliancePostureHistoryDays != 730 {
 		t.Fatalf("supersession/compliance payload = %+v", f)
@@ -475,10 +488,13 @@ func TestPlatformSettingsRenderEveryKey(t *testing.T) {
 		{"renderGovFeatures", "evidence.signing_key_file", `value="${esc(f.evidenceSigningKeyFile || '')}"`},
 		{"renderGovFeatures", "forgejo.forgejo_url", `data-arg0="features" data-arg1="forgejoUrl" data-arg-types="s,s,w"`},
 		{"renderGovFeatures", "forgejo.token_env", `data-arg0="features" data-arg1="forgejoTokenEnv" data-arg-types="s,s,w"`},
+		{"renderGovFeatures", "forgejo.token_file", `data-arg0="features" data-arg1="forgejoTokenFile" data-arg-types="s,s,w"`},
 		{"renderGovFeatures", "gitea.gitea_url", `data-arg0="features" data-arg1="giteaUrl" data-arg-types="s,s,w"`},
 		{"renderGovFeatures", "gitea.token_env", `data-arg0="features" data-arg1="giteaTokenEnv" data-arg-types="s,s,w"`},
+		{"renderGovFeatures", "gitea.token_file", `data-arg0="features" data-arg1="giteaTokenFile" data-arg-types="s,s,w"`},
 		{"renderGovFeatures", "gitlab.gitlab_url", `data-arg0="features" data-arg1="gitlabUrl" data-arg-types="s,s,w"`},
 		{"renderGovFeatures", "gitlab.token_env", `data-arg0="features" data-arg1="gitlabTokenEnv" data-arg-types="s,s,w"`},
+		{"renderGovFeatures", "gitlab.token_file", `data-arg0="features" data-arg1="gitlabTokenFile" data-arg-types="s,s,w"`},
 		{"renderGovFeatures", "mint.key_path", `value="${esc(f.mintKeyPath || '')}"`},
 		{"renderGovFeatures", "mint.max_ttl_seconds", `data-arg0="features" data-arg1="mintMaxTtlSeconds" data-arg-types="s,s,N"`},
 		{"renderGovFeatures", "supersession_sweep.grace_period", `data-arg0="features" data-arg1="supersessionGracePeriod" data-arg-types="s,s,w"`},
@@ -514,7 +530,7 @@ func TestPlatformSettingsRenderEveryKey(t *testing.T) {
 	body := extractJSFunction(t, html, "renderGovFeatures")
 	for _, want := range []string{
 		"Requires restart: these directories are read at boot.",
-		"Requires restart: the forge client is built at boot.",
+		"Requires restart: the forge client is built at boot. A rotated token file needs no restart, because it is read each time the token is needed.",
 		"Requires restart: the swarm view reads its default theme once.",
 	} {
 		if !strings.Contains(body, want) {
