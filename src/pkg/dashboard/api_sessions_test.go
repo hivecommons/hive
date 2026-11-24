@@ -425,7 +425,23 @@ func (e *sessionTestEnv) createWith(t *testing.T, c sessionCaller, name string, 
 	if got := e.waitSettled(t, id); got.Status != sessionStatusRunning {
 		t.Fatalf("session %s settled as %s (%s), want running", id, got.Status, got.Error)
 	}
+	e.waitStartWorkerDone(t, id)
 	return id
+}
+
+// waitStartWorkerDone waits until the background start of id has returned.
+// The record says running while that worker still holds sessionsMu and reads
+// the shared config (beginSessionAutostart), so a test that mutates
+// e.s.deps.Config afterwards raced it under -race (#19748). The worker clears
+// its in-flight mark and returns under one hold of sessionsMu, so observing
+// the mark gone under that lock orders the caller after the worker's reads.
+func (e *sessionTestEnv) waitStartWorkerDone(t *testing.T, id string) {
+	t.Helper()
+	waitSessionsFor(t, "session "+id+" start worker to return", func() bool {
+		e.s.sessionsMu.Lock()
+		defer e.s.sessionsMu.Unlock()
+		return !e.s.sessionsPreparing[id]
+	})
 }
 
 // sessionTestSettleTimeout bounds the wait for a background start in tests.
