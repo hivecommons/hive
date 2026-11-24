@@ -1,8 +1,10 @@
 # CNCF TechDocs AI-assisted assessment — curated workflow model
 
-`cncf-techdocs-assessment@curated-2026.11.2` is the current version of the first curated
+`cncf-techdocs-assessment@curated-2026.11.3` is the current version of the first curated
 model in the hub marketplace (https://hive.hivecommons.dev → Settings → Workflows →
-Marketplace on any hive); `curated-2026.11.1` stays in the catalogue unchanged. It encodes the CNCF TechDocs team's AI-assisted documentation assessment process
+Marketplace on any hive); `curated-2026.11.1` and `curated-2026.11.2` stay in the catalogue
+unchanged. 11.3 differs from 11.2 only in the stage labels four states write
+([Stage labels](#stage-labels)). It encodes the CNCF TechDocs team's AI-assisted documentation assessment process
 so a hive bound to `cncf/techdocs` runs intake, drafting, verification, stakeholder review
 and approval as a visible lifecycle, with every agent action followed by a human gate.
 
@@ -19,7 +21,8 @@ annotations and in each element's `citations`):
 
 The model's scope is `github.com cncf/techdocs` — the upstream repository where the
 process runs; the fork above is where the spec was written. Model files:
-`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.2.yaml` (current) and
+`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.3.yaml` (current),
+`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.2.yaml` and
 `pkg/hub/marketplace/curated/cncf-techdocs-assessment.yaml` (`curated-2026.11.1`)
 (`apiVersion: workflow.hivecommons.dev/v1alpha1`, `derivation.mode: rules`,
 `meta.provenance: curated`). Curated files are never edited in place: a change is a new
@@ -59,13 +62,14 @@ Issues (intake and per-phase tracking issues):
 | `closed` | terminal | closed | — |
 | `escalated` | 45 needs-decision | a hold label is present | administrator |
 | `draft-open` | 40 covered-by-PR | `triage/accepted` and a covering PR exists | registered agent |
-| `accepted` | 20 claimed | `triage/accepted` | reviewer (technical writer) |
+| `accepted` | 20 (`stage/020-accepted`) | `triage/accepted` | reviewer (technical writer) |
 | `requested` | 10 actionable | `needs-triage` | reviewer |
 
-The `accepted` state reuses the built-in stage number 20, so an accepted issue wears
-`stage/020-claimed`, but **no agent holds a claim on it**: the state means "waiting on the
-reviewer to start the drafter". The in-progress sweep leaves that label alone on a
-model-bound repository and does not withhold the issue for it
+The `accepted` state reuses the built-in stage number 20, but **no agent holds a claim on
+it**: the state means "waiting on the reviewer to start the drafter". From 11.3 an accepted
+issue wears `stage/020-accepted`; under 11.1 and 11.2 it wears the built-in
+`stage/020-claimed`, which the in-progress sweep leaves alone on a model-bound repository
+and does not withhold the issue for
 ([hivecommons/hive#18434](https://github.com/hivecommons/hive/issues/18434); before the fix
 the label was removed and re-added every enumeration cycle).
 
@@ -75,12 +79,31 @@ Pull requests (deliverables carry the `Docs analysis` label; anything else absta
 |---|---|---|
 | `merged` | terminal | merged |
 | `discarded` | terminal | closed unmerged |
-| `in-review` | 50 review-pending | draft and `verified` |
-| `drafting` | 70 fixing | draft |
+| `in-review` | 50 (`stage/050-reviewer-check`) | draft and `verified` |
+| `drafting` | 70 (`stage/070-drafting`) | draft |
 | `checks-failing` | 71 needs-author | checks red |
 | `awaiting-merge` | 90 ready-for-human-merge | `confirmed` |
-| `stakeholder-review` | 60 reviewed | ready and `verified` |
-| `in-review` | 50 review-pending | ready but not yet `verified` |
+| `stakeholder-review` | 60 (`stage/060-stakeholder-review`) | ready and `verified` |
+| `in-review` | 50 (`stage/050-reviewer-check`) | ready but not yet `verified` |
+
+#### Stage labels
+
+`curated-2026.11.3` gives four states their own stage label in the same number band
+(`lifecycle.stageLabel`, [hivecommons/hive#19611](https://github.com/hivecommons/hive/issues/19611)),
+because the built-in name at that number says something that is not true of the state:
+
+| State | Stage | 11.3 label | Built-in label (11.1, 11.2) |
+|---|---|---|---|
+| `accepted` | 20 | `stage/020-accepted` | `stage/020-claimed` |
+| `drafting` | 70 | `stage/070-drafting` | `stage/070-fixing` |
+| `in-review` | 50 | `stage/050-reviewer-check` | `stage/050-review-pending` |
+| `stakeholder-review` | 60 | `stage/060-stakeholder-review` | `stage/060-reviewed` |
+
+The number is unchanged, so the stage store, the Activity Monitor, anchors and replies see
+the same stage. After a rebind from 11.2 the hive creates the four labels and swaps each
+item's built-in label for the new one on its next pass. The built-in labels stay in the
+repository (the hive never deletes them) until an operator removes them. Searches or
+dashboards outside the hive that match the built-in slug need updating.
 
 ### Transitions
 
@@ -143,7 +166,7 @@ required.
 
 #### Reference repos from the request
 
-`curated-2026.11.2` adds a `spec.intake` block
+`curated-2026.11.2` (and 11.3) adds a `spec.intake` block
 ([hivecommons/hive#18139](https://github.com/hivecommons/hive/issues/18139)):
 
 ```yaml
@@ -171,8 +194,8 @@ The first request through this path is
 [cncf/techdocs#395](https://github.com/cncf/techdocs/issues/395), the Hive Commons assessment.
 What the operator of the TechDocs hive (authorized repo `cncf/techdocs`) does and sees:
 
-1. **Rebind to 11.2.** Settings → Workflows → Marketplace, bind `cncf/techdocs` to
-   `cncf-techdocs-assessment@curated-2026.11.2`. This step is required: a hive still bound to
+1. **Rebind to 11.2 or later.** Settings → Workflows → Marketplace, bind `cncf/techdocs` to
+   `cncf-techdocs-assessment@curated-2026.11.3` (or 11.2). This step is required: a hive still bound to
    `curated-2026.11.1` derives nothing, however many requests are accepted. No
    `reference_repos` entry is written by hand.
 2. **A maintainer accepts the request.** Someone with write access to `cncf/techdocs` applies

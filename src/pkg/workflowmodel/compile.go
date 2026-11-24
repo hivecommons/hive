@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Diagnostic is one compiler finding. Errors refuse the model; warnings
@@ -48,6 +50,9 @@ const (
 	// CodeDispatchReply warns that a dispatch reply is not a state reply.
 	CodeDuplicateDispatch = "duplicate-dispatch"
 	CodeDispatchReply     = "dispatch-reply-undeclared"
+	// CodeBadStageLabel refuses a state stageLabel outside its number
+	// band, on an unnumbered state or in a retired spelling (#19611).
+	CodeBadStageLabel = "bad-stage-label"
 )
 
 // ErrCompile wraps a compile refused by error diagnostics.
@@ -256,11 +261,19 @@ func (c *compiler) columns() {
 	c.p.Columns = append([]Column(nil), m.Spec.Columns...)
 }
 
-// numbers checks stage numbers are unique per item kind.
+// numbers checks stage numbers are unique per item kind and that a
+// declared stageLabel stays in its number band.
 func (c *compiler) numbers() {
 	seen := map[string]string{}
 	for _, s := range c.m.Spec.States {
 		n := s.Lifecycle.Number
+		if label := s.Lifecycle.StageLabel; label != "" {
+			if n == 0 {
+				c.errorf(CodeBadStageLabel, s.ID, "state %q declares stageLabel %q but no stage number", s.ID, label)
+			} else if err := stagelabels.ValidateModelLabel(n, label); err != nil {
+				c.errorf(CodeBadStageLabel, s.ID, "state %q stageLabel: %v", s.ID, err)
+			}
+		}
 		if n == 0 {
 			continue
 		}

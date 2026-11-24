@@ -90,9 +90,24 @@ observations and exempt), `duplicate-event-fact`, `state-no-column` / `unknown-c
 `duplicate-stage-number`, `unknown-fact` / `bad-op`, `no-rules`, `no-version`. Elements marked
 `confidence: inferred` compile with an `inferred-element` warning the editor shows.
 
-Stage numbers in a model are Hive's label numbers (`stagelabels.Table`) for now, so a bound repo's
+Stage numbers in a model are Hive's label numbers (`stagelabels.Table`), so a bound repo's
 labels, tracker anchors and replies keep working; a state whose number does not apply to the item
 kind is not covered. Models are whole (no inheritance) through phase 4.
+
+A numbered state may spell its own stage label in its number band with `lifecycle.stageLabel`
+(hivecommons/hive#19611): `{"number": 20, "stageLabel": "stage/020-accepted"}` makes items in that
+state wear `stage/020-accepted` instead of the built-in `stage/020-claimed`. The label must be
+`stage/NNN-<slug>` with `NNN` the state's zero-padded number (a number in the stage table) and a
+slug of lowercase letters, digits and single hyphens; a retired spelling (`stagelabels.Renames`) or
+a label on an unnumbered state is refused with `bad-stage-label`. Everything that reads a stage
+reads it by number (`stagelabels.StageOfLabel`, `stagelabels.Current`), so the stage store,
+tracker, anchors and replies treat both spellings as the same stage. The writer
+(`stagelabels.Plan` via `Desired.StageLabel`) swaps an item still wearing the built-in spelling
+for the model's on its next pass without recording a stage change; the claim hooks
+(`stagelabels.EnforceStage`) keep a model spelling of the stage they set. The labels are
+provisioned on bind with the model's other labels (`Profile.LabelDefs`) and reclaimed by the
+label GC when a rebinding drops them. A state without `stageLabel` keeps the built-in label, so
+hive-default and every model that does not declare one are unchanged.
 
 When a rules model selects an unnumbered state, it carries no built-in `stage/*` label, even if
 the state is nonterminal; its model-state labels still apply. The stage store treats the move to
@@ -327,9 +342,11 @@ input is never modified; `Inferred(m)` counts what is left to confirm. The store
 
 `labels` is `Profile.LabelDefs(stagelabels.StageColor)`: the model's `spec.labels.entries` with
 the stage colour filled in where an entry names none, the state's label as description where an
-entry has none, and descriptions clamped to GitHub's limit. `commands` is `Profile.Replies` (the
-human-gate verbs per state) in column order. `stages` is the built-in stage label each numbered
-state maps onto; custom model state labels are also reconciled onto items.
+entry has none, and descriptions clamped to GitHub's limit, followed by the stage labels numbered
+states declare with `lifecycle.stageLabel` (state label as description). `commands` is
+`Profile.Replies` (the human-gate verbs per state) in column order. `stages` is the stage label
+each numbered state writes: its `stageLabel` when it declares one, else the built-in label at its
+number; custom model state labels are also reconciled onto items.
 
 ### Label regeneration on bind
 

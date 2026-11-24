@@ -49,6 +49,39 @@ func TestCompileTechDocs(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#19611: a numbered state may spell its own stage label in
+// its number band; it compiles cleanly and is provisioned with the model's
+// labels.
+func TestCompileStageLabel(t *testing.T) {
+	m := techdocs(t)
+	m.Spec.States[1].Lifecycle.StageLabel = "stage/020-analysing"
+	p, diags, err := Compile(m)
+	if err != nil {
+		t.Fatalf("%v\n%+v", err, diags)
+	}
+	if got := p.StageLabelStates(); len(got) != 1 || got[0] != "analysing" {
+		t.Fatalf("StageLabelStates = %v", got)
+	}
+	var found *LabelDef
+	defs := p.LabelDefs("ededed")
+	for i := range defs {
+		if defs[i].Name == "stage/020-analysing" {
+			found = &defs[i]
+		}
+	}
+	if found == nil || found.State != "analysing" || found.Color != "ededed" || found.Description != m.Spec.States[1].Label {
+		t.Fatalf("stage label not provisioned: %+v in %+v", found, defs)
+	}
+	// A model without stage labels hashes as before: the field is omitted.
+	if techdocs(t).Hash() == m.Hash() {
+		t.Fatal("a declared stage label must change the model hash")
+	}
+	b, _ := json.Marshal(techdocs(t).Spec.States[1])
+	if strings.Contains(string(b), "stageLabel") {
+		t.Fatalf("empty stageLabel must be omitted: %s", b)
+	}
+}
+
 // Each refusal from the RFC's "Deterministic" list, and the structural
 // checks around them, produces its code and no Profile.
 func TestCompileRefusals(t *testing.T) {
@@ -83,6 +116,9 @@ func TestCompileRefusals(t *testing.T) {
 		{"empty column", func(m *Model) { m.Spec.Columns = append(m.Spec.Columns, Column{ID: "x", Label: "x"}) }, CodeColumnEmpty},
 		{"no terminal column", func(m *Model) { m.Spec.Columns[4].Terminal = false }, CodeNoTerminalColumn},
 		{"duplicate stage number", func(m *Model) { m.Spec.States[1].Lifecycle.Number = 10 }, CodeDuplicateNumber},
+		{"stage label outside its number band", func(m *Model) { m.Spec.States[1].Lifecycle.StageLabel = "stage/030-analysing" }, CodeBadStageLabel},
+		{"stage label with a bad slug", func(m *Model) { m.Spec.States[1].Lifecycle.StageLabel = "stage/020-Analysing" }, CodeBadStageLabel},
+		{"stage label on an unnumbered state", func(m *Model) { m.Spec.States[7].Lifecycle.StageLabel = "stage/100-published" }, CodeBadStageLabel},
 		{"unknown fact", func(m *Model) { m.Spec.Derivation.Rules[0].When[0].Fact = "weather" }, CodeUnknownFact},
 		{"bad operator", func(m *Model) { m.Spec.Derivation.Rules[0].When[0].Op = OpHas }, CodeBadOp},
 		{"scalar op without value", func(m *Model) { m.Spec.Derivation.Rules[2].When[0].Value = "" }, CodeBadOp},

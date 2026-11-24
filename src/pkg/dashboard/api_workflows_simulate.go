@@ -281,7 +281,7 @@ func simulateDecision(p *workflowmodel.Profile, d stageengine.Decision) Simulate
 	out.Covered = true
 	if d.Stage != stagelabels.None {
 		out.Stage = d.Stage.Number()
-		out.Label = d.Stage.Label()
+		out.Label = d.Label()
 		if st, ok := p.StateForNumber(out.Stage); ok {
 			out.State = st
 			out.Column = p.ColumnOf[st]
