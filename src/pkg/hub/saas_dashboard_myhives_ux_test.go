@@ -250,8 +250,8 @@ func TestDashboardSpokePointer(t *testing.T) {
 		// Dismissal is per viewer + hive and re-arms on a new attention kind.
 		"LS_SPOKE_POINTER_PREFIX",
 		"localStorage.setItem(spokePointerKey(",
-		// The callout's hive link reuses the row's href decision (SSO /open).
-		"ssoDisplayLink(dh, isHostedRow && rb ? rb : '', text, cls)",
+		// The callout's hive link reuses the row's href decision (hiveOpenURL).
+		"ssoDisplayLink(dh, openUrl && rb ? rb : '', text, cls)",
 		// Row affordances: the ↗ glyph on the bold hive-name link, and the
 		// ⋮ hint naming what the row menu manages.
 		`class="open-glyph"`,
