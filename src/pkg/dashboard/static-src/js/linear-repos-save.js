@@ -660,7 +660,8 @@
         const agent = {
           backend: generalData.cliPinValue || 'copilot',
           model: generalData.model || '',
-          enabled: true,
+          enabled: generalData.enabled !== false,
+          on_demand: generalData.onDemand,
           display_name: generalData.displayName || '',
           description: generalData.description || '',
           emoji: generalData.emoji || '',
