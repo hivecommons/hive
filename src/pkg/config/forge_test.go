@@ -39,8 +39,8 @@ project:
 	if cfg.GitLab.InstanceURL() != DefaultGitLabURL {
 		t.Errorf("default GitLab URL = %q, want %q", cfg.GitLab.InstanceURL(), DefaultGitLabURL)
 	}
-	if cfg.GitLab.TokenEnvName() != DefaultGitLabTokenEnv {
-		t.Errorf("default token env = %q, want %q", cfg.GitLab.TokenEnvName(), DefaultGitLabTokenEnv)
+	if cfg.GitLab.Credentials().Governor().TokenEnv != DefaultGitLabTokenEnv {
+		t.Errorf("default token env = %q, want %q", cfg.GitLab.Credentials().Governor().TokenEnv, DefaultGitLabTokenEnv)
 	}
 }
 
@@ -63,8 +63,8 @@ gitlab:
 	if cfg.GitLab.InstanceURL() != "https://gitlab.example.com" {
 		t.Errorf("InstanceURL = %q", cfg.GitLab.InstanceURL())
 	}
-	if cfg.GitLab.TokenEnvName() != "MY_GL_TOKEN" {
-		t.Errorf("TokenEnvName = %q", cfg.GitLab.TokenEnvName())
+	if cfg.GitLab.Credentials().Governor().TokenEnv != "MY_GL_TOKEN" {
+		t.Errorf("TokenEnv = %q", cfg.GitLab.Credentials().Governor().TokenEnv)
 	}
 }
 
@@ -87,8 +87,8 @@ gitea:
 	if cfg.Gitea.InstanceURL() != "https://gitea.example.com" {
 		t.Errorf("InstanceURL = %q", cfg.Gitea.InstanceURL())
 	}
-	if cfg.Gitea.TokenEnvName() != "MY_GITEA_TOKEN" {
-		t.Errorf("TokenEnvName = %q", cfg.Gitea.TokenEnvName())
+	if cfg.Gitea.Credentials().Governor().TokenEnv != "MY_GITEA_TOKEN" {
+		t.Errorf("TokenEnv = %q", cfg.Gitea.Credentials().Governor().TokenEnv)
 	}
 }
 
@@ -99,7 +99,7 @@ func TestForgeGiteaConfigDefaults(t *testing.T) {
 	if g.InstanceURL() != "" {
 		t.Errorf("default Gitea URL = %q, want empty", g.InstanceURL())
 	}
-	if g.TokenEnvName() != DefaultGiteaTokenEnv {
-		t.Errorf("default token env = %q, want %q", g.TokenEnvName(), DefaultGiteaTokenEnv)
+	if g.Credentials().Governor().TokenEnv != DefaultGiteaTokenEnv {
+		t.Errorf("default token env = %q, want %q", g.Credentials().Governor().TokenEnv, DefaultGiteaTokenEnv)
 	}
 }

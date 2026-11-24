@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
@@ -65,17 +65,17 @@ func forgeForRepo(cfg *config.Config, repo string, ghClient *github.Client, logg
 	var (
 		kind    forge.Kind
 		baseURL string
-		tokenID string
+		gov     cruxconfig.TokenSource
 	)
 	switch k := cfg.ForgeKindForRepo(repo); k {
 	case config.ForgeGitHub:
 		return fallback()
 	case config.ForgeGitLab:
-		kind, baseURL, tokenID = forge.KindGitLab, cfg.ForgeURLForRepo(repo), cfg.GitLab.TokenEnvName()
+		kind, baseURL, gov = forge.KindGitLab, cfg.ForgeURLForRepo(repo), cfg.GitLab.Credentials().Governor()
 	case config.ForgeGitea:
-		kind, baseURL, tokenID = forge.KindGitea, cfg.ForgeURLForRepo(repo), cfg.Gitea.TokenEnvName()
+		kind, baseURL, gov = forge.KindGitea, cfg.ForgeURLForRepo(repo), cfg.Gitea.Credentials().Governor()
 	case config.ForgeForgejo:
-		kind, baseURL, tokenID = forge.KindForgejo, cfg.ForgeURLForRepo(repo), cfg.Forgejo.TokenEnvName()
+		kind, baseURL, gov = forge.KindForgejo, cfg.ForgeURLForRepo(repo), cfg.Forgejo.Credentials().Governor()
 	default:
 		logger.Warn("unknown project.forge; falling back to the GitHub client",
 			"forge", k, "repo", repo, "known", config.KnownForgeKinds)
@@ -96,13 +96,14 @@ func forgeForRepo(cfg *config.Config, repo string, ghClient *github.Client, logg
 	// secret itself. An empty value is passed through — the forge will reject it
 	// with a 401 whose message names the real problem, which beats a local error
 	// that cannot distinguish "unset" from "set but wrong".
-	f, err := forge.NewForge(kind, os.Getenv(tokenID), forge.Options{
+	token, _ := gov.Resolve()
+	f, err := forge.NewForge(kind, token, forge.Options{
 		BaseURL: baseURL,
 		Org:     cfg.Project.Org,
 	})
 	if err != nil {
 		logger.Warn("forge adapter unavailable; falling back to the GitHub client",
-			"forge", kind, "repo", repo, "token_env", tokenID, "error", err)
+			"forge", kind, "repo", repo, "token_env", gov.TokenEnv, "error", err)
 		return fallback()
 	}
 	return f
@@ -163,14 +164,14 @@ var newForgeMerger = func(kind forge.Kind, token string, opts forge.Options) (fo
 // client could never succeed and must not be attempted.
 func forgeMergerForRepo(cfg *config.Config, repo string) (forge.Merger, error) {
 	var kind forge.Kind
-	var tokenID string
+	var gov cruxconfig.TokenSource
 	switch cfg.ForgeKindForRepo(repo) {
 	case config.ForgeGitLab:
-		kind, tokenID = forge.KindGitLab, cfg.GitLab.TokenEnvName()
+		kind, gov = forge.KindGitLab, cfg.GitLab.Credentials().Governor()
 	case config.ForgeGitea:
-		kind, tokenID = forge.KindGitea, cfg.Gitea.TokenEnvName()
+		kind, gov = forge.KindGitea, cfg.Gitea.Credentials().Governor()
 	case config.ForgeForgejo:
-		kind, tokenID = forge.KindForgejo, cfg.Forgejo.TokenEnvName()
+		kind, gov = forge.KindForgejo, cfg.Forgejo.Credentials().Governor()
 	default:
 		return nil, nil
 	}
@@ -178,7 +179,8 @@ func forgeMergerForRepo(cfg *config.Config, repo string) (forge.Merger, error) {
 	if err := cfg.CheckForgeTokenHost(repo); err != nil {
 		return nil, err
 	}
-	return newForgeMerger(kind, os.Getenv(tokenID), forge.Options{
+	token, _ := gov.Resolve()
+	return newForgeMerger(kind, token, forge.Options{
 		BaseURL: cfg.ForgeURLForRepo(repo),
 		Org:     cfg.Project.Org,
 	})

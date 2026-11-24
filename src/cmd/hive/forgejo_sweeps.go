@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -46,9 +45,10 @@ func forgejoSweepAPIForRepo(cfg *config.Config, repo string) (forge.SweepAPI, er
 	if err := cfg.CheckForgeTokenHost(repo); err != nil {
 		return nil, err
 	}
-	token := os.Getenv(cfg.Forgejo.TokenEnvName())
+	gov := cfg.Forgejo.Credentials().Governor()
+	token, _ := gov.Resolve()
 	if strings.TrimSpace(token) == "" {
-		return nil, fmt.Errorf("%s is empty", cfg.Forgejo.TokenEnvName())
+		return nil, fmt.Errorf("%s is empty", gov.TokenEnv)
 	}
 	return newForgejoSweepAPI(token, forge.Options{BaseURL: cfg.ForgeURLForRepo(repo), Org: cfg.Project.Org})
 }

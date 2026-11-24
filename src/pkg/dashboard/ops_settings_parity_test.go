@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
@@ -339,11 +340,11 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 	if c.Evidence.IsEnabled() || c.Evidence.SigningKeyFile != "/keys/evidence.key" {
 		t.Fatalf("evidence not applied (or signing_key_file written): %+v", c.Evidence)
 	}
-	if c.Forgejo != (config.ForgejoConfig{URL: "https://codeberg.org", TokenEnv: "MY_FORGEJO_TOKEN"}) {
+	if c.Forgejo != (config.ForgejoConfig{URL: "https://codeberg.org", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_FORGEJO_TOKEN"}}}) {
 		t.Fatalf("forgejo not applied: %+v", c.Forgejo)
 	}
-	if c.Gitea != (config.GiteaConfig{URL: "https://codeberg.org", TokenEnv: "MY_GITEA_TOKEN"}) ||
-		c.GitLab != (config.GitLabConfig{URL: "https://gitlab.example.com", TokenEnv: "MY_GITLAB_TOKEN"}) {
+	if c.Gitea != (config.GiteaConfig{URL: "https://codeberg.org", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_GITEA_TOKEN"}}}) ||
+		c.GitLab != (config.GitLabConfig{URL: "https://gitlab.example.com", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_GITLAB_TOKEN"}}}) {
 		t.Fatalf("forges not applied: gitea=%+v gitlab=%+v", c.Gitea, c.GitLab)
 	}
 	if c.Mint.MaxTTLSeconds != 1800 || c.Mint.KeyPath != "/keys/mint.pem" {

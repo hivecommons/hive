@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/url"
-	"os"
 	"sort"
 	"strings"
 
@@ -85,8 +84,11 @@ func forgejoMinter(cfg *config.Config) pushbroker.TokenMinter {
 			Audiences: auds,
 		}
 	}
-	envName := cfg.Forgejo.TokenEnvName()
-	return pushbroker.StaticTokenMinter{Token: func() string { return os.Getenv(envName) }}
+	gov := cfg.Forgejo.Credentials().Governor()
+	return pushbroker.StaticTokenMinter{Token: func() string {
+		token, _ := gov.Resolve()
+		return token
+	}}
 }
 
 // forgejoHosts lists the hosts of every forge URL a Forgejo repo of cfg

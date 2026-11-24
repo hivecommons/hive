@@ -4244,10 +4244,10 @@ type GitLabConfig struct {
 	// self-managed instance "https://gitlab.example.com". The "/api/v4" path is
 	// appended by the client.
 	URL string `yaml:"gitlab_url,omitempty"`
-	// TokenEnv is the environment variable holding the GitLab access token.
-	// Defaults to DefaultGitLabTokenEnv. The token value is resolved via
-	// os.Getenv at runtime and never persisted in config.
-	TokenEnv string `yaml:"token_env,omitempty"`
+	// ForgeTokens names the environment variable holding the GitLab access
+	// token (token_env, default DefaultGitLabTokenEnv). The token value is resolved at runtime and
+	// never persisted in config.
+	cruxconfig.ForgeTokens `yaml:",inline"`
 }
 
 const (
@@ -4266,13 +4266,9 @@ func (g GitLabConfig) InstanceURL() string {
 	return g.URL
 }
 
-// TokenEnvName returns the env var name to read the GitLab token from,
-// defaulting to DefaultGitLabTokenEnv when unset.
-func (g GitLabConfig) TokenEnvName() string {
-	if g.TokenEnv == "" {
-		return DefaultGitLabTokenEnv
-	}
-	return g.TokenEnv
+// Credentials returns the GitLab block's token sources.
+func (g GitLabConfig) Credentials() cruxconfig.ForgeCredentials {
+	return cruxconfig.ForgeCredentials{DefaultEnv: DefaultGitLabTokenEnv, Tokens: g.ForgeTokens}
 }
 
 // GiteaConfig configures the Gitea forge (used when project.forge ==
@@ -4287,10 +4283,10 @@ type GiteaConfig struct {
 	// URL is the Gitea instance root, e.g. "https://gitea.example.com". The "/api/v1" path is appended by
 	// the client. There is no default; it must be supplied for the Gitea forge.
 	URL string `yaml:"gitea_url,omitempty"`
-	// TokenEnv is the environment variable holding the Gitea access token.
-	// Defaults to DefaultGiteaTokenEnv. The token value is resolved via
-	// os.Getenv at runtime and never persisted in config.
-	TokenEnv string `yaml:"token_env,omitempty"`
+	// ForgeTokens names the environment variable holding the Gitea access
+	// token (token_env, default DefaultGiteaTokenEnv). The token value is resolved at runtime and
+	// never persisted in config.
+	cruxconfig.ForgeTokens `yaml:",inline"`
 }
 
 const (
@@ -4306,13 +4302,9 @@ func (g GiteaConfig) InstanceURL() string {
 	return g.URL
 }
 
-// TokenEnvName returns the env var name to read the Gitea token from, defaulting
-// to DefaultGiteaTokenEnv when unset.
-func (g GiteaConfig) TokenEnvName() string {
-	if g.TokenEnv == "" {
-		return DefaultGiteaTokenEnv
-	}
-	return g.TokenEnv
+// Credentials returns the Gitea block's token sources.
+func (g GiteaConfig) Credentials() cruxconfig.ForgeCredentials {
+	return cruxconfig.ForgeCredentials{DefaultEnv: DefaultGiteaTokenEnv, Tokens: g.ForgeTokens}
 }
 
 // ForgejoConfig configures the Forgejo forge (used when project.forge ==
@@ -4323,12 +4315,13 @@ type ForgejoConfig struct {
 	// URL is the Forgejo instance root, e.g. "https://codeberg.org". The
 	// "/api/v1" path is appended by the client. There is no default.
 	URL string `yaml:"forgejo_url,omitempty"`
-	// TokenEnv is the environment variable holding the Forgejo access token.
-	// Defaults to DefaultForgejoTokenEnv.
-	TokenEnv string `yaml:"token_env,omitempty"`
+	// ForgeTokens names the environment variable holding the Forgejo access
+	// token (token_env, default DefaultForgejoTokenEnv). The token value is resolved at runtime and
+	// never persisted in config.
+	cruxconfig.ForgeTokens `yaml:",inline"`
 	// Integration, when set, makes git clone and push on Forgejo repos use a
 	// short-lived JWT per token tier, signed by an operator-held key, instead
-	// of TokenEnv's access token. See ForgejoIntegrationConfig.
+	// of the access token. See ForgejoIntegrationConfig.
 	Integration *ForgejoIntegrationConfig `yaml:"integration,omitempty" json:"Integration,omitempty"`
 }
 
@@ -4342,13 +4335,9 @@ func (g ForgejoConfig) InstanceURL() string {
 	return g.URL
 }
 
-// TokenEnvName returns the env var name to read the Forgejo token from,
-// defaulting to DefaultForgejoTokenEnv when unset.
-func (g ForgejoConfig) TokenEnvName() string {
-	if g.TokenEnv == "" {
-		return DefaultForgejoTokenEnv
-	}
-	return g.TokenEnv
+// Credentials returns the Forgejo block's token sources.
+func (g ForgejoConfig) Credentials() cruxconfig.ForgeCredentials {
+	return cruxconfig.ForgeCredentials{DefaultEnv: DefaultForgejoTokenEnv, Tokens: g.ForgeTokens}
 }
 
 // ─────────────────────────────────────────────────────────────────────────

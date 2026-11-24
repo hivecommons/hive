@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
@@ -50,21 +50,22 @@ var errForgeNotOffGitHub = errors.New("forge enumeration: repo is on GitHub")
 // substitute a fake.
 var forgeListerForRepo = func(cfg *config.Config, repo string) (forgeLister, error) {
 	var kind forge.Kind
-	var tokenID string
+	var gov cruxconfig.TokenSource
 	switch cfg.ForgeKindForRepo(repo) {
 	case config.ForgeGitLab:
-		kind, tokenID = forge.KindGitLab, cfg.GitLab.TokenEnvName()
+		kind, gov = forge.KindGitLab, cfg.GitLab.Credentials().Governor()
 	case config.ForgeGitea:
-		kind, tokenID = forge.KindGitea, cfg.Gitea.TokenEnvName()
+		kind, gov = forge.KindGitea, cfg.Gitea.Credentials().Governor()
 	case config.ForgeForgejo:
-		kind, tokenID = forge.KindForgejo, cfg.Forgejo.TokenEnvName()
+		kind, gov = forge.KindForgejo, cfg.Forgejo.Credentials().Governor()
 	default:
 		return nil, errForgeNotOffGitHub
 	}
 	if err := cfg.CheckForgeTokenHost(repo); err != nil {
 		return nil, err
 	}
-	return forge.NewForge(kind, os.Getenv(tokenID), forge.Options{
+	token, _ := gov.Resolve()
+	return forge.NewForge(kind, token, forge.Options{
 		BaseURL: cfg.ForgeURLForRepo(repo),
 		Org:     cfg.Project.Org,
 	})
