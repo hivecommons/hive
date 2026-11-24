@@ -568,24 +568,43 @@
     // Copy button of the export viewer. The outcome goes in the popup's own
     // status line, not a toast: #toast-container (z-index 10001) sits under
     // .hive-dialog-overlay (20000) and its blur, so a toast here is unreadable.
-    // Each click clears the last outcome first; a success clears itself.
+    // Each click clears the last outcome first and only the newest click may
+    // write one, so a slow earlier clipboard promise cannot overwrite it. The
+    // text lands on the next task so a repeated message is announced again.
+    // A success clears itself. Resolves true (copied), false (selected for
+    // manual copy) or null (superseded by a later click).
     function hiveExportCopy(text, textEl, statusEl) {
-      if (statusEl._hiveExportClear) { clearTimeout(statusEl._hiveExportClear); statusEl._hiveExportClear = 0; }
-      statusEl.textContent = '';
+      const seq = (statusEl._hiveExportSeq || 0) + 1;
+      statusEl._hiveExportSeq = seq;
+      const current = function() { return statusEl._hiveExportSeq === seq; };
+      const stopClear = function() {
+        if (statusEl._hiveExportClear) { clearTimeout(statusEl._hiveExportClear); statusEl._hiveExportClear = 0; }
+      };
+      const show = function(msg) {
+        setTimeout(function() { if (current()) statusEl.textContent = msg; }, 0);
+      };
       const manualCopy = function(msg) {
         textEl.focus();
         hiveSelectAllText(textEl);
-        statusEl.textContent = msg;
+        show(msg);
         return false;
       };
+      stopClear();
+      statusEl.textContent = '';
       if (!(navigator.clipboard && navigator.clipboard.writeText)) {
         return Promise.resolve(manualCopy('The text is selected; press Ctrl+C (or Cmd+C) to copy it.'));
       }
       return navigator.clipboard.writeText(text).then(function() {
-        statusEl.textContent = 'Copied to clipboard.';
-        statusEl._hiveExportClear = setTimeout(function() { statusEl._hiveExportClear = 0; statusEl.textContent = ''; }, 4000);
+        if (!current()) return null;
+        show('Copied to clipboard.');
+        stopClear();
+        statusEl._hiveExportClear = setTimeout(function() {
+          statusEl._hiveExportClear = 0;
+          if (current()) statusEl.textContent = '';
+        }, 4000);
         return true;
       }, function() {
+        if (!current()) return null;
         return manualCopy('Your browser blocked the clipboard. The text is selected; press Ctrl+C (or Cmd+C) to copy it.');
       });
     }
@@ -615,8 +634,8 @@
             ? '<code class="hive-export-link" tabindex="0" aria-readonly="true"></code>'
             : '<pre class="hive-export-text" tabindex="0" aria-readonly="true"></pre>'}
         </div>
+        <p class="hive-export-status muted-xs" role="status" aria-live="polite"></p>
         <div class="hive-dialog-buttons">
-          <p class="hive-export-status muted-xs" role="status" aria-live="polite"></p>
           <button type="button" class="hv-btn btn-ghost hive-dialog-btn hive-export-close">Close</button>
           <button type="button" class="hv-btn btn-secondary hive-export-copy">Copy to clipboard</button>
           <a class="hv-btn btn-primary hive-export-open" target="_blank" rel="noopener noreferrer" hidden>Open in new tab</a>

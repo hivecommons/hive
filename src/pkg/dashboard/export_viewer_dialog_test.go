@@ -72,21 +72,31 @@ func TestExportViewerLinkDialog(t *testing.T) {
 // The Overview band download (and every other hiveExportViewer caller) used to
 // report the copy with a toast, but #toast-container sits under
 // .hive-dialog-overlay and its blur, so the confirmation could not be read.
-// The popup now carries an empty role="status" line next to its buttons and
-// hiveExportCopy writes the outcome there in plain words.
+// The popup now carries an empty role="status" line on its own row above the
+// buttons (inside the button row a long message squeezed the buttons until
+// their labels wrapped) and hiveExportCopy writes the outcome there in plain
+// words. Only the newest click may write an outcome.
 func TestExportViewerCopyStatus(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
 		`<p class="hive-export-status muted-xs" role="status" aria-live="polite"></p>`,
 		`const copyStatus = overlay.querySelector('.hive-export-status');`,
 		`hiveExportCopy(text, textEl, copyStatus);`,
-		`.hive-export-status { flex: 1 1 auto; min-width: 0; margin: 0; align-self: center; }`,
+		// No height or margin while empty, so the popup is unchanged until a copy.
+		`.hive-export-status { margin: 0; }`,
+		`.hive-export-status:not(:empty) { margin: calc(-1 * var(--sp-4)) 0 var(--sp-4); }`,
+		`.hive-dialog.modal-sheet > .hive-export-status:not(:empty) { margin: var(--sp-4) 0 0; }`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("index.html missing export viewer copy status wiring %q", want)
 		}
 	}
 	viewer := jsFunc(t, html, "hiveExportViewer")
+	statusAt := strings.Index(viewer, `<p class="hive-export-status`)
+	buttonsAt := strings.Index(viewer, `<div class="hive-dialog-buttons">`)
+	if statusAt < 0 || buttonsAt < 0 || statusAt > buttonsAt {
+		t.Error("export viewer copy status must sit on its own line above the button row, not inside it")
+	}
 	copyFn := jsFunc(t, html, "hiveExportCopy")
 	if strings.Contains(viewer, "showToast") || strings.Contains(copyFn, "showToast") {
 		t.Error("export viewer copy reports through showToast again; the toast renders under the dialog overlay")
@@ -102,12 +112,16 @@ func TestExportViewerCopyStatus(t *testing.T) {
 	script := `
 let navigator = {};
 const timers = [];
-function setTimeout(fn, ms) { timers.push({ fn, ms, cleared: false }); return timers.length; }
+let ticks = [];
+// 0 ms timers are the "next task" writes; flush() runs them. Others are kept.
+function setTimeout(fn, ms) { if (ms === 0) { ticks.push(fn); return 0; } timers.push({ fn, ms, cleared: false }); return timers.length; }
 function clearTimeout(id) { if (timers[id - 1]) timers[id - 1].cleared = true; }
+function flush() { const q = ticks; ticks = []; q.forEach(fn => fn()); }
 let selected = 0;
 function hiveSelectAllText() { selected++; }
 function fakeEl() { return { textContent: '', focused: 0, focus() { this.focused++; } }; }
 function check(cond, msg) { if (!cond) throw new Error(msg); }
+const BLOCKED = 'Your browser blocked the clipboard. The text is selected; press Ctrl+C (or Cmd+C) to copy it.';
 ` + copyFn + `
 (async () => {
   const textEl = fakeEl(), status = fakeEl();
@@ -115,6 +129,8 @@ function check(cond, msg) { if (!cond) throw new Error(msg); }
   navigator = { clipboard: { writeText(s) { written = s; return Promise.resolve(); } } };
   let ok = await hiveExportCopy('{"a":1}', textEl, status);
   check(ok === true && written === '{"a":1}', 'success: clipboard not written: ' + written);
+  check(status.textContent === '', 'the message must land on the next task, after the reset: ' + status.textContent);
+  flush();
   check(status.textContent === 'Copied to clipboard.', 'success status: ' + status.textContent);
   check(textEl.focused === 0 && selected === 0, 'success must not select the text for manual copy');
   check(timers.length === 1 && timers[0].ms > 0, 'success must schedule its own clear');
@@ -122,22 +138,43 @@ function check(cond, msg) { if (!cond) throw new Error(msg); }
   check(status.textContent === '', 'success status not cleared by its timer: ' + status.textContent);
 
   ok = await hiveExportCopy('x', textEl, status);
+  flush();
   check(ok === true && timers.length === 2, 'second success did not schedule a clear');
   navigator = { clipboard: { writeText() { return Promise.reject(new Error('NotAllowedError')); } } };
   const pending = hiveExportCopy('x', textEl, status);
   check(status.textContent === '', 'a new click must reset the last outcome: ' + status.textContent);
   check(timers[1].cleared, 'a new click must cancel the pending success clear');
   ok = await pending;
+  flush();
   check(ok === false, 'blocked clipboard reported success');
-  check(status.textContent === 'Your browser blocked the clipboard. The text is selected; press Ctrl+C (or Cmd+C) to copy it.', 'blocked status: ' + status.textContent);
+  check(status.textContent === BLOCKED, 'blocked status: ' + status.textContent);
   check(textEl.focused === 1 && selected === 1, 'blocked clipboard must select the text for manual copy');
   check(timers.length === 2, 'a blocked copy must stay on screen, not clear itself');
 
   navigator = {};
   ok = await hiveExportCopy('x', textEl, status);
+  flush();
   check(ok === false, 'no clipboard API reported success');
   check(status.textContent === 'The text is selected; press Ctrl+C (or Cmd+C) to copy it.', 'no-API status: ' + status.textContent);
   check(textEl.focused === 2 && selected === 2, 'no clipboard API must select the text for manual copy');
+
+  // Overlapping clicks: the first write is slow and succeeds only after the
+  // second click's write was rejected. The newer outcome must stay.
+  let resolveFirst;
+  navigator = { clipboard: { writeText() { return new Promise(r => { resolveFirst = r; }); } } };
+  const first = hiveExportCopy('x', textEl, status);
+  navigator = { clipboard: { writeText() { return Promise.reject(new Error('NotAllowedError')); } } };
+  ok = await hiveExportCopy('x', textEl, status);
+  flush();
+  check(ok === false && status.textContent === BLOCKED, 'second click did not show blocked: ' + status.textContent);
+  const timersBefore = timers.length;
+  resolveFirst();
+  ok = await first;
+  flush();
+  check(ok === null, 'a superseded click must resolve null, got ' + ok);
+  check(status.textContent === BLOCKED, 'a late earlier success overwrote the newer outcome: ' + status.textContent);
+  check(timers.length === timersBefore, 'a late earlier success scheduled a clear');
+  check(textEl.focused === 3 && selected === 3, 'only the blocked click should select the text');
 })().catch(e => { console.error(e.message); process.exit(1); });
 `
 	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {

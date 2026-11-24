@@ -46,8 +46,11 @@
     .hive-export-dialog .hive-dialog-title { margin-bottom: var(--sp-3); }
     .hive-export-dialog .hive-dialog-body { margin-bottom: var(--sp-6); white-space: normal; }
     .hive-export-note { margin: 0 0 var(--sp-4); }
-    /* Copy outcome, left of the buttons; empty until Copy is clicked. */
-    .hive-export-status { flex: 1 1 auto; min-width: 0; margin: 0; align-self: center; }
+    /* Copy outcome, its own line above the buttons. Empty (no height, no
+       margin) until Copy is clicked, so the popup looks the same until then;
+       kept in the layout rather than display:none so role="status" announces. */
+    .hive-export-status { margin: 0; }
+    .hive-export-status:not(:empty) { margin: calc(-1 * var(--sp-4)) 0 var(--sp-4); }
     .hive-export-link, .hive-export-text { display: block; width: 100%; box-sizing: border-box; margin: 0; padding: var(--sp-4) var(--sp-5); font: inherit; color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); border: 1px solid var(--border); border-radius: var(--r); cursor: text; user-select: all; -webkit-user-select: all; }
     .hive-export-link { word-break: break-all; overflow-wrap: anywhere; white-space: normal; line-height: 1.5; }
     .hive-export-text { font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.5; white-space: pre; overflow: auto; min-height: 8em; max-height: 50vh; }
