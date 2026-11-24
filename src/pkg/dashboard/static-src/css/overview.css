@@ -183,7 +183,14 @@
     .overview-partition-tooltip .overview-partition-label .overview-chart-swatch { display: inline-block; vertical-align: middle; margin-right: var(--sp-2); }
     /* Overview card bands and groups: the approved mock-up's palette, as
        --card-band-* tokens in base.css (light mode remaps them there). */
-    .overview-card-issue-your-turn, .overview-card-pr-your-turn { --slice-c: var(--band-needs-human); }
+    .overview-card-issue-inspect, .overview-card-pr-inspect { --slice-c: var(--card-band-inspect); }
+    .overview-card-issue-decide, .overview-card-pr-decide { --slice-c: var(--card-band-decide); }
+    .overview-card-issue-approve, .overview-card-pr-approve { --slice-c: var(--card-band-approve); }
+    .overview-card-issue-merge-by-hand, .overview-card-pr-merge-by-hand { --slice-c: var(--card-band-merge-by-hand); }
+    .overview-card-issue-review, .overview-card-pr-review { --slice-c: var(--card-band-review); }
+    .overview-card-issue-triage, .overview-card-pr-triage { --slice-c: var(--card-band-triage); }
+    .overview-card-issue-admit, .overview-card-pr-admit { --slice-c: var(--card-band-admit); }
+    .overview-card-issue-your-turn-other, .overview-card-pr-your-turn-other { --slice-c: var(--card-band-your-turn-other); }
     .overview-card-issue-to-close, .overview-card-pr-to-close { --slice-c: var(--band-confirm-close); }
     .overview-card-issue-unexplained, .overview-card-pr-unexplained { --slice-c: var(--card-band-unexplained); }
     .overview-card-issue-covered-by-pr, .overview-card-pr-covered-by-pr { --slice-c: var(--card-band-covered-by-pr); }
@@ -198,6 +205,7 @@
     .overview-card-issue-not-work, .overview-card-pr-not-work { --slice-c: var(--card-band-not-work); }
     .overview-card-issue-draft, .overview-card-pr-draft { --slice-c: var(--card-band-draft); }
     .overview-card-issue-held, .overview-card-pr-held { --slice-c: var(--card-band-held); }
+    .overview-card-group-your-turn { --slice-c: var(--band-needs-human); }
     .overview-card-group-waiting-elsewhere { --slice-c: var(--card-band-waiting-group); }
     .overview-card-group-blocked { --slice-c: var(--band-blocked); }
     .overview-card-group-actionable-now { --slice-c: var(--band-unclaimed); }

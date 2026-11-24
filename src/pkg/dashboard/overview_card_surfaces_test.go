@@ -23,6 +23,9 @@ import (
 
 // cardPartitionStatus is a snapshot with a row in every card band, a forge
 // lead on both kinds, a sidelined non-draft PR and a non-zero Unexplained.
+// #31 to #34 are stored your-turn decisions for the PR-only Your turn bands
+// (a sentinel flag, a person's approval, a hand merge) and for Other (a
+// verb the card does not know).
 func cardPartitionStatus() *StatusPayload {
 	own := func(code string) Ownership { return yourTurn(code, "reason") }
 	issue := func(n int, labels ...string) github.Issue {
@@ -50,7 +53,7 @@ func cardPartitionStatus() *StatusPayload {
 		Timestamp: cardTestNow.Format(time.RFC3339),
 		Repos: []FrontendRepo{{
 			Name: "demo", Full: cardTestRepo,
-			Issues: 20, PRs: 13,
+			Issues: 20, PRs: 17,
 			ActionableIssues: []any{
 				issue(1, "agent/strategist"), issue(2, ownershipLabelAlreadyDone), issue(3), assigned, issue(5), issue(13, "needs-triage"),
 			},
@@ -85,6 +88,10 @@ func cardPartitionStatus() *StatusPayload {
 				FrontendPR{PullRequest: hive},
 				FrontendPR{PullRequest: pr(26, "alice", "stage/085-needs-decision")},
 				FrontendPR{PullRequest: staleDraft},
+				FrontendPR{PullRequest: pr(31, "alice")},
+				FrontendPR{PullRequest: pr(32, "alice")},
+				FrontendPR{PullRequest: pr(33, "alice")},
+				FrontendPR{PullRequest: pr(34, "alice")},
 			},
 			HeldPrs: []any{github.PullRequest{Repo: cardTestRepo, Number: 27, Author: "alice", Labels: []string{"hold"}}},
 			NonActionablePrs: []any{
@@ -101,6 +108,10 @@ func cardPartitionStatus() *StatusPayload {
 				ownershipKey(ownershipKindIssue, 11): waitingElsewhere(),
 				ownershipKey(ownershipKindIssue, 12): own(OwnershipReasonParkedNeedsHuman),
 				ownershipKey(ownershipKindPR, 20):    own(OwnershipReasonPersonPRNeedsHuman),
+				ownershipKey(ownershipKindPR, 31):    own(OwnershipReasonSentinelFlagged),
+				ownershipKey(ownershipKindPR, 32):    own(OwnershipReasonReviewDecision),
+				ownershipKey(ownershipKindPR, 33):    own(OwnershipReasonHandMerge),
+				ownershipKey(ownershipKindPR, 34):    {YourTurn: true, ReasonCode: "some_new_reason", Reason: "reason"},
 			},
 		}},
 	}
@@ -122,14 +133,14 @@ func cardPartitionServer() *Server {
 
 // cardPartitionWant is every row's band in cardPartitionStatus.
 var cardPartitionWant = map[string]string{
-	"issue#1": cardBandYourTurn, "issue#2": cardBandToClose, "issue#3": cardBandQueued, "issue#4": cardBandWorking,
+	"issue#1": cardBandTriage, "issue#2": cardBandToClose, "issue#3": cardBandQueued, "issue#4": cardBandWorking,
 	"issue#5": cardBandWaitingOnItem, "issue#6": cardBandHeld, "issue#7": cardBandHumanHold, "issue#8": cardBandNotWork,
 	"issue#9": cardBandWaitingOnItem, "issue#10": cardBandCoveredByPR, "issue#11": cardBandReporterConfirm,
-	"issue#12": cardBandYourTurn, "issue#13": cardBandYourTurn, "issue#14": cardBandWorking,
-	"issue#16": cardBandYourTurn, "issue#17": cardBandYourTurn, "issue#18": cardBandUnexplained,
-	"pr#20": cardBandYourTurn, "pr#21": cardBandWillMerge, "pr#22": cardBandAuthorUpdate, "pr#23": cardBandBotRebase,
+	"issue#12": cardBandReview, "issue#13": cardBandTriage, "issue#14": cardBandWorking,
+	"issue#16": cardBandDecide, "issue#17": cardBandAdmit, "issue#18": cardBandUnexplained,
+	"pr#20": cardBandReview, "pr#21": cardBandWillMerge, "pr#22": cardBandAuthorUpdate, "pr#23": cardBandBotRebase,
 	"pr#24": cardBandDraft, "pr#25": cardBandWorking, "pr#26": cardBandUnexplained, "pr#27": cardBandHeld, "pr#28": cardBandDraft,
-	"pr#30": cardBandDraft,
+	"pr#30": cardBandDraft, "pr#31": cardBandInspect, "pr#32": cardBandApprove, "pr#33": cardBandHandMerge, "pr#34": cardBandTurnOther,
 }
 
 // cardPartitionNotRows are fixture rows the card leaves to the remainder.
@@ -275,8 +286,8 @@ func TestOverviewCardNotInInboxCountsOnlyCardOnlyRows(t *testing.T) {
 		t.Errorf("unexplained = %+v", card.Unexplained)
 	}
 	yt := card.tile(cardGroupYourTurn)
-	if yt.Issues != 7 || yt.PRs != 2 {
-		t.Errorf("your-turn tile = %d issues, %d PRs; want 7, 2 (Unexplained counts inside)", yt.Issues, yt.PRs)
+	if yt.Issues != 7 || yt.PRs != 6 {
+		t.Errorf("your-turn tile = %d issues, %d PRs; want 7, 6 (Unexplained counts inside)", yt.Issues, yt.PRs)
 	}
 }
 

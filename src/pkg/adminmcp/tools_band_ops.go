@@ -33,9 +33,11 @@ var (
 // Overview card: the issue and PR donuts' band keys in plot order
 // (cardIssueBandOrder, cardPRBandOrder) and the six group keys in tile order
 // (cardGroupOrder). Every export row carries its card_band and card_group.
+// The Your turn group's bands say what the person has to do (inspect,
+// decide, ...); card_group "your-turn" returns all of them.
 var (
-	issueCardBandKeys = []string{"your-turn", "to-close", "covered-by-pr", "waiting-on-item", "human-hold", "reporter-confirm", "queued", "working", "held", "not-work", "unexplained"}
-	prCardBandKeys    = []string{"your-turn", "to-close", "human-hold", "author-update", "bot-rebase", "working", "will-merge", "held", "draft", "unexplained"}
+	issueCardBandKeys = []string{"inspect", "decide", "review", "triage", "admit", "your-turn-other", "to-close", "covered-by-pr", "waiting-on-item", "human-hold", "reporter-confirm", "queued", "working", "held", "not-work", "unexplained"}
+	prCardBandKeys    = []string{"inspect", "decide", "approve", "merge-by-hand", "review", "triage", "admit", "your-turn-other", "to-close", "human-hold", "author-update", "bot-rebase", "working", "will-merge", "held", "draft", "unexplained"}
 	cardGroupKeys     = []string{"your-turn", "waiting-elsewhere", "held", "blocked", "actionable-now", "outside"}
 )
 

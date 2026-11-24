@@ -65,7 +65,9 @@ func TestOverviewBandChartClassMappings9003(t *testing.T) {
 		// The Overview card's bands: one class per donut and band, from the
 		// approved mock-up's palette, and one per headed group.
 		"className: 'overview-card-' + kind + '-' + spec.key",
-		".overview-card-issue-your-turn, .overview-card-pr-your-turn { --slice-c: var(--band-needs-human); }",
+		".overview-card-group-your-turn { --slice-c: var(--band-needs-human); }",
+		".overview-card-issue-decide, .overview-card-pr-decide { --slice-c: var(--card-band-decide); }",
+		".overview-card-issue-review, .overview-card-pr-review { --slice-c: var(--card-band-review); }",
 		".overview-card-issue-to-close, .overview-card-pr-to-close { --slice-c: var(--band-confirm-close); }",
 		".overview-card-issue-queued, .overview-card-pr-queued { --slice-c: var(--band-unclaimed); }",
 		".overview-card-issue-working, .overview-card-pr-working { --slice-c: var(--band-claimed); }",

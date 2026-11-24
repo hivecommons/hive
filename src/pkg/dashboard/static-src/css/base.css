@@ -88,6 +88,15 @@
       --card-band-draft: #3b4757;
       --card-band-held: #c9a27a;
       --card-band-waiting-group: #a8b3c2;
+      /* The Your turn group's bands: what the person has to do. */
+      --card-band-inspect: #fb7185;
+      --card-band-decide: #f97316;
+      --card-band-approve: #fdba74;
+      --card-band-merge-by-hand: #fcd34d;
+      --card-band-review: #fde68a;
+      --card-band-triage: #f9a8d4;
+      --card-band-admit: #fda4af;
+      --card-band-your-turn-other: #d4a373;
       --anim-chart-slow: 1200ms;
       --anim-band-grow: 900ms;
       --anim-kpi-count: 800ms;
@@ -204,6 +213,14 @@
       --card-band-draft: #d6d3d1;
       --card-band-held: #a16207;
       --card-band-waiting-group: #57534e;
+      --card-band-inspect: #e11d48;
+      --card-band-decide: #c2410c;
+      --card-band-approve: #ea580c;
+      --card-band-merge-by-hand: #b45309;
+      --card-band-review: #92400e;
+      --card-band-triage: #db2777;
+      --card-band-admit: #be123c;
+      --card-band-your-turn-other: #9a3412;
       background: var(--bg); color: var(--text);
     }
     body.light-mode .connection { display: none; }

@@ -363,7 +363,7 @@ func overviewCardExportCounts(kind string, rows []overviewCardCounted, remainder
 			continue
 		}
 		counts[r.band.Key]++
-		if (r.band.Key == cardBandYourTurn || r.band.Key == cardBandToClose) && (r.ownership == nil || !r.ownership.YourTurn) {
+		if cardNotInInbox(r.band.Key) && (r.ownership == nil || !r.ownership.YourTurn) {
 			notInInbox++
 		}
 		if r.band.Key == cardBandUnexplained {

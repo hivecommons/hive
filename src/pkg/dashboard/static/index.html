@@ -104,6 +104,15 @@
       --card-band-draft: #3b4757;
       --card-band-held: #c9a27a;
       --card-band-waiting-group: #a8b3c2;
+      /* The Your turn group's bands: what the person has to do. */
+      --card-band-inspect: #fb7185;
+      --card-band-decide: #f97316;
+      --card-band-approve: #fdba74;
+      --card-band-merge-by-hand: #fcd34d;
+      --card-band-review: #fde68a;
+      --card-band-triage: #f9a8d4;
+      --card-band-admit: #fda4af;
+      --card-band-your-turn-other: #d4a373;
       --anim-chart-slow: 1200ms;
       --anim-band-grow: 900ms;
       --anim-kpi-count: 800ms;
@@ -220,6 +229,14 @@
       --card-band-draft: #d6d3d1;
       --card-band-held: #a16207;
       --card-band-waiting-group: #57534e;
+      --card-band-inspect: #e11d48;
+      --card-band-decide: #c2410c;
+      --card-band-approve: #ea580c;
+      --card-band-merge-by-hand: #b45309;
+      --card-band-review: #92400e;
+      --card-band-triage: #db2777;
+      --card-band-admit: #be123c;
+      --card-band-your-turn-other: #9a3412;
       background: var(--bg); color: var(--text);
     }
     body.light-mode .connection { display: none; }
@@ -4035,7 +4052,14 @@
     .overview-partition-tooltip .overview-partition-label .overview-chart-swatch { display: inline-block; vertical-align: middle; margin-right: var(--sp-2); }
     /* Overview card bands and groups: the approved mock-up's palette, as
        --card-band-* tokens in base.css (light mode remaps them there). */
-    .overview-card-issue-your-turn, .overview-card-pr-your-turn { --slice-c: var(--band-needs-human); }
+    .overview-card-issue-inspect, .overview-card-pr-inspect { --slice-c: var(--card-band-inspect); }
+    .overview-card-issue-decide, .overview-card-pr-decide { --slice-c: var(--card-band-decide); }
+    .overview-card-issue-approve, .overview-card-pr-approve { --slice-c: var(--card-band-approve); }
+    .overview-card-issue-merge-by-hand, .overview-card-pr-merge-by-hand { --slice-c: var(--card-band-merge-by-hand); }
+    .overview-card-issue-review, .overview-card-pr-review { --slice-c: var(--card-band-review); }
+    .overview-card-issue-triage, .overview-card-pr-triage { --slice-c: var(--card-band-triage); }
+    .overview-card-issue-admit, .overview-card-pr-admit { --slice-c: var(--card-band-admit); }
+    .overview-card-issue-your-turn-other, .overview-card-pr-your-turn-other { --slice-c: var(--card-band-your-turn-other); }
     .overview-card-issue-to-close, .overview-card-pr-to-close { --slice-c: var(--band-confirm-close); }
     .overview-card-issue-unexplained, .overview-card-pr-unexplained { --slice-c: var(--card-band-unexplained); }
     .overview-card-issue-covered-by-pr, .overview-card-pr-covered-by-pr { --slice-c: var(--card-band-covered-by-pr); }
@@ -4050,6 +4074,7 @@
     .overview-card-issue-not-work, .overview-card-pr-not-work { --slice-c: var(--card-band-not-work); }
     .overview-card-issue-draft, .overview-card-pr-draft { --slice-c: var(--card-band-draft); }
     .overview-card-issue-held, .overview-card-pr-held { --slice-c: var(--card-band-held); }
+    .overview-card-group-your-turn { --slice-c: var(--band-needs-human); }
     .overview-card-group-waiting-elsewhere { --slice-c: var(--card-band-waiting-group); }
     .overview-card-group-blocked { --slice-c: var(--band-blocked); }
     .overview-card-group-actionable-now { --slice-c: var(--band-unclaimed); }
@@ -38529,15 +38554,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return String(label || '') + ': ' + lead;
     }
 
-    // The card legend in plot order. A headed group (Waiting on someone else,
-    // Blocked, Hive has it) is one bold subtotal row with its bands indented
-    // under it; the other bands are plain rows. The groups come from
-    // overview_card.groups; a band whose group is not headed stays plain.
+    // The card legend in plot order. A headed group (Your turn, Waiting on
+    // someone else, Blocked, Hive has it) is one bold subtotal row with its
+    // bands indented under it; the other bands are plain rows. The groups
+    // come from overview_card.groups; a band whose group is not headed stays
+    // plain.
     function overviewCardLegendRows(slices) {
       const groups = new Map(overviewCardGroups().map(g => [g.key, g]));
       const headed = key => {
         const g = groups.get(key);
-        return g ? !!g.headed : ['waiting-elsewhere', 'blocked', 'actionable-now'].includes(key);
+        return g ? !!g.headed : ['your-turn', 'waiting-elsewhere', 'blocked', 'actionable-now'].includes(key);
       };
       const rows = [];
       const done = new Set();
@@ -39207,7 +39233,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             if (!row || !row.card_band) return;
             groups[k][row.card_group] = (groups[k][row.card_group] || 0) + 1;
             bands[k][row.card_band] = (bands[k][row.card_band] || 0) + 1;
-            if ((row.card_band === 'your-turn' || row.card_band === 'to-close') && !(row.ownership && row.ownership.your_turn)) notInInbox[k]++;
+            // Every Your turn band but Unexplained, as the server counts
+            // your_turn_not_in_inbox.
+            if (row.card_group === 'your-turn' && row.card_band !== 'unexplained' && !(row.ownership && row.ownership.your_turn)) notInInbox[k]++;
             if (row.card_band === 'unexplained') unexplained[k]++;
           });
         });

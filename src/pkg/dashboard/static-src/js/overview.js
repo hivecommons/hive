@@ -868,15 +868,16 @@
       return String(label || '') + ': ' + lead;
     }
 
-    // The card legend in plot order. A headed group (Waiting on someone else,
-    // Blocked, Hive has it) is one bold subtotal row with its bands indented
-    // under it; the other bands are plain rows. The groups come from
-    // overview_card.groups; a band whose group is not headed stays plain.
+    // The card legend in plot order. A headed group (Your turn, Waiting on
+    // someone else, Blocked, Hive has it) is one bold subtotal row with its
+    // bands indented under it; the other bands are plain rows. The groups
+    // come from overview_card.groups; a band whose group is not headed stays
+    // plain.
     function overviewCardLegendRows(slices) {
       const groups = new Map(overviewCardGroups().map(g => [g.key, g]));
       const headed = key => {
         const g = groups.get(key);
-        return g ? !!g.headed : ['waiting-elsewhere', 'blocked', 'actionable-now'].includes(key);
+        return g ? !!g.headed : ['your-turn', 'waiting-elsewhere', 'blocked', 'actionable-now'].includes(key);
       };
       const rows = [];
       const done = new Set();
@@ -1546,7 +1547,9 @@
             if (!row || !row.card_band) return;
             groups[k][row.card_group] = (groups[k][row.card_group] || 0) + 1;
             bands[k][row.card_band] = (bands[k][row.card_band] || 0) + 1;
-            if ((row.card_band === 'your-turn' || row.card_band === 'to-close') && !(row.ownership && row.ownership.your_turn)) notInInbox[k]++;
+            // Every Your turn band but Unexplained, as the server counts
+            // your_turn_not_in_inbox.
+            if (row.card_group === 'your-turn' && row.card_band !== 'unexplained' && !(row.ownership && row.ownership.your_turn)) notInInbox[k]++;
             if (row.card_band === 'unexplained') unexplained[k]++;
           });
         });
