@@ -88,8 +88,7 @@ func forgeEnumerationRepos(cfg *config.Config) []string {
 	return out
 }
 
-// forgeIssueGate classifies one forge issue. It returns "" for an actionable
-// issue, holdGate for a held one, and otherwise the reason it is filtered out.
+// forgeIssueGate holds the label and filter config that classifyIssue applies.
 type forgeIssueGate struct {
 	holdExtra []string
 	exempt    []string
@@ -111,6 +110,8 @@ func newForgeIssueGate(cfg *config.Config) forgeIssueGate {
 	}
 }
 
+// classifyIssue returns "" for an actionable issue, forgeGateHold for a held
+// one, and otherwise the reason it is filtered out.
 func (g forgeIssueGate) classifyIssue(author string, labels []string) string {
 	if github.HasHoldLabelWith(labels, g.holdExtra) {
 		return forgeGateHold
