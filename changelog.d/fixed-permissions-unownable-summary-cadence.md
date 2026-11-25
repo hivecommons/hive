@@ -1,0 +1,1 @@
+- The permissions watcher's "entries owned by another uid" summary now warns again only when the skipped count doubles, and treats the condition as cleared only after several empty ticks, so a surge that grows the unfixable tree every tick no longer warns every tick and trips the fleet self-report (#19791).

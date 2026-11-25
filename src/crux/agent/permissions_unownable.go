@@ -27,17 +27,33 @@ func cannotChown(ownerUID uint32) bool {
 	return euid != 0 && uint32(euid) != ownerUID
 }
 
+// unownableGrowthFactor is how much the skipped count must grow over the
+// largest count already reported at WARN before the summary warns again. A
+// surge of sandbox kicks grows a standing unfixable tree a little on almost
+// every tick, so warning on any growth re-warned every tick (10 WARNs in ten
+// minutes on marinatedconcrete, count=9447, hivecommons/hive#19791); doubling
+// bounds the WARNs to log2(count) for the life of the condition.
+const unownableGrowthFactor = 2
+
+// unownableClearTicks is how many consecutive ticks must skip nothing before
+// the condition counts as cleared and the high-water mark resets. Sandbox
+// workspaces come and go with their kicks, so a single empty tick between two
+// waves is not a recovery; requiring a run of them keeps that flicker from
+// re-arming a WARN for the next wave.
+const unownableClearTicks = 3
+
 // unownableTally counts, per watcher tick, the entries fixEntry skipped
 // because cannotChown held, and reports them as ONE summary line per tick
-// instead of one line per path. The summary is WARN only when the count sets
-// a new high-water mark since the condition last cleared, and DEBUG otherwise,
-// so a standing unfixable tree costs one WARN when it appears, one more each
-// time it grows, and nothing at WARN in steady state.
+// instead of one line per path. The summary is WARN only when the count at
+// least doubles the high-water mark since the condition last cleared, and
+// DEBUG otherwise, so a standing unfixable tree costs one WARN when it
+// appears, one more each time it doubles, and nothing at WARN in steady state.
 type unownableTally struct {
-	mu        sync.Mutex
-	count     int    // entries skipped this tick
-	sample    string // first skipped path this tick, for the operator's grep
-	highWater int    // largest count already reported at WARN; 0 once clear
+	mu         sync.Mutex
+	count      int    // entries skipped this tick
+	sample     string // first skipped path this tick, for the operator's grep
+	highWater  int    // largest count already reported at WARN; 0 once clear
+	clearTicks int    // consecutive ticks that skipped nothing
 }
 
 // skipped records one entry the watcher could not own this tick.
@@ -57,12 +73,17 @@ func (u *unownableTally) flush(logger *slog.Logger) bool {
 	count, sample := u.count, u.sample
 	u.count, u.sample = 0, ""
 	if count == 0 {
-		// Condition cleared: the next appearance is a new finding.
-		u.highWater = 0
+		// Condition cleared once it stays clear for a run of ticks: the
+		// next appearance after that is a new finding.
+		u.clearTicks++
+		if u.clearTicks >= unownableClearTicks {
+			u.highWater = 0
+		}
 		u.mu.Unlock()
 		return false
 	}
-	warn := count > u.highWater
+	u.clearTicks = 0
+	warn := u.highWater == 0 || count >= u.highWater*unownableGrowthFactor
 	if warn {
 		u.highWater = count
 	}
@@ -76,7 +97,7 @@ func (u *unownableTally) flush(logger *slog.Logger) bool {
 	}
 	if warn {
 		logger.Warn("permissions watcher: entries owned by another uid need a chown this process cannot perform; skipped without retrying",
-			append(attrs, "note", "one summary per tick; logged at debug until the count grows or the condition clears")...)
+			append(attrs, "note", "one summary per tick; logged at debug until the count doubles or the condition clears")...)
 		return true
 	}
 	logger.Debug("permissions watcher: entries owned by another uid skipped (unchanged)", attrs...)
