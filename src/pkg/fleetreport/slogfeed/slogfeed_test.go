@@ -1322,6 +1322,46 @@ func TestReviewRetryServerErrorLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #19887: a GitHub 5xx on an issue stage-label write is reconciled next sweep.
+func TestIssueStageLabelServerErrorLogsWithoutFleetReport(t *testing.T) {
+	const msg = "issue stage labels: write failed"
+	errOf := func(code string) string {
+		return "stage engine: write tuna-os/gtk-office-suite#2424: effect outcome uncertain, reconciliation required: DELETE https://api.github.com/repos/tuna-os/gtk-office-suite/issues/2424/labels/stage%2F010-actionable: " + code + "  []"
+	}
+	cases := []struct {
+		name string
+		msg  string
+		err  string
+		want int
+	}{
+		{"500", msg, errOf("500"), 0},
+		{"502", msg, errOf("502"), 0},
+		{"503", msg, errOf("503"), 0},
+		{"403", msg, errOf("403"), 8},
+		{"422", msg, errOf("422"), 8},
+		{"non-label 500", msg, "stage engine: read: GET https://api.github.com/repos/o/r/issues/1: 500  []", 8},
+		{"non-http error", msg, "boom", 8},
+		{"other message", "issue stage labels: sweep interrupted", errOf("500"), 8},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logger, seen, out := newFeed(t)
+			for i := 0; i < 8; i++ {
+				logger.Warn(tc.msg, "repo", "tuna-os/gtk-office-suite", "issue", 2424, "stage", "none", "error", tc.err)
+			}
+			if tc.want == 0 && len(*seen) != 0 {
+				t.Errorf("produced observations: %+v", *seen)
+			}
+			if tc.want != 0 && len(*seen) == 0 {
+				t.Errorf("must remain reportable")
+			}
+			if n := strings.Count(out.String(), "\n"); n != 8 {
+				t.Errorf("wrapped handler saw %d records, want 8", n)
+			}
+		})
+	}
+}
+
 // #17103 / #17142: the stage dampener and the stage engine's reversal guard
 // suppressing a flap are designed behaviour.
 func TestStageDampenerSuppressionLogsWithoutFleetReport(t *testing.T) {

@@ -115,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || unresolvedConversationsSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) || unauthorizedLoginRejected(r) || appTokenRefreshTimeoutFallback(r) {
+	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || unresolvedConversationsSkip(r) || reviewRetryServerError(r) || issueStageLabelServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) || unauthorizedLoginRejected(r) || appTokenRefreshTimeoutFallback(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -451,6 +451,29 @@ func reviewRetryServerError(r slog.Record) bool {
 		if a.Key == "error" {
 			e := a.Value.String() + " "
 			match = (strings.Contains(e, "/reviews") || strings.Contains(e, "/pulls/")) &&
+				(strings.Contains(e, ": 500 ") || fleetreport.IsGitHubUpstreamUnavailable(e))
+			return false
+		}
+		return true
+	})
+	return match
+}
+
+// issueStageLabelServerError reports whether r is the issue stage-label
+// sweep's "write failed" warning caused by a GitHub 5xx on a label write
+// (POST/PUT/DELETE .../issues/<n>/labels). The stage engine marks the effect
+// uncertain and the next sweep re-reads the issue and reconciles its stage
+// labels, so a transient upstream 5xx is not a hive defect
+// (hivecommons/hive#19887). 4xx, non-label and non-HTTP errors stay reportable.
+func issueStageLabelServerError(r slog.Record) bool {
+	if strings.TrimSpace(r.Message) != "issue stage labels: write failed" {
+		return false
+	}
+	match := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error" {
+			e := a.Value.String() + " "
+			match = strings.Contains(e, "/labels") &&
 				(strings.Contains(e, ": 500 ") || fleetreport.IsGitHubUpstreamUnavailable(e))
 			return false
 		}
