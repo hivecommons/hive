@@ -1940,6 +1940,12 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				firstErr = err
 			}
 		}
+		if obs.Route != nil && err == nil && !out.Suppressed && want.Stage == stagelabels.ReadyForHumanMerge && out.Stage == stagelabels.ReadyForHumanMerge {
+			// The hive's own non-blocking threads must not block the
+			// person's merge on a base that requires conversation
+			// resolution (automerge_review_threads_ready.go). Once per head.
+			c.resolveOwnThreadsAtReady(ctx, obs, *obs.Route)
+		}
 		if want.Stage == stagelabels.NeedsDecision && obs.Reason == stagelabels.LaneReasonHiveSignoffAttribution {
 			// Hive-caused attribution: the maintainer is told what clears
 			// it; the contributor is not nudged.
