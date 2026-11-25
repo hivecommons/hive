@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v6.61.8)
+
+### Fixed
+
+- The hive's own non-blocking review threads no longer block a person's merge on a base that requires conversation resolution. [#19421](https://github.com/hivecommons/hive/pull/19421) resolved them only after GitHub refused a merge the hive attempted, so a PR the hive hands to a person at `stage/090-ready-for-human-merge` (auto-merge off for the repository, a human-merge path, a workflow fence) kept the hive's `low` notes open, GitHub refused the person's merge with "All comments must be resolved", and they had to reply to and resolve each note by hand ([projectbluefin/actions#779](https://github.com/projectbluefin/actions/pull/779), [#783](https://github.com/projectbluefin/actions/pull/783)). When the stage pass writes 090 for a head with no hold or sentinel gate, and the write-back gate admits it (under the 090 / 085 entry comment's `needs_decision_comment` kind, so a `labels-only` repository gets nothing), it reads whether the base requires conversation resolution (a ruleset `pull_request` rule's `required_review_thread_resolution`, or classic protection's `required_conversation_resolution`, cached per repository and branch for 10 minutes, or an hour after a 403) and, only when it does and every unresolved thread is the hive's own and marked non-blocking, replies once in each thread to say why and then resolves it, once per head, with the same rules as the merge-refusal path, audited with `trigger=ready-for-human-merge`. With quiet notifications the threads are resolved without replies. A rule that is not required or cannot be read, any thread a person must look at, a paused repository and a held 090 resolve nothing; the merge-refusal path is unchanged.
+
 ## 2026-11-25 (v6.61.7)
 
 ### Fixed
