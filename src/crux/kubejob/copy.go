@@ -139,11 +139,20 @@ func (p *copyPlan) apply(manifest map[string]any, secretName string) error {
 	if len(command) == 0 {
 		return errors.New("kubejob: copy transport: the kick has no command")
 	}
+	// These assertions mirror the concrete types jobManifest builds
+	// ([]map[string]any volumes and mounts, []map[string]string env). If
+	// jobManifest changes them they stop matching, so the swap below must
+	// report that instead of leaving the claim mounted.
 	volumes, _ := pod["volumes"].([]map[string]any)
+	swapped := false
 	for i, v := range volumes {
 		if v["name"] == workspaceName {
 			volumes[i] = map[string]any{"name": workspaceName, "emptyDir": map[string]any{}}
+			swapped = true
 		}
+	}
+	if !swapped {
+		return errors.New("kubejob: copy transport: manifest has no workspace volume to replace")
 	}
 	pod["volumes"] = append(volumes, map[string]any{"name": bridgeVolumeName, "emptyDir": map[string]any{}})
 	mounts, _ := c["volumeMounts"].([]map[string]any)

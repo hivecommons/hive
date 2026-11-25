@@ -2949,7 +2949,10 @@ subjects:
 # spoke creates the Job, polls it, reads the pod's log and exit code, and
 # deletes it. Namespace-scoped and nothing more: no exec, no secrets read —
 # the Job's own secrets are referenced by name in the pod template and
-# resolved by Kubernetes, never read by hive. Unconditional like
+# resolved by Kubernetes, never read by hive. The one secret grant is
+# write-only (create, delete; no get/list): workspace_transport: copy creates
+# a per-Job bridge token Secret and deletes it with the Job. Per-Job
+# NetworkPolicies are likewise create/delete only. Unconditional like
 # hive-self-upgrade: the Job runtime is a spoke feature on every cluster.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -2966,6 +2969,12 @@ rules:
 - apiGroups: [""]
   resources: ["serviceaccounts"]
   verbs: ["get"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["create", "delete"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["create", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
