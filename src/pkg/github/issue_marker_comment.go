@@ -78,7 +78,7 @@ func (c *Client) editIssueMarkerComment(ctx context.Context, repo string, number
 		if budgeted {
 			err = c.CreateIssueCommentBudgeted(ctx, owner+"/"+repoName, number, body)
 		} else {
-			err = c.CreateIssueComment(ctx, owner+"/"+repoName, number, body)
+			err = c.CreateIssueComment(ctx, owner+"/"+repoName, number, body) // writeback:solicited operator acted on this item from the dashboard (#19852)
 		}
 		if err != nil {
 			return IssueMarkerCommentResult{}, err
