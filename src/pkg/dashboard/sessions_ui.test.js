@@ -141,13 +141,13 @@ test('a successful send clears its draft only if it has not been edited', async 
   finishSend({ queued: { position: 2 } });
   await second;
   assert.strictEqual(box.value, 'follow-up draft');
-  assert.match(counter.textContent, /15 B/);
+  assert.strictEqual(counter.textContent, '15 bytes / 100 bytes');
 
   const third = sessionsSend(false);
   finishSend({ queued: { position: 3 } });
   await third;
   assert.strictEqual(box.value, '');
-  assert.match(counter.textContent, /^0 B/);
+  assert.strictEqual(counter.textContent, '0 bytes / 100 bytes');
   assert.deepStrictEqual(requests, [
     { route: '/a/input', method: 'POST', text: 'first prompt', submit: true },
     { route: '/a/input', method: 'POST', text: 'follow-up draft', submit: false },
