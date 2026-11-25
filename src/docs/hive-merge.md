@@ -965,8 +965,11 @@ need to be a trusted bot author.
 At the moment the red-CI hand-off is posted (red on the same head past the 4
 hours, after the hive's one transient re-run if one is owed, and the adoption
 request above did not take the head), the sweep files one issue in the PR's
-repository only when all of this holds. The cheap conditions come first, so a
-refused or impossible case costs no API call:
+repository only when all of this holds. A PR still carrying the `needs-human`
+of its own red-CI hand-off for an earlier head gets no second hand-off, so the
+sweep also runs the same check once for its newer red head, after the same 4
+hours on that head (see "Reproduced across heads" below). The cheap conditions
+come first, so a refused or impossible case costs no API call:
 
 - the hive can name its own accounts, so it can tell an issue it wrote from a
   copy later (with PAT auth and no resolvable login, nothing is filed), and
@@ -989,27 +992,41 @@ Then, for at most 3 PRs per pass (the evaluation budget), it reads GitHub:
   pass. The newest run of every failing check there must have concluded
   `success`. A check that is red there, has not run there, or was skipped or
   neutral, files nothing;
-- the head must already contain that base tip, so a rebase alone would not
-  change the result (one compare). This holds for a head the bot
-  regenerated after the stale-red pass asked it to rebase too; the text then
-  says the hive will not ask again. A head that is behind a passing base gets
-  no issue: a rebase is the answer there. For Renovate the stale-red pass may
-  ask it; for Dependabot, which takes no command from the hive, a person asks
-  it to rebase;
+- whether the head contains that base tip (one compare). The in-suite path
+  below needs it, so a rebase alone would not change the result. This holds
+  for a head the bot regenerated after the stale-red pass asked it to rebase
+  too; the text then says the hive will not ask again. A head that is behind
+  a passing base gets no in-suite issue: a rebase is the answer there. For
+  Renovate the stale-red pass may ask it; for Dependabot, which takes no
+  command from the hive, a person asks it to rebase. The cross-head path does
+  not need it;
 - every run of each failing check on the head (two calls per check: the runs,
-  with every attempt, and the newest failing run's annotations). The failure
-  must have reproduced: for every failing check, within one check suite, a
-  failing run started after an earlier failing run of it had finished
-  (re-run attempts of one workflow run share a suite and run one after
-  another; failures in different suites, or overlapping same-named runs such
-  as a matrix, do not count), or the hive's transient re-run of the head ran
-  and failed again. Any run of the check that passed on the head (fail,
-  pass, fail) is a flaky check: nothing is filed. A single failed attempt files
-  nothing either; a person re-running the failed check before the hand-off is
-  enough to qualify;
+  with every attempt, and the newest failing run's annotations). Any run of
+  the check that passed on the head (fail, pass, fail) is a flaky check:
+  nothing is filed. Otherwise the failure must have reproduced, one of two
+  ways:
+  - **in-suite** (the head contains the base tip): for every failing check,
+    within one check suite, a failing run started after an earlier failing
+    run of it had finished (re-run attempts of one workflow run share a suite
+    and run one after another; failures in different suites, or overlapping
+    same-named runs such as a matrix, do not count), or the hive's transient
+    re-run of the head ran and failed again. A person re-running the failed
+    check before the hand-off is enough to qualify;
+  - **across heads** (the head may be behind the base tip): every failing
+    check also failed on the PR's previous head, whoever pushed the newer head
+    (the bot regenerating it, or a hive base refresh), and the newer head
+    contains the base commit the PR reported while that previous head was red
+    (a second compare, skipped when that commit is the base tip the head
+    already contains). The base run that passed after the newer head's
+    failure started (next item) is the freshness proof, so the newer head
+    need not contain the current tip. This is the usual case where the hive
+    cannot re-run a job (its App has no Actions write) and a busy
+    repository's bot PRs are nearly always behind after 4 hours;
+
+  A single failed attempt on a single head files nothing;
 - each base tip's successful run must have finished after the head's newest
   failing run started. An older base proof, or a missing time on either side,
-  is unknown: nothing is filed;
+  is unknown: nothing is filed. This holds on both paths;
 - the newest failing runs must carry at least one failure-level annotation
   beyond the bare exit code; warnings do not count;
 - one open-issue listing: no open `[shared-ci] <check> failing across <repo>`
@@ -1023,7 +1040,42 @@ Then, for at most 3 PRs per pass (the evaluation budget), it reads GitHub:
 
 Any PR past the evaluation budget, and any PR that fails a condition, is
 handed off at once exactly as with the switch off. No hand-off waits for the
-filer.
+filer. A parked newer head past the budget is judged on a later pass; any
+other newer head is judged once.
+
+#### Reproduced across heads
+
+The previous head comes from a red-head history the sweep keeps itself, in
+the same sidecar file as the filed issues, only while the switch is on. On
+every pass, before any hand-off, each dependency-bot PR in the snapshot is
+noted: a settled red head (a failing required check, CI no longer running)
+with its failing checks and the base commit GitHub reports for the PR, a head
+still in CI as the next head, and a green head clears the history. A newer
+red head keeps the red head before it as its previous head only when it
+directly followed it: no third head was seen between them, and it was first
+seen red within 24 hours of the earlier head's last red sighting. The rule
+then needs, for the current head:
+
+- the previous head is a different SHA, and every check failing now failed
+  on it (a different check, or one more check, files nothing);
+- the base commit reported while the previous head was red is known, and the
+  current head contains it (it is not behind it). That is "brought up to
+  date with the base" read from data the hive already has: a hive base
+  refresh merges the then-current tip, and a bot regeneration rebases onto
+  it, so either way the newer head contains a base commit at least as new as
+  the one the previous head was judged against. A new commit on the same old
+  base does not;
+- all the other conditions above, including the base run that passed after
+  the newer head's failure started and no passing run on the newer head.
+
+Fail closed: a PR missing from one snapshot loses its history, a restart
+keeps it (persisted), and anything unknown is no evidence. The issue's
+"Reproduced:" line reads "the same checks failed on the previous head
+`<sha>` and again on this head after it was brought up to date with the base,
+and no run of these checks passed on this head.", and the hand-off line, when
+there is one, says the same. A parked newer head gets the issue only; nothing
+new is posted on the PR, and GitHub shows the issue's mention of the PR in
+the PR's timeline.
 
 The issue links the PR and each failing check's run (only links on the
 forge's own host, read from the PR's URL; otherwise the PR's checks page),
@@ -1082,9 +1134,14 @@ Limitations:
   one for the same dependency (a newer version supersedes it), the new PR is a
   new number, so one breakage can end up with two open issues, one per PR.
   The first issue gets its "closed without merging" note.
-- Once the hand-off adds `needs-human`, the PR is not looked at again, so a
-  case skipped at hand-off time (for example a failure seen only once, or a PR
-  past the per-pass budget) is not filed later.
+- Once the hand-off adds `needs-human`, the same head is not looked at
+  again, so a case skipped at hand-off time (for example a failure seen only
+  once, or a PR past the per-pass budget) is not filed later for that head.
+  Only a newer red head is judged again (across heads, or in-suite).
+- The cross-head path trusts the base commit GitHub reports on the PR while
+  the previous head was red. If that report lags, the check is weaker (an
+  older base commit is easier to contain), never wrong in the other
+  direction; the timing proof on the base still applies.
 
 ```yaml
 auto_merge:

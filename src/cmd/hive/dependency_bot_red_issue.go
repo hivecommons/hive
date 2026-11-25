@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/escalation"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -41,11 +42,23 @@ import (
 //     every bot PR lacks);
 //   - every failing required check concluded success on the base tip (not
 //     skipped or neutral), in a run that finished after this head's failing
-//     run started, and the head already contains that tip;
-//   - the failure reproduced: within one check suite (re-run attempts of one
-//     workflow run) a failing run started after an earlier failing run had
-//     finished, or the hive's transient re-run failed again, and no run of
-//     these checks passed on the head;
+//     run started;
+//   - the failure reproduced, one of two ways, and no run of these checks
+//     passed on the head:
+//     in-suite: the head already contains that base tip, and within one
+//     check suite (re-run attempts of one workflow run) a failing run
+//     started after an earlier failing run had finished, or the hive's
+//     transient re-run failed again;
+//     across heads: the same checks failed on the PR's previous head (a
+//     different SHA, the head seen red just before this one), whoever pushed
+//     this newer head (the bot regenerating it or a hive base refresh), and
+//     this head contains the base commit the PR reported while the previous
+//     head failed. The head may be behind the current base tip: the base
+//     run that passed after this head's failure started is the freshness
+//     proof. The sweep keeps that history itself (depBotRedHeads), because
+//     the bot PRs of a busy repository are nearly always behind after the
+//     hand-off's 4 hours and a re-run needs Actions write, which an App may
+//     not have;
 //   - the newest failing runs left failure-level annotations beyond the bare
 //     exit code.
 //
@@ -55,6 +68,12 @@ import (
 // are unchanged apart from one line naming the issue, and no label is added
 // to the PR, so the stale-red pass can still ask the bot to rebase once a fix
 // lands on the base (staleRedOwnRedCIHandoff).
+//
+// A PR still parked by its own red-CI hand-off for an earlier head gets no
+// second hand-off for a newer red head, so the filer also runs once for that
+// newer head after the same grace (fileForParkedHead). It files the issue
+// only; the PR gets no new comment, and the issue's mention of the PR shows
+// in the PR's timeline.
 //
 // Lifecycle: when the PR later merges, closes or goes green, the sweep posts
 // one note on the issue it filed (only while that issue is open and is the
@@ -94,6 +113,7 @@ const (
 	depBotRedIssueSkipBaseStale    = "base-proof-older-than-failure"
 	depBotRedIssueSkipRebaseDue    = "bot-rebase-due"
 	depBotRedIssueSkipNotRepro     = "failure-not-reproduced"
+	depBotRedIssueSkipCrossBase    = "cross-head-base-not-contained"
 	depBotRedIssueSkipPassed       = "check-passed-on-head"
 	depBotRedIssueSkipRunsRead     = "runs-unreadable"
 	depBotRedIssueSkipNoErrors     = "no-error-annotation"
@@ -228,9 +248,13 @@ func (p *depBotRedIssuePass) baseFor(ctx context.Context, repo, baseRef string) 
 
 // depBotRedIssueOutcome is what the filer tells the hand-off: the issue the
 // hand-off links (0: none) and the sentence the hand-off gains for it.
+// Deferred: the per-pass budget was spent before this PR's reads, so a later
+// pass may judge the head (fileForParkedHead retries it; a hand-off does not
+// wait).
 type depBotRedIssueOutcome struct {
-	Number int
-	Line   string
+	Number   int
+	Line     string
+	Deferred bool
 }
 
 // depBotRedIssueChecks is the failing required check set on pr's head: the
@@ -321,11 +345,17 @@ func depBotRedIssueAfterFix(pr github.PullRequest, regenerated bool) string {
 // dependencyBotRedIssueLine is the line the red-CI hand-off gains when an
 // issue covers the PR. The hand-off's own text lists fixing this branch as
 // one option; this line says why the issue asks for the fix in the
-// repository instead, and what then happens to this PR.
-func dependencyBotRedIssueLine(pr github.PullRequest, number int, regenerated bool) string {
+// repository instead, and what then happens to this PR. prevHead is the
+// previous head when the failure counted as reproduced across heads ("":
+// in-suite).
+func dependencyBotRedIssueLine(pr github.PullRequest, number int, regenerated bool, prevHead string) string {
 	base := depBotRedIssueBaseName(pr)
 	why := fmt.Sprintf("its failing checks pass on %s, which this head already contains", base)
-	if regenerated {
+	switch {
+	case strings.TrimSpace(prevHead) != "":
+		why = fmt.Sprintf("its failing checks pass on %s, and they failed on the previous head `%s` and again on this head after it was brought up to date with the base",
+			base, github.DependencyBotRedSafeText(stagelabels.ShortSHA(prevHead)))
+	case regenerated:
 		why = fmt.Sprintf("its failing checks pass on %s, and the bot's regenerated branch failed them again", base)
 	}
 	return fmt.Sprintf("Issue #%d asks for that fix in the repository instead of on this branch (%s; a commit on the bot's branch stops the bot updating it, or is dropped when the bot regenerates it). %s",
@@ -387,7 +417,7 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 		// did not go out: link it, read nothing. A later head is judged
 		// again, and the marker lookup finds the open issue.
 		regenerated := depBotRedIssueRegenerated(store, key, pr, checks)
-		return depBotRedIssueOutcome{Number: rec.Issue, Line: dependencyBotRedIssueLine(pr, rec.Issue, regenerated)}
+		return depBotRedIssueOutcome{Number: rec.Issue, Line: dependencyBotRedIssueLine(pr, rec.Issue, regenerated, rec.PreviousHead)}
 	}
 	// A first cheap look at the evidence the issue would quote: without a
 	// line beyond the bare exit code there is nothing to file.
@@ -401,7 +431,9 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 	// The read-heavy part is budgeted per pass; over the budget the PR is
 	// handed off now without the issue.
 	if p.evaluated >= depBotRedIssueMaxPerPass {
-		return skip(depBotRedIssueSkipBudget)
+		out := skip(depBotRedIssueSkipBudget)
+		out.Deferred = true
+		return out
 	}
 	p.evaluated++
 
@@ -415,15 +447,18 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 		return skip(depBotRedIssueSkipBaseVerdict, "verdict", string(verdict), "check", check, "base_sha", base.SHA)
 	}
 	regenerated := depBotRedIssueRegenerated(store, key, pr, checks)
-	// The head must contain the passing base tip, regenerated or not: a
-	// head behind it may only need a rebase onto that tip, not a repository
-	// change (for Renovate the stale-red bot rebase or a person ticking the
-	// box; for Dependabot a person asks it to rebase).
+	// In-suite, the head must contain the passing base tip, regenerated or
+	// not: a head behind it may only need a rebase onto that tip, not a
+	// repository change (for Renovate the stale-red bot rebase or a person
+	// ticking the box; for Dependabot a person asks it to rebase). Across
+	// heads it need not: the newer head was already brought up to date once
+	// and failed again.
 	behind, err := gh.StaleRedBehindBy(ctx, repo, base.SHA, pr.HeadSHA)
 	if err != nil {
 		return skip(depBotRedIssueSkipNoBase, "error", err)
 	}
-	if behind > 0 {
+	prev, crossHead := store.redHeadBefore(key, pr.HeadSHA, checks)
+	if behind > 0 && !crossHead {
 		return skip(depBotRedIssueSkipRebaseDue, "behind_by", behind, "base_sha", base.SHA, "regenerated", regenerated)
 	}
 
@@ -451,17 +486,32 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 			errorLines = append(errorLines, check+": "+msg)
 		}
 	}
-	reproduced := ""
-	switch {
-	case rerun.State == depBotRerunDone:
-		reproduced = "Hive re-ran the failed jobs of this head once and they failed again, and no run of these checks passed on this head."
-	case allReproduced:
-		reproduced = "each failing check failed again within one check suite of this head after an earlier failing attempt had finished (a re-run of the same workflow run), and no run of these checks passed on this head."
-	default:
-		return skip(depBotRedIssueSkipNotRepro)
-	}
 	if len(errorLines) == 0 {
 		return skip(depBotRedIssueSkipNoErrors)
+	}
+	reproduced, prevHead := "", ""
+	switch {
+	case behind == 0 && rerun.State == depBotRerunDone:
+		reproduced = "Hive re-ran the failed jobs of this head once and they failed again, and no run of these checks passed on this head."
+	case behind == 0 && allReproduced:
+		reproduced = "each failing check failed again within one check suite of this head after an earlier failing attempt had finished (a re-run of the same workflow run), and no run of these checks passed on this head."
+	case crossHead:
+		// The newer head must contain the base commit the PR reported
+		// while the previous head failed: brought up to date since, not a
+		// new commit on the same old base. Equal to the tip it contains,
+		// that is already proven.
+		if behind > 0 || !strings.EqualFold(prev.BaseSHA, base.SHA) {
+			lacks, err := gh.StaleRedBehindBy(ctx, repo, prev.BaseSHA, pr.HeadSHA)
+			if err != nil {
+				return skip(depBotRedIssueSkipNoBase, "error", err)
+			}
+			if lacks > 0 {
+				return skip(depBotRedIssueSkipCrossBase, "previous_head", prev.HeadSHA, "previous_base_sha", prev.BaseSHA, "behind_by", lacks)
+			}
+		}
+		reproduced, prevHead = github.DependencyBotRedCrossHeadReproduced(prev.HeadSHA), prev.HeadSHA
+	default:
+		return skip(depBotRedIssueSkipNotRepro)
 	}
 
 	marker := github.DependencyBotRedIssueMarker(pr.Number, checks)
@@ -476,28 +526,29 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 		// (a copy, or a forgery): neither link it nor file beside it.
 		return skip(depBotRedIssueSkipNotOwned, "issue", found.Open)
 	case found.Open > 0:
-		store.markRedIssue(key, depBotRedIssueRecord{ChecksKey: checksKey, Checks: checks, Issue: found.Open, URL: found.OpenURL, HeadSHA: pr.HeadSHA, FiledAt: now})
-		return depBotRedIssueOutcome{Number: found.Open, Line: dependencyBotRedIssueLine(pr, found.Open, regenerated)}
+		store.markRedIssue(key, depBotRedIssueRecord{ChecksKey: checksKey, Checks: checks, Issue: found.Open, URL: found.OpenURL, HeadSHA: pr.HeadSHA, PreviousHead: prevHead, FiledAt: now})
+		return depBotRedIssueOutcome{Number: found.Open, Line: dependencyBotRedIssueLine(pr, found.Open, regenerated, prevHead)}
 	case found.RecentlyClosed:
 		return skip(depBotRedIssueSkipRecentClosed)
 	}
 
 	title := github.DependencyBotRedIssueTitle(pr.Number, checks)
 	body := github.RenderDependencyBotRedIssueBody(github.DependencyBotRedIssueFacts{
-		PRNumber:    pr.Number,
-		PRTitle:     pr.Title,
-		ChecksURL:   depBotRedIssueChecksURL(pr),
-		ForgeHost:   github.DependencyBotRedURLHost(pr.URL),
-		Bot:         dependencyBotDisplayName(pr.Author),
-		HeadSHA:     pr.HeadSHA,
-		BaseRef:     pr.BaseRef,
-		BaseSHA:     base.SHA,
-		Checks:      checks,
-		Runs:        depBotRedIssueRuns(pr, checks),
-		ErrorLines:  errorLines,
-		Regenerated: regenerated,
-		Reproduced:  reproduced,
-		AfterFix:    depBotRedIssueAfterFix(pr, regenerated),
+		PRNumber:        pr.Number,
+		PRTitle:         pr.Title,
+		ChecksURL:       depBotRedIssueChecksURL(pr),
+		ForgeHost:       github.DependencyBotRedURLHost(pr.URL),
+		Bot:             dependencyBotDisplayName(pr.Author),
+		HeadSHA:         pr.HeadSHA,
+		BaseRef:         pr.BaseRef,
+		BaseSHA:         base.SHA,
+		Checks:          checks,
+		Runs:            depBotRedIssueRuns(pr, checks),
+		ErrorLines:      errorLines,
+		Regenerated:     regenerated,
+		PreviousHeadSHA: prevHead,
+		Reproduced:      reproduced,
+		AfterFix:        depBotRedIssueAfterFix(pr, regenerated),
 	})
 	res, err := gh.FileDependencyBotRedIssue(ctx, repo, title, body)
 	switch {
@@ -519,10 +570,10 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 			return skip(depBotRedIssueSkipNotOwned, "issue", res.Number, "error", err)
 		}
 	}
-	store.markRedIssue(key, depBotRedIssueRecord{ChecksKey: checksKey, Checks: checks, Issue: res.Number, URL: res.URL, HeadSHA: pr.HeadSHA, FiledAt: now})
+	store.markRedIssue(key, depBotRedIssueRecord{ChecksKey: checksKey, Checks: checks, Issue: res.Number, URL: res.URL, HeadSHA: pr.HeadSHA, PreviousHead: prevHead, FiledAt: now})
 	logger.Info("dependency-bot red CI: repository issue filed",
-		"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "issue", res.Number, "checks", checks, "already_existed", res.AlreadyExisted)
-	return depBotRedIssueOutcome{Number: res.Number, Line: dependencyBotRedIssueLine(pr, res.Number, regenerated)}
+		"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "issue", res.Number, "checks", checks, "already_existed", res.AlreadyExisted, "previous_head", prevHead)
+	return depBotRedIssueOutcome{Number: res.Number, Line: dependencyBotRedIssueLine(pr, res.Number, regenerated, prevHead)}
 }
 
 // noteDependencyBotRedIssues is the minimal lifecycle: once the PR an issue
@@ -606,14 +657,16 @@ func (p *depBotRedIssuePass) noteDependencyBotRedIssues(ctx context.Context, sto
 
 // depBotRedIssueRecord is the persisted issue for one PR: the failing check
 // set it was filed for and its number. One per PR; a new check set that
-// gets its own issue replaces it.
+// gets its own issue replaces it. PreviousHead is set when the failure
+// counted as reproduced across heads (the hand-off line says so).
 type depBotRedIssueRecord struct {
-	ChecksKey string    `json:"checks_key"`
-	Checks    []string  `json:"checks,omitempty"`
-	Issue     int       `json:"issue"`
-	URL       string    `json:"url,omitempty"`
-	HeadSHA   string    `json:"head_sha,omitempty"`
-	FiledAt   time.Time `json:"filed_at"`
+	ChecksKey    string    `json:"checks_key"`
+	Checks       []string  `json:"checks,omitempty"`
+	Issue        int       `json:"issue"`
+	URL          string    `json:"url,omitempty"`
+	HeadSHA      string    `json:"head_sha,omitempty"`
+	PreviousHead string    `json:"previous_head,omitempty"`
+	FiledAt      time.Time `json:"filed_at"`
 }
 
 func (s *depBotConflictStore) redIssue(key string) (depBotRedIssueRecord, bool) {
@@ -663,20 +716,44 @@ func depBotRedIssuePath(path string) string {
 	return strings.TrimSuffix(path, ".json") + "-red-issue.json"
 }
 
-func loadDepBotRedIssues(path string) map[string]*depBotRedIssueRecord {
-	out := map[string]*depBotRedIssueRecord{}
+// depBotRedIssueFile is the red-issue sidecar: the filed issues and the
+// red-head history the cross-head rule reads, per PR key.
+type depBotRedIssueFile struct {
+	Issues   map[string]*depBotRedIssueRecord `json:"issues,omitempty"`
+	RedHeads map[string]*depBotRedHeads       `json:"red_heads,omitempty"`
+}
+
+// loadDepBotRedIssueFile reads the sidecar. A file in the first layout (a
+// bare map of issue records, before the red-head history) still loads its
+// issues. Anything unreadable is empty.
+func loadDepBotRedIssueFile(path string) (map[string]*depBotRedIssueRecord, map[string]*depBotRedHeads) {
+	issues, heads := map[string]*depBotRedIssueRecord{}, map[string]*depBotRedHeads{}
 	if path == "" {
-		return out
+		return issues, heads
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return out
+		return issues, heads
+	}
+	var f depBotRedIssueFile
+	if json.Unmarshal(data, &f) == nil && (f.Issues != nil || f.RedHeads != nil) {
+		if f.Issues != nil {
+			issues = f.Issues
+		}
+		if f.RedHeads != nil {
+			heads = f.RedHeads
+		}
+		return issues, heads
 	}
 	var m map[string]*depBotRedIssueRecord
 	if json.Unmarshal(data, &m) == nil && m != nil {
-		out = m
+		for k, r := range m {
+			if r != nil && r.Issue > 0 {
+				issues[k] = r
+			}
+		}
 	}
-	return out
+	return issues, heads
 }
 
 func (s *depBotConflictStore) saveRedIssuesLocked() {
@@ -684,7 +761,7 @@ func (s *depBotConflictStore) saveRedIssuesLocked() {
 	if path == "" {
 		return
 	}
-	data, err := json.MarshalIndent(s.redIssues, "", "  ")
+	data, err := json.MarshalIndent(depBotRedIssueFile{Issues: s.redIssues, RedHeads: s.redHeads}, "", "  ")
 	if err != nil {
 		return
 	}
@@ -693,4 +770,250 @@ func (s *depBotConflictStore) saveRedIssuesLocked() {
 	if os.WriteFile(tmp, data, 0o644) == nil {
 		_ = os.Rename(tmp, path)
 	}
+}
+
+// depBotRedHeadMaxGap bounds the time between the last sighting of a red
+// head and the first sighting of the next red head for the two to count as
+// successive. A longer gap (the hive down, or the switch off, while other
+// heads came and went unseen) breaks the chain: fail closed.
+const depBotRedHeadMaxGap = 24 * time.Hour
+
+// depBotRedHeadRefresh is how far a red head's last sighting may advance
+// before it is written again, so a head red for hours costs no write per
+// pass.
+const depBotRedHeadRefresh = time.Hour
+
+// depBotRedHead is one head of a PR seen red on its failing required checks.
+type depBotRedHead struct {
+	HeadSHA string   `json:"head_sha"`
+	Checks  []string `json:"checks"`
+	// BaseSHA is the base branch commit the PR reported
+	// (PullRequest.BaseSHA) while this head was red; "" when unknown, and
+	// then the cross-head rule cannot use this head.
+	BaseSHA string `json:"base_sha,omitempty"`
+	// SeenAt is when the head was last seen red (to depBotRedHeadRefresh).
+	SeenAt time.Time `json:"seen_at"`
+}
+
+// depBotRedHeads is the red-head history of one PR, kept only with
+// auto_merge.dependency_bot_red_issue on: the newest head seen red and,
+// when it directly followed it, the red head before it. It is the evidence
+// "the previous head failed the same check" for the cross-head rule.
+type depBotRedHeads struct {
+	Last depBotRedHead  `json:"last"`
+	Prev *depBotRedHead `json:"prev,omitempty"`
+	// Next is the first other head seen after Last that was not red yet
+	// (CI pending), and Skipped that yet another head followed it: the next
+	// red head then did not directly follow Last.
+	Next    string `json:"next,omitempty"`
+	Skipped bool   `json:"skipped,omitempty"`
+	// Judged is the head fileForParkedHead already judged, so a PR parked
+	// by an earlier head's hand-off is judged once per head.
+	Judged string `json:"judged,omitempty"`
+}
+
+// noteRedHead records h as seen red now. The same head refreshes its checks
+// and base; a new head becomes Last, with the old Last as Prev only when it
+// directly followed it (no other head seen between, within
+// depBotRedHeadMaxGap).
+func (s *depBotConflictStore) noteRedHead(key string, h depBotRedHead) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.redHeads == nil {
+		s.redHeads = map[string]*depBotRedHeads{}
+	}
+	r := s.redHeads[key]
+	switch {
+	case r == nil:
+		s.redHeads[key] = &depBotRedHeads{Last: h}
+	case strings.EqualFold(r.Last.HeadSHA, h.HeadSHA):
+		if h.BaseSHA == "" {
+			h.BaseSHA = r.Last.BaseSHA
+		}
+		if github.DependencyBotRedChecksKey(h.Checks) == github.DependencyBotRedChecksKey(r.Last.Checks) &&
+			strings.EqualFold(h.BaseSHA, r.Last.BaseSHA) && h.SeenAt.Sub(r.Last.SeenAt) < depBotRedHeadRefresh {
+			return
+		}
+		r.Last = h
+	default:
+		successive := !r.Skipped && (r.Next == "" || strings.EqualFold(r.Next, h.HeadSHA)) &&
+			!h.SeenAt.Before(r.Last.SeenAt) && h.SeenAt.Sub(r.Last.SeenAt) <= depBotRedHeadMaxGap
+		n := &depBotRedHeads{Last: h}
+		if successive {
+			prev := r.Last
+			n.Prev = &prev
+		}
+		s.redHeads[key] = n
+	}
+	s.saveRedIssuesLocked()
+}
+
+// noteOtherHead records that headSHA, not red yet, is the PR's current
+// head.
+func (s *depBotConflictStore) noteOtherHead(key, headSHA string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.redHeads[key]
+	if r == nil || strings.EqualFold(r.Last.HeadSHA, headSHA) || strings.EqualFold(r.Next, headSHA) || r.Skipped {
+		return
+	}
+	if r.Next == "" {
+		r.Next = headSHA
+	} else {
+		r.Skipped = true
+	}
+	s.saveRedIssuesLocked()
+}
+
+// forgetRedHeads drops key's red-head history (its head went green).
+func (s *depBotConflictStore) forgetRedHeads(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.redHeads[key]; !ok {
+		return
+	}
+	delete(s.redHeads, key)
+	s.saveRedIssuesLocked()
+}
+
+// pruneRedHeads drops the history of PRs not in the open snapshot. A PR
+// missing from a partial snapshot loses its history: fail closed.
+func (s *depBotConflictStore) pruneRedHeads(open map[string]github.PullRequest) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	for k := range s.redHeads {
+		if _, ok := open[k]; !ok {
+			delete(s.redHeads, k)
+			changed = true
+		}
+	}
+	if changed {
+		s.saveRedIssuesLocked()
+	}
+}
+
+// redHeadBefore returns the red head directly before headSHA when it is the
+// cross-head evidence for checks: headSHA is the newest red head, the one
+// before it is a different SHA that failed every one of checks, and the base
+// commit the PR reported then is known. Anything else is false.
+func (s *depBotConflictStore) redHeadBefore(key, headSHA string, checks []string) (depBotRedHead, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.redHeads[key]
+	if r == nil || r.Prev == nil || len(checks) == 0 || !strings.EqualFold(r.Last.HeadSHA, headSHA) ||
+		strings.TrimSpace(r.Prev.HeadSHA) == "" || strings.EqualFold(r.Prev.HeadSHA, headSHA) || strings.TrimSpace(r.Prev.BaseSHA) == "" {
+		return depBotRedHead{}, false
+	}
+	failed := map[string]bool{}
+	for _, c := range r.Prev.Checks {
+		failed[strings.ToLower(strings.TrimSpace(c))] = true
+	}
+	for _, c := range checks {
+		if !failed[strings.ToLower(strings.TrimSpace(c))] {
+			return depBotRedHead{}, false
+		}
+	}
+	prev := *r.Prev
+	prev.Checks = append([]string(nil), r.Prev.Checks...)
+	return prev, true
+}
+
+// redHeadJudged reports whether fileForParkedHead already judged headSHA.
+func (s *depBotConflictStore) redHeadJudged(key, headSHA string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.redHeads[key]
+	return r != nil && r.Judged != "" && strings.EqualFold(r.Judged, headSHA)
+}
+
+// markRedHeadJudged records that fileForParkedHead judged headSHA, so it
+// is not judged again (a record with no history yet is started for it; it
+// carries no checks, so it is never cross-head evidence).
+func (s *depBotConflictStore) markRedHeadJudged(key, headSHA string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.redHeads == nil {
+		s.redHeads = map[string]*depBotRedHeads{}
+	}
+	r := s.redHeads[key]
+	if r == nil {
+		r = &depBotRedHeads{Last: depBotRedHead{HeadSHA: headSHA}}
+		s.redHeads[key] = r
+	}
+	r.Judged = headSHA
+	s.saveRedIssuesLocked()
+}
+
+// noteRedHeads keeps the red-head history for every dependency-bot PR in
+// the snapshot, before any hand-off is judged this pass: a settled red head
+// with failing required checks is recorded with the base commit the PR
+// reports, a head still in CI is noted as the next head, and a green head
+// clears the history (the next red head starts a new chain). It reads
+// nothing from GitHub. With the switch off it does nothing.
+func (p *depBotRedIssuePass) noteRedHeads(store *depBotConflictStore, seen map[string]github.PullRequest, now time.Time) {
+	if !p.on() || store == nil {
+		return
+	}
+	store.pruneRedHeads(seen)
+	for key, pr := range seen {
+		if strings.TrimSpace(pr.HeadSHA) == "" || pr.Draft || (pr.State != "" && !strings.EqualFold(pr.State, "open")) {
+			continue
+		}
+		if !github.IsDependencyBotAuthor(pr.Author) && !github.DependencyBotBranch(pr.HeadRef, pr.Author) {
+			continue
+		}
+		switch {
+		case strings.EqualFold(strings.TrimSpace(pr.CIStatus), "success"):
+			store.forgetRedHeads(key)
+		case pr.HasFailingRequiredCheck() && !pr.CIChecksRunning:
+			if checks := depBotRedIssueChecks(pr); len(checks) > 0 {
+				store.noteRedHead(key, depBotRedHead{HeadSHA: pr.HeadSHA, Checks: checks, BaseSHA: strings.TrimSpace(pr.BaseSHA), SeenAt: now})
+			}
+		default:
+			store.noteOtherHead(key, pr.HeadSHA)
+		}
+	}
+}
+
+// fileForParkedHead runs the filer for a dependency-bot PR that is still
+// parked by the sweep's own red-CI hand-off for an earlier head (reason
+// red-ci, the label the sweep applied, a different head) and is red again
+// on its current head. That PR gets no second hand-off (the hand-off ends
+// only when the PR goes green), so without this the newer head, the one the
+// cross-head rule is about, would never be judged. It waits the same
+// red-CI grace and transient re-run as the hand-off, then judges the head
+// once (a spent per-pass budget retries next pass). It files the issue and
+// posts nothing on the PR. It reports whether the head's grace clock must
+// be kept.
+func (p *depBotRedIssuePass) fileForParkedHead(ctx context.Context, store *depBotConflictStore, repo, key string, pr github.PullRequest, now time.Time, logger *slog.Logger) bool {
+	if !p.on() || store == nil || strings.TrimSpace(pr.HeadSHA) == "" || !escalation.HasNeedsHumanLabel(pr.Labels) ||
+		!dependencyBotHandoffCandidate(staleRedWithoutNeedsHuman(pr)) || !dependencyBotRedCI(pr) {
+		return false
+	}
+	rec, ok := store.get(key)
+	if !ok || rec.Reason != depBotHandoffRedCI || !rec.LabelApplied || strings.EqualFold(rec.HeadSHA, pr.HeadSHA) {
+		return false
+	}
+	if store.redHeadJudged(key, pr.HeadSHA) {
+		return false
+	}
+	if r, ok := store.redIssue(key); ok && r.Issue > 0 && strings.EqualFold(r.HeadSHA, pr.HeadSHA) {
+		return false
+	}
+	rerun := depBotTransientRerunFor(dbrLedger(), repo, pr)
+	red := now.Sub(store.observe(key, pr.HeadSHA, depBotHandoffRedCI, now))
+	var owed time.Duration
+	if rerun.State == depBotRerunOwed {
+		owed = now.Sub(store.rerunOwedSince(key, pr.HeadSHA, now))
+	}
+	if red < depBotRedCIGrace || rerun.holdsHandoff(red, owed) {
+		return true
+	}
+	out := p.issueFor(ctx, store, repo, key, pr, rerun, now, logger)
+	if out.Deferred {
+		return true
+	}
+	store.markRedHeadJudged(key, pr.HeadSHA)
+	return false
 }

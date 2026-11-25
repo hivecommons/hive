@@ -80,8 +80,10 @@ type depBotConflictStore struct {
 	adopt map[string]*depBotAdoptRecord
 
 	// redIssues holds, persisted, the repository issue filed per PR for a
-	// red bump (dependency_bot_red_issue.go).
+	// red bump, and redHeads, in the same file, each PR's recent red heads
+	// for the cross-head rule (dependency_bot_red_issue.go).
 	redIssues map[string]*depBotRedIssueRecord
+	redHeads  map[string]*depBotRedHeads
 
 	// staleRedLast holds, persisted, the last stale-red rebase request per
 	// PR, kept across the bot's new heads (stale_red_bot_rebase.go).
@@ -106,10 +108,9 @@ func loadDepBotConflictStore(path string) *depBotConflictStore {
 
 		adopt: loadDepBotAdoptRecords(depBotAdoptPath(path)),
 
-		redIssues: loadDepBotRedIssues(depBotRedIssuePath(path)),
-
 		staleRedLast: loadDepBotStaleRedAsks(depBotStaleRedPath(path)),
 	}
+	s.redIssues, s.redHeads = loadDepBotRedIssueFile(depBotRedIssuePath(path))
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return s
@@ -373,6 +374,7 @@ func sweepDependencyBotHandoffs(
 	issues := newDepBotRedIssuePass(redIssue, seen)
 	undoDependencyBotConflicts(ctx, store, writer, reader, seen, issues.states, logger)
 	issues.noteDependencyBotRedIssues(ctx, store, reader, seen, logger)
+	issues.noteRedHeads(store, seen, now())
 
 	if rebaseAfter <= 0 {
 		rebaseAfter = config.DefaultDependencyBotRebaseAfterS * time.Second
@@ -389,6 +391,16 @@ func sweepDependencyBotHandoffs(
 		}
 		botAuthor := dependencyBotHandoffCandidate(pr)
 		if !botAuthor && !dependencyBotBranchCandidate(pr) {
+			// Parked by this sweep's own red-CI hand-off for an earlier
+			// head and red again: auto_merge.dependency_bot_red_issue may
+			// still file for the newer head (no second hand-off).
+			if issues.on() {
+				repo := qualify(pr.Repo)
+				key := escalation.Key(repo, pr.Number)
+				if issues.fileForParkedHead(ctx, store, repo, key, pr, now(), logger) {
+					waiting[key] = true
+				}
+			}
 			continue
 		}
 		repo := qualify(pr.Repo)

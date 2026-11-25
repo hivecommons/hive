@@ -21,8 +21,9 @@ import (
 // Dependency-bot red-CI issues (auto_merge.dependency_bot_red_issue).
 //
 // A dependency-bot PR whose failing required checks all pass on the base tip,
-// on a head that already contains that tip, and whose failure reproduced, is
-// red because of the bump itself: an upstream change usually needs a
+// and whose failure reproduced (within one check suite of a head that
+// already contains that tip, or across two successive heads, the newer one
+// brought up to date with the base), is red because of the bump itself: an upstream change usually needs a
 // companion change in the repository (a Makefile target, a config key, a
 // renamed import). The governor's dependency-bot sweep
 // (cmd/hive/dependency_bot_red_issue.go) files one issue here saying so,
@@ -169,6 +170,15 @@ func dependencyBotRedQuoted(checks []string, limit int) string {
 	return strings.Join(quoted, ", ") + more
 }
 
+// DependencyBotRedCrossHeadReproduced is the issue's fixed "Reproduced:"
+// wording when the failure counts as reproduced across heads: the same
+// checks failed on the PR's previous head prevHead and again on the current
+// head after it was brought up to date with the base.
+func DependencyBotRedCrossHeadReproduced(prevHead string) string {
+	return fmt.Sprintf("the same checks failed on the previous head `%s` and again on this head after it was brought up to date with the base, and no run of these checks passed on this head.",
+		DependencyBotRedSafeText(shortSHA(strings.TrimSpace(prevHead))))
+}
+
 // DependencyBotRedRun is one failing run linked from the issue.
 type DependencyBotRedRun struct {
 	Check string
@@ -199,6 +209,12 @@ type DependencyBotRedIssueFacts struct {
 	// hive's stale-red rebase request, and the new head fails the same
 	// checks. Otherwise the head already contains BaseSHA.
 	Regenerated bool
+	// PreviousHeadSHA is set when the failure counts as reproduced across
+	// heads: the PR's previous head failed the same checks, and this head,
+	// brought up to date with the base since, fails them again. The head
+	// may then be behind BaseSHA, so the body says that instead of claiming
+	// it contains the tip.
+	PreviousHeadSHA string
 	// Reproduced says how the failure was seen more than once ("Hive
 	// re-ran the failed jobs and they failed again", ...).
 	Reproduced string
@@ -293,9 +309,12 @@ func RenderDependencyBotRedIssueBody(f DependencyBotRedIssueFacts) string {
 		fmt.Fprintf(&b, " at `%s`", DependencyBotRedSafeText(shortSHA(f.BaseSHA)))
 	}
 	b.WriteString(", where the newest run of each of these checks passed, finishing after this head's failing run started.\n")
-	if f.Regenerated {
+	switch {
+	case strings.TrimSpace(f.PreviousHeadSHA) != "":
+		fmt.Fprintf(&b, "- The previous head `%s` failed the same checks, and this head was brought up to date with the base after that failure, so updating the branch did not change the result.\n", DependencyBotRedSafeText(shortSHA(strings.TrimSpace(f.PreviousHeadSHA))))
+	case f.Regenerated:
 		b.WriteString("- The bot already regenerated this branch once after Hive asked it to rebase, and the new head fails the same checks.\n")
-	} else {
+	default:
 		b.WriteString("- The head already contains that base commit, so updating the branch alone would not change the result.\n")
 	}
 	if lines := f.ErrorLines; len(lines) > 0 {

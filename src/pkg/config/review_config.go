@@ -604,9 +604,11 @@ type AutoMergeConfig struct {
 	DependencyBotAdopt DependencyBotAdoptAutoMergeConfig `yaml:"dependency_bot_adopt,omitempty" json:"dependency_bot_adopt,omitempty"`
 	// DependencyBotRedIssue lets the dependency-bot hand-off sweep file one
 	// issue in the repository when a dependency-bot PR's red-CI hand-off
-	// fires, the adoption request did not apply, no bot rebase is due or
-	// pending, and every failing required check on the PR head passes on the
-	// base tip: the bump then most likely needs a companion change in the
+	// fires (or, for a PR its own earlier hand-off parked, its newer head is
+	// red again), the adoption request did not apply, no bot rebase is
+	// pending, every failing required check on the PR head passes on the
+	// base tip, and the failure reproduced in-suite or across two successive
+	// heads: the bump then most likely needs a companion change in the
 	// repository. One issue per PR and set of failing checks, found again
 	// by a marker in its body. The hand-off itself is unchanged and names
 	// the issue. Default off.

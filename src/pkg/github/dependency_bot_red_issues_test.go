@@ -92,6 +92,48 @@ func TestRenderDependencyBotRedIssueBody(t *testing.T) {
 	}
 }
 
+// The cross-head path says which heads failed and does not claim the head
+// contains the base tip; the fixed Reproduced wording names the previous
+// head, shortened and neutralized.
+func TestRenderDependencyBotRedIssueBodyCrossHead(t *testing.T) {
+	reproduced := DependencyBotRedCrossHeadReproduced(" b00c45bcd70a5e114a04 ")
+	if want := "the same checks failed on the previous head `b00c45bcd70a` and again on this head after it was brought up to date with the base, and no run of these checks passed on this head."; reproduced != want {
+		t.Fatalf("reproduced = %q, want %q", reproduced, want)
+	}
+	if got := DependencyBotRedCrossHeadReproduced("ab`<c>"); strings.ContainsAny(got[strings.Index(got, "`")+1:strings.LastIndex(got, "`")], "`<>") {
+		t.Fatalf("previous head not neutralized: %q", got)
+	}
+	body := RenderDependencyBotRedIssueBody(DependencyBotRedIssueFacts{
+		PRNumber:        1486,
+		Bot:             "mergeraptor",
+		ForgeHost:       "github.com",
+		ChecksURL:       "https://github.com/o/r/pull/1486/checks",
+		HeadSHA:         "b1d71454e2671a054efb",
+		BaseRef:         "main",
+		BaseSHA:         "fedcba9876543210fedc",
+		Checks:          []string{"Build Utah"},
+		PreviousHeadSHA: "b00c45bcd70a5e114a04",
+		Regenerated:     true,
+		Reproduced:      reproduced,
+	})
+	for _, want := range []string{
+		"- Reproduced: " + reproduced,
+		"- The previous head `b00c45bcd70a` failed the same checks, and this head was brought up to date with the base after that failure",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body has no %q:\n%s", want, body)
+		}
+	}
+	for _, bad := range []string{"The head already contains that base commit", "already regenerated this branch once", "\u2014", "\u2013", "@"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("cross-head body contains %q:\n%s", bad, body)
+		}
+	}
+	if err := validateIssueTemplateFilled(DependencyBotRedIssueTitle(1486, []string{"Build Utah"}), body); err != nil {
+		t.Fatalf("the issue template guard refuses the body: %v", err)
+	}
+}
+
 // PR-supplied text can neither forge the marker nor trip the template guard:
 // the title, check names and links are neutralized, links must be on the
 // forge's own host, and only the first line of a body counts as the marker.
