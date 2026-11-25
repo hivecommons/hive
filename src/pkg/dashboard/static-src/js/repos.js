@@ -132,6 +132,64 @@
       }
     }
 
+    // Per-repo open-PRs mode (repo_policies[].open_prs): the sibling of the
+    // auto-merge switch, at every level. Shared by the repo card and the
+    // Settings → Repos row.
+    const REPO_OPEN_PRS_MODES = [
+      { value: 'on', label: 'On', tip: 'Agents may open pull requests in this repo' },
+      { value: 'workflow_only', label: 'Workflow only', tip: 'Only workflow hand-off pull requests; cadence work (coverage, test hardening) files issues instead' },
+      { value: 'off', label: 'Off', tip: 'Agents open no pull requests here; they analyse, comment and file issues' },
+    ];
+    const REPO_OPEN_PRS_RANK = { off: 0, workflow_only: 1, on: 2 };
+
+    // repoOpenPRsSelectHtml renders the select. Narrowing needs the repo
+    // pause tier (canNarrow); widening needs the owner role, mirroring the
+    // server's asymmetric gate. hiveOff says project.open_prs is false, so
+    // every repo is off whatever its own mode.
+    function repoOpenPRsSelectHtml(repo, setting, hiveOff, canNarrow, extraClass) {
+      const current = REPO_OPEN_PRS_RANK[setting] !== undefined ? setting : 'on';
+      const isOwner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const editable = canNarrow || isOwner;
+      const tip = hiveOff
+        ? 'project.open_prs is false: agents open no pull requests in any repo, whatever this repo\'s own mode'
+        : (editable ? 'Open PRs: whether agents may open pull requests in this repo' : 'Requires repo write or owner role to change');
+      const opts = REPO_OPEN_PRS_MODES.map(m => {
+        const widens = REPO_OPEN_PRS_RANK[m.value] > REPO_OPEN_PRS_RANK[current];
+        const disabled = widens ? !isOwner : !canNarrow && m.value !== current && !isOwner;
+        return `<option value="${m.value}" title="${esc(m.tip)}" ${m.value === current ? 'selected' : ''} ${disabled ? 'disabled' : ''}>${esc(m.label)}</option>`;
+      }).join('');
+      return `<label class="repo-open-prs ${extraClass || ''}" title="${esc(tip)}"><span class="config-toggle-label">open PRs${hiveOff ? ' (hive off)' : ''}</span><select class="repo-open-prs-select" aria-label="${esc('open PRs for ' + repo)}" data-prev="${esc(current)}" ${editable ? '' : 'disabled'} data-change-action="setRepoOpenPRs" data-arg0="${esc(repo)}" data-arg-types="s,v,t">${opts}</select></label>`;
+    }
+
+    async function setRepoOpenPRs(repo, mode, el) {
+      const prev = (el && el.dataset.prev) || 'on';
+      if (!mode || mode === prev) return;
+      if (el) el.disabled = true;
+      try {
+        const resp = await fetch('/api/repos/open-prs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repo: repo, mode: mode })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        if (el) { el.dataset.prev = data.mode || mode; el.disabled = false; }
+        if (typeof _configState !== 'undefined' && _configState && _configState.data) {
+          if (!_configState.data.repoOpenPRs) _configState.data.repoOpenPRs = {};
+          _configState.data.repoOpenPRs[data.repo || repo] = { value: data.mode || mode, effective: data.effective || mode };
+        }
+        const label = (REPO_OPEN_PRS_MODES.find(m => m.value === (data.mode || mode)) || {}).label || mode;
+        showToast('Open PRs for ' + repo + ': ' + label + (data.persisted === false ? ' (not saved to disk)' : ''), data.persisted === false ? 'warning' : 'success');
+        // Same #11020 floor as the auto-merge switch, so the refetch cannot
+        // repaint the old mode.
+        noteStatusMutation(data.minStatusSeq);
+        fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+      } catch (e) {
+        showToast('Open PRs change failed: ' + (e && e.message ? e.message : 'network error'), 'error');
+        if (el) { el.value = prev; el.disabled = false; }
+      }
+    }
+
     async function startSwarm(repo, btn, force) {
       if (btn && btn.dataset.busy === '1') return;
       if (btn) { btn.dataset.busy = '1'; btn.textContent = 'Calling…'; }

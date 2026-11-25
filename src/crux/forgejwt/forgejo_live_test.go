@@ -13,6 +13,8 @@
 //	FORGEJO_JWT_SUBJECT  the sub the integration requires with --claim-eq
 //	FORGEJO_JWT_BARE_AUDIENCE the audience of a second integration with no
 //	                     claim rules, to show which claims Forgejo itself requires
+//	FORGEJO_JWT_WRITE_AUDIENCE the audience of a third integration with
+//	                     write:repository and no claim rules
 package forgejwt
 
 import (
@@ -45,6 +47,7 @@ func TestForgejoAcceptsMintedTokens(t *testing.T) {
 	aud := Audience(liveEnv(t, "FORGEJO_JWT_AUDIENCE"))
 	sub := liveEnv(t, "FORGEJO_JWT_SUBJECT")
 	bare := Audience(liveEnv(t, "FORGEJO_JWT_BARE_AUDIENCE"))
+	write := Audience(liveEnv(t, "FORGEJO_JWT_WRITE_AUDIENCE"))
 	signer := Signer{Issuer: iss, KeyFile: keyFile}
 
 	mint := func(aud Audience, sub string) string {
@@ -85,7 +88,8 @@ func TestForgejoAcceptsMintedTokens(t *testing.T) {
 			t.Errorf("POST contents = %d, want 403", got)
 		}
 	})
-	t.Run("git push is forbidden", func(t *testing.T) {
+	push := func(t *testing.T, tok, branch string) (string, error) {
+		t.Helper()
 		dir := t.TempDir()
 		u := strings.Replace(base, "://", "://x-access-token:"+tok+"@", 1) + "/" + repo + ".git"
 		git := func(args ...string) (string, error) {
@@ -106,9 +110,17 @@ func TestForgejoAcceptsMintedTokens(t *testing.T) {
 		if out, err := git("commit", "-qm", "jwt live"); err != nil {
 			t.Fatalf("commit: %v\n%s", err, out)
 		}
-		out, err := git("push", "origin", "HEAD:refs/heads/jwt-live")
+		return git("push", "origin", "HEAD:refs/heads/"+branch)
+	}
+	t.Run("git push is forbidden", func(t *testing.T) {
+		out, err := push(t, tok, "jwt-live")
 		if err == nil || !strings.Contains(out, "403") {
 			t.Errorf("push: err %v, want a 403\n%s", err, out)
+		}
+	})
+	t.Run("write scope pushes", func(t *testing.T) {
+		if out, err := push(t, mint(write, sub), "jwt-live-write"); err != nil {
+			t.Errorf("push with a write:repository integration: %v\n%s", err, out)
 		}
 	})
 

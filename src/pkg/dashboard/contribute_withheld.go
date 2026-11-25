@@ -89,6 +89,8 @@ var withheldReasonLabels = map[string]string{
 	contributorAdmissionReasonDependencyBlocked: "A dependency is still open",
 	contributorAdmissionReasonDependencyUnknown: "A dependency could not be resolved",
 	contributorAdmissionReasonOwnerGrace:        "Filed by an owner or maintainer moments ago; they claim first",
+	contributorAdmissionReasonHeld:              "On hold: a maintainer put a hold label on this issue",
+	contributorAdmissionReasonAwaitingTriage:    "Waiting for maintainer triage (reporter trust)",
 	withheldReasonDisabledRepo:                  "Repository is disabled for contribution",
 	withheldReasonRepoUnmintable:                "Repository excluded after a GitHub App token mint failure",
 	withheldReasonTracker:                       "Tracker / umbrella issue",
@@ -382,6 +384,8 @@ func withheldFromAdmissionDecision(c withheldCandidate, d contributorAdmissionDe
 		item := newWithheldItem(c, d.reason)
 		item.Detail = d.detail
 		return item
+	case contributorAdmissionReasonHeld, contributorAdmissionReasonAwaitingTriage:
+		return newWithheldItem(c, d.reason)
 	case contributorAdmissionReasonWorkflowBlocked, contributorAdmissionReasonLabelSkipped:
 		item := newWithheldItem(c, d.reason)
 		if d.skippedLabel != "" {

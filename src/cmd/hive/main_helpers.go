@@ -498,6 +498,23 @@ func humanMergePinOnlyFor(cfg *config.Config, repo string) (config.PinOnlyExcept
 	return cfg.AutoMerge.HumanMergePinOnlyFor(repo)
 }
 
+// decisionGateFor returns auto_merge.decision_gate as the automerge engine's
+// policy, read through cfg on every evaluation so a reload applies without a
+// restart. A nil cfg gets the safe default (on, the default paths, sentinel
+// on), never an open gate. repo is the owner/repo being evaluated; the policy
+// is hive-wide today.
+func decisionGateFor(cfg *config.Config, _ string) automerge.DecisionGatePolicy {
+	var gate config.DecisionGateConfig
+	if cfg != nil {
+		gate = cfg.AutoMerge.DecisionGate
+	}
+	return automerge.DecisionGatePolicy{
+		Enabled:  gate.IsEnabled(),
+		Paths:    gate.EffectivePaths(),
+		Sentinel: gate.SentinelNeedsDecision(),
+	}
+}
+
 // humanMergeRuleFor reads auto_merge.human_merge_title_prefixes /
 // human_merge_labels through cfg on every call so a reload applies
 // (hivecommons/hive#15442). A nil config means the defaults.

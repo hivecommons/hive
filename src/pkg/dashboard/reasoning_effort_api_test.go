@@ -10,6 +10,7 @@ import (
 // unchanged when the field is absent, and cleared by an explicit "".
 func TestHandleAgentConfigModels_ReasoningEffort(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 
 	rec := doPut(s, "/api/config/agent/scanner/models",
 		map[string]interface{}{"backend": "codex", "model": "gpt-6-astra", "reasoning_effort": "xhigh"})
@@ -74,6 +75,7 @@ func TestHandleAgentConfigModels_ReasoningEffortRejected(t *testing.T) {
 // "default" sentinel, and reject a value the backend does not accept.
 func TestHandleEffortSet(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	if rec := doPut(s, "/api/config/agent/scanner/models",
 		map[string]interface{}{"backend": "codex"}); rec.Code != http.StatusOK {
 		t.Fatalf("backend switch: status = %d, want 200", rec.Code)
@@ -104,7 +106,8 @@ func TestHandleEffortSet(t *testing.T) {
 // effort control (the fixture's claude scanner is moved to gemini first;
 // claude itself has an effort control since #8377).
 func TestHandleEffortSet_NoEffortBackend(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	if rec := doPut(s, "/api/config/agent/scanner/models",
 		map[string]interface{}{"backend": "gemini"}); rec.Code != http.StatusOK {
 		t.Fatalf("backend switch: status = %d, want 200", rec.Code)
@@ -122,6 +125,7 @@ func TestHandleEffortSet_NoEffortBackend(t *testing.T) {
 // rejected without touching the stored value.
 func TestHandleEffortSet_ClaudeRoundTrip(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	if got := deps.Config.Agents["scanner"].Backend; got != "claude" {
 		t.Fatalf("fixture scanner backend = %q, want claude", got)
 	}

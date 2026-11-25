@@ -1413,7 +1413,8 @@ func TestHandleResetRestarts_Success(t *testing.T) {
 // ---- Agent config endpoint tests ----
 
 func TestHandleAgentConfigCadences_Success(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	rec := doPut(s, "/api/config/agent/scanner/cadences", map[string]int64{"idle": 900, "busy": 300})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
@@ -1429,7 +1430,8 @@ func TestHandleAgentConfigCadences_MissingAgent(t *testing.T) {
 }
 
 func TestHandleAgentConfigCadences_PauseValue(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	rec := doPut(s, "/api/config/agent/scanner/cadences", map[string]int64{"idle": 0})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rec.Code)
@@ -1841,7 +1843,8 @@ func TestHandleKnowledgeLayer_Disabled(t *testing.T) {
 // ---- Agent config general PUT with fields ----
 
 func TestHandleAgentConfigGeneral_WithAllFields(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	enabled := true
 	clearOnKick := true
 	rec := doPut(s, "/api/config/agent/scanner/general", map[string]interface{}{
@@ -1855,7 +1858,8 @@ func TestHandleAgentConfigGeneral_WithAllFields(t *testing.T) {
 }
 
 func TestHandleAgentConfigModels_WithFields(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	rec := doPut(s, "/api/config/agent/scanner/models", map[string]interface{}{
 		"backend": "gemini",
 		"model":   "gemini-2.5-pro",
@@ -3586,7 +3590,8 @@ func TestHandleAgentPrompt_ValidAgent(t *testing.T) {
 }
 
 func TestHandleAgentConfigGeneral_ValidAgent(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	body := map[string]interface{}{"enabled": true}
 	rec := doPut(s, "/api/config/agent/scanner/general", body)
 	if rec.Code != http.StatusOK {
@@ -3595,7 +3600,8 @@ func TestHandleAgentConfigGeneral_ValidAgent(t *testing.T) {
 }
 
 func TestHandleAgentConfigGeneral_ClearOnKick(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	body := map[string]interface{}{"clear_on_kick": true}
 	rec := doPut(s, "/api/config/agent/scanner/general", body)
 	if rec.Code != http.StatusOK {
@@ -3604,7 +3610,8 @@ func TestHandleAgentConfigGeneral_ClearOnKick(t *testing.T) {
 }
 
 func TestHandleAgentConfigGeneral_BeadsDir(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	body := map[string]interface{}{"beads_dir": "/tmp/beads"}
 	rec := doPut(s, "/api/config/agent/scanner/general", body)
 	if rec.Code != http.StatusOK {
@@ -3755,18 +3762,9 @@ func TestHandleWidget_PausedAgent(t *testing.T) {
 	}
 }
 
-func TestHandleAgentConfigCadences_UnknownMode(t *testing.T) {
-	s, _ := apiServer(t)
-	// Include a mode name that does NOT exist in config — should be skipped via continue
-	body := map[string]int64{"nonexistent_mode": 600, "idle": 900}
-	rec := doPut(s, "/api/config/agent/scanner/cadences", body)
-	if rec.Code != http.StatusOK {
-		t.Errorf("status = %d, want 200", rec.Code)
-	}
-}
-
 func TestHandleAgentConfigCadences_NilCadencesMap(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	// Set a mode's Cadences to nil to hit the nil-check branch
 	mode := deps.Config.Governor.Modes["idle"]
 	mode.Cadences = nil

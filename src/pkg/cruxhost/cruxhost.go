@@ -117,6 +117,11 @@ type Deps struct {
 	Conditions   ConditionReporter
 	Linear       LinearResolver
 	PullRequests PRCreator
+	// RepoPRRefusal is the per-repo open-PRs gate CreatePR asks first: why a
+	// new PR may not open in repo, or "" when it may. The callback request
+	// names no agent, so a workflow_only repo refuses here (fail closed).
+	// Nil allows every repo.
+	RepoPRRefusal func(repo string) string
 	// Policy and RepoAutoMerge back the policy routes (#14138 stage 4);
 	// Policy nil means the capability is absent. RepoAutoMerge nil with a
 	// Policy answers the per-repo call not_configured.
@@ -416,6 +421,11 @@ func (c *Capabilities) BobCredential(context.Context) (callback.BobCredential, e
 func (c *Capabilities) CreatePR(ctx context.Context, req callback.CreatePRRequest) (callback.CreatePRResponse, error) {
 	if c.deps.PullRequests == nil {
 		return callback.CreatePRResponse{}, callback.ErrNotConfigured
+	}
+	if c.deps.RepoPRRefusal != nil {
+		if reason := c.deps.RepoPRRefusal(req.Repo); reason != "" {
+			return callback.CreatePRResponse{}, fmt.Errorf("%w: pull request refused: %s", callback.ErrForbidden, reason)
+		}
 	}
 	res, err := c.deps.PullRequests.CreatePR(ctx, req.Repo, req.Head, req.Base, req.Title, req.Body)
 	if err != nil {

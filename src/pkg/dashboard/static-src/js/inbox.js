@@ -433,7 +433,8 @@
       const href = inboxShareTargetHref(rec, canOpen);
       if (href) return '<a' + attrs + ' href="' + escapeHtml(href) + '"' + (/^https?:/.test(href) ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + inner + '</a>';
       if (canOpen && rec.destination === 'knowledge' && (rec.ref || {}).id && it && it.fact_slug) {
-        return '<a' + attrs + ' href="#" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '">' + inner + '</a>';
+        const layer = inboxFactLayer(it);
+        if (layer) return '<a' + attrs + ' href="#" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(layer) + '">' + inner + '</a>';
       }
       return '<span' + attrs + '>' + inner + '</span>';
     }
@@ -464,7 +465,8 @@
       const dur = inboxFmtDuration(it.duration_ms);
       // The backing Knowledge fact is a plain link in the metadata line, not
       // an action: it only opens the fact.
-      const factLink = it.fact_slug ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
+      const factLayer = it.fact_slug && inboxFactLayer(it);
+      const factLink = factLayer ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(factLayer) + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
       // The title is shown without its trailing recording id; the id and the
       // Knowledge state join the meta line, and the full title is the tooltip.
       const tp = inboxTitleParts(it.title || it.id);
@@ -913,6 +915,9 @@
       renderInbox();
     }
     function inboxFind(src, id) { return ((_inboxCache || {}).items || []).find(it => it.source === src && it.id === id); }
+    function inboxFactLayer(it) {
+      return it.fact_source_layer || (it.fact_path ? '' : it.layer || 'all');
+    }
     function inboxOpenFact(slug, layer) {
       ocNavigate('knowledge-section');
       kbReadFact(slug, layer || undefined);

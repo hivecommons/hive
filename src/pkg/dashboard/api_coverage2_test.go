@@ -787,6 +787,7 @@ func TestHandleGovernorBudget_WithTotalTokens(t *testing.T) {
 
 func TestHandleAgentConfigGeneral_AllFields(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 
 	rec := doPut(s, "/api/config/agent/scanner/general", map[string]interface{}{
 		"displayName":     "Scanner Bot",

@@ -117,7 +117,8 @@ titled **Ask Hive**, docked to the side (a bottom sheet on a phone). Choosing
 Ask Hive closes the Help menu (and the navigation drawer on a phone) first; it
 works with a tap, a click, or Enter and Space from the keyboard. The first time, it shows the
 notice and **I understand, continue**; after that the person types a question
-(Enter sends, Shift+Enter adds a line) and gets a plain-text answer with a
+(Enter to send, Shift+Enter for a new line) and gets an answer, with
+paragraphs, lists and code blocks laid out but never rendered as HTML, a
 **Sources** list and the "AI generated, may be wrong" label. The label of the
 section in view, or of the open Settings tab, goes with the question. Every
 state has a docs link for the section in view. Escape closes the panel and

@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/authorkind"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/ioscan"
@@ -150,6 +151,10 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// Lane write allowlist (#9587), same live-config contract as the two
 	// predicates above.
 	client.SetWriteAllowlistFunc(b.cfg.AgentMayWrite)
+	// Per-repo open-PRs mode (repo_policies[].open_prs), enforced on the
+	// relay and sandbox PR paths at every ACMM level, so it is installed
+	// whether or not the hive has a usable App (repo_open_prs.go).
+	client.SetPROpenModeGate(hiveOpenPRsGate(func() *config.Config { return b.cfg }, b.logger))
 	// Per-lane mention sanitizing for relay-posted bodies (#9587), same
 	// live-config contract.
 	client.SetMentionNeutralizeFunc(b.cfg.WriteSurfaceNeutralizesMentions)

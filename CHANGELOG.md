@@ -11,6 +11,55 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.367.0)
+
+### Added
+
+- Per-repo **open PRs** setting (`project.repo_policies[].open_prs`: `on`, `off` or `workflow_only`), the sibling of the per-repo auto-merge switch, at every ACMM level. `off` lets agents analyse, comment and file issues in a repo but open no PR there. `workflow_only` lets only workflow hand-off PRs (`workflow.dispatch`) open, so an agent's own cadence work, such as test hardening, files issues instead of PRs and reviews. It is enforced where agent PRs open: the `hive-open-pr` relay, the forge relay, the sandbox PR path and the sidecar callback. Each refusal is audited as `agent_write_refused` with `gate=open-prs`. A workflow PR is recognised from the hive's own record of the hand-off kicks it planned and delivered, never from PR text: a `hive-open-pr` request must name the handed-off issue, and a sandboxed kick must be the planned hand-off kick. Kicks name each limited repo, and the setting survives a reload through the dashboard overlay. Set it on **Settings → Repos** or on the repo card next to auto-merge (`POST /api/repos/open-prs`). `project.open_prs: false` still wins. **Behavior change:** `project.open_prs: false` used to stop only sandbox PRs; it now also stops PRs through the `hive-open-pr` and forge relays, and workflow profiles that open PRs resolve to no agent on such a hive. (#19870)
+- **Hub affiliation from hivecommons/colony.** The hub admin Users table's daily affiliation refresh now matches each user's public github.com login against the public cncf/gitdm files on the hub (on by default, `HIVE_HUB_AFFILIATION_COLONY_GITDM`; nothing about anyone is sent, emails are never used) and can ask CNCF DevStats for the user's CNCF contribution count (off by default, `HIVE_HUB_AFFILIATION_COLONY_DEVSTATS`, hourly cap). A colony value is labelled `colony:gitdm` or `colony:devstats` with colony's confidence, never replaces an organization the user or an admin set on the hub or the company on the person's own profile, and is not sent to any hive. Phase 1 of the Colony customer-data backend design ([#19851](https://github.com/hivecommons/hive/issues/19851)); see [telemetry.md](src/docs/telemetry.md#hub-affiliation-from-colony).
+
+### Fixed
+
+- ACMM criteria detection: Test suite now matches nested test directories (monorepos; vendored trees excluded), Coverage gate also accepts `.github/codecov.yml`, `dev/codecov.yml` and `.github/workflows/coverage.yml`, Code style config accepts more documented config names (such as `.prettierrc.yml`), and the four L2 agent instruction file criteria are merged into one `acmm:agent-instructions` criterion so any single file (such as `AGENTS.md`) passes. Waivers on the old `acmm:claude-md`, `acmm:copilot-instructions`, `acmm:agents-md`, and `acmm:cursor-rules` IDs are no longer recognized.
+
+### Security
+
+- **Customers hub import: the hub answers only its own trust domain.** `POST /api/customers/match` now answers only hives listed in the new hub setting `HIVE_HUB_CUSTOMERS_TRUSTED_HIVES` (the project's own hives; empty by default). Every other hive gets an empty match list, whatever its `customers.hub_import.enabled` says and whatever consent a person recorded for it, so the hub's knowledge about a person no longer reaches third-party spokes. Operators who use the hub import for their own hive must add its ID to the list. Part of [#19851](https://github.com/hivecommons/hive/issues/19851).
+
+## 2026-11-25 (v5.366.7)
+
+### Changed
+
+- CI now runs the Forgejo JWT live check against a real Forgejo 17 in a nightly lane on GitHub-hosted runners (schedule and manual dispatch only, never a required check), so the per-tier JWT path no longer depends on a manual run; `forgejo-live.sh` accepts `RUNTIME=docker` and a host Go toolchain, and the check also confirms a write-scope integration can push (#19494).
+
+### Fixed
+
+- A codex agent whose project lacks access to its configured model (the `■ Project ... does not have access to model` pane line) is now recorded as a backend auth denial with a backoff instead of ending every kick as `ended_no_visible_action`; only the model name is kept, not the project id. (#19810)
+- A forgotten hold on an all-green pull request no longer reads as a CI failure, and it no longer waits unnoticed. On a PR event, `native-queue-policy` now reports a head held only by `hold` or `do-not-merge/hold` as held: it still validates every policy provider, and when they are green the check passes with a `HELD:` notice instead of failing. Every merge-group run still refuses held PRs, and other blocking labels, drafts and moved heads still fail. The hive now raises a PR that has sat behind a hold label with every check green for longer than `escalation.stale_hold_after` (default 2h, `HIVE_STALE_HOLD_AFTER` overrides, `off` disables) once per held head, as a high-priority notification and a blocked lifecycle stage. A PR that also carries the opt-in `escalation.release_when_green_label` (default `hold/until-green`) has its hold labels removed once every check is green; a plain hold is never removed, and no approval or lgtm label is added. (#19839)
+- The contributor relay no longer assigns an issue a maintainer has put on hold or that is awaiting triage. Before, `selectTask` picked from the cached snapshot and only re-read the issue after the lease, claim and token mint, so a `hold` added half a minute earlier was logged as "claim refused" while the task was still sent. Now the chosen issue is read live before anything is committed: the hold family and configured hold labels, contribute skip labels, a closed state and the reporter-trust triage gate (configured trusted associations, logins and triage labels) all refuse it, and a failed read refuses too. The contribute admission also withholds cached rows whose webhook-patched labels show a hold or fail the triage gate, so they leave the Ready queue within seconds. An issue that gains a hold or loses its triage label while a contributor is working on it has its task revoked ("the maintainer put this issue on hold"), with the lease, claim and pending credential released and the contributor's branch and PR left alone. This happens from the `issues` webhook, and a two-minute reconcile catches a missed webhook. The ledger's fresh-claim admission applies the same triage gate. (#19846)
+- Fix the Ask Hive panel: it now sits below the dashboard header with a title and close button, uses one type scale, renders answers as markdown with numbered source citations, shows progress while a question is answered (with Retry on failure), and keeps scrolling inside the panel.
+
+## 2026-11-25 (v5.366.6)
+
+### Fixed
+
+- Open and act on the selected Knowledge fact when multiple layers contain the same slug.
+
+### Security
+
+- No automerge lane merges a PR that touches credential, keystore, auth or secret code, or that wears the sentinel alert label, until a person decides on that exact head ([#19741](https://github.com/hivecommons/hive/issues/19741)). This applies to App self-merge, trusted bots, trusted authors and contributors. The trusted-author lane had merged an owner's credential change on green CI alone. Three things let it through: the sentinel finding was notice-only, the swarm's changes_requested was a COMMENTED review, and the review gate was in shadow. The new `auto_merge.decision_gate` is on by default with a shipped set of credential paths. A trusted merger's APPROVED review on the head, the dashboard's Approve, or `/hive decision approve` releases it, and the tracker parks a held PR at 085. Set `paths` to replace the set, `sentinel: false` to leave sentinel-labelled trusted PRs to the label rules, or `enabled: false` to turn the gate off.
+
+## 2026-11-25 (v5.366.5)
+
+### Changed
+
+- Scoped-token tier names now have a named Go type (`agentmode.TokenTier`) instead of a bare string; no behavior change ([#19566](https://github.com/hivecommons/hive/pull/19566)).
+
+### Fixed
+
+- The post-merge DCO monitor no longer fails a contributor's private-email squash because the pull request also held GitHub "Update branch" merges made by the hive App. The merged-PR evidence rule from #19660 required every PR commit to belong to the PR author, so the squash of #19766 (69794fd) was reported as `pr-commit-not-by-pr-author`; it now ignores only verified web-flow merge commits authored by the hive App (`hivecommons-hive[bot]`, login and id), which carry base-branch content and none of the change. Merges by humans or any other GitHub App, unverified or single-parent bot commits, and PRs with no commit of the author's own still fail. (#19775)
+- Clear Inbox selections when items are hidden or removed, and list the affected items in the delete confirmation.
+
 ## 2026-11-25 (v5.366.4)
 
 ### Fixed

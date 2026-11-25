@@ -130,6 +130,7 @@ func (c *Client) classifyWebhookIssue(repo string, issue *gh.Issue, labels []str
 		Body:              issue.GetBody(),
 		Author:            author,
 		AuthorIsHuman:     authorIsHuman,
+		AuthorAssociation: strings.TrimSpace(issue.GetAuthorAssociation()),
 		HumanAcknowledged: c.issueHasCheapHumanAcknowledgement(issue),
 		Labels:            labels,
 		Assignees:         extractAssignees(issue.Assignees),

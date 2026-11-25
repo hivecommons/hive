@@ -702,6 +702,15 @@ func runEvalCycle(
 	escalatedPRs := map[string]bool{}
 	if !budgetDecision.SkipUnstick {
 		escalatedPRs = runEscalationSweep(ctx, cfg, governorForge(cfg, ghClient, logger), actionable, notifier, dashSrv, logger)
+		// A PR held with every check green past the threshold is raised
+		// once; a hold carrying the opt-in release label is released when
+		// green. A plain hold is never removed.
+		runStaleHoldSweep(ctx, cfg, actionable, staleHoldSweepDeps{
+			writer: governorForge(cfg, ghClient, logger),
+			send:   staleHoldNotifierSend(notifier),
+			rec:    dashSrv,
+			store:  getStaleHoldStore(),
+		}, logger)
 	}
 
 	intentVerdicts := writeIntentVerdicts(ctx, cfg, ghClient, actionable, beadStores, logger)
@@ -1090,6 +1099,9 @@ func runEvalCycle(
 		return workflowAgentTurnFrom(st)
 	}, logger) {
 		k.Message = sched.PrimeWorkflowDispatch(k.Message, k.Dispatch)
+		// Open-PRs provenance for workflow_only repos, with the exact text
+		// that will be sent (after priming) and before the send.
+		recordPlannedHandoffKick(workflowHandoffKicks, k, time.Now())
 		workflowMessages = append(workflowMessages, k.Message)
 		workflowKickByMessage[workflowDispatchKickKey(k.Message)] = k
 	}

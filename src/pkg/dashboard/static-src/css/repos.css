@@ -94,6 +94,10 @@
     .repo-name .repo-automerge-toggle { margin: 0 0 0 auto; }
     .repo-automerge-toggle .config-toggle-label { font-size: var(--fs-2xs); }
     .repo-automerge-switch { flex: 0 0 auto; }
+    /* Per-repo open-PRs mode select, beside the auto-merge switch. */
+    .repo-open-prs { display: inline-flex; align-items: center; flex: 0 0 auto; white-space: nowrap; gap: var(--sp-2); margin: 0; font-size: var(--fs-2xs); color: var(--muted); }
+    .repo-open-prs .config-toggle-label { font-size: var(--fs-2xs); }
+    .repo-open-prs-select { font-size: var(--fs-2xs); padding: var(--sp-0) var(--sp-2); }
     .repo-swarm-btn { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--border)); background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber); opacity: 0.85; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-swarm-btn:hover { opacity: 1; border-color: var(--amber); }
     .repo-swarm-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
