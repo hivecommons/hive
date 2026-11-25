@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.366.3)
+
+### Fixed
+
+- The Hive Hub Contribute dialog keeps keyboard focus inside and restores it when closed.
+
 ## 2026-11-25 (v5.366.2)
 
 ### Fixed
