@@ -41,8 +41,17 @@ func TestStageTrackerTriagePRNamesContributorPR(t *testing.T) {
 		// Triage needed with no PR at all.
 		{Repo: "o/r", Kind: "issue", Number: 5, Modifiers: []string{modNeedsTriage}, Caption: stageTrackerTriageNeededCaption},
 	}
+	// Read before the resolve pass, which turns a covered issue into a
+	// "Covered by PR #N" row and drops its 000-new block, as the build does.
+	waiting := stageTrackerTriageWaiting(items)
 	stageTrackerResolveLinkedPRs(items, nil)
-	stageTrackerApplyTriagePR(items)
+	resolved := map[int]string{}
+	for _, it := range items {
+		if it.Kind == "issue" {
+			resolved[it.Number] = it.Caption
+		}
+	}
+	stageTrackerApplyTriagePR(items, waiting)
 
 	byNum := map[int]StageTrackerItem{}
 	for _, it := range items {
@@ -63,10 +72,10 @@ func TestStageTrackerTriagePRNamesContributorPR(t *testing.T) {
 	if two := byNum[2]; two.TriagePR == nil || two.TriagePR.Number != 8 || !strings.Contains(two.Caption, "contributor PR #8 open") {
 		t.Fatalf("000-new hold = %+v / %q, want PR #8 named", two.TriagePR, two.Caption)
 	}
-	if three := byNum[3]; three.TriagePR != nil || three.Caption != "Triaged and eligible" {
+	if three := byNum[3]; three.TriagePR != nil || three.Caption != resolved[3] {
 		t.Fatalf("an accepted issue keeps its row: %+v / %q", three.TriagePR, three.Caption)
 	}
-	if four := byNum[4]; four.TriagePR != nil || four.Caption != stageTrackerTriageNeededCaption {
+	if four := byNum[4]; four.TriagePR != nil || four.Caption != resolved[4] {
 		t.Fatalf("a hive PR is not a contributor PR: %+v / %q", four.TriagePR, four.Caption)
 	}
 	if five := byNum[5]; five.TriagePR != nil || five.Caption != stageTrackerTriageNeededCaption {
@@ -78,7 +87,7 @@ func TestStageTrackerTriagePRNamesContributorPR(t *testing.T) {
 func TestStageTrackerTriagePRSkipsClosedPR(t *testing.T) {
 	items := []StageTrackerItem{{Repo: "o/r", Kind: "issue", Number: 1, Stage: stagelabels.TriageNeeded.Number(),
 		LinkedPRs: []StageTrackerLinkedPR{{Number: 7, State: "closed"}, {Number: 8, SupersededBy: 9}, {Number: 11, URL: "u11"}}}}
-	stageTrackerApplyTriagePR(items)
+	stageTrackerApplyTriagePR(items, stageTrackerTriageWaiting(items))
 	if items[0].TriagePR == nil || items[0].TriagePR.Number != 11 {
 		t.Fatalf("triage_pr = %+v, want the open PR #11", items[0].TriagePR)
 	}

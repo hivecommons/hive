@@ -39,17 +39,33 @@ func stageTrackerWaitsOnTriage(it *StageTrackerItem) bool {
 	return it.New.TriagePending()
 }
 
-// stageTrackerApplyTriagePR marks every triage-waiting issue whose linked
-// PRs (resolved by stageTrackerResolveLinkedPRs) include an open PR the
-// hive did not author (hivecommons/hive#19843). The enumerator's reporter
-// gate skips such an issue before the PR-claims pass can call it "covered
-// by external PR", so without this the row reads a bare "Triage needed"
-// with no hint a contributor's PR is ready. Display only.
-func stageTrackerApplyTriagePR(items []StageTrackerItem) {
+// stageTrackerTriageWaiting is the set of triage-waiting issue rows
+// (stageTrackerWaitsOnTriage), keyed repo#number. It must be read before
+// stageTrackerResolveLinkedPRs: that pass turns an issue with a linked PR
+// into a "Covered by PR #N" row and drops its 000-new block
+// (stageTrackerLinkedPRProgress), which would hide a reporter-trust hold.
+func stageTrackerTriageWaiting(items []StageTrackerItem) map[string]bool {
+	waiting := map[string]bool{}
+	for i := range items {
+		if stageTrackerWaitsOnTriage(&items[i]) {
+			waiting[items[i].Repo+"#"+strconv.Itoa(items[i].Number)] = true
+		}
+	}
+	return waiting
+}
+
+// stageTrackerApplyTriagePR marks every triage-waiting issue (waiting, from
+// stageTrackerTriageWaiting) whose linked PRs (resolved by
+// stageTrackerResolveLinkedPRs) include an open PR the hive did not author
+// (hivecommons/hive#19843). The enumerator's reporter gate skips such an
+// issue, so without this the row reads "Covered by PR #N" or a bare
+// "Triage needed" with no hint the contributor's PR waits on the
+// maintainer's triage. Display only.
+func stageTrackerApplyTriagePR(items []StageTrackerItem, waiting map[string]bool) {
 	for i := range items {
 		it := &items[i]
 		it.TriagePR = nil
-		if !stageTrackerWaitsOnTriage(it) {
+		if it.Kind != "issue" || !waiting[it.Repo+"#"+strconv.Itoa(it.Number)] {
 			continue
 		}
 		for _, lp := range it.LinkedPRs {
