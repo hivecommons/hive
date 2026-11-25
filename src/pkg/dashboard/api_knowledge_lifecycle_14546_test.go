@@ -15,6 +15,9 @@ import (
 
 // lifecycle14546Server holds one fact in each lifecycle state, all tagged lc
 // so a tag search reaches every one of them.
+// The facts live in the vault connected as "vault". Since #19829 the path
+// segment names the fact source to read, so the reads below address it
+// as /api/knowledge/vault/<slug>.
 func lifecycle14546Server(t *testing.T) *Server {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -120,7 +123,7 @@ func TestKnowledgeReadsClampNonOwnerToApproved(t *testing.T) {
 		}
 		for _, slug := range []string{"lc-draft", "lc-deprecated", "lc-superseded"} {
 			for _, target := range []string{
-				"/api/knowledge/project/" + slug + "?include_states=all",
+				"/api/knowledge/vault/" + slug + "?include_states=all",
 				"/api/knowledge/entry/" + slug + "?include_states=all",
 			} {
 				if code, body := lifecycle14546Get(t, s, target, c.role, c.verified); code != http.StatusNotFound {
@@ -152,10 +155,10 @@ func TestKnowledgeReadsOwnerOptsIntoStates(t *testing.T) {
 			}
 		}
 	}
-	if code, body := lifecycle14546Get(t, s, "/api/knowledge/project/lc-draft?include_states=draft", "owner", true); code != http.StatusOK || !strings.Contains(body, "LC Draft Fact") {
+	if code, body := lifecycle14546Get(t, s, "/api/knowledge/vault/lc-draft?include_states=draft", "owner", true); code != http.StatusOK || !strings.Contains(body, "LC Draft Fact") {
 		t.Errorf("owner draft fact read = %d %s", code, body)
 	}
-	if code, _ := lifecycle14546Get(t, s, "/api/knowledge/project/lc-draft", "owner", true); code != http.StatusNotFound {
+	if code, _ := lifecycle14546Get(t, s, "/api/knowledge/vault/lc-draft", "owner", true); code != http.StatusNotFound {
 		t.Errorf("owner draft fact read without include_states = %d, want 404", code)
 	}
 }

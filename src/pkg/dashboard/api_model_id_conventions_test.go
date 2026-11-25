@@ -60,10 +60,16 @@ func TestCanonicalizeModelForBackend(t *testing.T) {
 // the Claude CLI spelling and warn, instead of keeping an id the CLI rejects.
 func TestHandleSwitch_ToClaudeRewritesCarriedDottedModel(t *testing.T) {
 	s, deps := apiServer(t)
+	// On copilot first: v6's SetModelOverride spells the id for the agent's
+	// current backend, so on claude it would already store the dashed id.
+	if err := deps.AgentMgr.SetBackendOverride("scanner", "copilot"); err != nil {
+		t.Fatalf("SetBackendOverride: %v", err)
+	}
 	if err := deps.AgentMgr.SetModelOverride("scanner", dottedClaudeModel); err != nil {
 		t.Fatalf("SetModelOverride: %v", err)
 	}
 	ac := deps.Config.Agents["scanner"]
+	ac.Backend = "copilot"
 	ac.Model = dottedClaudeModel
 	deps.Config.Agents["scanner"] = ac
 

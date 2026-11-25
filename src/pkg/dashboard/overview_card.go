@@ -866,6 +866,11 @@ func cardIssueVerdictBand(row cardIssueRow, v cardVerdict, in cardInputs) Overvi
 		return cardSkippedLabelBand(item.SkippedLabel, code, in.cfg)
 	case withheldReasonTracker:
 		return cardBand(cardBandNotWork, code, "A tracker or umbrella issue; its child issues carry the work.")
+	case withheldReasonUmbrella:
+		return cardBand(cardBandNotWork, code, "An umbrella or epic issue; the owner and the hive coordinate it, so the contributor queue does not offer it.")
+	case withheldReasonHumanOnly:
+		// The same band a needs-human park gets (parkedOwnership).
+		return cardBand(cardBandReview, code, "It waits on something only a person can do (needs-human or human-only).")
 	case contributorAdmissionReasonWorkflowBlocked, contributorAdmissionReasonDependencyBlocked, contributorAdmissionReasonDependencyUnknown,
 		convergence.ReasonWaitingForDependency, convergence.ReasonDependencyUnknown:
 		return cardBand(cardBandWaitingOnItem, code, "Another issue or PR must finish first.")

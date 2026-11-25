@@ -246,6 +246,8 @@ func TestDecideIssueCardEveryWithheldReason(t *testing.T) {
 		withheldReasonDisabledRepo:                  cardBandNotWork,
 		withheldReasonRepoUnmintable:                cardBandQueued,
 		withheldReasonTracker:                       cardBandNotWork,
+		withheldReasonUmbrella:                      cardBandNotWork,
+		withheldReasonHumanOnly:                     cardBandReview,
 		withheldReasonCooldown:                      cardBandQueued,
 		withheldReasonNoWorkNeeded:                  cardBandToClose,
 		completionVerdictNeedsDecision:              cardBandDecide,
