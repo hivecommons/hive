@@ -80,6 +80,22 @@ type contributorAdmissionCandidate struct {
 	// zero when unknown. The owner-grace hold (Dependencies.ContributorHold)
 	// uses it to skip the forge read for an old issue.
 	createdAt time.Time
+	// author, authorIsHuman and authorAssociation describe the reporter as
+	// the enumerator saw them, for the cached reporter-trust triage check.
+	// An empty association (older enumerator) skips that check; the live
+	// gate in selectTask still applies it.
+	author            string
+	authorIsHuman     bool
+	authorAssociation string
+}
+
+// reporterFieldsFromIssueMap reads the reporter fields the enumerator puts
+// on an issue envelope.
+func reporterFieldsFromIssueMap(issue map[string]any) (author string, human bool, association string) {
+	author, _ = issue["author"].(string)
+	human, _ = issue["author_is_human"].(bool)
+	association, _ = issue["author_association"].(string)
+	return author, human, strings.TrimSpace(association)
 }
 
 // isGitHubBacked reports whether this candidate may be handed to the two
@@ -168,7 +184,45 @@ const (
 	// filed the issue inside the contributor grace window and no person has
 	// opened it to outside help yet (hivecommons/hive#18898).
 	contributorAdmissionReasonOwnerGrace = "owner_grace"
+	// contributorAdmissionReasonHeld: the issue's labels, as the cached
+	// snapshot has them after a webhook patch, carry a hold (the hold family
+	// or a configured hold label). A held issue is never offered.
+	contributorAdmissionReasonHeld = "issue_held"
+	// contributorAdmissionReasonAwaitingTriage: reporter trust is on, the
+	// reporter is not trusted, and the issue carries none of the configured
+	// triage labels (hivecommons/hive#9665).
+	contributorAdmissionReasonAwaitingTriage = "awaiting_triage"
 )
+
+// cachedLabelsHeld reports whether the snapshot's labels carry a hold, using
+// the GitHub client's hold set (the hold family plus the configured hold
+// labels) — the predicate enumeration uses. Without a client the generic
+// hold family still applies.
+func (h *ContributeWSHub) cachedLabelsHeld(labels []string) bool {
+	var gh *ghpkg.Client
+	if h != nil && h.server != nil && h.server.deps != nil {
+		gh = h.server.deps.GHClient
+	}
+	return gh.IsHeldLabels(labels)
+}
+
+// cachedAwaitingTriage applies the reporter-trust triage gate to the
+// snapshot's labels and reporter, with the configured trusted associations,
+// trusted logins and triage labels. Unknown reporter data admits: the live
+// gate reads the forge before anything is assigned.
+func (h *ContributeWSHub) cachedAwaitingTriage(candidate contributorAdmissionCandidate) bool {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.Config == nil {
+		return false
+	}
+	if !candidate.authorIsHuman || candidate.authorAssociation == "" {
+		return false
+	}
+	filter := h.server.deps.Config.Project.IssueFilter
+	if !filter.ReporterTrustEnabled() {
+		return false
+	}
+	return !filter.AdmitsReporter(candidate.labels, candidate.author, candidate.authorAssociation)
+}
 
 // evaluateContributorNeutralAdmission applies repository-global admission
 // decisions shared by ReadyQueue and selectTask. Contributor-specific policy,
@@ -200,6 +254,16 @@ func (h *ContributeWSHub) evaluateContributorNeutralAdmission(sweep *contributor
 			return blockedWorkflowAdmissionDecision(label)
 		}
 		return labelSkippedAdmissionDecision(label)
+	}
+	// A hold or a missing triage label on the cached labels (webhook-patched
+	// within seconds of the change) keeps the issue out of the Ready queue
+	// and out of selection. The enumerator never lists such an issue; this
+	// covers the window before the next enumeration drops it.
+	if h.cachedLabelsHeld(candidate.labels) {
+		return contributorAdmissionDecision{reason: contributorAdmissionReasonHeld}
+	}
+	if candidate.isGitHubBacked() && h.cachedAwaitingTriage(candidate) {
+		return contributorAdmissionDecision{reason: contributorAdmissionReasonAwaitingTriage}
 	}
 
 	// isGitHubBacked remains the hard boundary around BOTH legacy observers: the
