@@ -990,6 +990,8 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 		r = s.discoverAgyModels()
 	case ompBackendID:
 		r = s.discoverOmpModels()
+	case opencodeBackendID:
+		r = s.discoverOpencodeModels()
 	case bobBackendID:
 		// bob picks its own model and exposes no catalog, so there is nothing
 		// to discover. The single auto sentinel is authoritative (not a
@@ -1212,6 +1214,8 @@ func cliStaticFallback(backend string) []string {
 		return agyStaticModels
 	case ompBackendID:
 		return ompStaticModels
+	case opencodeBackendID:
+		return opencodeStaticModels
 	case bobBackendID:
 		return bobStaticModels
 	case "pi":

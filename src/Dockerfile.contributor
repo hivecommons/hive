@@ -518,6 +518,38 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
        echo "WARN: omp download failed — skipping (backend: omp will be unavailable)"; \
      fi
 
+# --- OpenCode CLI (backend: opencode) ---
+# Shipped in the contributor image so the relay can run backend: opencode (parity with Dockerfile; keep the two layers identical).
+# The release tarball holds one self-contained executable (`opencode`). Pins are
+# the digests GitHub publishes for the glibc linux-x64 / linux-arm64 assets of
+# anomalyco/opencode v2.3.2; bump OPENCODE_VERSION and both digests together.
+# Download failures are tolerated like Goose/agy/omp (the backend is optional and
+# a Releases outage must not block every other backend's image); checksum
+# mismatches never are. No credential is baked in: opencode reads
+# $XDG_DATA_HOME/opencode/auth.json or provider env vars, and its bundled
+# `opencode/*-free` models need none.
+ARG OPENCODE_VERSION=2.3.2
+ARG OPENCODE_SHA256_AMD64=563b5d663637226b6e3bb4bb6803281bc39b0d2cd88db06d674b6420aab009b0
+ARG OPENCODE_SHA256_ARM64=9d10185acdb72336e086e699ca363a6065f410fd3c1caed0dc8046e95ac06ccb
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+  && case "$ARCH" in \
+       amd64|x86_64) OPENCODE_ASSET=opencode-linux-x64; OPENCODE_SHA256="$OPENCODE_SHA256_AMD64" ;; \
+       arm64|aarch64) OPENCODE_ASSET=opencode-linux-arm64; OPENCODE_SHA256="$OPENCODE_SHA256_ARM64" ;; \
+       *) echo "unsupported arch for opencode: $ARCH" >&2; exit 1 ;; \
+     esac \
+  && if curl -fsSL --retry 60 --retry-delay 10 --retry-max-time 600 --retry-connrefused --retry-all-errors \
+       --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 600 \
+       "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${OPENCODE_ASSET}.tar.gz" \
+       -o /tmp/opencode.tgz; then \
+       echo "${OPENCODE_SHA256}  /tmp/opencode.tgz" | sha256sum -c - \
+       && tar -xzf /tmp/opencode.tgz -C /tmp opencode \
+       && install -m 0755 /tmp/opencode /usr/local/bin/opencode \
+       && rm -f /tmp/opencode /tmp/opencode.tgz \
+       && opencode --version; \
+     else \
+       echo "WARN: opencode download failed — skipping (backend: opencode will be unavailable)"; \
+     fi
+
 # Install Pi CLI (pi.dev coding agent). Do not use pi.dev's curl-pipe-to-shell
 # installer here: it is mutable and executes remote shell as root. Pi publishes
 # npm-shrinkwrap.json, so install a pinned npm package with lifecycle scripts

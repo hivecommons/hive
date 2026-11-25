@@ -247,6 +247,12 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		{"HIVE_BACKEND", backend, false},
 		{"HIVE_MODEL", model, false},
 	}
+	if backend == "opencode" && strings.TrimSpace(model) != "" {
+		// The opencode TUI has no --model flag; inline config selects it.
+		if cfg, err := json.Marshal(map[string]string{"model": strings.TrimSpace(model)}); err == nil {
+			vars = append(vars, agentEnvPair{"OPENCODE_CONFIG_CONTENT", string(cfg), false})
+		}
+	}
 	if backend == "cline" {
 		source := os.Getenv("HIVE_CLINE_CONFIG_DIR")
 		if source == "" {
