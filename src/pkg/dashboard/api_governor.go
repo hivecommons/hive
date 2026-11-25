@@ -74,6 +74,9 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 	// #15335 current-base gate: same three-way shape as #5117/#9665
 	// (hive-wide default on the Features tab, per-repo override here).
 	repoCurrentBase := make(map[string]map[string]any, len(cfg.Project.Repos))
+	// Per-repo open-PRs mode (repo_policies[].open_prs): the repo's own
+	// mode and the effective one after project.open_prs.
+	repoOpenPRs := make(map[string]map[string]any, len(cfg.Project.Repos))
 	for _, repo := range cfg.Project.Repos {
 		full := repo
 		if strings.Contains(repo, "/") {
@@ -98,6 +101,7 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 			cbEntry["value"] = *v
 		}
 		repoCurrentBase[full] = cbEntry
+		repoOpenPRs[full] = repoOpenPRsPayload(cfg, repo)
 	}
 	// hivecommons/hive#11313 label-driven approval, rendered on the Repos tab
 	// next to the per-repo opt-in. EFFECTIVE values are sent for the defaulted
@@ -208,6 +212,8 @@ func (s *Server) handleGovernorConfigGet(w http.ResponseWriter, r *http.Request)
 		"labelDrivenApproval":            labelDrivenApproval,
 		"currentBaseDefault":             cfg.AutoMerge.CurrentBaseDefaultEnabled(),
 		"repoCurrentBase":                repoCurrentBase,
+		"repoOpenPRs":                    repoOpenPRs,
+		"openPRsHiveWide":                cfg.Project.PRsAllowed(),
 		// Kick-list caps, rendered on the Repos tab. The EFFECTIVE values are
 		// sent (defaults and ceiling already resolved) so the fields always
 		// show the number actually in force rather than an empty box when the

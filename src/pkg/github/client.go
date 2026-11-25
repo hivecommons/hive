@@ -397,6 +397,9 @@ type Client struct {
 	prTerminalReviews    prTerminalReviewCache
 	prTerminalEnrichment terminalEnrichmentState
 	prRepoPolicyGate     atomic.Pointer[PRRepoPolicyGate]
+	// prOpenModeGate is the per-repo open-PRs gate (repo_policies[].open_prs).
+	// See pr_open_mode_gate.go.
+	prOpenModeGate atomic.Pointer[PROpenModeGate]
 	// agentStartHook is told when an agent's own relay request shows it
 	// working an issue (#10527). See agent_start_hook.go.
 	agentStartHook atomic.Pointer[AgentStartHook]

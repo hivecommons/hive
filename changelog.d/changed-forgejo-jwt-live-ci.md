@@ -1,1 +1,0 @@
-- CI now runs the Forgejo JWT live check against a real Forgejo 17 in a nightly lane on GitHub-hosted runners (schedule and manual dispatch only, never a required check), so the per-tier JWT path no longer depends on a manual run; `forgejo-live.sh` accepts `RUNTIME=docker` and a host Go toolchain, and the check also confirms a write-scope integration can push (#19494).

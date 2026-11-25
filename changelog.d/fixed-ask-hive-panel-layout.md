@@ -1,1 +1,0 @@
-- Fix the Ask Hive panel: it now sits below the dashboard header with a title and close button, uses one type scale, renders answers as markdown with numbered source citations, shows progress while a question is answered (with Retry on failure), and keeps scrolling inside the panel.

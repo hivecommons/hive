@@ -544,7 +544,6 @@ project.label_driven_approval_labels[] # TODO #11854
 project.label_driven_supersede_park_actors[] # TODO #11854
 project.label_driven_trust_org_members # TODO #11854
 project.label_driven_trusted_bots[] # TODO #11854
-project.open_prs # TODO #11854
 project.paused_repos[].at # TODO #11854
 project.paused_repos[].by # TODO #11854
 project.paused_repos[].reason # TODO #11854
