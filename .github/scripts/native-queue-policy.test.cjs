@@ -468,6 +468,124 @@ test('untrusted events and workflow provenance are rejected', async () => {
   await assert.rejects(evaluate(g), /Unexpected workflow/);
 });
 
+// feedback.yml's `gate` job is skipped on a PR closed unmerged. Adopting a PR
+// at the same head closes the original after opening the copy, so that skip
+// lands newer than docker.yml's `gate` on the copy's head.
+const FEEDBACK_RUN = 8000;
+function feedbackGateFixture(eventName, { dockerGate = true, feedback = {} } = {}) {
+  const f = fixture(eventName);
+  const runs = f.state.runs.get(sha(11));
+  const docker = runs.find(r => r.name === 'gate');
+  runs.push({ ...docker, id: 900, conclusion: 'skipped', check_suite: { id: 17000 },
+    details_url: `https://github.com/acme/widget/actions/runs/${FEEDBACK_RUN}/job/1`, ...feedback });
+  if (!dockerGate) runs.splice(runs.indexOf(docker), 1);
+  f.state.feedbackJobReads = 0;
+  f.state.workflowRunReads = 0;
+  const getWorkflowRun = f.github.rest.actions.getWorkflowRun;
+  f.github.rest.actions.getWorkflowRun = async args => {
+    f.state.workflowRunReads++;
+    return args.run_id === FEEDBACK_RUN ? { data: {
+      id: FEEDBACK_RUN, check_suite_id: 17000, path: '.github/workflows/feedback.yml',
+      event: 'pull_request', head_sha: sha(11),
+    } } : getWorkflowRun(args);
+  };
+  const paginate = f.github.paginate;
+  f.github.paginate = async (method, args) => {
+    if (method !== 'jobs' || args.run_id !== FEEDBACK_RUN) return paginate(method, args);
+    f.state.feedbackJobReads++;
+    return [{
+      id: 180000, run_id: FEEDBACK_RUN, name: 'gate', head_sha: sha(11),
+      check_run_url: 'https://api.github.com/repos/acme/widget/check-runs/900',
+      status: 'completed', conclusion: 'skipped',
+    }];
+  };
+  return f;
+}
+
+const rejectsAsVerdict = (promise, provider, conclusion) => assert.rejects(promise, error => {
+  assert.ok(error instanceof ProviderVerdict, error.message);
+  assert.equal(error.provider, provider);
+  assert.equal(error.conclusion, conclusion);
+  return true;
+});
+
+test('a newer skipped gate from feedback.yml is passed over for docker.yml gate', async () => {
+  for (const eventName of [...PR_EVENTS, 'merge_group']) {
+    const f = feedbackGateFixture(eventName);
+    assert.match(await evaluate(f), /policy providers succeeded|validated all/, eventName);
+    assert.equal(f.state.feedbackJobReads, 0, 'a passed-over run is never bound');
+  }
+});
+
+test('the newest docker.yml gate still decides: a skipped one is a verdict over an older success', async () => {
+  for (const withFeedback of [false, true]) {
+    const f = withFeedback ? feedbackGateFixture('pull_request') : fixture('pull_request');
+    const runs = f.state.runs.get(sha(11));
+    const docker = runs.find(r => r.name === 'gate' && r.id === 100);
+    runs.push({ ...docker, id: 50 });
+    docker.conclusion = 'skipped';
+    await rejectsAsVerdict(evaluate(f), 'gate', 'skipped');
+  }
+});
+
+test('a newer docker.yml gate on an event gate does not accept is judged as before, never passed over', async () => {
+  for (const [conclusion, expect] of [['skipped', 'verdict'], ['success', /Unexpected workflow\/event\/head for gate/]]) {
+    const f = fixture('pull_request');
+    const runs = f.state.runs.get(sha(11));
+    const docker = runs.find(r => r.name === 'gate');
+    runs.push({ ...docker, id: 901, conclusion, check_suite: { id: 17001 },
+      details_url: 'https://github.com/acme/widget/actions/runs/8001/job/1' });
+    const getWorkflowRun = f.github.rest.actions.getWorkflowRun;
+    f.github.rest.actions.getWorkflowRun = async args => (args.run_id === 8001 ? { data: {
+      id: 8001, check_suite_id: 17001, path: '.github/workflows/docker.yml',
+      event: 'workflow_dispatch', head_sha: sha(11),
+    } } : getWorkflowRun(args));
+    if (expect === 'verdict') await rejectsAsVerdict(evaluate(f), 'gate', 'skipped');
+    else await assert.rejects(evaluate(f), expect);
+  }
+});
+
+test('a newer feedback.yml gate success is not passed over and stays a provenance failure', async () => {
+  const f = feedbackGateFixture('pull_request', { feedback: { conclusion: 'success' } });
+  await assert.rejects(evaluate(f), /Unexpected workflow\/event\/head for gate on #1/);
+});
+
+test('only a feedback.yml gate on the head is a provenance failure, never a skipped verdict', async () => {
+  for (const eventName of [...PR_EVENTS, 'merge_group']) {
+    const f = feedbackGateFixture(eventName, { dockerGate: false });
+    await assert.rejects(evaluate(f), error => {
+      assert.ok(!(error instanceof ProviderVerdict), error.message);
+      assert.ok(!(error instanceof PendingEvidence), error.message);
+      assert.match(error.message, /Unexpected workflow\/event\/head for gate on #1/);
+      return true;
+    });
+  }
+});
+
+test('a newer gate that is not provably another suite-bound workflow stops the scan and is judged as before', async () => {
+  // Another App: rejected as an untrusted provider, as today.
+  await assert.rejects(evaluate(feedbackGateFixture('pull_request', { feedback: { app: { id: 999 } } })),
+    /Untrusted provider or wrong head for gate/);
+  // A details_url that is not this repository's Actions run, or a check suite
+  // the workflow run does not own: the skip is read as the verdict, as today.
+  for (const feedback of [
+    { details_url: 'not a url' },
+    { details_url: `https://example.com/acme/widget/actions/runs/${FEEDBACK_RUN}/job/1` },
+    { check_suite: { id: 99999 } },
+    { check_suite: null },
+  ]) {
+    await rejectsAsVerdict(evaluate(feedbackGateFixture('pull_request', { feedback })), 'gate', 'skipped');
+  }
+});
+
+test('a newer pending feedback.yml gate is pending evidence with no workflow-run read', async () => {
+  for (const status of ['queued', 'in_progress']) {
+    const f = feedbackGateFixture('pull_request', { feedback: { status, conclusion: null } });
+    await assert.rejects(evaluate(f), error => error instanceof PendingEvidence && /gate is pending/.test(error.message));
+    assert.equal(f.state.workflowRunReads, 0);
+  }
+});
+
 for (const prEvent of PR_EVENTS) test('copied expected-run URL/name cannot substitute a foreign check suite or check identity' + ` [${prEvent}]`, async () => {
   for (const change of [
     { id: 999, check_suite: { id: 99999 } },
