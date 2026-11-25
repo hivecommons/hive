@@ -79,7 +79,7 @@ class NativeQueueWorkflows(unittest.TestCase):
         # Stage-label flips re-fire the PR-target run every few minutes; a
         # cancelling concurrency group would never let the bounded evidence
         # wait finish (#16942). Re-triggers must still run (a hold added after
-        # a green run must turn the check red) but must queue, not cancel.
+        # a green run must re-evaluate the head) but must queue, not cancel.
         data = workflow("native-queue-policy.yml")
         events = data.get("on", data.get(True))
         for action in ("edited", "labeled", "unlabeled"):
@@ -118,6 +118,18 @@ class NativeQueueWorkflows(unittest.TestCase):
         verdict = script[script.index("error instanceof ProviderVerdict"):]
         self.assertLess(verdict.index("core.setFailed(error.message)"),
                         verdict.index("instanceof PendingEvidence"))
+
+    def test_held_pr_is_a_notice_not_a_failure(self):
+        # A forgotten hold on an all-green PR read as a red CI check for
+        # hours: both the replay and the full wait surface a held verdict as
+        # a notice and summary, never core.setFailed.
+        steps = workflow("native-queue-policy.yml")["jobs"]["policy"]["steps"]
+        for name in ("Replay last verdict for cosmetic label flips", "Validate exact-head evidence"):
+            step = next(s for s in steps if s.get("name", "").startswith(name))
+            script = step["with"]["script"]
+            self.assertIn("isHeldVerdict(", script)
+            held = script[script.index("isHeldVerdict(", script.index("require(")):]
+            self.assertLess(held.index("core.notice("), held.index("core.info("))
 
     def test_dependabot_runs_the_same_trusted_pr_verifier(self):
         verifier = workflow("pr-verifier.yml")

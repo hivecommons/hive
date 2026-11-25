@@ -77,6 +77,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.handleMergedPRIssueStage":                         {Class: NotificationClassStatus},
 	"github.runRecheckSoak":                                   {Class: NotificationClassStatus},
 	"main.postReviewAcknowledgements":                         {Class: NotificationClassStatus},
+	"main.releaseGreenHold":                                   {Class: NotificationClassStatus},
 	"main.rfcNotifySource.Comment":                            {Class: NotificationClassStatus},
 	"main.unparkEscalatedPR":                                  {Class: NotificationClassStatus},
 
