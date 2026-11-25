@@ -218,7 +218,11 @@ func (k *KickServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		dir := k.workspaceDir()
 		var buf bytes.Buffer
-		if err := Pack(dir, &buf); err != nil {
+		skipped, err := PackSkipped(dir, &buf)
+		if len(skipped) > 0 {
+			fmt.Fprintf(k.stderr(), "job bridge: left %d entries out of the workspace pull (sockets, FIFOs, devices, oversized or vanished files): %s\n", len(skipped), strings.Join(skipped, ", "))
+		}
+		if err != nil {
 			http.Error(w, fmt.Sprintf("job bridge: packing workspace: %v", err), http.StatusInternalServerError)
 			return
 		}
