@@ -228,7 +228,11 @@ func TestGitHubToken_AppSetWhileWaitingForLockGets409(t *testing.T) {
 	s.githubConfigMu.Lock()
 	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() { done <- doGitHubTokenPut(s, map[string]any{"token": "ghp_new_token"}, true) }()
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-done:
+		t.Fatal("PUT completed while the GitHub config lock was held")
+	case <-time.After(50 * time.Millisecond):
+	}
 	s.deps.Config.GitHub.AppID = 123456
 	s.githubConfigMu.Unlock()
 

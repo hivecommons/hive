@@ -20,7 +20,7 @@ import (
 const defaultGitHubTokenRejectCooldown = 15 * time.Second
 
 // githubTokenRejectCooldownEnv names the override for the cooldown.
-const githubTokenRejectCooldownEnv = "HIVE_GITHUB_TOKEN_REJECT_COOLDOWN"
+const githubTokenRejectCooldownEnv = "HIVE_GITHUB_TOKEN_REJECT_COOLDOWN" // #nosec G101 -- the env var name, not a credential.
 
 // githubTokenSealable reports whether the config save would seal the token.
 // A var so tests can cover both outcomes without a live keystore.
