@@ -14,6 +14,7 @@ import (
 
 func TestAgentSandboxSetupEditable(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	rec := doPut(s, "/api/config/agent/scanner/general", map[string]any{
 		"sandboxSetup": map[string]any{
 			"commands":       []any{"./scripts/install-ml-stack.sh", " "},
@@ -63,6 +64,7 @@ func TestAgentSandboxSetupEditable(t *testing.T) {
 
 func TestAgentSandboxSetupEmptyListsTurnItOff(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	deps.Config.AgentSandbox.Setup = &config.SandboxSetupConfig{Commands: []string{"./install.sh"}}
 	rec := doPut(s, "/api/config/agent/scanner/general", map[string]any{"sandboxSetup": map[string]any{"commands": []any{}, "healthCommands": []any{}}})
 	if rec.Code != http.StatusOK {

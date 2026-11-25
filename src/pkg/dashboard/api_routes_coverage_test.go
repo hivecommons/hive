@@ -320,7 +320,8 @@ func TestCovG2_GovernorAddAgent(t *testing.T) {
 // ---------- Agent config: restrictions / prompt-save / general ----------
 
 func TestCovG2_AgentConfig(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 
 	// Restrictions: unknown agent → 404.
 	if rec := doPut(s, "/api/config/agent/ghost/restrictions", map[string]any{"agent": []any{}}); rec.Code != http.StatusNotFound {

@@ -91,6 +91,13 @@ func apiServer(t *testing.T) (*Server, *Dependencies) {
 	return s, deps
 }
 
+// writableConfig points cfg at a temp source file, so handlers that refuse a
+// save with nowhere to write (409, #19847) can persist in a test.
+func writableConfig(t *testing.T, cfg *config.Config) {
+	t.Helper()
+	cfg.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+}
+
 func doGet(s *Server, path string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -720,7 +727,8 @@ func TestHandleAgentConfigGet_MultilineDescription(t *testing.T) {
 }
 
 func TestHandleAgentConfigGeneral(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	enabled := true
 	clearOnKick := false
 	rec := doPut(s, "/api/config/agent/scanner/general",
@@ -739,7 +747,8 @@ func TestHandleAgentConfigGeneral_NotFound(t *testing.T) {
 }
 
 func TestHandleAgentConfigModels(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	rec := doPut(s, "/api/config/agent/scanner/models",
 		map[string]interface{}{"backend": "copilot", "model": "gpt-4o"})
 	if rec.Code != http.StatusOK {
@@ -1273,7 +1282,8 @@ func TestHandlePane_WithLines(t *testing.T) {
 }
 
 func TestHandleAgentConfigCadences(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	body := map[string]int64{"idle": 900, "busy": 300}
 	rec := doPut(s, "/api/config/agent/scanner/cadences", body)
 	if rec.Code != http.StatusOK {
@@ -1290,7 +1300,8 @@ func TestHandleAgentConfigCadences_NotFound(t *testing.T) {
 }
 
 func TestHandleAgentConfigCadences_Pause(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	body := map[string]int64{"idle": 0}
 	rec := doPut(s, "/api/config/agent/scanner/cadences", body)
 	if rec.Code != http.StatusOK {
@@ -1299,7 +1310,8 @@ func TestHandleAgentConfigCadences_Pause(t *testing.T) {
 }
 
 func TestHandleAgentConfigCadences_StructuredTimesRoundTrip(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	body := map[string]any{"idle": map[string]any{
 		"times": []string{"09:00", "17:00"},
 		"days":  []string{"mon", "tue", "wed", "thu", "fri"},
@@ -1322,7 +1334,8 @@ func TestHandleAgentConfigCadences_StructuredTimesRoundTrip(t *testing.T) {
 }
 
 func TestHandleAgentConfigCadences_ContinuousRoundTrip(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	rec := doPut(s, "/api/config/agent/scanner/cadences", map[string]any{"surge": "continuous"})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())

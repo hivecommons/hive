@@ -8,6 +8,7 @@ import (
 
 func TestAgentConfigContinuousRoundTrip(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 
 	cfg := deps.Config.Agents["scanner"]
 	cfg.Continuous = true

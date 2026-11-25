@@ -55,6 +55,7 @@ func TestUpdateAgentProcessConfig(t *testing.T) {
 // reconciliation has deliberately left it out of the enabled runtime roster.
 func TestGeneralConfigDisabledAgentDoesNotWarnAboutMissingProcess(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	deps.AgentMgr = cruxtest.NewRecorder()
 	deps.Config.Agents["strategist"] = config.AgentConfig{Backend: "claude", Enabled: false}
 	var logs bytes.Buffer
