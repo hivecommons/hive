@@ -259,6 +259,15 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		time.Sleep(preLaunchShellClearDelay)
 	}
 
+	// A session built while the agent was inference-routed hands its shell's
+	// ANTHROPIC_BASE_URL to a CLI launched on a non-routed backend, sending it
+	// to the translator the launch above just cleared (#19811).
+	if !isInference {
+		if err := m.retireTranslatorSessionLocked(agent); err != nil {
+			return err
+		}
+	}
+
 	m.fixSharedConfigPerms(agent)
 
 	// NOTE on Copilot's "Confirm folder trust" modal (≥1.0.78): #4563 tried to
