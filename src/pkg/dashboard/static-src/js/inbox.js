@@ -433,7 +433,8 @@
       const href = inboxShareTargetHref(rec, canOpen);
       if (href) return '<a' + attrs + ' href="' + escapeHtml(href) + '"' + (/^https?:/.test(href) ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + inner + '</a>';
       if (canOpen && rec.destination === 'knowledge' && (rec.ref || {}).id && it && it.fact_slug) {
-        return '<a' + attrs + ' href="#" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '">' + inner + '</a>';
+        const layer = inboxFactLayer(it);
+        if (layer) return '<a' + attrs + ' href="#" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(layer) + '">' + inner + '</a>';
       }
       return '<span' + attrs + '>' + inner + '</span>';
     }
@@ -464,7 +465,8 @@
       const dur = inboxFmtDuration(it.duration_ms);
       // The backing Knowledge fact is a plain link in the metadata line, not
       // an action: it only opens the fact.
-      const factLink = it.fact_slug ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
+      const factLayer = it.fact_slug && inboxFactLayer(it);
+      const factLink = factLayer ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(factLayer) + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
       // The title is shown without its trailing recording id; the id and the
       // Knowledge state join the meta line, and the full title is the tooltip.
       const tp = inboxTitleParts(it.title || it.id);
@@ -827,7 +829,12 @@
       const settings = data.settings || {};
       const rules = Array.isArray(settings.rules) ? settings.rules.length : 0;
       if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
-      const shown = items.filter(it => _inboxShowProcessed || !it.processed);
+      const shown = inboxShownItems();
+      const selectedBeforeRender = _inboxSelected.size;
+      inboxPruneSelection(shown);
+      const closeBulkMenu = _inboxSelected.size !== selectedBeforeRender && _inboxShareMenu?.btn.dataset.action === 'inboxBulkMenu';
+      const restoreBulkFocus = closeBulkMenu && (_inboxShareMenu.btn === document.activeElement || _inboxShareMenu.el.contains(document.activeElement));
+      if (closeBulkMenu) inboxShareMenuClose(false);
       // Sources line: only configured sources are chips (with the account
       // hint); the rest sit behind a "+N more" disclosure next to Connect
       // sources, so the header is one quiet line instead of a wall of
@@ -859,6 +866,10 @@
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
       const paint = () => { panel.innerHTML = html; };
       inboxPreserveAudio(panel, typeof inboxNoteKeepFocus === 'function' ? () => inboxNoteKeepFocus(paint) : paint);
+      if (restoreBulkFocus) {
+        const control = panel.querySelector('[data-action="inboxBulkMenu"]') || panel.querySelector('[data-action="inboxToggleProcessed"]');
+        control?.focus();
+      }
       inboxApplyFocus(panel);
     }
 
@@ -881,6 +892,16 @@
     }
     function inboxToggleSources() { _inboxSourcesOpen = !_inboxSourcesOpen; renderInbox(); }
 
+    function inboxShownItems() {
+      return ((_inboxCache || {}).items || []).filter(it => _inboxShowProcessed || !it.processed);
+    }
+    function inboxPruneSelection(shown) {
+      if (!_inboxSelected.size) return;
+      const shownKeys = new Set(shown.map(inboxItemKey));
+      for (const key of _inboxSelected) {
+        if (!shownKeys.has(key)) _inboxSelected.delete(key);
+      }
+    }
     function inboxToggleProcessed() { _inboxShowProcessed = !_inboxShowProcessed; renderInbox(); }
     function inboxToggleSelect(src, id) {
       const key = src + '/' + id;
@@ -888,12 +909,15 @@
       renderInbox();
     }
     function inboxSelectAll() {
-      const shown = ((_inboxCache || {}).items || []).filter(it => _inboxShowProcessed || !it.processed);
+      const shown = inboxShownItems();
       if (_inboxSelected.size === shown.length) _inboxSelected.clear();
       else _inboxSelected = new Set(shown.map(inboxItemKey));
       renderInbox();
     }
     function inboxFind(src, id) { return ((_inboxCache || {}).items || []).find(it => it.source === src && it.id === id); }
+    function inboxFactLayer(it) {
+      return it.fact_source_layer || (it.fact_path ? '' : it.layer || 'all');
+    }
     function inboxOpenFact(slug, layer) {
       ocNavigate('knowledge-section');
       kbReadFact(slug, layer || undefined);

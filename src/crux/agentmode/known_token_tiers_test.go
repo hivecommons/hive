@@ -19,18 +19,18 @@ func TestKnownTokenTiers_CoversEveryTokenTierForRole(t *testing.T) {
 
 func TestLessPrivilegedTokenTier(t *testing.T) {
 	tests := []struct {
-		tier string
-		want string
+		tier TokenTier
+		want TokenTier
 		ok   bool
 	}{
-		{"reviewer", "advisor", true},
-		{"shared-uid-read", "advisor", true},
-		{SecCheckTier, "contributor", true},
-		{SecCheckTrustedTier, "trusted", true},
-		{"trusted", "contributor", true},
-		{"advisor", "", false},
-		{"newcomer", "", false},
-		{"contributor", "", false},
+		{TokenTierReviewer, TokenTierAdvisor, true},
+		{TokenTierSharedUIDRead, TokenTierAdvisor, true},
+		{SecCheckTier, TokenTierContributor, true},
+		{SecCheckTrustedTier, TokenTierTrusted, true},
+		{TokenTierTrusted, TokenTierContributor, true},
+		{TokenTierAdvisor, "", false},
+		{TokenTierNewcomer, "", false},
+		{TokenTierContributor, "", false},
 		{"Contributor", "", false},
 		{"", "", false},
 	}
@@ -58,7 +58,7 @@ func TestLessPrivilegedTokenTier_NeverEscalatesAndEndsInKnownTier(t *testing.T) 
 				t.Errorf("chain from %q reaches unknown tier %q", start, next)
 			}
 			if !startKnown {
-				if next != "advisor" {
+				if next != TokenTierAdvisor {
 					t.Errorf("chain from %q, which ModeForTokenTier does not know, goes to %q, want advisor", start, next)
 				}
 			} else if m, _ := ModeForTokenTier(next); m > startMode {

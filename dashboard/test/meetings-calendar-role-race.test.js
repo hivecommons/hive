@@ -94,6 +94,16 @@ test('meetings and calendar are in the dashboard layout template', () => {
   assert.match(m[1], /'inbox-section','calendar-section','meetings-section'/);
 });
 
+test('calendar link label follows the selected meeting after moving back to an earlier occurrence', () => {
+  const sb = makeSandbox({});
+  const link = sb.calendarMeetingLink({
+    meeting_id: 'earlier',
+    status: 'ended',
+    history: [{ meeting_id: 'earlier', status: 'ended' }, { meeting_id: 'later', status: 'live' }],
+  });
+  assert.match(link, /data-arg0="earlier">Notes</);
+});
+
 test('while the role is unknown both panels show loading, not the not-allowed notice, and fetch nothing', async () => {
   const sb = makeSandbox({});
   await sb.fetchMeetings();

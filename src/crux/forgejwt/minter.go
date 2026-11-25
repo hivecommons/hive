@@ -17,7 +17,7 @@ import (
 const SubjectPrefix = "hive:"
 
 // Subject is the sub claim for tier.
-func Subject(tier string) string { return SubjectPrefix + tier }
+func Subject(tier agentmode.TokenTier) string { return SubjectPrefix + string(tier) }
 
 // Minter is the Forgejo analogue of the GitHub App installation-token
 // minter: a pushbroker.TieredMinter whose tokens are one-hour JWTs for the
@@ -26,16 +26,16 @@ func Subject(tier string) string { return SubjectPrefix + tier }
 type Minter struct {
 	Signer Signer
 	// Audiences maps a token tier to the aud of the integration made for it.
-	Audiences map[string]Audience
+	Audiences map[agentmode.TokenTier]Audience
 	// Tier is the tier this minter mints for; empty is
 	// pushbroker.DefaultTier.
-	Tier string
+	Tier agentmode.TokenTier
 }
 
 var _ pushbroker.TieredMinter = Minter{}
 
 // WithTier implements pushbroker.TieredMinter.
-func (m Minter) WithTier(tier string) pushbroker.TokenMinter {
+func (m Minter) WithTier(tier agentmode.TokenTier) pushbroker.TokenMinter {
 	m.Tier = tier
 	return m
 }
@@ -54,8 +54,8 @@ func (m Minter) MintPushToken(_ context.Context, _ string) (string, error) {
 // minter's own tier when it has one, else the closest less-privileged tier
 // that does. It never moves to a more-privileged tier, and it refuses an
 // unknown tier.
-func (m Minter) audience() (string, Audience, error) {
-	tier := strings.TrimSpace(m.Tier)
+func (m Minter) audience() (agentmode.TokenTier, Audience, error) {
+	tier := agentmode.TokenTier(strings.TrimSpace(string(m.Tier)))
 	if tier == "" {
 		tier = pushbroker.DefaultTier
 	}

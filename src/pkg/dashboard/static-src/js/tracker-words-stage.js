@@ -124,7 +124,9 @@
       if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
       if (n === 0 && mods.indexOf('draft') >= 0) return 'Open · draft';
       // Guarded: test harnesses lift this function by name without the 000-new helpers.
-      if (n === 0 && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item)) return 'Triage needed';
+      // An open contributor PR rides the triage word (hivecommons/hive#19843).
+      const triagePR = typeof stageTrackerTriagePRSuffix === 'function' ? stageTrackerTriagePRSuffix(item) : '';
+      if (n === 0 && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item)) return 'Triage needed' + triagePR;
       if (n === 0 && typeof stageTrackerNewState === 'function' && stageTrackerNewState(item)) return 'New';
       // An issue parked on a person (045, or a pre-045 085 with no covering
       // PR) is parked itself, so no "(its PR)" suffix.
@@ -132,7 +134,7 @@
       switch (n) {
         case 0: return 'Open';
         case 10: return 'Waiting for a worker';
-        case 15: return 'Triage needed';
+        case 15: return 'Triage needed' + triagePR;
         case 17: return 'Possibly exists · needs author';
         case 18: return 'Open for discussion';
         case 20: return 'Claimed';

@@ -38,6 +38,9 @@ type matchHarness struct {
 func newMatchHarness(t *testing.T) *matchHarness {
 	t.Helper()
 	resetCustomerMatchStore(t)
+	// The hives these tests ask as are inside the hub's trust domain;
+	// customer_trust_test.go covers a hive that is not.
+	t.Setenv(customersTrustedHivesEnv, "one,two")
 	s := newHandlerHub()
 	s.mux = http.NewServeMux()
 	s.registerCustomerSharingRoutes()

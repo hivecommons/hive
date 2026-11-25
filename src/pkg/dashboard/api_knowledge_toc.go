@@ -189,9 +189,10 @@ func (s *Server) handleKnowledgeEntryState(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		State        string `json:"state"`
-		SupersededBy string `json:"superseded_by"`
-		Reason       string `json:"reason"`
+		State        string              `json:"state"`
+		SupersededBy string              `json:"superseded_by"`
+		Reason       string              `json:"reason"`
+		SourceLayer  knowledge.LayerType `json:"source_layer"`
 	}
 	if err := decodeBody(r, &req); err != nil {
 		jsonError(w, "invalid request body", http.StatusBadRequest)
@@ -224,7 +225,7 @@ func (s *Server) handleKnowledgeEntryState(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	change, err := s.deps.Knowledge.SetEntryState(id, state, supersededBy)
+	change, err := s.deps.Knowledge.SetEntryStateInLayer(req.SourceLayer, id, state, supersededBy)
 	switch {
 	case errors.Is(err, knowledge.ErrEntryNotWritable):
 		jsonError(w, "knowledge entry not found in a writable channel", http.StatusNotFound)

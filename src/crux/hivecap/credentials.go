@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/api/callback"
 	"github.com/hivecommons/hive/crux/config"
 )
@@ -84,14 +85,14 @@ func (w *AppTokenWriter) dir() string {
 // callback.ErrUnavailable; both leave the cache file untouched (a stale
 // token is better than none until it expires) and are returned so the
 // manager's condition reporting sees them.
-func (w *AppTokenWriter) WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error {
+func (w *AppTokenWriter) WriteAgentToken(ctx context.Context, agentName string, tier agentmode.TokenTier, agentUID int) error {
 	if w == nil || w.caps == nil {
 		return errors.New("hivecap: no capabilities")
 	}
 	if w.injectOn != nil && w.injectOn() {
 		return fmt.Errorf("%w: agent %s", ErrProxyInjectionUnsupported, agentName)
 	}
-	resp, err := w.caps.MintToken(ctx, callback.MintTokenRequest{Agent: agentName, Tier: tier})
+	resp, err := w.caps.MintToken(ctx, callback.MintTokenRequest{Agent: agentName, Tier: string(tier)})
 	if err != nil {
 		return fmt.Errorf("minting scoped token for %s: %w", agentName, err)
 	}
@@ -111,7 +112,7 @@ func (w *AppTokenWriter) WriteAgentToken(ctx context.Context, agentName, tier st
 	}
 	// Shared-UID mode has no private agent group; keep this owner-only even
 	// if a previous deployment pre-created a group-readable cache.
-	if agentUID == 0 && tier == crux.SharedUIDReadTokenTier {
+	if agentUID == 0 && tier == agentmode.TokenTierSharedUIDRead {
 		if err := f.Chmod(agentTokenCachePerms); err != nil {
 			_ = f.Close()
 			return fmt.Errorf("securing shared-UID token cache %s: %w", cachePath, err)
@@ -156,13 +157,13 @@ func NewAgentMint(caps any, timeout time.Duration) AgentMint {
 func (m AgentMint) Enabled() bool { return m.caps != nil }
 
 // MintAgentToken asks hive for agentName's mint credential at tier.
-func (m AgentMint) MintAgentToken(agentName, tier string) (string, error) {
+func (m AgentMint) MintAgentToken(agentName string, tier agentmode.TokenTier) (string, error) {
 	if m.caps == nil {
 		return "", nil
 	}
 	ctx, cancel := background(m.timeout)
 	defer cancel()
-	resp, err := m.caps.MintAgentToken(ctx, callback.AgentMintRequest{Agent: agentName, Tier: tier})
+	resp, err := m.caps.MintAgentToken(ctx, callback.AgentMintRequest{Agent: agentName, Tier: string(tier)})
 	if errors.Is(err, callback.ErrNotConfigured) {
 		return "", nil
 	}

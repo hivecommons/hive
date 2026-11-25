@@ -132,8 +132,13 @@ func TestRepoItemDecisionApprovePRReleasesThePark(t *testing.T) {
 	if strings.Join(mock.removed, ",") != "needs-human,085-needs-decision,sentinel-alert" {
 		t.Fatalf("removed = %v", mock.removed)
 	}
-	if len(mock.comments) != 2 || len(mock.added)+len(mock.edits) != 0 {
-		t.Fatalf("approval still posts the two commands and nothing else: comments=%d added=%v edits=%v", len(mock.comments), mock.added, mock.edits)
+	// The two commands, then one note naming who released the labels
+	// (hivecommons/hive#19852); nothing is labelled or edited.
+	if len(mock.comments) != 3 || len(mock.added)+len(mock.edits) != 0 {
+		t.Fatalf("approval posts the two commands and the actor note, nothing else: comments=%d added=%v edits=%v", len(mock.comments), mock.added, mock.edits)
+	}
+	if note := mock.comments[2]; !strings.Contains(note, dashboardActorNoteMarker(dashboardActorKindApproval)) || !strings.Contains(note, "@writer") || !strings.Contains(note, "`needs-human`") {
+		t.Fatalf("actor note = %q", note)
 	}
 	srv.stageTrackerCacheMu.Lock()
 	stale, after := srv.stageTrackerCache.stale, srv.stageTrackerGen

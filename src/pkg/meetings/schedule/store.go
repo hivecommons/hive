@@ -296,6 +296,11 @@ func (s *Store) Cancel(uid string, recurrenceID *time.Time, sequence int, reason
 func (s *Store) overrides(uid string) []time.Time {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.overridesLocked(uid)
+}
+
+// overridesLocked returns the current overrides while s.mu is held.
+func (s *Store) overridesLocked(uid string) []time.Time {
 	var out []time.Time
 	for _, e := range s.events {
 		if e.UID == uid && e.RecurrenceID != nil {

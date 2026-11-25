@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/hivecommons/hive/crux/agentmode"
 )
 
 func TestNormalizeForgeBaseURL(t *testing.T) {
@@ -99,7 +101,9 @@ func TestCredentialStoreLine(t *testing.T) {
 type tierMinter struct{ tier string }
 
 func (m tierMinter) MintPushToken(context.Context, string) (string, error) { return "t-" + m.tier, nil }
-func (m tierMinter) WithTier(tier string) TokenMinter                      { return tierMinter{tier: tier} }
+func (m tierMinter) WithTier(tier agentmode.TokenTier) TokenMinter {
+	return tierMinter{tier: string(tier)}
+}
 
 func TestWithTier(t *testing.T) {
 	if WithTier(nil, "x") != nil {

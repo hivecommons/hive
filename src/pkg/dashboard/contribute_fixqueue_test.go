@@ -2,7 +2,9 @@ package dashboard
 
 import (
 	"context"
+	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -334,5 +336,74 @@ func TestFixQueueInstantRelayFailureIsNotDelivered(t *testing.T) {
 	hub.fixQueueMu.Unlock()
 	if owned != 0 || waiters != 0 || failures != 0 {
 		t.Fatalf("leftover state: owners=%d waiters=%d failures=%d", owned, waiters, failures)
+	}
+}
+
+// fixGiveUpLevels records the level of every fix-pr give-up log line.
+type fixGiveUpLevels struct {
+	mu     sync.Mutex
+	levels []slog.Level
+}
+
+func (r *fixGiveUpLevels) Enabled(context.Context, slog.Level) bool { return true }
+func (r *fixGiveUpLevels) WithAttrs([]slog.Attr) slog.Handler       { return r }
+func (r *fixGiveUpLevels) WithGroup(string) slog.Handler            { return r }
+func (r *fixGiveUpLevels) Handle(_ context.Context, rec slog.Record) error {
+	if strings.Contains(rec.Message, "giving up on relay delivery") {
+		r.mu.Lock()
+		r.levels = append(r.levels, rec.Level)
+		r.mu.Unlock()
+	}
+	return nil
+}
+
+// A relay whose agent CLI cannot authenticate fails every fix-pr it is
+// handed until its contributor logs in again. The give-up after
+// fixTaskMaxAttempts is then the contributor's to fix, so it must stay below
+// WARN, where the fleet self-report feed would file it against the hive
+// (hivecommons/hive#19816). Any other relay failure still warns.
+func TestFixQueueGiveUpLevelFollowsFailureCause(t *testing.T) {
+	cases := []struct {
+		name string
+		fail WSMessage
+		want slog.Level
+	}{
+		{"expired CLI OAuth session", WSMessage{Reason: "headless CLI exited with error: code 1: Failed to authenticate: OAuth session expired and could not be refreshed"}, slog.LevelInfo},
+		{"declared environment failure", WSMessage{Reason: "headless CLI exited with error: code 1", FailureKind: TaskFailureKindEnvironment}, slog.LevelInfo},
+		{"work failure", WSMessage{Reason: "headless CLI exited with error: code 1: tests still failing"}, slog.LevelWarn},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			hub, _ := covK2Hub(t)
+			rec := &fixGiveUpLevels{}
+			hub.logger = slog.New(rec)
+			hub.fixAckGrace = time.Millisecond
+			c := fixConn(hub, "alice", fixCaps(capFixPRInterrupt), time.Now())
+			s := &wsSession{h: hub, contributor: c}
+			got := captureFixDispatch(hub)
+			hub.Nudge(context.Background(), fixNudge("r", 1, "build"))
+			if len(*got) != 1 {
+				t.Fatalf("dispatches = %d, want 1", len(*got))
+			}
+			fail := func(taskID string) {
+				m := tc.fail
+				m.Type, m.TaskID = "task_failed", taskID
+				s.handleTaskFailed(m)
+			}
+			fail((*got)[0].TaskID)
+			for attempt := 2; attempt <= fixTaskMaxAttempts; attempt++ {
+				msg := hub.selectFixTask(c)
+				if msg == nil {
+					t.Fatalf("attempt %d: queued fix not served", attempt)
+				}
+				fail(msg.TaskID)
+			}
+			rec.mu.Lock()
+			levels := append([]slog.Level(nil), rec.levels...)
+			rec.mu.Unlock()
+			if len(levels) != 1 || levels[0] != tc.want {
+				t.Fatalf("give-up log levels = %v, want [%v]", levels, tc.want)
+			}
+		})
 	}
 }

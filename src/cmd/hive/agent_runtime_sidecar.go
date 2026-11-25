@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/api/callback"
 	cruxconfig "github.com/hivecommons/hive/crux/config"
@@ -264,7 +265,7 @@ func (h *sidecarHost) Enabled() bool {
 	return m != nil && m.Enabled()
 }
 
-func (h *sidecarHost) MintAgentToken(agentName, tier string) (string, error) {
+func (h *sidecarHost) MintAgentToken(agentName string, tier agentmode.TokenTier) (string, error) {
 	h.mu.Lock()
 	m := h.mint
 	h.mu.Unlock()
@@ -525,6 +526,16 @@ func (b *boot) hiveCallbackCapabilities() *cruxhost.Capabilities {
 	deps.Usage = lateUsageSink{get: b.inferenceSinkRef, logger: b.logger, once: &sync.Once{}}
 	if b.ghClient != nil {
 		deps.PullRequests = b.ghClient
+		// Per-repo open-PRs mode (repo_open_prs.go). The callback names no
+		// agent, so the hand-off record cannot vouch for a workflow PR here:
+		// a workflow_only repo refuses, as an off one does.
+		deps.RepoPRRefusal = func(repo string) string {
+			reason := b.cfg.RepoOpenPRsRefusal(repo, false)
+			if reason != "" {
+				auditOpenPRsRefusal("", repo, string(b.cfg.RepoOpenPRsMode(repo)), "sidecar", reason)
+			}
+			return reason
+		}
 	}
 	if sh, ok := b.agentMgr.(*sidecarHost); ok {
 		deps.Policy = func() callback.Policy { return sh.policy(b.gatewayNames) }

@@ -357,13 +357,36 @@
       ctx = ctx || {};
       const who = ctx.login ? '@' + ctx.login : 'you';
       const when = stageTrackerNextPassWord(stageTrackerNextPassLeftMs(item, nowMs || Date.now(), governor));
-      return 'adds `' + stageTrackerTriageLabel(item) + '` as ' + who + '; the hive takes it on its next pass' + (when ? ' (' + when + ')' : '');
+      // Guarded: fixtures lift this function by name without the helper.
+      const pr = typeof stageTrackerTriagePRNumber === 'function' ? stageTrackerTriagePRNumber(item) : 0;
+      // Accepting the issue is also what lifts the open PR's merge-side
+      // reporter-trust hold (hivecommons/hive#19843).
+      const lifts = pr ? '; PR #' + pr + ' can then be reviewed and merged' : '';
+      return 'adds `' + stageTrackerTriageLabel(item) + '` as ' + who + '; the hive takes it on its next pass' + (when ? ' (' + when + ')' : '') + lifts;
+    }
+    // Pure: the open contributor PR number on an issue waiting on triage
+    // (the payload's triage_pr), or 0.
+    function stageTrackerTriagePRNumber(item) {
+      if (!item || item.kind === 'pr' || !item.triage_pr || typeof item.triage_pr !== 'object') return 0;
+      return Number(item.triage_pr.number) || 0;
+    }
+    // Pure: the "Open contributor PR #N" menu entry under Accept triage, or
+    // null when the issue has no open contributor PR. It opens the PR on
+    // GitHub; the review itself happens there.
+    function stageTrackerTriagePRAction(item) {
+      const n = stageTrackerTriagePRNumber(item);
+      if (!n) return null;
+      const url = String(item.triage_pr.url || '');
+      const by = item.triage_pr.author ? ' by @' + item.triage_pr.author : '';
+      return { id: 'open:triage-pr', label: 'Open contributor PR #' + n, hint: 'review the PR' + by + ' on GitHub', enabled: !!url, why: url ? '' : 'No GitHub link', url, lead: true };
     }
     // Pure: the item as it reads once triage is accepted — 010 Actionable,
     // the needs-triage pill and the 👤 next-move gone — for the optimistic
     // re-render before the tracker's next payload confirms it.
     function stageTrackerTriageAccepted(item) {
       const next = Object.assign({}, item);
+      // Accepted: the contributor PR is ordinary covering work now.
+      delete next.triage_pr;
       next.modifiers = (Array.isArray(item.modifiers) ? item.modifiers : []).filter(m => m !== 'needs-triage');
       if ((Number(item.stage) || 0) === STAGE_TRACKER_TRIAGE_STAGE) {
         next.stage = STAGE_TRACKER_ACTIONABLE_STAGE;
@@ -478,6 +501,10 @@
       // hold): the ask the row makes has its answer first.
       const triage = stageTrackerTriageNeeded(item);
       if (triage) out.push({ id: 'accept-triage', label: 'Accept triage', hint: stageTrackerTriageHint(item, ctx, ctx.nowMs, ctx.governor), enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, lead: true });
+      // An untriaged issue with an open contributor PR (hivecommons/hive#19843):
+      // the PR to review sits right under Accept triage.
+      const triagePR = triage && typeof stageTrackerTriagePRAction === 'function' ? stageTrackerTriagePRAction(item) : null;
+      if (triagePR) out.push(triagePR);
       // An advisory issue (hivecommons/hive#15381) asks for one thing:
       // read it, then close it. "Close now" leads; it is the existing
       // decision close path with the verdict `close-read`. A checklist the
@@ -2700,6 +2727,11 @@
       }
       if (id === 'open') {
         for (const it of items) if (it.url) window.open(it.url, '_blank', 'noopener');
+        return { toasts: [], pending: [] };
+      }
+      if (id === 'open:triage-pr') {
+        // The contributor PR on an untriaged issue (hivecommons/hive#19843).
+        for (const it of items) { const a = stageTrackerTriagePRAction(it); if (a && a.url) window.open(a.url, '_blank', 'noopener'); }
         return { toasts: [], pending: [] };
       }
       if (id === 'open:app-settings') {

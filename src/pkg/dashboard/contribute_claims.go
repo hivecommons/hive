@@ -127,17 +127,10 @@ func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorCo
 	if !h.claimsEnabled() || c == nil || repoFull == "" || number <= 0 {
 		return ghpkg.IssueClaimMark{}, false
 	}
-	// The queue may predate a label change. Recheck before posting the
-	// legacy claim marker too, not only when writing the worker ledger.
-	if h.server.deps.GHClient != nil {
-		checkCtx, cancel := context.WithTimeout(ctx, claimCommentTimeout)
-		reason, err := h.server.deps.GHClient.IssueClaimBlockReason(checkCtx, repoFull, number)
-		cancel()
-		if err != nil || reason != "" {
-			h.logger.Warn("[contribute-ws] issue claim refused", "repo", repoFull, "number", number, "reason", reason, "error", err)
-			return ghpkg.IssueClaimMark{}, false
-		}
-	}
+	// No label recheck here: selectTask's live gate (assignGateRefusal) read
+	// the issue BEFORE the lease, claim and mint, and refused a held or
+	// untriaged issue there. A recheck at this point could only log while
+	// the task_assign went out anyway — the hold-on-assign incident.
 	claim := ghpkg.IssueClaimMark{
 		Identity:  claimIdentityFor(c),
 		StartedAt: now,
@@ -158,7 +151,7 @@ func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorCo
 	if c.profile != nil {
 		tier = c.profile.TrustTier
 	}
-	canComment, mode := ghpkg.IssueClaimTierCanComment(tier)
+	canComment, mode := ghpkg.IssueClaimTierCanComment(ghpkg.TokenTier(tier))
 	posted := false
 	if commenter := h.claimCommenterFor(); commenter != nil && canComment {
 		postCtx, cancel := context.WithTimeout(ctx, claimCommentTimeout)

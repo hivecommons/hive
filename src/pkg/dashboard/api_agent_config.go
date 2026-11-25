@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -713,7 +714,12 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			agentCfg.Sandbox = &config.AgentSandboxOverride{}
 		}
 		if agentCfg.Sandbox != nil {
-			agentCfg.Sandbox.Substrate = sub
+			// Copy before writing: agentCfg.Sandbox may still be the pointer the
+			// live config holds, and a later validation failure must leave the
+			// in-memory config untouched (#19847).
+			sandbox := *agentCfg.Sandbox
+			sandbox.Substrate = sub
+			agentCfg.Sandbox = &sandbox
 		}
 	}
 	if v, ok := body["cavemanMode"]; ok {
@@ -836,6 +842,15 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Persist before acting on the change: a save that fails is reported, and
+	// the in-memory roster is restored so the dashboard, the agent processes
+	// and the file all keep agreeing on the old config (#19847).
+	if status, err := s.saveConfigStrict(); err != nil {
+		s.deps.Config.Agents = prevAgents
+		s.logger.Error("failed to persist config after agent update", "agent", name, "error", err)
+		jsonError(w, "agent config not saved: "+err.Error(), status)
+		return
+	}
 	agentCfg = s.deps.Config.Agents[name]
 	addedAgents := s.deps.AgentMgr.ReconcileAgents(s.deps.Config.EnabledAgents())
 	for _, added := range addedAgents {
@@ -898,10 +913,6 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
 	}
 
-	if err := s.saveConfig(); err != nil {
-		s.logger.Error("failed to persist config after agent update", "agent", name, "error", err)
-	}
-
 	s.deps.AgentMgr.SyncModeFiles(s.deps.AgentMgr.GetACMMLevel())
 	if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
 		if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
@@ -950,13 +961,14 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Validate every mode before changing any of them, so a bad later entry
+	// cannot leave earlier modes changed in memory (#19847).
+	gov := &s.deps.Config.Governor
+	cadences := make(map[string]config.Cadence, len(body))
 	for modeName, raw := range body {
-		mode, ok := s.deps.Config.Governor.Modes[modeName]
-		if !ok {
-			continue
-		}
-		if mode.Cadences == nil {
-			mode.Cadences = make(map[string]config.Cadence)
+		if _, ok := gov.Modes[modeName]; !ok {
+			jsonError(w, fmt.Sprintf("unknown governor mode %q", modeName), http.StatusBadRequest)
+			return
 		}
 		var seconds int64
 		var cadence config.Cadence
@@ -975,20 +987,36 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if cadence.Mode() == config.CadenceModeInterval && cadence.IsPaused() {
-			mode.Cadences[name] = "pause"
-		} else {
-			mode.Cadences[name] = cadence
+			cadence = "pause"
 		}
-		s.deps.Config.Governor.Modes[modeName] = mode
+		cadences[modeName] = cadence
+	}
+
+	// Each edited mode gets a fresh Cadences map rather than a write into the
+	// shared one, so restoring the previous ModeConfig values undoes the edit.
+	prevModes := make(map[string]config.ModeConfig, len(cadences))
+	prevOwners := cloneCadenceOwners(gov.CadenceOwners)
+	for modeName, cadence := range cadences {
+		mode := gov.Modes[modeName]
+		prevModes[modeName] = mode
+		next := make(map[string]config.Cadence, len(mode.Cadences)+1)
+		maps.Copy(next, mode.Cadences)
+		next[name] = cadence
+		mode.Cadences = next
+		gov.Modes[modeName] = mode
 		// Operator edits claim ownership so the pack apply that runs on every
 		// restart (and on steady-state re-applies) cannot reconcile the cadence
 		// back to the pack default — the same contract model/backend edits
 		// already have (#5632).
-		s.deps.Config.Governor.ClaimCadenceOwnership(modeName, name)
+		gov.ClaimCadenceOwnership(modeName, name)
 	}
 
-	if err := s.saveConfig(); err != nil {
+	if status, err := s.saveConfigStrict(); err != nil {
+		maps.Copy(gov.Modes, prevModes)
+		gov.CadenceOwners = prevOwners
 		s.logger.Error("failed to persist config after cadence update", "agent", name, "error", err)
+		jsonError(w, "cadences not saved: "+err.Error(), status)
+		return
 	}
 	s.auditFromRequest(r, "config_agent_cadences", auditDetail("section", "cadences"), name)
 	// The rebuild kicked here is asynchronous, so the browser's post-save
@@ -1001,6 +1029,19 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 	// jsonResponse rather than okResponse: the latter is typed map[string]string
 	// and cannot carry the numeric floor. "ok" is preserved for callers.
 	jsonResponse(w, map[string]any{"ok": true, "status": "updated", "agent": name, "minStatusSeq": floor})
+}
+
+// cloneCadenceOwners deep-copies the governor's cadence ownership markers so a
+// failed cadence save can restore them.
+func cloneCadenceOwners(owners map[string]map[string]string) map[string]map[string]string {
+	if owners == nil {
+		return nil
+	}
+	out := make(map[string]map[string]string, len(owners))
+	for mode, agents := range owners {
+		out[mode] = maps.Clone(agents)
+	}
+	return out
 }
 
 func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request) {
@@ -1099,22 +1140,20 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		effortChanged = effort != agentCfg.ReasoningEffort
 		agentCfg.ReasoningEffort = effort
 	}
+	prevCfg := s.deps.Config.Agents[name]
 	s.deps.Config.Agents[name] = agentCfg
 
-	// Sync updated backend/model into the agent process so status builders
-	// reflect the change without requiring a restart.
-	if err := s.updateAgentProcessConfig(name, agentCfg); err != nil {
-		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
-	}
-
 	// The reconcile above guarantees no backend/launch_cmd contradiction
-	// reaches the save guard; a failure here is an I/O problem, and the
-	// in-memory change already applied, so surface it rather than abort.
-	if err := s.saveConfig(); err != nil {
+	// reaches the save guard, so a failure here is an I/O problem or a hive
+	// with nothing writable. Report it and restore the previous config rather
+	// than answer 200 for a change that is gone on the next restart (#19847).
+	if status, err := s.saveConfigStrict(); err != nil {
+		s.deps.Config.Agents[name] = prevCfg
 		s.logger.Error("failed to persist config after model update", "agent", name, "error", err)
-		s.AddSystemAlert("agent-field-save-failed", "error",
-			"Could not save the model/method choice for "+name+" — it will revert on the next restart: "+err.Error())
-	} else if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
+		jsonError(w, "model/method choice for "+name+" not saved: "+err.Error(), status)
+		return
+	}
+	if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
 		if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
 			s.logger.Error("failed to persist agent overlay after model update", "agent", name, "error", err)
 			s.AddSystemAlert("agent-field-save-failed", "error",
@@ -1124,6 +1163,12 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		}
 	} else {
 		s.ClearSystemAlert("agent-field-save-failed")
+	}
+
+	// Sync updated backend/model into the agent process so status builders
+	// reflect the change without requiring a restart.
+	if err := s.updateAgentProcessConfig(name, agentCfg); err != nil {
+		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
 	}
 	s.auditFromRequest(r, "config_agent_models", auditDetail("backend", agentCfg.Backend, "model", agentCfg.Model, "reasoning_effort", agentCfg.ReasoningEffort), name)
 

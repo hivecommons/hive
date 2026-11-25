@@ -216,6 +216,9 @@ auto_merge.human_merge_pin_only.<key>.paths[] # bounded pin-only human-merge pol
 auto_merge.human_merge_pin_only.<key>.trusted_authors[] # bounded pin-only human-merge policy (#16262); yaml-only
 auto_merge.human_merge_title_prefixes[] # breaking-titled PRs wait for a human; yaml-only
 auto_merge.human_merge_labels[] # needs-owner-merge PRs wait for a human; yaml-only
+auto_merge.decision_gate.enabled # credential-path PRs wait for a person's decision; yaml-only
+auto_merge.decision_gate.paths[] # credential-path PRs wait for a person's decision; yaml-only
+auto_merge.decision_gate.sentinel # sentinel-flagged PRs wait for a person's decision; yaml-only
 auto_merge.merge_forward_trusted_human[] # TODO #11854
 auto_merge.native_merge_queue.enabled # native merge queue hand-off opt-in (#15198); yaml-only
 auto_merge.native_merge_queue.probe_ttl # merge-queue probe cache TTL (#15198); yaml-only
@@ -249,6 +252,9 @@ debug.pprof_addr # loopback-only pprof bind address, operator/debug knob, not a 
 dedupe.advisory_autoclose # advisory-checklist sweep; yaml-only (#15754)
 deployment.runtime # set via HIVE_DEPLOYMENT_RUNTIME env var or auto-detected, not a Settings control (#14072)
 duplicate_sweep.bot_authors[] # TODO #11854
+escalation.release_when_green_label # stale-hold opt-in release label; yaml/env only, Settings control pending (#19839)
+escalation.stale_hold_after # stale-hold threshold; yaml or HIVE_STALE_HOLD_AFTER, Settings control pending (#19839)
+escalation.stale_hold_labels[] # stale-hold watched labels; yaml-only, Settings control pending (#19839)
 evidence.complexity.enabled # TODO #11854
 evidence.complexity.static_analysis # TODO #11854
 forgejo.integration.audiences.<key> # Forgejo JWT signer setup is yaml-only for now; see docs/forge-app-setup.md (#19679)
@@ -538,7 +544,6 @@ project.label_driven_approval_labels[] # TODO #11854
 project.label_driven_supersede_park_actors[] # TODO #11854
 project.label_driven_trust_org_members # TODO #11854
 project.label_driven_trusted_bots[] # TODO #11854
-project.open_prs # TODO #11854
 project.paused_repos[].at # TODO #11854
 project.paused_repos[].by # TODO #11854
 project.paused_repos[].reason # TODO #11854

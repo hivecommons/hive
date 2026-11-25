@@ -164,6 +164,7 @@ func (p Agents) SetAgentPaused(name string, paused bool) Agents {
 func (p Agents) Update(msg tea.Msg) (Pane, tea.Cmd) {
 	switch msg := msg.(type) {
 	case AgentsMsg:
+		selectedName, _, hadSelection := p.SelectedAgent()
 		p.agents = append([]client.Agent(nil), msg.Agents...)
 		// States is optional supplemental data. A fleet-only refresh carries a
 		// nil map and must not erase an authoritative pause/resume result that
@@ -180,6 +181,14 @@ func (p Agents) Update(msg tea.Msg) (Pane, tea.Cmd) {
 			p.selected = 0
 		} else if p.selected >= len(p.agents) {
 			p.selected = len(p.agents) - 1
+		}
+		if hadSelection {
+			for i, agent := range p.agents {
+				if agent.Name == selectedName {
+					p.selected = i
+					break
+				}
+			}
 		}
 		return p, nil
 	case tea.KeyMsg:
@@ -210,8 +219,8 @@ func cloneAgentStates(in map[string]AgentState) map[string]AgentState {
 	return out
 }
 
-// View renders one clipped, non-wrapping row per agent into the exact box the
-// grid assigned to this pane.
+// View renders the agents that fit in the pane, scrolling to keep the selected
+// row visible.
 func (p Agents) View(width, height int) string {
 	if !p.loaded {
 		return stubView(p.Title(), width, height)
@@ -225,8 +234,11 @@ func (p Agents) View(width, height int) string {
 		lines = append(lines, "", "no agents configured")
 	} else {
 		lines = append(lines, agentsHeader(width))
-		for i, agent := range p.agents {
-			lines = append(lines, p.agentLine(agent, i == p.selected, width))
+		visibleRows := max(0, height-len(lines))
+		first := max(0, p.selected-visibleRows+1)
+		last := min(len(p.agents), first+visibleRows)
+		for i := first; i < last; i++ {
+			lines = append(lines, p.agentLine(p.agents[i], i == p.selected, width))
 		}
 	}
 

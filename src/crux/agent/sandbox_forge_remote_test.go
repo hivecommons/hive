@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/pushbroker"
 )
@@ -50,8 +51,8 @@ func (m recordingTierMinter) MintPushToken(context.Context, string) (string, err
 	return "fj_clone_token", nil
 }
 
-func (m recordingTierMinter) WithTier(tier string) pushbroker.TokenMinter {
-	m.tier = tier
+func (m recordingTierMinter) WithTier(tier agentmode.TokenTier) pushbroker.TokenMinter {
+	m.tier = string(tier)
 	return m
 }
 

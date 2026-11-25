@@ -30,6 +30,9 @@ const (
 	autoMergeReasonHumanChangesRequested   = prstage.AutoMergeReasonHumanChangesRequested
 	autoMergeReasonHumanMergePath          = prstage.AutoMergeReasonHumanMergePath
 	autoMergeReasonHumanMergePathEvidence  = prstage.AutoMergeReasonHumanMergePathEvidence
+	autoMergeReasonSensitivePathDecision   = prstage.AutoMergeReasonSensitivePathDecision
+	autoMergeReasonSensitivePathEvidence   = prstage.AutoMergeReasonSensitivePathEvidence
+	autoMergeReasonSentinelDecision        = prstage.AutoMergeReasonSentinelDecision
 	autoMergeReasonHumanMergeRequired      = prstage.AutoMergeReasonHumanMergeRequired
 	autoMergeReasonIntentEvidence          = prstage.AutoMergeReasonIntentEvidence
 	autoMergeReasonIntentUnauthorized      = prstage.AutoMergeReasonIntentUnauthorized
@@ -282,6 +285,10 @@ var stageNeedsHumanReasons = map[string]bool{
 	contributorLaneReasonNoReviewer: true, contributorLaneReasonReporterTrustHold: true,
 	contributorLaneReasonNoAppBotLogin: true, contributorLaneReasonFilesEvidence: true,
 	autoMergeReasonHumanMergePath: true, autoMergeReasonHumanMergePathEvidence: true,
+	// A credential, keystore, auth or secret path, or a sentinel alert,
+	// waits for a person's decision on the head (auto_merge.decision_gate).
+	autoMergeReasonSensitivePathDecision: true, autoMergeReasonSensitivePathEvidence: true,
+	autoMergeReasonSentinelDecision:   true,
 	autoMergeReasonIntentUnauthorized: true, autoMergeReasonIntentEvidence: true,
 	"approval-desk-withheld": true, "author-permission-missing": true, "fork-non-member": true,
 	"label:needs-human": true, "exempt-label": true,

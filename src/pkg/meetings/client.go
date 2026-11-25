@@ -101,7 +101,7 @@ type rpcResponse struct {
 // errSessionExpired: Quorum restarted and forgot our MCP session.
 var errSessionExpired = errors.New("mcp session expired")
 
-func (c *Client) post(ctx context.Context, body any, wantID int64) (json.RawMessage, error) {
+func (c *Client) post(ctx context.Context, body any, wantID int64, beforeDispatch func() error) (json.RawMessage, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -124,6 +124,11 @@ func (c *Client) post(ctx context.Context, body any, wantID int64) (json.RawMess
 	}
 	if inited {
 		req.Header.Set(mcpVersionHeader, mcpProtocolVersion)
+	}
+	if beforeDispatch != nil {
+		if err := beforeDispatch(); err != nil {
+			return nil, err
+		}
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -181,9 +186,9 @@ func (c *Client) post(ctx context.Context, body any, wantID int64) (json.RawMess
 	return msg.Result, nil
 }
 
-func (c *Client) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
+func (c *Client) request(ctx context.Context, method string, params any, beforeDispatch func() error) (json.RawMessage, error) {
 	id := c.nextID.Add(1)
-	return c.post(ctx, map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}, id)
+	return c.post(ctx, map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}, id, beforeDispatch)
 }
 
 func (c *Client) initialize(ctx context.Context) error {
@@ -194,14 +199,14 @@ func (c *Client) initialize(ctx context.Context) error {
 		"protocolVersion": mcpProtocolVersion,
 		"capabilities":    map[string]any{},
 		"clientInfo":      map[string]any{"name": "hive-meetings", "version": "1"},
-	})
+	}, nil)
 	if err != nil {
 		return err
 	}
 	c.mu.Lock()
 	c.inited = true
 	c.mu.Unlock()
-	_, err = c.post(ctx, map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}, 0)
+	_, err = c.post(ctx, map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}, 0, nil)
 	return err
 }
 
@@ -218,14 +223,18 @@ func (c *Client) ensureInit(ctx context.Context) error {
 // Call invokes a contract tool and decodes its {ok:true,...} result into
 // out (which may be nil). {ok:false} comes back as a *ToolError.
 func (c *Client) Call(ctx context.Context, tool string, args, out any) error {
+	return c.call(ctx, tool, args, out, nil)
+}
+
+func (c *Client) call(ctx context.Context, tool string, args, out any, beforeDispatch func() error) error {
 	if err := c.ensureInit(ctx); err != nil {
 		return err
 	}
 	params := map[string]any{"name": tool, "arguments": args}
-	raw, err := c.request(ctx, "tools/call", params)
+	raw, err := c.request(ctx, "tools/call", params, beforeDispatch)
 	if errors.Is(err, errSessionExpired) {
 		if err = c.initialize(ctx); err == nil {
-			raw, err = c.request(ctx, "tools/call", params)
+			raw, err = c.request(ctx, "tools/call", params, beforeDispatch)
 		}
 	}
 	if err != nil {
@@ -299,7 +308,8 @@ type JoinArgs struct {
 	// Vexa's per-speak voice). Empty uses Quorum's default.
 	VoiceID string `json:"voice_id,omitempty"`
 	// HostName names the companion's mic channel speaker.
-	HostName string `json:"host_name,omitempty"`
+	HostName       string `json:"host_name,omitempty"`
+	beforeDispatch func() error
 }
 
 // JoinResult is meeting.join's result.
@@ -333,7 +343,7 @@ type textArgs struct {
 // Join calls meeting.join.
 func (c *Client) Join(ctx context.Context, a JoinArgs) (JoinResult, error) {
 	var r JoinResult
-	err := c.Call(ctx, "meeting.join", a, &r)
+	err := c.call(ctx, "meeting.join", a, &r, a.beforeDispatch)
 	return r, err
 }
 

@@ -83,6 +83,11 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				m.markProviderErrorLocked(agent, providerErrorMatch{Class: "backend_auth_error", Line: authState.BackendAuthErrorMsg}, time.Now())
 				m.mu.Unlock()
 			}
+			if authState.ModelAccessDenied {
+				m.mu.Lock()
+				m.markProviderErrorLocked(agent, providerErrorMatch{Class: "model_access", Line: authState.ModelAccessDeniedMsg}, time.Now())
+				m.mu.Unlock()
+			}
 			if showsLogin || bobKeyRejected {
 				showsLogin = true
 				loginStreak++

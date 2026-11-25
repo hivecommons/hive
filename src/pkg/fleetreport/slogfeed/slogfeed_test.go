@@ -1322,6 +1322,51 @@ func TestReviewRetryServerErrorLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// #19889 / #19887: a GitHub 5xx on a PR or issue stage-label write is
+// reconciled on the next sweep.
+func TestStageLabelServerErrorLogsWithoutFleetReport(t *testing.T) {
+	const prMsg = "stage labels: write failed"
+	const issueMsg = "issue stage labels: write failed"
+	errOf := func(code string) string {
+		return "stage engine: write projectbluefin/finpilot#794: effect outcome uncertain, reconciliation required: DELETE https://api.github.com/repos/projectbluefin/finpilot/issues/794/labels/stage%2F090-ready-for-human-merge: " + code + "  []"
+	}
+	cases := []struct {
+		name string
+		msg  string
+		err  string
+		want int
+	}{
+		{"pr 500", prMsg, errOf("500"), 0},
+		{"pr 502", prMsg, errOf("502"), 0},
+		{"pr 503", prMsg, errOf("503"), 0},
+		{"issue 500", issueMsg, errOf("500"), 0},
+		{"issue 504", issueMsg, errOf("504"), 0},
+		{"pr 403", prMsg, errOf("403"), 8},
+		{"pr 422", prMsg, errOf("422"), 8},
+		{"issue 404", issueMsg, errOf("404"), 8},
+		{"non-label 500", prMsg, "stage engine: read: GET https://api.github.com/repos/o/r/issues/1: 500  []", 8},
+		{"non-http error", prMsg, "boom", 8},
+		{"other message", "stage labels: sweep interrupted", errOf("500"), 8},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logger, seen, out := newFeed(t)
+			for i := 0; i < 8; i++ {
+				logger.Warn(tc.msg, "repo", "projectbluefin/finpilot", "pr", 794, "stage", "050-review-pending", "error", tc.err)
+			}
+			if tc.want == 0 && len(*seen) != 0 {
+				t.Errorf("produced observations: %+v", *seen)
+			}
+			if tc.want != 0 && len(*seen) == 0 {
+				t.Errorf("must remain reportable")
+			}
+			if n := strings.Count(out.String(), "\n"); n != 8 {
+				t.Errorf("wrapped handler saw %d records, want 8", n)
+			}
+		})
+	}
+}
+
 // #17103 / #17142: the stage dampener and the stage engine's reversal guard
 // suppressing a flap are designed behaviour.
 func TestStageDampenerSuppressionLogsWithoutFleetReport(t *testing.T) {

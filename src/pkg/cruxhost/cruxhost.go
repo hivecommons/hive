@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/api/callback"
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/toolapprove"
@@ -52,7 +53,7 @@ const InstallationTokenTTL = time.Hour
 // TokenScoper is *github.AppAuth's ScopedTokenForRepos. repos are bare
 // repository names; empty means installation-wide.
 type TokenScoper interface {
-	ScopedTokenForRepos(ctx context.Context, tier string, repos []string) (string, error)
+	ScopedTokenForRepos(ctx context.Context, tier agentmode.TokenTier, repos []string) (string, error)
 }
 
 // RESTAccounting is cmd/hive's githubRESTAccounting (and
@@ -116,6 +117,11 @@ type Deps struct {
 	Conditions   ConditionReporter
 	Linear       LinearResolver
 	PullRequests PRCreator
+	// RepoPRRefusal is the per-repo open-PRs gate CreatePR asks first: why a
+	// new PR may not open in repo, or "" when it may. The callback request
+	// names no agent, so a workflow_only repo refuses here (fail closed).
+	// Nil allows every repo.
+	RepoPRRefusal func(repo string) string
 	// Policy and RepoAutoMerge back the policy routes (#14138 stage 4);
 	// Policy nil means the capability is absent. RepoAutoMerge nil with a
 	// Policy answers the per-repo call not_configured.
@@ -158,7 +164,7 @@ type KnowledgeAdviseService interface {
 // import crux/agent.
 type AgentMintIssuer interface {
 	Enabled() bool
-	MintAgentToken(agentName, tier string) (string, error)
+	MintAgentToken(agentName string, tier agentmode.TokenTier) (string, error)
 }
 
 // BobResolver returns the Bob API key and its source ("file:<path>",
@@ -245,7 +251,7 @@ func (c *Capabilities) MintToken(ctx context.Context, req callback.MintTokenRequ
 	if name := bareRepo(req.Repo); name != "" {
 		repos = append(repos, name)
 	}
-	tok, err := c.deps.Tokens.ScopedTokenForRepos(ctx, req.Tier, repos)
+	tok, err := c.deps.Tokens.ScopedTokenForRepos(ctx, agentmode.TokenTier(req.Tier), repos)
 	if err != nil {
 		return callback.MintTokenResponse{}, fmt.Errorf("mint token for %q: %w", req.Agent, err)
 	}
@@ -395,7 +401,7 @@ func (c *Capabilities) MintAgentToken(_ context.Context, req callback.AgentMintR
 	if !c.deps.Mint.Enabled() {
 		return callback.AgentMintResponse{}, nil
 	}
-	tok, err := c.deps.Mint.MintAgentToken(req.Agent, req.Tier)
+	tok, err := c.deps.Mint.MintAgentToken(req.Agent, agentmode.TokenTier(req.Tier))
 	if err != nil {
 		return callback.AgentMintResponse{}, fmt.Errorf("mint agent token for %q: %w", req.Agent, err)
 	}
@@ -415,6 +421,11 @@ func (c *Capabilities) BobCredential(context.Context) (callback.BobCredential, e
 func (c *Capabilities) CreatePR(ctx context.Context, req callback.CreatePRRequest) (callback.CreatePRResponse, error) {
 	if c.deps.PullRequests == nil {
 		return callback.CreatePRResponse{}, callback.ErrNotConfigured
+	}
+	if c.deps.RepoPRRefusal != nil {
+		if reason := c.deps.RepoPRRefusal(req.Repo); reason != "" {
+			return callback.CreatePRResponse{}, fmt.Errorf("%w: pull request refused: %s", callback.ErrForbidden, reason)
+		}
 	}
 	res, err := c.deps.PullRequests.CreatePR(ctx, req.Repo, req.Head, req.Base, req.Title, req.Body)
 	if err != nil {

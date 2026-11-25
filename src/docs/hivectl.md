@@ -994,7 +994,7 @@ The commands below are independent examples, not a script to run from top to bot
 hivectl hives list                                            # active hive marked *
 hivectl hives list --check -o json                            # also probe each hub
 hivectl hives add acme --hub wss://acme.hive.hivecommons.dev/contribute
-hivectl hives reissue acme                                    # rotate one saved profile
+hivectl hives reissue acme                                    # rotate a contributor token
 hivectl hives reissue acme --hub wss://acme.hive.hivecommons.dev/contribute
 hivectl hives use acme
 hivectl hives export acme --out acme.hive-profile
@@ -1268,7 +1268,7 @@ It POSTs to
 
 The register endpoint is unauthenticated,
 so the hub will never hand an existing contributor's token back. On a
-profile-store machine, rotate and save only that one profile with
+profile-store machine, rotate and save the contributor credential with
 `hivectl hives reissue acme --hub <url>` (or omit `--hub` when `acme`
 already exists locally). If you want to keep the old machine working, use
 `hivectl hives export` on the holding machine and `hivectl hives import` on
@@ -1283,8 +1283,11 @@ regenerates `contributor.env` from `profiles.yml`.
 
 It calls the hub's
 authenticated `/api/contribute/reissue-token` endpoint using your local `gh`
-token, replaces only the named profile's registration token in
+token, updates local profiles for that contributor on the same hive in
 `profiles.yml`, and regenerates `contributor.env` through the profile store.
+If the active profile is on the same hive and its credential cannot be matched,
+the command prints a warning and shows how to switch to the refreshed profile.
+Restart the relay to load the active profile's credential and session settings.
 If the hub says this GitHub account is not registered, run
 `hivectl hives add <name> --hub <url>` instead.
 

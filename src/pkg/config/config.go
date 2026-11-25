@@ -5642,6 +5642,14 @@ type DashboardConfig struct {
 	StageTracker DashboardStageTrackerConfig `yaml:"stage_tracker,omitempty" json:"stage_tracker,omitempty"`
 	// Sessions configures the interactive Sessions terminals (default off).
 	Sessions DashboardSessionsConfig `yaml:"sessions,omitempty" json:"sessions,omitempty"`
+	// AttributeLabelActions posts one comment, kept up to date under a
+	// hidden marker, on an issue or PR whose labels the dashboard changed
+	// for a person (hold added/released, triage accepted, needs-human or
+	// sentinel label lifted by an approval), naming the signed-in user.
+	// GitHub records the Hive App as the actor of those label writes, so
+	// without it the history reads as automation overriding a person
+	// (hivecommons/hive#19852). Default true.
+	AttributeLabelActions *bool `yaml:"attribute_label_actions,omitempty" json:"attribute_label_actions,omitempty"`
 }
 
 // DashboardStageTrackerConfig is dashboard.stage_tracker.
@@ -6204,6 +6212,13 @@ func (d DashboardConfig) GitHubSignInEnabled() bool {
 	return d.GitHubSignIn == nil || *d.GitHubSignIn
 }
 
+// LabelActionAttributionEnabled reports whether a dashboard label action
+// leaves its attribution comment. An unset
+// dashboard.attribute_label_actions means yes.
+func (d DashboardConfig) LabelActionAttributionEnabled() bool {
+	return d.AttributeLabelActions == nil || *d.AttributeLabelActions
+}
+
 // HubURLEnvVar overrides hub.url at runtime. Hosted spokes are provisioned
 // with it (the hub's public URL) and often leave hub.url empty in hive.yaml.
 const HubURLEnvVar = "HIVE_HUB_URL"
@@ -6452,6 +6467,11 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	if !reflect.DeepEqual(overlay.AgentSandbox, cruxconfig.AgentSandboxConfig{}) {
 		cfg.AgentSandbox = overlay.AgentSandbox
 	}
+	// Per-repo open-PRs modes: Settings → Repos saves them into the
+	// overlay, so a reload from the seed must carry them (same shape as
+	// #18804 and #19740). Only the open_prs field of each repo policy is
+	// adopted; BEFORE the fullness guard so a short overlay still wins.
+	adoptOverlayRepoOpenPRs(cfg, &overlay)
 	if len(overlay.RemovedAgents) > 0 {
 		cfg.RemovedAgents = overlay.RemovedAgents
 		cfg.PruneRemovedAgents()
@@ -8730,6 +8750,23 @@ type EscalationConfig struct {
 	// Threshold is the distinct-red-attempt count that triggers escalation.
 	// Zero means DefaultEscalationThreshold.
 	Threshold int `yaml:"threshold,omitempty" json:"threshold,omitempty"`
+	// StaleHoldAfter is how long an open PR may sit behind a hold label
+	// (StaleHoldLabels) with every check green before the hive raises it to
+	// a person, once per head: a notification plus a blocked lifecycle
+	// event. A Go duration ("2h", "90m"); empty means DefaultStaleHoldAfter;
+	// "off" or "0" disables it. The HIVE_STALE_HOLD_AFTER environment
+	// variable overrides it.
+	StaleHoldAfter string `yaml:"stale_hold_after,omitempty" json:"stale_hold_after,omitempty"`
+	// StaleHoldLabels are the hold labels the stale-hold signal and the
+	// release-when-green label act on, matched exactly and
+	// case-insensitively. Empty means DefaultStaleHoldLabels.
+	StaleHoldLabels []string `yaml:"stale_hold_labels,omitempty" json:"stale_hold_labels,omitempty"`
+	// ReleaseWhenGreenLabel is the opt-in label that asks the hive to remove
+	// a PR's StaleHoldLabels, and then this label, once every check on the
+	// head is green. A hold without it is never removed by the hive, and
+	// nothing else (no lgtm, no approval) is added. Empty means
+	// DefaultReleaseWhenGreenLabel; "off" disables releases.
+	ReleaseWhenGreenLabel string `yaml:"release_when_green_label,omitempty" json:"release_when_green_label,omitempty"`
 }
 
 // ReviewConfig gates the optional structured review-swarm merge gate. The zero
@@ -9331,6 +9368,10 @@ type AutoMergeConfig struct {
 	// means no such paths. This key only declares the paths; enforcement
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+	// DecisionGate holds credential, keystore, auth and secret paths (and
+	// sentinel-flagged PRs) for a person's decision on the head before any
+	// automerge lane merges them. Default on; see DecisionGateConfig.
+	DecisionGate DecisionGateConfig `yaml:"decision_gate,omitempty" json:"decision_gate,omitempty"`
 
 	// HumanMergePinOnly holds the opt-in pin-only exception, enforced by the
 	// automerge sweep and /approve gates (#16266), and the hive-merge relay
@@ -10302,6 +10343,76 @@ func (e EscalationConfig) EffectiveThreshold() int {
 		return e.Threshold
 	}
 	return DefaultEscalationThreshold
+}
+
+// DefaultStaleHoldAfter is how long a held PR may stay all green before the
+// hive raises it, when escalation.stale_hold_after is unset.
+const DefaultStaleHoldAfter = 2 * time.Hour
+
+// StaleHoldAfterEnv overrides escalation.stale_hold_after.
+const StaleHoldAfterEnv = "HIVE_STALE_HOLD_AFTER"
+
+// staleHoldOff is the spelling that disables the stale-hold signal or the
+// release-when-green label.
+const staleHoldOff = "off"
+
+// DefaultStaleHoldLabels are the hold labels the stale-hold signal watches
+// when escalation.stale_hold_labels is unset.
+var DefaultStaleHoldLabels = []string{"hold", "do-not-merge/hold"}
+
+// DefaultReleaseWhenGreenLabel is the opt-in release label when
+// escalation.release_when_green_label is unset.
+const DefaultReleaseWhenGreenLabel = "hold/until-green"
+
+// EffectiveStaleHoldAfter resolves the stale-hold threshold: the
+// HIVE_STALE_HOLD_AFTER value read through getenv (nil means os.Getenv)
+// wins over the config value, which wins over DefaultStaleHoldAfter. Zero
+// means disabled. An unparsable or negative value falls back to the next
+// source rather than disabling the signal by accident.
+func (e EscalationConfig) EffectiveStaleHoldAfter(getenv func(string) string) time.Duration {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	for _, raw := range []string{getenv(StaleHoldAfterEnv), e.StaleHoldAfter} {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		if strings.EqualFold(v, staleHoldOff) || v == "0" {
+			return 0
+		}
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return DefaultStaleHoldAfter
+}
+
+// EffectiveStaleHoldLabels resolves the watched hold labels.
+func (e EscalationConfig) EffectiveStaleHoldLabels() []string {
+	var out []string
+	for _, l := range e.StaleHoldLabels {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	if len(out) == 0 {
+		return append([]string(nil), DefaultStaleHoldLabels...)
+	}
+	return out
+}
+
+// EffectiveReleaseWhenGreenLabel resolves the opt-in release label; "" means
+// releases are disabled.
+func (e EscalationConfig) EffectiveReleaseWhenGreenLabel() string {
+	v := strings.TrimSpace(e.ReleaseWhenGreenLabel)
+	switch {
+	case v == "":
+		return DefaultReleaseWhenGreenLabel
+	case strings.EqualFold(v, staleHoldOff):
+		return ""
+	}
+	return v
 }
 
 // RecommendationsConfig controls the hive's "what should I merge next?" issue.

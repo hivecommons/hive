@@ -350,12 +350,24 @@ func (c *Client) detectSupersessionDetail(ctx context.Context, prRepo string, pr
 		return det, nil
 	}
 	det.allNotPlanned = true
+	checked := 0
 	for _, claim := range claims {
 		issueOwner, issueRepoName := c.splitRepo(claim.Repo)
 		issue, _, err := c.client.Issues.Get(ctx, issueOwner, issueRepoName, claim.Issue)
+		if closeOnMergeIssueNotFound(err) {
+			// A claim naming an issue that does not exist (a typo or a
+			// cross-repo reference) is a normal skip, not a sweep failure:
+			// it is permanent, so it must not abort the sweep or warn on
+			// every tick (hivecommons/hive#19808).
+			if c.logger != nil {
+				c.logger.Debug("supersession sweep: skipped claim on an issue that does not exist", "repo", prRepo, "pr", pr.GetNumber(), "issue", claim.Repo+"#"+strconv.Itoa(claim.Issue))
+			}
+			continue
+		}
 		if err != nil {
 			return supersessionDetail{}, fmt.Errorf("checking claimed issue %s#%d for PR %s#%d: %w", claim.Repo, claim.Issue, prRepo, pr.GetNumber(), err)
 		}
+		checked++
 		if !strings.EqualFold(issue.GetState(), "closed") {
 			// An issue this PR claims to close is still open, so the PR is
 			// still live work whatever happened to its other claims. Before
@@ -378,6 +390,10 @@ func (c *Client) detectSupersessionDetail(ctx context.Context, prRepo string, pr
 			det.candidate = claim
 			det.closer = resolved
 		}
+	}
+	if checked == 0 {
+		// Every claim named a missing issue: nothing to judge.
+		return supersessionDetail{}, nil
 	}
 	det.allClosingClosed = true
 	det.closingClaims = claims[0].Closing

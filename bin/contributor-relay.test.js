@@ -1546,6 +1546,22 @@ test('muse headless argv uses `muse exec` with the prompt as a trailing position
   } finally { teardown(relay); }
 });
 
+test('opencode and kilo headless argv puts --auto and --model after the run subcommand (#19794)', () => {
+  for (const backend of ['opencode', 'kilo']) {
+    const relay = loadRelay({
+      backend, mode: 'headless', model: 'opencode/hy4-flash-free', backendPerm: '--auto',
+    });
+    try {
+      const a = relay.buildHeadlessArgv('say ok');
+      const run = a.args.indexOf('run');
+      assert.equal(run, 0, `${backend}: run must lead the argv: ${JSON.stringify(a.args)}`);
+      assert.ok(a.args.indexOf('--auto') > run, `${backend}: --auto must follow run: ${JSON.stringify(a.args)}`);
+      assert.ok(a.args.indexOf('--model') > run, `${backend}: --model must follow run: ${JSON.stringify(a.args)}`);
+      assert.equal(a.args[a.args.length - 1], 'say ok');
+    } finally { teardown(relay); }
+  }
+});
+
 test('openhands headless argv never carries --model and maps AGENT_MODEL to LLM_MODEL', () => {
   // OpenHands has no --model flag: an argv --model would be rejected by its
   // argparse (exit 2) and the task would be reported failed. The model

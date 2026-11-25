@@ -1907,6 +1907,7 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		PrimaryRepoName:    b.cfg.Project.PrimaryRepo,
 		ACMMLevel:          b.acmmLevel,
 		PRsAllowed:         b.cfg.Project.PRsAllowed(),
+		RepoPRRefusal:      b.sandboxRepoPRRefusal,
 		PolicyDir:          b.policyDirPath,
 		SharedUIDReadToken: b.cfg.GitHub.SharedUIDReadToken,
 		AppAuthoredPRs:     b.cfg.GitHub.AppAuthoredPRsEnabled(),
@@ -2371,6 +2372,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
 	autoMergeOpts.HumanMergePinOnly = func(repo string) (config.PinOnlyException, bool) { return humanMergePinOnlyFor(b.cfg, repo) }
+	// Decision gate: credential, keystore, auth and secret paths, and
+	// sentinel-flagged PRs, wait for a person's decision on the head in
+	// every lane (auto_merge.decision_gate, default on).
+	autoMergeOpts.DecisionGate = func(repo string) automerge.DecisionGatePolicy { return decisionGateFor(b.cfg, repo) }
 	autoMergeOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(b.cfg) }
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 	autoMergeOpts.RequireCurrentBaseStrict = func(repo string) bool {
@@ -2456,15 +2461,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		_ = deps.startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
 			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger))
 	}
-	// Forgejo repos (#19671): the GitHub sweeps above skip them
-	// (RepoOnGitHub), so they get their own automerge and close-on-merge
-	// sweeps. These need no GitHub client, so a Forgejo-only hive runs them.
+	// Forgejo repos (#19671): the GitHub sweeps above skip them (RepoOnGitHub),
+	// so they get their own sweeps, which need no GitHub client. A gitea config
+	// pointed at a Forgejo instance gets a one-time hint to switch (#19832).
 	if b.ctx != nil {
 		startForgejoSweeps(b.ctx, func() *config.Config { return b.cfg }, forgejoSweepDeps{
 			Mutation: b.mutationBoundary,
 			Gate:     b.writebackGate(),
 			Logger:   b.logger,
 		}, forgejoSweepInterval)
+		startGiteaForgejoHint(b.ctx, func() *config.Config { return b.cfg }, b.logger, giteaForgejoHintInterval)
 	}
 	b.integrationEligibility = func(ctx context.Context, repo, base string, number int, head string) (*gh.PullRequest, string, error) {
 		client := b.currentGitHubClient()
@@ -2716,6 +2722,12 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 		}
 	})
 	installIoscanClassifier(b.sched, b.ioscanAlerts(), b.cfg, b.logger, time.Now)
+	// Open-PRs refusals on paths without a GitHub client audit sink (the
+	// forge relay, the sidecar callback) land in the same audit log.
+	openPRsAudit := func(agent, repo, mode, via, reason string) {
+		b.dashSrv.AuditLog(agent, github.AuditActionAgentWriteRefused, openPRsRefusalDetail(repo, mode, via, reason), agent)
+	}
+	openPRsRefusalAudit.Store(&openPRsAudit)
 	b.agentMgr.SetSandboxAuditCallback(func(agentName, action, detail string) {
 		b.dashSrv.AuditLog(agentName, action, detail, agentName)
 		if action == "sandbox_broker_rejected" {

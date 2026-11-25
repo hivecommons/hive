@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -23,6 +24,11 @@ type repoHoldMock struct {
 	// answers (with addLabelsBody) instead of accepting the labels.
 	addLabelsStatus int
 	addLabelsBody   string
+	// comments are the issue's comments; commentPosts and commentEdits
+	// count the create and edit calls the hold toggle made.
+	comments     []map[string]any
+	commentPosts int
+	commentEdits int
 }
 
 func newRepoHoldMockServer(t *testing.T, m *repoHoldMock) *httptest.Server {
@@ -30,6 +36,29 @@ func newRepoHoldMockServer(t *testing.T, m *repoHoldMock) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/7/comments"):
+			_ = json.NewEncoder(w).Encode(m.comments)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues/7/comments"):
+			var c map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&c)
+			c["id"] = 100 + len(m.comments)
+			c["user"] = map[string]any{"login": "hive-app[bot]"}
+			m.comments = append(m.comments, c)
+			m.commentPosts++
+			_ = json.NewEncoder(w).Encode(c)
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/issues/comments/"):
+			var edit map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&edit)
+			id := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
+			for _, c := range m.comments {
+				if fmt.Sprint(c["id"]) == id {
+					c["body"] = edit["body"]
+					m.commentEdits++
+					_ = json.NewEncoder(w).Encode(c)
+					return
+				}
+			}
+			http.NotFound(w, r)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/collaborators/writer/permission"):
 			_, _ = io.WriteString(w, `{"permission":"`+m.permission["writer"]+`"}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/collaborators/reader/permission"):

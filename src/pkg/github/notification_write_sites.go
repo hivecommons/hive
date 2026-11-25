@@ -27,7 +27,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"main.(*repoForgeRouter).CreateIssueComment":   {Class: NotificationClassAttention, Passthrough: true},
 	"main.liveTriageCommenter.CreateIssueComment":  {Class: NotificationClassAttention, Passthrough: true},
 	"github.(*Client).UpsertIssueMarkerComment":    {Class: NotificationClassStatus, Passthrough: true},
-	"github.(*Client).EditIssueMarkerComment":      {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*Client).editIssueMarkerComment":      {Class: NotificationClassStatus, Passthrough: true},
 	"github.(*clientStatusForge).CreateComment":    {Class: NotificationClassStatus, Passthrough: true},
 	"github.(*Client).PostIssueNote":               {Class: NotificationClassStatus, Passthrough: true},
 	"github.(*Client).PostInformationalIssueNote":  {Class: NotificationClassStatus, Passthrough: true},
@@ -77,6 +77,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.handleMergedPRIssueStage":                         {Class: NotificationClassStatus},
 	"github.runRecheckSoak":                                   {Class: NotificationClassStatus},
 	"main.postReviewAcknowledgements":                         {Class: NotificationClassStatus},
+	"main.releaseGreenHold":                                   {Class: NotificationClassStatus},
 	"main.rfcNotifySource.Comment":                            {Class: NotificationClassStatus},
 	"main.unparkEscalatedPR":                                  {Class: NotificationClassStatus},
 

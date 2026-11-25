@@ -290,7 +290,7 @@ func IssueClaimCommentBody(identity string, started, expires time.Time) string {
 // IssueClaimTierCanComment reports whether a scoped-token tier maps to an
 // agent mode that may write issue comments, and names that mode for logs.
 // An unknown tier fails closed (ADVISORY, cannot comment).
-func IssueClaimTierCanComment(tier string) (canComment bool, mode string) {
+func IssueClaimTierCanComment(tier agentmode.TokenTier) (canComment bool, mode string) {
 	m, _ := agentmode.ModeForTokenTier(tier)
 	return m.CanComment(), m.String()
 }

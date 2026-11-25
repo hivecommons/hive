@@ -31,6 +31,19 @@ that status is the thing to check before treating a page as current behaviour:
   agent context block, and the position on personal data of people who never
   signed up. Nothing leaves the hive.
 
+- [Colony as the customer-data backend](colony-customer-data-backend.md) -
+  **design only / proposed; phase 1 built.** Tracking issue
+  [#19851](https://github.com/hivecommons/hive/issues/19851): hivecommons/colony
+  grows an embedded store package (one schema for person, identities, facts
+  with source, confidence and rank, consent and tombstones) that the hub and
+  every spoke embed, not a service. Records the hub and own-hive trust domain
+  enforced on the hub by hive ID, the field mapping from the hub SaaSUser
+  record and spoke people.json, the precedence user > admin > hub-shared >
+  enrichment, the import, shadow and rollback migration, the provider
+  defaults (hub gitdm on, devstats off), the privacy table per flow, and how
+  customer data can shape a hive's issue priorities and roadmap without
+  leaving the hive.
+
 - [Customers: opt-in, consent-first import of hub-held person fields](customers-hub-consent.md) -
   **design only / decided.** Issue
   [#19088](https://github.com/hivecommons/hive/issues/19088): the person
@@ -42,6 +55,17 @@ that status is the thing to check before treating a page as current behaviour:
   match-by-hash wire shape that cannot tell a hive who exists on the hub,
   revocation with a clearing reply, the privacy and audit rules, and four
   phases, hub consent page and record first.
+
+- [Customers: signal audit and using customer data to shape managed repos](customers-signal-audit.md) -
+  **design only.** Issue
+  [#19866](https://github.com/hivecommons/hive/issues/19866): a cited table of
+  every signal Customers collects on the hub and on a spoke and whether it
+  works (dead `reviewed`, `merged` and chat edges; country broken for lack of a
+  source), why no flag shows on the project hive, and proposals for using the
+  data in ranking, triage and advisory reports. Records the trust rule (the hub
+  and the project hive are one domain; other spokes use local data only), the
+  prerequisites, and the privacy constraints: scorers see tiers, never
+  identities, and public output carries counts only.
 
 - [Dashboard Ask AI help: an optional, isolated "Ask" panel](dashboard-ask-ai-help.md) -
   **design only / proposed.** Issue

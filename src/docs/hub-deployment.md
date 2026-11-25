@@ -106,6 +106,15 @@ material disclosure change requires reconfirmation: disclosure version 2, which
 replaced the version that said nothing was sent yet, suspends every earlier
 consent until the person confirms again.
 
+**Trust domain.** The hub answers only the project's own hives, listed by hive
+ID in `HIVE_HUB_CUSTOMERS_TRUSTED_HIVES` (comma-separated, empty by default).
+The hub and those hives are one trust domain: what the hub knows about a person
+may reach their Customers records, labelled with its source. Every other hive
+gets an empty answer, whatever its own switch says and whatever a person
+consented to for it, so with the list empty no hive receives anything. The
+hub decides by the hive identity the per-hive bearer proves; a hive cannot
+widen the domain from its side.
+
 A hive asks for these values only when its owner turns on
 `customers.hub_import.enabled` (see
 [Customers hub import](telemetry.md#customers-hub-import)). The hive posts

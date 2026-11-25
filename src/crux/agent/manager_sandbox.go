@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/kubejob"
@@ -341,6 +342,17 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 			}
 		}
 	}
+	// Per-repo open-PRs mode: a kick that would open a NEW PR in a repo the
+	// host refuses runs without push or PR client, so no branch is pushed
+	// that cannot become a PR. A push to an existing PR opens nothing and
+	// is left alone.
+	if pushEnabled && spec.TargetPR == 0 && m.project.RepoPRRefusal != nil {
+		if reason := m.project.RepoPRRefusal(agent.Name, m.project.Org+"/"+repo, message); reason != "" {
+			pushMinter, prClient, pushEnabled = nil, nil, false
+			m.logger.Info("sandbox kick runs without push: the repo's open-PRs mode refuses a new PR", "name", agent.Name, "repo", repo, "reason", reason)
+			m.auditSandbox(agent.Name, crux.AuditActionAgentWriteRefused, "repo="+m.project.Org+"/"+repo+", op=open_pr, gate=open-prs, via=sandbox, outcome=refused, reason="+reason)
+		}
+	}
 	go m.runSandboxKick(runCtx, agent.Name, runtime, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, prReader, targetReader, mutationBoundary)
 	return nil
 }
@@ -349,7 +361,7 @@ func (m *Manager) sandboxWorkspaceDirLocked() string {
 	return sandbox.WorkspaceRoot(m.sandboxConfig.WorkspaceDir, m.workDir)
 }
 
-func (m *Manager) tieredSandboxMinterLocked(tier string) pushbroker.TokenMinter {
+func (m *Manager) tieredSandboxMinterLocked(tier agentmode.TokenTier) pushbroker.TokenMinter {
 	return pushbroker.WithTier(m.sandboxGit.pushMinter, tier)
 }
 

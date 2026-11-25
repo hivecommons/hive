@@ -1125,7 +1125,7 @@
     <section class="section" id="hives">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--sp-5)">
         <h2>Active Hives</h2>
-        <input type="text" id="hive-search" placeholder="Search hives..." oninput="filterHiveTable()" style="padding:8px 14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);color:var(--text);font-size:0.85rem;width:250px">
+        <input type="text" id="hive-search" placeholder="Search hives..." oninput="renderHives()" style="padding:8px 14px;background:var(--bg-soft);border:1px solid var(--line);border-radius:var(--r);color:var(--text);font-size:0.85rem;width:250px">
       </div>
       <!-- Contribute blurb: the Contributors tile and the "Contribute compute"
            card both point here, so name the action next to the list it refers to. -->
@@ -1479,11 +1479,11 @@
         var res = await fetch('/api/registry');
         var data = await res.json();
         _allMainHives = data.hives || [];
-        renderHives(_allMainHives);
+        renderHives();
         renderStats(_allMainHives);
         renderTicker(_allMainHives);
       } catch (e) {
-        document.getElementById('hive-table-container').innerHTML = '<div class="loading">Unable to load hive registry</div>';
+        replaceHiveTable('<div class="loading">Unable to load hive registry</div>');
       }
     }
 
@@ -1550,21 +1550,7 @@
 
     function sortMainHives(key) {
       if (_mainSortKey === key) { _mainSortAsc = !_mainSortAsc; } else { _mainSortKey = key; _mainSortAsc = true; }
-      var sorted = _allMainHives.slice().sort(function(a, b) {
-        var va = a[key] || '', vb = b[key] || '';
-        if (typeof va === 'number' && typeof vb === 'number') return _mainSortAsc ? va - vb : vb - va;
-        return _mainSortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
-      });
-      renderHives(sorted);
-    }
-
-    function filterHiveTable() {
-      var q = (document.getElementById('hive-search').value || '').toLowerCase();
-      if (!q) { renderHives(_allMainHives); return; }
-      var filtered = _allMainHives.filter(function(h) {
-        return JSON.stringify(h).toLowerCase().includes(q);
-      });
-      renderHives(filtered);
+      renderHives();
     }
 
     // contributeBase returns the spoke's real base URL for building /contribute
@@ -1613,7 +1599,7 @@
       if (_isLoggedIn) {
         return '<button class="hv-btn btn-secondary btn-sm" onclick="requestAccessInline(\'' + esc(hid) + '\',this)" >Request Access</button>';
       }
-      return '<button class="hv-btn btn-secondary btn-sm" onclick="openContributeInfo(\'' + esc(h.name || h.id) + '\',\'' + esc(hid) + '\')" >Contribute</button>';
+      return '<button id="contrib-trigger-' + encodeURIComponent(hid) + '" class="hv-btn btn-secondary btn-sm" onclick="openContributeInfo(\'' + esc(h.name || h.id) + '\',\'' + esc(hid) + '\')" >Contribute</button>';
     }
 
     async function requestAccessInline(hiveId, btn) {
@@ -1629,9 +1615,41 @@
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); btn.textContent = 'Request Access'; btn.disabled = false; }
     }
 
-    function renderHives(hives) {
-      var pub = hives.filter(function(h) { return h.isPublic !== false; });
-      if (!pub.length) { document.getElementById('hive-table-container').innerHTML = '<div class="loading">No public hives registered yet</div>'; return; }
+    function isInViewport(el) {
+      var rect = el.getBoundingClientRect();
+      return rect.bottom > 0 && rect.top < window.innerHeight &&
+        rect.right > 0 && rect.left < window.innerWidth;
+    }
+
+    function replaceHiveTable(markup) {
+      var focused = document.activeElement;
+      var focusedId = focused && focused.id;
+      var hadContribFocus = focusedId && focusedId.startsWith('contrib-trigger-');
+      var wasVisible = hadContribFocus && isInViewport(focused);
+      document.getElementById('hive-table-container').innerHTML = markup;
+      if (!hadContribFocus) return;
+      var target = contribFocusTarget(focusedId);
+      var preserveScroll = target.id === focusedId && (!wasVisible || isInViewport(target));
+      target.focus({preventScroll: preserveScroll});
+    }
+
+    function renderHives() {
+      var q = document.getElementById('hive-search').value.toLowerCase();
+      var pub = _allMainHives.filter(function(h) {
+        return h.isPublic !== false && (!q || JSON.stringify(h).toLowerCase().includes(q));
+      });
+      if (_mainSortKey) {
+        pub.sort(function(a, b) {
+          var va = a[_mainSortKey] || '', vb = b[_mainSortKey] || '';
+          if (typeof va === 'number' && typeof vb === 'number') return _mainSortAsc ? va - vb : vb - va;
+          return _mainSortAsc ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+        });
+      }
+      if (!pub.length) {
+        var message = q ? 'No public hives match your search' : 'No public hives registered yet';
+        replaceHiveTable('<div class="loading">' + message + '</div>');
+        return;
+      }
       var rows = pub.map(function(h, i) {
         var dot = '<span class="online-dot ' + (h.online ? 'on' : 'off') + '"></span>';
         var link = (h.snapshotUrl && h.isPublic) ? '<a href="' + esc(h.snapshotUrl) + '" target="_blank" class="repo-link">↗</a>' : '';
@@ -1656,10 +1674,10 @@
           '<td>' + link + '</td>' +
           '</tr>';
       }).join('');
-      document.getElementById('hive-table-container').innerHTML =
+      replaceHiveTable(
         '<table class="hive-table"><thead><tr>' +
         '<th></th><th onclick="sortMainHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortMainHives(\'hiveType\')" style="cursor:pointer">Type ⇅</th><th>Repo</th><th>Repos</th><th onclick="sortMainHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortMainHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortMainHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortMainHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortMainHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortMainHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th><th>Preview</th>' +
-        '</tr></thead><tbody>' + rows + '</tbody></table>';
+        '</tr></thead><tbody>' + rows + '</tbody></table>');
     }
 
     function renderLeaderboard(entries) {
@@ -1902,7 +1920,7 @@
         return fetch('/api/saas/access-status').then(function(r2){return r2.json()}).then(function(as){
           _userAccessStatus = as.hives || {};
           if(d.authenticated) document.getElementById('nav-dashboard').style.display='';
-          renderHives(_allMainHives);
+          renderHives();
           handleAutoRequestFromUrl();
         });
       }
@@ -1917,9 +1935,20 @@
     }
 
     var _contribHiveId = '';
+    function setContribPageInert(inert) {
+      document.querySelectorAll('body > header, body > main, body > footer').forEach(function(el) {
+        el.inert = inert;
+      });
+    }
+    function contribFocusTarget(triggerId) {
+      return document.getElementById(triggerId) || document.getElementById('hive-search');
+    }
     function closeContribModal() {
       document.getElementById('contrib-modal').style.display = 'none';
       document.body.style.overflow = '';
+      setContribPageInert(false);
+      // The registry poll can replace the button or remove its hive while the dialog is open.
+      contribFocusTarget('contrib-trigger-' + encodeURIComponent(_contribHiveId)).focus();
     }
     var _hubLandingModalSeq = 0;
     function hubLandingRememberModalOpen(el) {
@@ -1935,9 +1964,21 @@
       closeContribModal();
       return true;
     }
+    function trapContribFocus(e) {
+      var modal = document.getElementById('contrib-modal');
+      if (!modal || modal.style.display !== 'flex' || e.ctrlKey || e.metaKey) return;
+      var controls = Array.from(modal.querySelectorAll('a[href], button:not([disabled])'));
+      var next = controls.indexOf(document.activeElement) + (e.shiftKey ? -1 : 1);
+      // Safari can skip links or buttons in its native Tab order.
+      if (next < 0) next = controls.length - 1;
+      if (next === controls.length) next = 0;
+      e.preventDefault();
+      controls[next].focus();
+    }
     document.addEventListener('keydown', function(e) {
-      if (e.key !== 'Escape') return;
       if (e.isComposing) return;
+      if (e.key === 'Tab') { trapContribFocus(e); return; }
+      if (e.key !== 'Escape') return;
       if (!hubLandingDismissTopModal()) return;
       e.preventDefault();
       e.stopPropagation();
@@ -1950,6 +1991,8 @@
       document.body.style.overflow = 'hidden';
       document.getElementById('contrib-hive-name').textContent = name;
       document.getElementById('contrib-hive-id').textContent = id;
+      setContribPageInert(true);
+      document.getElementById('contrib-close').focus();
       var area = document.getElementById('contrib-access-area');
 
       if (!_isLoggedIn) {
@@ -1988,7 +2031,7 @@
         _userAccessStatus[_contribHiveId] = {status: 'pending'};
         btn.textContent = 'Request sent!';
         btn.style.background = 'var(--green)';
-        renderHives(_allMainHives);
+        renderHives();
       } catch(e) { btn.textContent = 'Error'; }
     }
 
@@ -2006,7 +2049,7 @@
           var hiveName = hiveId;
           (_allMainHives || []).forEach(function(h) { if (h.id === hiveId) hiveName = h.name || h.id; });
           hiveToast('Access request sent for ' + hiveName + '!', 'success');
-          renderHives(_allMainHives);
+          renderHives();
         } else {
           hiveToast(data.error || 'Request failed', 'error');
         }
@@ -2064,13 +2107,13 @@
   </script>
 
   <div id="contrib-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center;overscroll-behavior:contain;overscroll-behavior-y:contain" onclick="if(event.target===this)closeContribModal()">
-    <div style="background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:var(--sp-9);max-width:540px;width:90%;max-height:80vh;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain">
-      <h2 style="font-size:1.3rem;margin-bottom:var(--sp-2);color:var(--amber)">Contribute to <span id="contrib-hive-name"></span></h2>
+    <div role="dialog" aria-modal="true" aria-labelledby="contrib-modal-title" style="background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:var(--sp-9);max-width:540px;width:90%;max-height:80vh;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain">
+      <h2 id="contrib-modal-title" style="font-size:1.3rem;margin-bottom:var(--sp-2);color:var(--amber)">Contribute to <span id="contrib-hive-name"></span></h2>
       <p style="font-size:0.8rem;color:var(--muted);margin-bottom:var(--sp-6)">Hive ID: <code id="contrib-hive-id" style="font-size:var(--fs-sm);background:#080b0f85;border:1px solid var(--line);padding:var(--sp-1) var(--sp-3);border-radius:var(--r-sm)"></code></p>
       <p style="color:var(--muted);font-size:0.9rem;line-height:1.6;margin-bottom:var(--sp-7)">Help this project by contributing to open issues and PRs. Login with GitHub to request access &mdash; the hive owner will be notified and can approve your request.</p>
       <div id="contrib-access-area"></div>
       <div style="display:flex;justify-content:flex-end;margin-top:var(--sp-5)">
-        <button class="hv-btn btn-secondary" onclick="closeContribModal()">Close</button>
+        <button id="contrib-close" class="hv-btn btn-secondary" onclick="closeContribModal()">Close</button>
       </div>
     </div>
   </div>

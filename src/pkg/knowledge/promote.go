@@ -67,19 +67,25 @@ func NewPromoter(layers []LayerConfig, config CuratorConfig, logger *slog.Logger
 // Promotion only flows upward (project → org → community); attempting to
 // promote downward returns an error.
 func (p *Promoter) Promote(ctx context.Context, req PromoteRequest) PromoteResult {
+	return p.promoteFrom(ctx, req, req.FromLayer, p.layers[req.FromLayer])
+}
+
+func (p *Promoter) promoteFrom(ctx context.Context, req PromoteRequest, from LayerType, sourceClient *Client) PromoteResult {
 	result := PromoteResult{
 		Slug:      req.Slug,
 		FromLayer: req.FromLayer,
 		ToLayer:   req.ToLayer,
 	}
 
-	if !isUpwardPromotion(req.FromLayer, req.ToLayer) {
-		result.Error = fmt.Sprintf("cannot promote from %s to %s: promotion only flows upward", req.FromLayer, req.ToLayer)
+	if from == "" {
+		from = req.FromLayer
+	}
+	if !IsUpwardPromotion(from, req.ToLayer) {
+		result.Error = fmt.Sprintf("cannot promote from %s to %s: promotion only flows upward", from, req.ToLayer)
 		return result
 	}
 
-	sourceClient, ok := p.layers[req.FromLayer]
-	if !ok {
+	if sourceClient == nil {
 		result.Error = fmt.Sprintf("source layer %s has no configured endpoint", req.FromLayer)
 		return result
 	}
@@ -102,7 +108,7 @@ func (p *Promoter) Promote(ctx context.Context, req PromoteRequest) PromoteResul
 		Type:       FactType(page.Type),
 		Confidence: page.Confidence,
 		Tags:       page.Tags,
-		SourcePR:   fmt.Sprintf("%s%s by %s: %s", PromotedSourcePrefix, req.FromLayer, req.Promoter, req.Reason),
+		SourcePR:   fmt.Sprintf("%s%s by %s: %s", PromotedSourcePrefix, from, req.Promoter, req.Reason),
 		SourceDate: time.Now(),
 	}
 
@@ -132,7 +138,7 @@ func (p *Promoter) AutoPromoteCandidates(ctx context.Context, fromLayer, toLayer
 		return nil, fmt.Errorf("layer %s has no configured endpoint", fromLayer)
 	}
 
-	if !isUpwardPromotion(fromLayer, toLayer) {
+	if !IsUpwardPromotion(fromLayer, toLayer) {
 		return nil, fmt.Errorf("cannot promote from %s to %s: not upward", fromLayer, toLayer)
 	}
 
@@ -164,11 +170,9 @@ func (p *Promoter) AutoPromoteCandidates(ctx context.Context, fromLayer, toLayer
 	return candidates, nil
 }
 
-// isUpwardPromotion returns true if promoting from→to moves the fact to a
-// broader scope (lower precedence number = narrower scope).
-// Valid: personal→project, project→org, org→community
-func isUpwardPromotion(from, to LayerType) bool {
-	return from.Precedence() < to.Precedence()
+// IsUpwardPromotion reports whether the target is a broader knowledge layer.
+func IsUpwardPromotion(from, to LayerType) bool {
+	return from.Precedence() < to.Precedence() && to.Precedence() <= LayerCommunity.Precedence()
 }
 
 func (p *Promoter) ingestToLayer(ctx context.Context, client *Client, facts []ExtractedFact) error {

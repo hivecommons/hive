@@ -48,6 +48,11 @@ func (f *fakeJoiner) Join(_ context.Context, req meetings.JoinRequest) (meetings
 	if f.during != nil {
 		f.during()
 	}
+	if req.BeforeDispatch != nil {
+		if err := req.BeforeDispatch(); err != nil {
+			return meetings.Meeting{}, err
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.joins = append(f.joins, req)
@@ -470,6 +475,196 @@ func TestIngestRejectsUpdateOlderThanCancellation(t *testing.T) {
 	invite.Sequence = 6
 	if got, err := s.Ingest(invite); err != nil || got.Status != StatusScheduled {
 		t.Fatalf("newer update = %+v, %v", got, err)
+	}
+}
+
+func TestTickRevalidatesRescheduledInvite(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		start time.Time
+	}{
+		{"old occurrence due", t0.Add(30 * time.Second)},
+		{"old occurrence missed", t0.Add(-30 * time.Minute)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &clock{t: t0}
+			j := &fakeJoiner{}
+			s := newTestScheduler(t, t.TempDir(), c, j)
+			ownerAdd(t, s, ManualRequest{Start: t0.Add(-time.Hour), End: t0.Add(time.Hour)})
+			invite := Event{
+				UID: "rescheduled@example.com", Method: MethodRequest, Source: SourceEmail,
+				Organizer: &Person{Email: "alice@example.com"}, Summary: "Moved meeting",
+				Start: tc.start, JoinURL: "https://meet.google.com/xyz",
+			}
+			ev, err := s.Ingest(invite)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Approve(ev.ID, "octo"); err != nil {
+				t.Fatal(err)
+			}
+
+			newStart := t0.Add(2 * time.Hour)
+			j.during = func() {
+				j.during = nil
+				invite.Sequence++
+				invite.Start = newStart
+				if _, err := s.Ingest(invite); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if n := s.Tick(context.Background()); n != 1 || j.count() != 1 {
+				t.Fatalf("old-time tick started %d joins, want only the earlier meeting", n)
+			}
+			got, err := s.Get(ev.ID)
+			if err != nil || got.Status != StatusScheduled || !got.Start.Equal(newStart) || len(got.History) != 0 {
+				t.Fatalf("moved meeting after old-time tick = %+v (%v)", got, err)
+			}
+
+			c.Set(newStart.Add(-DefaultLead))
+			if n := s.Tick(context.Background()); n != 1 || j.count() != 2 {
+				t.Fatalf("new-time tick started %d joins, want the moved meeting", n)
+			}
+			got, err = s.Get(ev.ID)
+			if err != nil || got.JoinedOccurrence == nil || !got.JoinedOccurrence.Equal(newStart) {
+				t.Fatalf("moved meeting after join = %+v (%v)", got, err)
+			}
+		})
+	}
+}
+
+func TestRescheduleWhileJoining(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		beforeDispatch   bool
+		wantPreviousJoin int
+	}{
+		{name: "before dispatch", beforeDispatch: true},
+		{name: "after dispatch", wantPreviousJoin: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &clock{t: t0}
+			j := &fakeJoiner{}
+			s := newTestScheduler(t, t.TempDir(), c, j)
+			invite := Event{
+				UID: "move-during-join@example.com", Method: MethodRequest, Source: SourceEmail,
+				Organizer: &Person{Email: "alice@example.com"},
+				Start:     t0.Add(30 * time.Second), JoinURL: "https://meet.google.com/old",
+			}
+			ev, err := s.Ingest(invite)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Approve(ev.ID, "octo"); err != nil {
+				t.Fatal(err)
+			}
+			newStart := t0.Add(5 * time.Minute)
+			move := func(start time.Time, url string) {
+				invite.Sequence++
+				invite.Start = start
+				invite.JoinURL = url
+				if _, err := s.Ingest(invite); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.beforeDispatch {
+				j.during = func() { move(newStart, "https://meet.google.com/new") }
+			}
+			if n := s.Tick(context.Background()); n != tc.wantPreviousJoin {
+				t.Fatalf("old-time tick joined %d, want %d", n, tc.wantPreviousJoin)
+			}
+			j.during = nil
+			if !tc.beforeDispatch {
+				move(newStart, "https://meet.google.com/new")
+			}
+			got, err := s.Get(ev.ID)
+			if err != nil || got.Status != StatusScheduled || got.ApprovedBy != "octo" ||
+				!got.Start.Equal(newStart) || len(got.History) != tc.wantPreviousJoin {
+				t.Fatalf("moved meeting = %+v (%v)", got, err)
+			}
+			if tc.beforeDispatch && (got.JoinedOccurrence != nil || got.MeetingID != "") {
+				t.Fatalf("superseded claim remains: %+v", got)
+			}
+
+			c.Set(newStart.Add(-DefaultLead))
+			if n := s.Tick(context.Background()); n != 1 || j.count() != tc.wantPreviousJoin+1 {
+				t.Fatalf("new-time tick joined %d, want one new join", n)
+			}
+			if last := j.joins[j.count()-1]; last.URL != invite.JoinURL {
+				t.Fatalf("joined %q, want the updated URL %q", last.URL, invite.JoinURL)
+			}
+			if !tc.beforeDispatch {
+				j.set("mtg-a", meetings.StateEnded)
+				s.Tick(context.Background()) // Reconcile the old join when its callback is lost.
+				got, err = s.Get(ev.ID)
+				if err != nil || got.Status != StatusLive || got.MeetingID != "mtg-b" || len(got.History) != 2 ||
+					got.History[0].Status != StatusEnded || got.History[1].Status != StatusLive {
+					t.Fatalf("after the old join ended = %+v (%v)", got, err)
+				}
+				move(ev.Start, ev.JoinURL)
+				if n := s.Tick(context.Background()); n != 0 || j.count() != 2 {
+					t.Fatalf("move back joined %d, want no duplicate join", n)
+				}
+				got, err = s.Get(ev.ID)
+				if err != nil || got.Status != StatusEnded || got.MeetingID != "mtg-a" {
+					t.Fatalf("after moving back to the ended meeting = %+v (%v)", got, err)
+				}
+			}
+		})
+	}
+}
+
+func TestWithdrawnJoinKeepsHistoryDeletion(t *testing.T) {
+	c := &clock{t: t0}
+	j := &fakeJoiner{}
+	s := newTestScheduler(t, t.TempDir(), c, j)
+	start := t0.Add(30 * time.Second)
+	series := ownerAdd(t, s, ManualRequest{Start: start, RRule: "FREQ=DAILY;COUNT=3"})
+	if n := s.Tick(context.Background()); n != 1 {
+		t.Fatalf("first tick joined %d, want one join", n)
+	}
+	s.OnMeeting(j.set("mtg-a", meetings.StateEnded))
+
+	second := start.AddDate(0, 0, 1)
+	c.Set(second.Add(-DefaultLead))
+	j.during = func() {
+		s.ForgetMeeting("mtg-a")
+		if _, err := s.Ingest(Event{
+			UID: series.UID, RecurrenceID: &second, Start: second.Add(time.Hour),
+			JoinURL: series.JoinURL, Source: SourceManual, InvitedByOwner: true,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := s.Tick(context.Background()); n != 0 {
+		t.Fatalf("override tick joined %d, want no join", n)
+	}
+	got, err := s.Get(series.ID)
+	if err != nil || got.Status != StatusScheduled || len(got.History) != 0 ||
+		got.MeetingID != "" || got.JoinedOccurrence == nil || !got.JoinedOccurrence.Equal(start) {
+		t.Fatalf("series after withdrawing the claim = %+v (%v)", got, err)
+	}
+}
+
+func TestJoinRechecksRecurringOverride(t *testing.T) {
+	c := &clock{t: t0}
+	j := &fakeJoiner{}
+	s := newTestScheduler(t, t.TempDir(), c, j)
+	start := t0.Add(30 * time.Second)
+	series := ownerAdd(t, s, ManualRequest{Start: start, RRule: "FREQ=DAILY;COUNT=2"})
+	if _, err := s.Ingest(Event{
+		UID: series.UID, RecurrenceID: &start, Start: start.Add(time.Hour),
+		JoinURL: series.JoinURL, Source: SourceManual, InvitedByOwner: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The scan had selected the unmodified series occurrence before the override arrived.
+	if s.join(context.Background(), series.ID, start) || j.count() != 0 {
+		t.Fatal("claimed the original occurrence after its override arrived")
+	}
+	got, err := s.Get(series.ID)
+	if err != nil || got.Status != StatusScheduled || len(got.History) != 0 {
+		t.Fatalf("series after rejected claim = %+v (%v)", got, err)
 	}
 }
 

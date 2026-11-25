@@ -11,6 +11,171 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.369.4)
+
+### Fixed
+
+- Continue self-authored automerge sweeps for accessible repositories when another repository returns 404.
+
+## 2026-11-25 (v5.369.3)
+
+### Fixed
+
+- The queued automerge sweep now skips repositories whose GitHub issue listing returns 404, logging the affected repository instead of preventing other repositories from being swept ([#19908](https://github.com/hivecommons/hive/issues/19908)). A 404 can also indicate missing access; operators should check the repository configuration and GitHub App permissions.
+
+## 2026-11-25 (v5.369.2)
+
+### Fixed
+
+- A GitHub 5xx on a PR or issue stage-label write (`stage labels: write failed`, `issue stage labels: write failed`) no longer files an `unclassified_error_repeated` fleet self-report ([#19889](https://github.com/hivecommons/hive/issues/19889), [#19887](https://github.com/hivecommons/hive/issues/19887)). The stage engine marks the write uncertain and the next sweep re-reads the item and reconciles its labels, so a transient upstream error is not a hive defect; the warning stays in local logs, and 4xx or non-label failures remain reportable.
+
+## 2026-11-25 (v5.369.1)
+
+### Changed
+
+- Activity monitor rows now show the maintainer's real decision. An untriaged issue whose reporter already opened a PR reads **Triage needed · contributor PR #N open**, with the PR named in the caption and an **Open contributor PR #N** entry under **Accept triage** (the tracker payload's new `triage_pr`). The row only displays this; the reporter-trust and triage gates are unchanged. A reviewer's `requires_human` / needs-decision verdict on a PR a person pushed themselves now parks at `stage/085-needs-decision` with the reviewer's question, so the row no longer says it is waiting on the author to push. Only `changes_requested`, a conflict, red checks or a missing DCO send the PR back to its author (`stage/071-needs-author`). **Behavior change:** since #15202 that verdict had routed a person's PR to 071. (#19843)
+
+### Fixed
+
+- The inference translator no longer leaves the Claude CLI on a silent stream while a model waits in a gateway queue or reasons, which made the CLI abort and resend the request after 300 seconds and threw away five minutes of generation each time ([#19793](https://github.com/hivecommons/hive/issues/19793)). For a streaming request it now sends the 200 and `message_start` before it calls the gateway, writes an Anthropic `ping` event after every 10 seconds of silence (`HIVE_INFERENCE_STREAM_PING_INTERVAL` changes the interval), forwards `delta.reasoning_content` as a `thinking` block, and flushes every event. Because the 200 is already out, a gateway failure on a streamed request (unreachable, a non-2xx status, or a stream that breaks) now reaches the CLI as an SSE `error` event with the same `inference backend ...` message and an Anthropic error type that follows the status. Non-streaming requests and `governor.inference_resilience` are unchanged. The operator docs also note the CLI's own `CLAUDE_STREAM_IDLE_TIMEOUT_MS` and `API_FORCE_IDLE_TIMEOUT` limits.
+
+## 2026-11-25 (v5.369.0)
+
+### Added
+
+- **GitHub now shows who made a dashboard label change** ([#19852](https://github.com/hivecommons/hive/issues/19852)): the dashboard writes labels with the Hive App's token, so GitHub showed the App as the one who released or added a hold, which read as automation overriding a person's hold. Adding or releasing a hold, accepting triage, and an approval that lifts `needs-human` or the sentinel label now leave one comment on the issue or PR naming the signed-in dashboard user and the labels changed. Each item and kind keeps one comment under a hidden `<!-- hive:dashboard-actor kind=… -->` marker, edited in place on the next action instead of posted again. The setting is `dashboard.attribute_label_actions` (on by default), and the audit-log entry is written as before.
+
+### Fixed
+
+- Keep the same agent selected and visible in the TUI when the fleet list refreshes and the agent is still present.
+
+## 2026-11-25 (v5.368.0)
+
+### Added
+
+- A hive configured with `forge: gitea` (project-wide or in `project.repo_policies[]`) now reads `/api/v1/version` from each Gitea instance it points at and, when the instance reports a Forgejo version, logs one warning per instance suggesting `forge: forgejo` — the only kind that gets the Forgejo automerge and close-on-merge sweeps ([#19832](https://github.com/hivecommons/hive/issues/19832)).
+
+### Fixed
+
+- Exclude closed GitHub issues from GitHub Projects work queues even when they still have a matching board status.
+- Update sibling named sessions when reissuing their shared contributor token with `hivectl`.
+
+## 2026-11-25 (v5.367.1)
+
+### Fixed
+
+- **Agent config saves no longer report success when the config was not written** ([#19847](https://github.com/hivecommons/hive/issues/19847)). `PUT /api/config/agent/{name}/general`, `.../cadences` and `.../models` used to log a failed save and still answer `200`, so the dashboard showed the change as saved while it lived only in memory and vanished on the next restart or reload. They now answer `500` when the write fails and `409` when the hive has no writable config source, and put the in-memory config back as it was. The whole request is validated before anything is applied, and a cadence for a governor mode the hive does not define is refused with `400` instead of being skipped silently.
+
+## 2026-11-25 (v5.367.0)
+
+### Added
+
+- Per-repo **open PRs** setting (`project.repo_policies[].open_prs`: `on`, `off` or `workflow_only`), the sibling of the per-repo auto-merge switch, at every ACMM level. `off` lets agents analyse, comment and file issues in a repo but open no PR there. `workflow_only` lets only workflow hand-off PRs (`workflow.dispatch`) open, so an agent's own cadence work, such as test hardening, files issues instead of PRs and reviews. It is enforced where agent PRs open: the `hive-open-pr` relay, the forge relay, the sandbox PR path and the sidecar callback. Each refusal is audited as `agent_write_refused` with `gate=open-prs`. A workflow PR is recognised from the hive's own record of the hand-off kicks it planned and delivered, never from PR text: a `hive-open-pr` request must name the handed-off issue, and a sandboxed kick must be the planned hand-off kick. Kicks name each limited repo, and the setting survives a reload through the dashboard overlay. Set it on **Settings → Repos** or on the repo card next to auto-merge (`POST /api/repos/open-prs`). `project.open_prs: false` still wins. **Behavior change:** `project.open_prs: false` used to stop only sandbox PRs; it now also stops PRs through the `hive-open-pr` and forge relays, and workflow profiles that open PRs resolve to no agent on such a hive. (#19870)
+- **Hub affiliation from hivecommons/colony.** The hub admin Users table's daily affiliation refresh now matches each user's public github.com login against the public cncf/gitdm files on the hub (on by default, `HIVE_HUB_AFFILIATION_COLONY_GITDM`; nothing about anyone is sent, emails are never used) and can ask CNCF DevStats for the user's CNCF contribution count (off by default, `HIVE_HUB_AFFILIATION_COLONY_DEVSTATS`, hourly cap). A colony value is labelled `colony:gitdm` or `colony:devstats` with colony's confidence, never replaces an organization the user or an admin set on the hub or the company on the person's own profile, and is not sent to any hive. Phase 1 of the Colony customer-data backend design ([#19851](https://github.com/hivecommons/hive/issues/19851)); see [telemetry.md](src/docs/telemetry.md#hub-affiliation-from-colony).
+
+### Fixed
+
+- ACMM criteria detection: Test suite now matches nested test directories (monorepos; vendored trees excluded), Coverage gate also accepts `.github/codecov.yml`, `dev/codecov.yml` and `.github/workflows/coverage.yml`, Code style config accepts more documented config names (such as `.prettierrc.yml`), and the four L2 agent instruction file criteria are merged into one `acmm:agent-instructions` criterion so any single file (such as `AGENTS.md`) passes. Waivers on the old `acmm:claude-md`, `acmm:copilot-instructions`, `acmm:agents-md`, and `acmm:cursor-rules` IDs are no longer recognized.
+
+### Security
+
+- **Customers hub import: the hub answers only its own trust domain.** `POST /api/customers/match` now answers only hives listed in the new hub setting `HIVE_HUB_CUSTOMERS_TRUSTED_HIVES` (the project's own hives; empty by default). Every other hive gets an empty match list, whatever its `customers.hub_import.enabled` says and whatever consent a person recorded for it, so the hub's knowledge about a person no longer reaches third-party spokes. Operators who use the hub import for their own hive must add its ID to the list. Part of [#19851](https://github.com/hivecommons/hive/issues/19851).
+
+## 2026-11-25 (v5.366.7)
+
+### Changed
+
+- CI now runs the Forgejo JWT live check against a real Forgejo 17 in a nightly lane on GitHub-hosted runners (schedule and manual dispatch only, never a required check), so the per-tier JWT path no longer depends on a manual run; `forgejo-live.sh` accepts `RUNTIME=docker` and a host Go toolchain, and the check also confirms a write-scope integration can push (#19494).
+
+### Fixed
+
+- A codex agent whose project lacks access to its configured model (the `■ Project ... does not have access to model` pane line) is now recorded as a backend auth denial with a backoff instead of ending every kick as `ended_no_visible_action`; only the model name is kept, not the project id. (#19810)
+- A forgotten hold on an all-green pull request no longer reads as a CI failure, and it no longer waits unnoticed. On a PR event, `native-queue-policy` now reports a head held only by `hold` or `do-not-merge/hold` as held: it still validates every policy provider, and when they are green the check passes with a `HELD:` notice instead of failing. Every merge-group run still refuses held PRs, and other blocking labels, drafts and moved heads still fail. The hive now raises a PR that has sat behind a hold label with every check green for longer than `escalation.stale_hold_after` (default 2h, `HIVE_STALE_HOLD_AFTER` overrides, `off` disables) once per held head, as a high-priority notification and a blocked lifecycle stage. A PR that also carries the opt-in `escalation.release_when_green_label` (default `hold/until-green`) has its hold labels removed once every check is green; a plain hold is never removed, and no approval or lgtm label is added. (#19839)
+- The contributor relay no longer assigns an issue a maintainer has put on hold or that is awaiting triage. Before, `selectTask` picked from the cached snapshot and only re-read the issue after the lease, claim and token mint, so a `hold` added half a minute earlier was logged as "claim refused" while the task was still sent. Now the chosen issue is read live before anything is committed: the hold family and configured hold labels, contribute skip labels, a closed state and the reporter-trust triage gate (configured trusted associations, logins and triage labels) all refuse it, and a failed read refuses too. The contribute admission also withholds cached rows whose webhook-patched labels show a hold or fail the triage gate, so they leave the Ready queue within seconds. An issue that gains a hold or loses its triage label while a contributor is working on it has its task revoked ("the maintainer put this issue on hold"), with the lease, claim and pending credential released and the contributor's branch and PR left alone. This happens from the `issues` webhook, and a two-minute reconcile catches a missed webhook. The ledger's fresh-claim admission applies the same triage gate. (#19846)
+- Fix the Ask Hive panel: it now sits below the dashboard header with a title and close button, uses one type scale, renders answers as markdown with numbered source citations, shows progress while a question is answered (with Retry on failure), and keeps scrolling inside the panel.
+
+## 2026-11-25 (v5.366.6)
+
+### Fixed
+
+- Open and act on the selected Knowledge fact when multiple layers contain the same slug.
+
+### Security
+
+- No automerge lane merges a PR that touches credential, keystore, auth or secret code, or that wears the sentinel alert label, until a person decides on that exact head ([#19741](https://github.com/hivecommons/hive/issues/19741)). This applies to App self-merge, trusted bots, trusted authors and contributors. The trusted-author lane had merged an owner's credential change on green CI alone. Three things let it through: the sentinel finding was notice-only, the swarm's changes_requested was a COMMENTED review, and the review gate was in shadow. The new `auto_merge.decision_gate` is on by default with a shipped set of credential paths. A trusted merger's APPROVED review on the head, the dashboard's Approve, or `/hive decision approve` releases it, and the tracker parks a held PR at 085. Set `paths` to replace the set, `sentinel: false` to leave sentinel-labelled trusted PRs to the label rules, or `enabled: false` to turn the gate off.
+
+## 2026-11-25 (v5.366.5)
+
+### Changed
+
+- Scoped-token tier names now have a named Go type (`agentmode.TokenTier`) instead of a bare string; no behavior change ([#19566](https://github.com/hivecommons/hive/pull/19566)).
+
+### Fixed
+
+- The post-merge DCO monitor no longer fails a contributor's private-email squash because the pull request also held GitHub "Update branch" merges made by the hive App. The merged-PR evidence rule from #19660 required every PR commit to belong to the PR author, so the squash of #19766 (69794fd) was reported as `pr-commit-not-by-pr-author`; it now ignores only verified web-flow merge commits authored by the hive App (`hivecommons-hive[bot]`, login and id), which carry base-branch content and none of the change. Merges by humans or any other GitHub App, unverified or single-parent bot commits, and PRs with no commit of the author's own still fail. (#19775)
+- Clear Inbox selections when items are hidden or removed, and list the affected items in the delete confirmation.
+
+## 2026-11-25 (v5.366.4)
+
+### Fixed
+
+- **A contributor's expired CLI login no longer files a fleet self-report against the hub** ([#19816](https://github.com/hivecommons/hive/issues/19816)). When a relay fails a `fix-pr` task because its own agent CLI cannot authenticate (an expired OAuth session, a missing login, a rejected API key) or declares `failure_kind: environment`, the hub's "fix-pr task failed; giving up on relay delivery" line is now logged at INFO instead of WARN, so it stays out of the `unclassified_error_repeated` feed. Retries, cooldowns and the stage engine's re-nudge/adoption hand-off are unchanged; a give-up for any other reason still warns.
+
+## 2026-11-25 (v5.366.3)
+
+### Fixed
+
+- The Hive Hub Contribute dialog keeps keyboard focus inside and restores it when closed.
+
+## 2026-11-25 (v5.366.2)
+
+### Fixed
+
+- An agent switched off an inference gateway backend while stopped or paused no longer keeps sending its requests to the inference translator, which failed every one with "inference no route"; its next start rebuilds the tmux session for the new backend.
+
+## 2026-11-25 (v5.366.1)
+
+### Fixed
+
+- The supersession sweep no longer fails or warns on every tick when a PR claims an issue that does not exist; the claim is skipped quietly.
+
+## 2026-11-25 (v5.366.0)
+
+### Added
+
+- Run `opencode` as a hub/spoke agent backend, not only a contributor one: both images now ship it (pinned, checksummed), the launcher starts the TUI unattended with the model passed through inline config, its pane is recognised as a live CLI, and the dashboard model picker lists its models. Also creates the shared opencode XDG bridge target that previously dangled and crashed opencode at startup.
+
+## 2026-11-25 (v5.365.7)
+
+### Fixed
+
+- The permissions watcher's "entries owned by another uid" summary now warns again only when the skipped count doubles, and treats the condition as cleared only after several empty ticks, so a surge that grows the unfixable tree every tick no longer warns every tick and trips the fleet self-report (#19791).
+
+## 2026-11-25 (v5.365.6)
+
+### Fixed
+
+- Sorting and refreshing the Hive Hub directory keep the active search filter and sort order.
+
+## 2026-11-25 (v5.365.5)
+
+### Fixed
+
+- Hive now checks the latest schedule before joining a meeting or marking it missed, so changed invites do not use the old time.
+
+## 2026-11-24 (v5.365.4)
+
+### Fixed
+
+- A hive paused through its fleet breaker no longer looks healthy in My Hives, and it can be resumed from where its paused state shows ([#19778](https://github.com/hivecommons/hive/issues/19778)). The My Hives row now carries a **⏸ paused** pill next to the mode badge, with a hover naming how many agents the breaker holds and who paused them. For the owner or a hub admin the pill reads **⏸ paused · ▶ resume** and resumes the hive on click. On the hive's own dashboard the owner's chip reads **paused · resume**, and it is clickable as soon as sign-in resolves instead of after the next status poll. A viewer who cannot release the breaker there gets a **Resume in My Hives ↗** link to the hub.
+
+## 2026-11-24 (v5.365.3)
+
+### Fixed
+
+- dashboard: the "model is not the <backend> spelling" warning no longer returns on every boot or upgrade once the hive has written the corrected id to the agent overlay (the rewrite is logged instead); the banner is raised only when that write fails, and it now has a Dismiss button that `POST /api/system-alerts/dismiss` accepts.
+- The Review Queue keeps your selected page when a background refresh finishes late, preserves keyboard focus during loading, and lets you retry failed or timed-out page changes.
+
 ## 2026-11-24 (v5.365.2)
 
 ### Fixed

@@ -173,6 +173,15 @@ Notes that will save you a wrong guess:
 - The instance URL is the **bare instance root**. The adapters append `/api/v4`
   (GitLab) and `/api/v1` (Gitea and Forgejo) themselves; adding the suffix
   yourself produces a doubled path.
+- A Forgejo instance configured as `gitea` is detected. The spoke reads
+  `/api/v1/version` from each instance a `gitea` repo resolves to, at startup
+  and every ten minutes for instances it has not read yet (a failed request,
+  or one added by a reload). When the answer is a Forgejo version
+  (`X.Y.Z+gitea-A.B.C` from Forgejo 7.0 on, `A.B.C+N` before), it logs one
+  warning per instance suggesting `forge: forgejo`, the only kind with the
+  Forgejo automerge and close-on-merge sweeps. The request carries the
+  `gitea.token_env` token only where that token may go (the `forge_url` host
+  rule below).
 - A single repo can live on a different forge from the rest of the project with
   `project.repo_policies[].forge` and `forge_url` (bare instance root; inherits
   `gitlab_url` / `gitea_url` / `forgejo_url` when omitted). Unlike

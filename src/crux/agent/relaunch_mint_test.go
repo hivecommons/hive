@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -36,10 +37,10 @@ type relaunchProbeMinter struct {
 
 	agents []string
 	uids   []int
-	tiers  []string
+	tiers  []agentmode.TokenTier
 }
 
-func (p *relaunchProbeMinter) WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error {
+func (p *relaunchProbeMinter) WriteAgentToken(ctx context.Context, agentName string, tier agentmode.TokenTier, agentUID int) error {
 	// Re-enter the manager: deadlocks (→ test timeout) if the caller holds m.mu.
 	_ = p.m.AllStatuses()
 	p.mu.Lock()

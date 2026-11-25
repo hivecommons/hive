@@ -259,6 +259,15 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		time.Sleep(preLaunchShellClearDelay)
 	}
 
+	// A session built while the agent was inference-routed hands its shell's
+	// ANTHROPIC_BASE_URL to a CLI launched on a non-routed backend, sending it
+	// to the translator the launch above just cleared (#19811).
+	if !isInference {
+		if err := m.retireTranslatorSessionLocked(agent); err != nil {
+			return err
+		}
+	}
+
 	m.fixSharedConfigPerms(agent)
 
 	// NOTE on Copilot's "Confirm folder trust" modal (≥1.0.78): #4563 tried to
@@ -858,6 +867,8 @@ func toolRulesToLaunchCmdWithBobSession(binary, model, backend string, tools *co
 		return agyLaunchCmd(binary, model, effort)
 	case "omp":
 		return ompLaunchCmd(binary, model, effort)
+	case "opencode":
+		return opencodeLaunchCmd(binary)
 	default:
 		return binary + config.ModelFlag(model)
 	}
@@ -939,6 +950,8 @@ func backendLaunchCmdWithBobSession(binary, model, backend string, isInference b
 		launchCmd = codexUnattendedLaunchCmd(binary) + config.ModelFlag(model) + codexEffortFlag(effort)
 	case "omp":
 		launchCmd = ompLaunchCmd(binary, model, effort)
+	case "opencode":
+		launchCmd = opencodeLaunchCmd(binary)
 	default:
 		launchCmd = binary
 	}
@@ -1101,54 +1114,6 @@ func agyHeadlessTurnShellCommand(hiveBinary, agyBinary, model, effort, promptFil
 	}
 	return fmt.Sprintf("printf '\\n%s\\n'; %s; echo %s",
 		agyHeadlessRunningMarker, strings.Join(args, " "), agyHeadlessReadyMarker)
-}
-
-const ompDefaultApprovalMode = "yolo"
-
-func ompLaunchCmd(binary, model, effort string) string {
-	approval := strings.TrimSpace(os.Getenv("HIVE_OMP_APPROVAL_MODE"))
-	if approval == "" {
-		approval = ompDefaultApprovalMode
-	}
-	cmd := fmt.Sprintf("%s --approval-mode %s", binary, approval) + config.ModelFlag(model)
-	if effort != "" {
-		cmd += fmt.Sprintf(" --thinking %s", effort)
-	}
-	return cmd
-}
-
-// codexEffortFlag renders the codex reasoning-effort config-key argument for
-// a configured effort, or "" when unset. The `-c model_reasoning_effort="<v>"`
-// spelling (a Codex CONFIG KEY, not a flag) is the one the scripted launch
-// paths already use — bin/agent-launch.sh and the contributor relay — and the
-// three spellings must not drift apart.
-func codexEffortFlag(effort string) string {
-	if effort == "" {
-		return ""
-	}
-	return fmt.Sprintf(" -c model_reasoning_effort=%q", effort)
-}
-
-// claudeEffortFlag renders Claude Code's `--effort <v>` argument for a
-// configured reasoning effort, or "" when unset or not one of the levels
-// claude accepts (config.ReasoningEffortsByBackend["claude"]). Absent means
-// Claude Code keeps its own default effort; an unknown value is dropped
-// rather than passed, so a stale or mistyped stored effort can never turn
-// into a launch that fails to parse its flags (hivecommons/hive#8377). Set
-// time already rejects unknown values (config.ValidateReasoningEffort), so
-// this is the launch-side half of the same rule, mirrored in
-// ResolveReasoningEffort for the attribution trail.
-func claudeEffortFlag(effort string) string {
-	if !config.ValidEffort(config.ClaudeBackend, effort) {
-		return ""
-	}
-	return fmt.Sprintf(" --effort %s", effort)
-}
-
-// agyLaunchEffort is config.AgyLaunchEffort: the --effort agy is launched
-// with for a model and configured effort.
-func agyLaunchEffort(model, effort string) string {
-	return config.AgyLaunchEffort(model, effort)
 }
 
 // connectionMCPFlags builds MCP-related launch flags from connection configs.

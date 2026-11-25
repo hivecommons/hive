@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/authz"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
@@ -24,7 +25,7 @@ import (
 
 const (
 	DefaultRemote = "origin"
-	DefaultTier   = "contributor"
+	DefaultTier   = agentmode.TokenTierContributor
 )
 
 var DefaultProtectedPaths = []string{
@@ -88,7 +89,7 @@ func (ExecRunner) Run(ctx context.Context, dir string, env []string, name string
 // needs from the host's GitHub App credential (*github.AppAuth in hive), kept
 // as an interface so this package stays inside the Crux ring.
 type TokenScoper interface {
-	ScopedTokenForRepos(ctx context.Context, tier string, repos []string) (string, error)
+	ScopedTokenForRepos(ctx context.Context, tier agentmode.TokenTier, repos []string) (string, error)
 }
 
 // GitHubAppMinter mints a per-push token through the host's TokenScoper.
@@ -97,14 +98,14 @@ type TokenScoper interface {
 // storing a typed nil (see cmd/hive's appMinter).
 type GitHubAppMinter struct {
 	Auth TokenScoper
-	Tier string
+	Tier agentmode.TokenTier
 }
 
 func (m GitHubAppMinter) MintPushToken(ctx context.Context, repo string) (string, error) {
 	if m.Auth == nil {
 		return "", errors.New("pushbroker: nil GitHub App auth")
 	}
-	tier := strings.TrimSpace(m.Tier)
+	tier := agentmode.TokenTier(strings.TrimSpace(string(m.Tier)))
 	if tier == "" {
 		tier = DefaultTier
 	}

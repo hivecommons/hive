@@ -4260,9 +4260,12 @@ const HEADLESS_BACKENDS = {
   // deliberately does not join), so it is only ever reached through
   // CONTRIBUTOR_MODE=headless. `opencode run` exits with a real status code
   // on completion, the exit-code contract runHeadlessTask() relies on.
-  opencode: { flag: 'run' },
+  //
+  // flagsAfterCommand: `run` owns --auto and --model; the root binary rejects
+  // them ("Unrecognized flag: --auto in command opencode run", #19794).
+  opencode: { flag: 'run', flagsAfterCommand: true },
   // Kilo is OpenCode-derived but uses distinct credentials and config.
-  kilo: { flag: 'run' },
+  kilo: { flag: 'run', flagsAfterCommand: true },
   // muse exec "<prompt>" — Muse Code's documented non-interactive
   // sub-command ("Run one prompt non-interactively (headless)"). Verified
   // against Muse Code 1.0.3 (1.0.3-R2198.1): a completed run exits 0, a run
