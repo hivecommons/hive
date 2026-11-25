@@ -2,8 +2,10 @@ package askai
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestPanelRendersBackendTextAsTextOnly pins the panel's rendering contract:
@@ -63,12 +65,61 @@ func TestPanelAccessibilityContract(t *testing.T) {
 			t.Errorf("panel stylesheet lacks %q", want)
 		}
 	}
-	for _, banned := range []string{"@import", "url(", "animation", "transition"} {
-		if strings.Contains(css, banned) {
-			t.Errorf("panel stylesheet uses %q", banned)
+	// The one motion (the busy spinner) must sit inside a reduced-motion
+	// no-preference block; outside it the stylesheet has no motion at all.
+	still := css
+	if i := strings.Index(still, reducedMotionOK); i >= 0 {
+		end := strings.Index(still[i:], "\n}\n")
+		if end < 0 {
+			t.Fatal("unterminated reduced-motion block")
+		}
+		still = still[:i] + still[i+end:]
+	}
+	for _, banned := range []string{"@import", "url(", "animation", "transition", "@keyframes"} {
+		if strings.Contains(still, banned) {
+			t.Errorf("panel stylesheet uses %q outside %s", banned, reducedMotionOK)
 		}
 	}
 }
+
+// reducedMotionOK opens the only block where the panel may animate.
+const reducedMotionOK = "@media (prefers-reduced-motion: no-preference) {"
+
+// TestPanelTimeoutOutlastsServer pins that the browser waits longer than the
+// server's own bound on one question, so a slow but successful answer (one
+// took 27.7 s in the field) is never dropped by the page, and that the busy
+// state names its timings as constants.
+func TestPanelTimeoutOutlastsServer(t *testing.T) {
+	js := string(PanelJS)
+	m := regexp.MustCompile(`var ASK_TIMEOUT_MS = (\d+);`).FindStringSubmatch(js)
+	if m == nil {
+		t.Fatal("panel script lacks ASK_TIMEOUT_MS")
+	}
+	ms, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := time.Duration(ms) * time.Millisecond; got <= DefaultUpstreamTimeout+panelTimeoutMargin {
+		t.Errorf("ASK_TIMEOUT_MS = %v, want more than the server bound %v plus %v", got, DefaultUpstreamTimeout, panelTimeoutMargin)
+	}
+	for _, want := range []string{
+		"var STILL_WORKING_AFTER_MS = ",
+		"input.readOnly = on;",
+		"send.disabled = on;",
+		"'Asking...'",
+		"'hive-ask-spinner'",
+		"'Retry'",
+		".then(settle, settle);",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("panel script lacks %q", want)
+		}
+	}
+}
+
+// panelTimeoutMargin is the least headroom the page keeps over the server
+// bound, for the relay hop and the response write.
+const panelTimeoutMargin = 10 * time.Second
 
 // TestPanelLayoutContract pins the layout fixes for the operator-reported
 // clipping (the panel sat under the fixed dashboard header with its title row
@@ -88,6 +139,10 @@ func TestPanelLayoutContract(t *testing.T) {
 		"--hive-ask-fs: var(--fs-base",
 		"--hive-ask-fs-small: var(--fs-sm",
 		"font-size: var(--fs-touch",
+		"overscroll-behavior: contain;",
+		"html.hive-ask-scroll-lock,\n  html.hive-ask-scroll-lock body {\n    overflow: hidden;",
+		"html.hive-ask-open .hive-chat-fab",
+		"clip-path: inset(50%);",
 	} {
 		if !strings.Contains(css, want) {
 			t.Errorf("panel stylesheet lacks %q", want)
@@ -110,8 +165,23 @@ func TestPanelLayoutContract(t *testing.T) {
 			t.Errorf("panel script lacks %q", want)
 		}
 	}
+	// The script's bottom-sheet query must be the stylesheet's breakpoint.
+	if !strings.Contains(js, "var SHEET_QUERY = '(max-width: 899px)';") || !strings.Contains(css, "@media (max-width: 899px)") {
+		t.Error("SHEET_QUERY and the stylesheet's bottom-sheet breakpoint must match")
+	}
+	for _, want := range []string{
+		"classList.toggle(SCROLL_LOCK_CLASS, open)",
+		"'touchmove'",
+		"{ passive: false }",
+		"scrollIntoView({ block: 'start' })",
+		"announce(view.kind === 'answer' ? 'Answer received.' : view.text)",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("panel script lacks %q", want)
+		}
+	}
 	for _, src := range []string{js, css} {
-		if strings.Contains(src, "Ask AI") || strings.Contains(src, "—") {
+		if strings.Contains(src, "Ask AI") || strings.Contains(src, "\u2014") {
 			t.Error("panel copy must say Ask Hive, never Ask AI, and use no em-dashes")
 		}
 	}
