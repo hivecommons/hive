@@ -1,1 +1,0 @@
-- Hive now checks the latest schedule before joining a meeting or marking it missed, so changed invites do not use the old time.

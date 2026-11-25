@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.365.5)
+
+### Fixed
+
+- Hive now checks the latest schedule before joining a meeting or marking it missed, so changed invites do not use the old time.
+
 ## 2026-11-24 (v5.365.4)
 
 ### Fixed
