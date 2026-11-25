@@ -4666,7 +4666,10 @@
     .tabbed-modal-body { flex:1 1 auto; min-height:0; overflow:auto; }
     .hive-dialog-title { font-size: var(--fs-lg); font-weight: 700; color: var(--text); margin-bottom: var(--sp-5); }
     .hive-dialog-body { font-size: 0.9rem; color: var(--muted); line-height: 1.5; white-space: pre-wrap; margin-bottom: var(--sp-7); }
-    .hive-dialog-body.long { max-height: min(55vh, 520px); overflow: auto; }
+    .hive-dialog-body.long { max-height: min(55vh, 520px); }
+    .hive-dialog.hive-confirm-scroll { display: flex; flex-direction: column; overflow: hidden; }
+    .hive-confirm-scroll > .modal-scroll { min-height: 0; overflow-wrap: anywhere; }
+    .hive-confirm-scroll > :not(.modal-scroll) { flex-shrink: 0; }
     /* .modal-scroll — shared long-content scroll region for every modal
        (release notes, alerts, export viewer, decision dialogs, settings
        bodies). Scrollability is made discoverable: a thin always-visible
@@ -4689,6 +4692,7 @@
     .hive-dialog-error { min-height: 1.2em; margin-top: var(--sp-3); font-size: var(--fs-sm); color: var(--red); }
     /* Optional "remember my choice" row under the body (hiveConfirm cfg.check) */
     .hive-dialog-check { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--muted); margin: calc(-1 * var(--sp-4)) 0 var(--sp-6); cursor: pointer; }
+    .hive-confirm-scroll > .hive-dialog-check { margin-top: 0; }
     .hive-dialog-check input { accent-color: var(--accent); margin: 0; }
     .hive-dialog-buttons { display: flex; gap: 10px; justify-content: flex-end; }
     /* Export / link viewer (hiveExportViewer): the handed-over text sits in
@@ -50526,7 +50530,12 @@ function burnAreaChart() {
       const settings = data.settings || {};
       const rules = Array.isArray(settings.rules) ? settings.rules.length : 0;
       if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
-      const shown = items.filter(it => _inboxShowProcessed || !it.processed);
+      const shown = inboxShownItems();
+      const selectedBeforeRender = _inboxSelected.size;
+      inboxPruneSelection(shown);
+      const closeBulkMenu = _inboxSelected.size !== selectedBeforeRender && _inboxShareMenu?.btn.dataset.action === 'inboxBulkMenu';
+      const restoreBulkFocus = closeBulkMenu && (_inboxShareMenu.btn === document.activeElement || _inboxShareMenu.el.contains(document.activeElement));
+      if (closeBulkMenu) inboxShareMenuClose(false);
       // Sources line: only configured sources are chips (with the account
       // hint); the rest sit behind a "+N more" disclosure next to Connect
       // sources, so the header is one quiet line instead of a wall of
@@ -50558,6 +50567,10 @@ function burnAreaChart() {
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
       const paint = () => { panel.innerHTML = html; };
       inboxPreserveAudio(panel, typeof inboxNoteKeepFocus === 'function' ? () => inboxNoteKeepFocus(paint) : paint);
+      if (restoreBulkFocus) {
+        const control = panel.querySelector('[data-action="inboxBulkMenu"]') || panel.querySelector('[data-action="inboxToggleProcessed"]');
+        control?.focus();
+      }
       inboxApplyFocus(panel);
     }
 
@@ -50580,6 +50593,16 @@ function burnAreaChart() {
     }
     function inboxToggleSources() { _inboxSourcesOpen = !_inboxSourcesOpen; renderInbox(); }
 
+    function inboxShownItems() {
+      return ((_inboxCache || {}).items || []).filter(it => _inboxShowProcessed || !it.processed);
+    }
+    function inboxPruneSelection(shown) {
+      if (!_inboxSelected.size) return;
+      const shownKeys = new Set(shown.map(inboxItemKey));
+      for (const key of _inboxSelected) {
+        if (!shownKeys.has(key)) _inboxSelected.delete(key);
+      }
+    }
     function inboxToggleProcessed() { _inboxShowProcessed = !_inboxShowProcessed; renderInbox(); }
     function inboxToggleSelect(src, id) {
       const key = src + '/' + id;
@@ -50587,7 +50610,7 @@ function burnAreaChart() {
       renderInbox();
     }
     function inboxSelectAll() {
-      const shown = ((_inboxCache || {}).items || []).filter(it => _inboxShowProcessed || !it.processed);
+      const shown = inboxShownItems();
       if (_inboxSelected.size === shown.length) _inboxSelected.clear();
       else _inboxSelected = new Set(shown.map(inboxItemKey));
       renderInbox();
@@ -51420,7 +51443,7 @@ function burnAreaChart() {
           kept ? n(kept, 'Knowledge fact', 'Knowledge facts') + ' of synced sources ' + (kept === 1 ? 'is' : 'are') + ' kept: the sync maintains ' + (kept === 1 ? 'it' : 'them') + '.' : ''
         ];
       }
-      parts.push(inboxDeleteSharesText(shares), 'This cannot be undone.');
+      parts.push(list.map(it => '• ' + (it.title || inboxItemKey(it))).join('\n'), inboxDeleteSharesText(shares), 'This cannot be undone.');
       return {
         title: list.length === 1 ? 'Delete this item?' : 'Delete ' + list.length + ' items?',
         message: parts.filter(Boolean).join('\n\n'),
@@ -51439,17 +51462,35 @@ function burnAreaChart() {
       if (window._hiveRole !== 'owner' && window._hiveRole !== 'read-write') return [];
       return [{ id: 'manage', label: 'Manage', items: [{ id: 'delete', label: 'Delete…', disabled: false, hint: '' }] }];
     }
-    async function inboxDeleteRun(items) {
+    function inboxDeleteEligible(it) {
+      return inboxCanDelete(it, window._hiveRole, window._hiveUser) && !inboxDeleteBusy(it);
+    }
+    async function inboxDeleteRun(items, bulk = false) {
       const list = (items || []).filter(Boolean);
       if (!list.length) return;
       const dlg = inboxDeleteDialog(list);
-      const cfg = { title: dlg.title, message: dlg.message, confirmLabel: 'Delete', danger: true };
+      const cfg = { title: dlg.title, message: dlg.message, confirmLabel: 'Delete', danger: true, scrollBody: list.length > 1 };
       if (dlg.knowledge) cfg.check = { label: INBOX_DELETE_KNOWLEDGE_LABEL, checked: false };
       const answer = await hiveConfirm(cfg);
       if (!answer) return;
+      const visible = bulk ? new Map(inboxShownItems().map(it => [inboxItemKey(it), it])) : null;
+      const current = list.map(it => bulk ? visible.get(inboxItemKey(it)) : inboxFind(it.source, it.id));
+      if (current.some(it => !inboxDeleteEligible(it) || (bulk && !_inboxSelected.has(inboxItemKey(it))))) {
+        showToast(bulk ? 'The Inbox selection changed. Review it before deleting.' : 'This item can no longer be deleted. Review the Inbox.', 'error');
+        return;
+      }
+      const removeKnowledge = !!(dlg.knowledge && answer.checked);
+      if (removeKnowledge && list.some((it, i) => {
+        const latest = current[i];
+        return (inboxDeleteKnowledgeRemovable(it) || inboxDeleteKnowledgeRemovable(latest)) &&
+          (it.fact_slug !== latest.fact_slug || it.layer !== latest.layer);
+      })) {
+        showToast('A Knowledge copy changed. Review the items before deleting.', 'error');
+        return;
+      }
       try {
         const r = await fetch('/api/inbox/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: list.map(it => ({ source: it.source, item_id: it.id })), remove_knowledge: !!(dlg.knowledge && answer.checked) }) });
+          body: JSON.stringify({ items: list.map(it => ({ source: it.source, item_id: it.id })), remove_knowledge: removeKnowledge }) });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         for (const d of (data.items || [])) {
@@ -51473,9 +51514,9 @@ function burnAreaChart() {
     // Delete… in the bulk menu: the selected items the viewer may delete.
     function inboxDeleteSelected() {
       const picked = Array.from(_inboxSelected).map(k => { const i = k.indexOf('/'); return inboxFind(k.slice(0, i), k.slice(i + 1)); }).filter(Boolean);
-      const allowed = picked.filter(it => inboxCanDelete(it, window._hiveRole, window._hiveUser) && !inboxDeleteBusy(it));
+      const allowed = picked.filter(inboxDeleteEligible);
       if (!allowed.length) { showToast(picked.length ? 'None of the selected items can be deleted by you right now' : 'Nothing selected', 'error'); return undefined; }
-      return inboxDeleteRun(allowed);
+      return inboxDeleteRun(allowed, true);
     }
     // ── Inbox: ● Record a meeting or note into the Inbox ──
     // The browser records with MediaRecorder and uploads one chunk every
@@ -60886,9 +60927,20 @@ function burnAreaChart() {
       el.addEventListener('scroll', sync, { passive: true });
       // Content arrives async (release notes fetch) and hidden modals have no
       // layout until opened: re-check whenever size or children change.
-      if (typeof ResizeObserver === 'function') new ResizeObserver(sync).observe(el);
-      if (typeof MutationObserver === 'function') new MutationObserver(sync).observe(el, { childList: true, subtree: true, characterData: true });
-      if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('resize', sync, { passive: true });
+      const size = typeof ResizeObserver === 'function' ? new ResizeObserver(sync) : null;
+      const content = typeof MutationObserver === 'function' ? new MutationObserver(sync) : null;
+      const viewport = typeof window === 'undefined' ? null : window;
+      size?.observe(el);
+      content?.observe(el, { childList: true, subtree: true, characterData: true });
+      viewport?.addEventListener?.('resize', sync, { passive: true });
+      el.hiveModalScrollCleanup = () => {
+        size?.disconnect();
+        content?.disconnect();
+        viewport?.removeEventListener?.('resize', sync);
+        el.removeEventListener('scroll', sync);
+        if (el.dataset) delete el.dataset.modalScrollWired;
+        delete el.hiveModalScrollCleanup;
+      };
       sync();
       return el;
     }
@@ -60912,20 +60964,21 @@ function burnAreaChart() {
       x.addEventListener('click', () => { if (typeof onClose === 'function') onClose(); });
       dlg.insertBefore(x, dlg.firstChild);
     }
-    function hiveWireDialog(overlay, resolve, cancelValue, okSelector, cancelSelector, submit) {
+    function hiveWireDialog(overlay, resolve, cancelValue, okSelector, cancelSelector, submit, submitOnEnter = true) {
       let done = false;
       const focusableSelector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
       const close = (val) => {
         if (done) return;
         done = true;
         document.removeEventListener('keydown', onKey, true);
+        for (const el of overlay.querySelectorAll('.modal-scroll')) el.hiveModalScrollCleanup?.();
         overlay.remove();
         resolve(val);
       };
       overlay.hiveDialogClose = () => close(cancelValue);
       const onKey = (e) => {
         if (e.key === 'Escape') { e.preventDefault(); close(cancelValue); return; }
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' && submitOnEnter) {
           const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
           if (tag !== 'textarea') { e.preventDefault(); submit(close); }
           return;
@@ -60952,6 +61005,7 @@ function burnAreaChart() {
     // cfg.check = { label } adds a checkbox under the body (a "don't show this
     // again" opt-out); the promise then resolves { checked } instead of true
     // so the caller can persist the choice. Without cfg.check it is true/false.
+    // cfg.scrollBody keeps the heading and actions in view above and below long content.
     function hiveConfirm(opts, title) {
       const cfg = hiveNormalizeDialogOptions(opts, title);
       return new Promise(resolve => {
@@ -60964,17 +61018,18 @@ function burnAreaChart() {
         const body = cfg.title ? message : (parts.length > 1 ? parts.slice(1).join('\n\n') : message);
         const confirmLabel = cfg.confirmLabel || cfg.ok || 'OK';
         const check = cfg.check && typeof cfg.check === 'object' ? cfg.check : null;
-        overlay.innerHTML = `<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">
+        const scrollBody = cfg.scrollBody === true;
+        overlay.innerHTML = `<div class="hive-dialog${scrollBody ? ' hive-confirm-scroll' : ''}" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">
           <div id="hive-dialog-title" class="hive-dialog-title">${hiveDialogEscape(heading)}</div>
-          <div class="hive-dialog-body">${hiveDialogEscape(body)}</div>
+          <div class="hive-dialog-body${scrollBody ? ' long modal-scroll' : ''}"${scrollBody ? ' tabindex="0" data-initial-focus' : ''}>${hiveDialogEscape(body)}</div>
           ${check ? `<label class="hive-dialog-check"><input type="checkbox" class="hive-dialog-check-input"${check.checked ? ' checked' : ''}>${hiveDialogEscape(check.label || 'Don\'t show this again')}</label>` : ''}
           <div class="hive-dialog-buttons">
             <button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">${hiveDialogEscape(cfg.cancelLabel || 'Cancel')}</button>
-            <button type="button" class="hv-btn ${hiveConfirmIsDanger(cfg, message) ? 'btn-danger' : 'btn-primary'} hive-dialog-btn primary" data-initial-focus>${hiveDialogEscape(confirmLabel)}</button>
+            <button type="button" class="hv-btn ${hiveConfirmIsDanger(cfg, message) ? 'btn-danger' : 'btn-primary'} hive-dialog-btn primary">${hiveDialogEscape(confirmLabel)}</button>
           </div></div>`;
         document.body.appendChild(overlay);
         const box = check ? overlay.querySelector('.hive-dialog-check-input') : null;
-        hiveWireDialog(overlay, resolve, false, '.primary', '.cancel', close => close(check ? { checked: !!(box && box.checked) } : true));
+        hiveWireDialog(overlay, resolve, false, '.primary', '.cancel', close => close(check ? { checked: !!(box && box.checked) } : true), !scrollBody);
       });
     }
     // cfg.check = { label } adds the same opt-out box as hiveConfirm; the

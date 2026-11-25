@@ -827,7 +827,12 @@
       const settings = data.settings || {};
       const rules = Array.isArray(settings.rules) ? settings.rules.length : 0;
       if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
-      const shown = items.filter(it => _inboxShowProcessed || !it.processed);
+      const shown = inboxShownItems();
+      const selectedBeforeRender = _inboxSelected.size;
+      inboxPruneSelection(shown);
+      const closeBulkMenu = _inboxSelected.size !== selectedBeforeRender && _inboxShareMenu?.btn.dataset.action === 'inboxBulkMenu';
+      const restoreBulkFocus = closeBulkMenu && (_inboxShareMenu.btn === document.activeElement || _inboxShareMenu.el.contains(document.activeElement));
+      if (closeBulkMenu) inboxShareMenuClose(false);
       // Sources line: only configured sources are chips (with the account
       // hint); the rest sit behind a "+N more" disclosure next to Connect
       // sources, so the header is one quiet line instead of a wall of
@@ -859,6 +864,10 @@
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
       const paint = () => { panel.innerHTML = html; };
       inboxPreserveAudio(panel, typeof inboxNoteKeepFocus === 'function' ? () => inboxNoteKeepFocus(paint) : paint);
+      if (restoreBulkFocus) {
+        const control = panel.querySelector('[data-action="inboxBulkMenu"]') || panel.querySelector('[data-action="inboxToggleProcessed"]');
+        control?.focus();
+      }
       inboxApplyFocus(panel);
     }
 
@@ -881,6 +890,16 @@
     }
     function inboxToggleSources() { _inboxSourcesOpen = !_inboxSourcesOpen; renderInbox(); }
 
+    function inboxShownItems() {
+      return ((_inboxCache || {}).items || []).filter(it => _inboxShowProcessed || !it.processed);
+    }
+    function inboxPruneSelection(shown) {
+      if (!_inboxSelected.size) return;
+      const shownKeys = new Set(shown.map(inboxItemKey));
+      for (const key of _inboxSelected) {
+        if (!shownKeys.has(key)) _inboxSelected.delete(key);
+      }
+    }
     function inboxToggleProcessed() { _inboxShowProcessed = !_inboxShowProcessed; renderInbox(); }
     function inboxToggleSelect(src, id) {
       const key = src + '/' + id;
@@ -888,7 +907,7 @@
       renderInbox();
     }
     function inboxSelectAll() {
-      const shown = ((_inboxCache || {}).items || []).filter(it => _inboxShowProcessed || !it.processed);
+      const shown = inboxShownItems();
       if (_inboxSelected.size === shown.length) _inboxSelected.clear();
       else _inboxSelected = new Set(shown.map(inboxItemKey));
       renderInbox();

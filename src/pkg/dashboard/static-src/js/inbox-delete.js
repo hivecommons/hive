@@ -78,7 +78,7 @@
           kept ? n(kept, 'Knowledge fact', 'Knowledge facts') + ' of synced sources ' + (kept === 1 ? 'is' : 'are') + ' kept: the sync maintains ' + (kept === 1 ? 'it' : 'them') + '.' : ''
         ];
       }
-      parts.push(inboxDeleteSharesText(shares), 'This cannot be undone.');
+      parts.push(list.map(it => '• ' + (it.title || inboxItemKey(it))).join('\n'), inboxDeleteSharesText(shares), 'This cannot be undone.');
       return {
         title: list.length === 1 ? 'Delete this item?' : 'Delete ' + list.length + ' items?',
         message: parts.filter(Boolean).join('\n\n'),
@@ -97,17 +97,35 @@
       if (window._hiveRole !== 'owner' && window._hiveRole !== 'read-write') return [];
       return [{ id: 'manage', label: 'Manage', items: [{ id: 'delete', label: 'Delete…', disabled: false, hint: '' }] }];
     }
-    async function inboxDeleteRun(items) {
+    function inboxDeleteEligible(it) {
+      return inboxCanDelete(it, window._hiveRole, window._hiveUser) && !inboxDeleteBusy(it);
+    }
+    async function inboxDeleteRun(items, bulk = false) {
       const list = (items || []).filter(Boolean);
       if (!list.length) return;
       const dlg = inboxDeleteDialog(list);
-      const cfg = { title: dlg.title, message: dlg.message, confirmLabel: 'Delete', danger: true };
+      const cfg = { title: dlg.title, message: dlg.message, confirmLabel: 'Delete', danger: true, scrollBody: list.length > 1 };
       if (dlg.knowledge) cfg.check = { label: INBOX_DELETE_KNOWLEDGE_LABEL, checked: false };
       const answer = await hiveConfirm(cfg);
       if (!answer) return;
+      const visible = bulk ? new Map(inboxShownItems().map(it => [inboxItemKey(it), it])) : null;
+      const current = list.map(it => bulk ? visible.get(inboxItemKey(it)) : inboxFind(it.source, it.id));
+      if (current.some(it => !inboxDeleteEligible(it) || (bulk && !_inboxSelected.has(inboxItemKey(it))))) {
+        showToast(bulk ? 'The Inbox selection changed. Review it before deleting.' : 'This item can no longer be deleted. Review the Inbox.', 'error');
+        return;
+      }
+      const removeKnowledge = !!(dlg.knowledge && answer.checked);
+      if (removeKnowledge && list.some((it, i) => {
+        const latest = current[i];
+        return (inboxDeleteKnowledgeRemovable(it) || inboxDeleteKnowledgeRemovable(latest)) &&
+          (it.fact_slug !== latest.fact_slug || it.layer !== latest.layer);
+      })) {
+        showToast('A Knowledge copy changed. Review the items before deleting.', 'error');
+        return;
+      }
       try {
         const r = await fetch('/api/inbox/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: list.map(it => ({ source: it.source, item_id: it.id })), remove_knowledge: !!(dlg.knowledge && answer.checked) }) });
+          body: JSON.stringify({ items: list.map(it => ({ source: it.source, item_id: it.id })), remove_knowledge: removeKnowledge }) });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         for (const d of (data.items || [])) {
@@ -131,7 +149,7 @@
     // Delete… in the bulk menu: the selected items the viewer may delete.
     function inboxDeleteSelected() {
       const picked = Array.from(_inboxSelected).map(k => { const i = k.indexOf('/'); return inboxFind(k.slice(0, i), k.slice(i + 1)); }).filter(Boolean);
-      const allowed = picked.filter(it => inboxCanDelete(it, window._hiveRole, window._hiveUser) && !inboxDeleteBusy(it));
+      const allowed = picked.filter(inboxDeleteEligible);
       if (!allowed.length) { showToast(picked.length ? 'None of the selected items can be deleted by you right now' : 'Nothing selected', 'error'); return undefined; }
-      return inboxDeleteRun(allowed);
+      return inboxDeleteRun(allowed, true);
     }
