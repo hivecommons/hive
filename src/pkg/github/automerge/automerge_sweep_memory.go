@@ -106,6 +106,13 @@ func (m *sweepMemory) hasOnce(key string, now time.Time) bool {
 	return true
 }
 
+// forgetOnce drops key, so the next markOnce for it is a first use again.
+func (m *sweepMemory) forgetOnce(key string) {
+	m.onceMu.Lock()
+	defer m.onceMu.Unlock()
+	delete(m.once, key)
+}
+
 // markHoldLogged records a logged hold and reports whether this is its
 // first report.
 func (m *sweepMemory) markHoldLogged(key string, now time.Time) bool {
