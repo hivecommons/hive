@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -370,6 +371,40 @@ func TestDependencyBotRedCompareBaseAtAndPassed(t *testing.T) {
 	var nilClient *Client
 	if _, err := nilClient.DependencyBotRedCompare(context.Background(), "acme/widgets", "a", "b"); err == nil {
 		t.Fatal("a nil client compared")
+	}
+}
+
+// A lasting 4xx is final; 429, a rate-limited 403, a 5xx or an unknown
+// error is not.
+func TestDependencyBotRedFinalError(t *testing.T) {
+	resp := func(code int, hdr map[string]string, msg string) error {
+		r := &http.Response{StatusCode: code, Header: http.Header{}}
+		for k, v := range hdr {
+			r.Header.Set(k, v)
+		}
+		return fmt.Errorf("creating: %w", &gh.ErrorResponse{Response: r, Message: msg})
+	}
+	for name, tc := range map[string]struct {
+		err   error
+		final bool
+	}{
+		"410 issues disabled":    {resp(410, nil, "Issues are disabled for this repo"), true},
+		"404":                    {resp(404, nil, "Not Found"), true},
+		"422":                    {resp(422, nil, "Validation Failed"), true},
+		"403 forbidden":          {resp(403, nil, "Resource not accessible by integration"), true},
+		"403 retry-after":        {resp(403, map[string]string{"Retry-After": "60"}, "slow down"), false},
+		"403 remaining zero":     {resp(403, map[string]string{"X-RateLimit-Remaining": "0"}, "forbidden"), false},
+		"403 rate limit message": {resp(403, nil, "You have exceeded a secondary rate limit"), false},
+		"429":                    {resp(429, nil, "Too Many Requests"), false},
+		"502":                    {resp(502, nil, "Bad Gateway"), false},
+		"go-github rate limit":   {&gh.RateLimitError{Response: &http.Response{StatusCode: 403}}, false},
+		"go-github abuse limit":  {&gh.AbuseRateLimitError{Response: &http.Response{StatusCode: 403}}, false},
+		"plain error":            {errors.New("connection reset"), false},
+		"no error":               {nil, false},
+	} {
+		if got := DependencyBotRedFinalError(tc.err); got != tc.final {
+			t.Errorf("%s: final = %v, want %v", name, got, tc.final)
+		}
 	}
 }
 

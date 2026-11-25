@@ -70,12 +70,14 @@ type depBotRedIssueFake struct {
 	// runs overrides the run facts per check; any other check failed twice
 	// in one suite, never passed, started at depBotRedFailStart and left one
 	// error annotation.
-	runs      map[string]github.DependencyBotRedCheckRuns
-	runsErr   error
-	sharedCI  map[string]int
-	lookupErr error
-	refuse    bool
-	createErr error
+	runs    map[string]github.DependencyBotRedCheckRuns
+	runsErr error
+	// runsErrHead fails the run read for one head only.
+	runsErrHead map[string]error
+	sharedCI    map[string]int
+	lookupErr   error
+	refuse      bool
+	createErr   error
 	// existing makes the create return this issue as AlreadyExisted.
 	existing   *depBotRedIssueFakeIssue
 	isOwnErr   error
@@ -181,10 +183,13 @@ func (f *depBotRedIssueFake) StaleRedNeedsHumanLabeledByApp(context.Context, str
 	return !f.labelNotOwn && f.labelErr == nil, f.labelErr
 }
 
-func (f *depBotRedIssueFake) DependencyBotRedRunFacts(_ context.Context, _ string, _ string, checks []string) (map[string]github.DependencyBotRedCheckRuns, error) {
+func (f *depBotRedIssueFake) DependencyBotRedRunFacts(_ context.Context, _ string, headSHA string, checks []string) (map[string]github.DependencyBotRedCheckRuns, error) {
 	f.runReads++
 	if f.runsErr != nil {
 		return nil, f.runsErr
+	}
+	if err := f.runsErrHead[headSHA]; err != nil {
+		return nil, err
 	}
 	out := map[string]github.DependencyBotRedCheckRuns{}
 	for _, c := range checks {
@@ -1385,7 +1390,7 @@ func TestDependencyBotRedHeadHistory(t *testing.T) {
 		t.Fatal("a triaged previous head counts")
 	}
 
-	s.markRedHeadPending("k", "f")
+	s.markRedHeadPending("k", "f", true)
 	if !s.redHeadPending("k", "f") || s.redHeadPending("k", "e") {
 		t.Fatal("pending mark wrong")
 	}
@@ -1393,10 +1398,6 @@ func TestDependencyBotRedHeadHistory(t *testing.T) {
 	s.markRedHeadJudged("other", "z")
 	if !s.redHeadJudged("k", "f") || !s.redHeadJudged("other", "z") || s.redHeadJudged("k", "d") || s.redHeadPending("k", "f") {
 		t.Fatal("judged marks wrong, or judging kept the pending retry")
-	}
-	s.markRedHeadLabelOwn("k", "f")
-	if !s.redHeadLabelOwn("k", "f") || s.redHeadLabelOwn("k", "e") {
-		t.Fatal("label mark wrong")
 	}
 	if _, ok := s.redHeadBefore("other", "z", []string{"build"}); ok {
 		t.Fatal("a judged-only record is cross-head evidence")
@@ -1432,7 +1433,7 @@ func TestDependencyBotRedIssueSidecarPersistence(t *testing.T) {
 	s := loadDepBotConflictStore(path)
 	s.noteRedHead(depBotKey, depBotRedHead{HeadSHA: "a", Checks: []string{"build"}, SeenAt: depBotT0})
 	s.noteRedHead(depBotKey, depBotRedHead{HeadSHA: "b", Checks: []string{"build"}, SeenAt: depBotT0.Add(time.Hour)})
-	s.markRedHeadPending(depBotKey, "b")
+	s.markRedHeadPending(depBotKey, "b", true)
 	s.markRedIssue(depBotKey, depBotRedIssueRecord{ChecksKey: "k", Checks: []string{"build"}, Issue: 7, HeadSHA: "b", PreviousHead: "a", FiledAt: depBotT0})
 	re := loadDepBotConflictStore(path)
 	if prev, ok := re.redHeadBefore(depBotKey, "b", []string{"build"}); !ok || prev.HeadSHA != "a" || !re.redHeadPending(depBotKey, "b") {
@@ -1516,8 +1517,8 @@ func TestDependencyBotRedIssueParkedHeadOnlyOwnHandoff(t *testing.T) {
 	if newDepBotRedIssuePass(f.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, past, discardLogger()) || !store.redHeadJudged(depBotKey, "sha-2") {
 		t.Fatal("past the grace: the head is not judged once")
 	}
-	if f.creates != 1 || f.labelReads != 1 {
-		t.Fatalf("creates=%d label reads=%d, want one issue after one label read", f.creates, f.labelReads)
+	if f.creates != 1 || f.labelReads != 2 {
+		t.Fatalf("creates=%d label reads=%d, want one issue, the label read on each attempt", f.creates, f.labelReads)
 	}
 
 	// The needs-human was taken off and put back by a person: nothing is
@@ -1592,5 +1593,181 @@ func TestDependencyBotRedIssueCrossHeadSwitchOff(t *testing.T) {
 	h.redIssuePassAt(at.Add(time.Hour+depBotRedCIGrace), depBotAdoptPolicy{}, off, parked)
 	if len(h.store.redHeads) != 0 || f.reads() != 0 || f.gateChecks != 0 || f.creates != 0 || len(h.writer.comments) != 1 {
 		t.Fatalf("switch off: heads=%v reads=%d gate=%d creates=%d comments=%d", h.store.redHeads, f.reads(), f.gateChecks, f.creates, len(h.writer.comments))
+	}
+}
+
+// depBotGitHubErr is GitHub answering code.
+func depBotGitHubErr(code int) error {
+	return fmt.Errorf("creating issue: %w", &gh.ErrorResponse{Response: &http.Response{StatusCode: code, Header: http.Header{}}, Message: "refused"})
+}
+
+// A lasting 4xx (410: issues disabled) is final for the head: judged at
+// once, never read again. A 429 is temporary and keeps the head pending.
+func TestDependencyBotRedIssueParkedHeadLasting4xxIsFinal(t *testing.T) {
+	newTestEscalationStore(t)
+	parked := depBotParked(depBotCrossHeadPR("sha-2"))
+	past := depBotT0.Add(depBotRedCIGrace)
+	ctx := context.Background()
+
+	f := newDepBotCrossHeadFake()
+	f.createErr = depBotGitHubErr(http.StatusGone)
+	store := depBotParkedStore()
+	newDepBotRedIssuePass(f.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, depBotT0, discardLogger())
+	if newDepBotRedIssuePass(f.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, past, discardLogger()) ||
+		!store.redHeadJudged(depBotKey, "sha-2") || store.redHeadPending(depBotKey, "sha-2") {
+		t.Fatal("a 410 on create left the head to retry")
+	}
+	reads := f.reads()
+	newDepBotRedIssuePass(f.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, past.Add(time.Hour), discardLogger())
+	if f.reads() != reads {
+		t.Fatal("a judged head was read again")
+	}
+
+	f2 := newDepBotCrossHeadFake()
+	f2.createErr = depBotGitHubErr(http.StatusTooManyRequests)
+	store = depBotParkedStore()
+	newDepBotRedIssuePass(f2.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, depBotT0, discardLogger())
+	if !newDepBotRedIssuePass(f2.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, past, discardLogger()) ||
+		store.redHeadJudged(depBotKey, "sha-2") || !store.redHeadPending(depBotKey, "sha-2") {
+		t.Fatal("a 429 on create was final")
+	}
+
+	// On the hand-off path too: the 4xx leaves nothing pending.
+	h := newDepBotHarness(t)
+	f3 := newDepBotRedIssueFake()
+	f3.createErr = depBotGitHubErr(http.StatusUnprocessableEntity)
+	h.redIssuePastGrace(depBotT0, f3.policy(), depBotRedBump("sha-1"))
+	h.wantPlainHandoff(f3, "422 on create")
+	if h.store.redHeadPending(depBotKey, "sha-1") {
+		t.Fatal("a 422 on create left the hand-off head pending")
+	}
+}
+
+// A head whose answer stays temporary is tried at most
+// depBotRedIssueMaxAttempts times, then judged; and stuck PRs that fill the
+// per-pass budget hold another PR back only until their attempts are spent.
+func TestDependencyBotRedIssueRetriesCappedNoStarvation(t *testing.T) {
+	h := newDepBotHarness(t)
+	f := newDepBotRedIssueFake()
+	f.runsErrHead = map[string]error{}
+	var prs []github.PullRequest
+	for i := 0; i < depBotRedIssueMaxPerPass+1; i++ {
+		check := fmt.Sprintf("check-%d", i)
+		f.baseGreen(check)
+		head := fmt.Sprintf("stuck-%d", i)
+		if i == depBotRedIssueMaxPerPass {
+			head = "sha-ok"
+		} else {
+			f.runsErrHead[head] = errors.New("502")
+		}
+		pr := depBotRedBump(head)
+		pr.Number = 60 + i
+		pr.FailingChecks = []string{check}
+		pr.CIFailureExcerpt = check + ": failed to compile"
+		prs = append(prs, pr)
+	}
+	at := h.redIssuePastGrace(depBotT0, f.policy(), prs...)
+	if f.creates != 0 || f.runReads != depBotRedIssueMaxPerPass || len(h.writer.comments) != len(prs) {
+		t.Fatalf("hand-off pass: creates=%d run reads=%d comments=%d", f.creates, f.runReads, len(h.writer.comments))
+	}
+	parked := make([]github.PullRequest, len(prs))
+	for i, pr := range prs {
+		parked[i] = depBotParked(pr)
+	}
+	healthy := escalation.Key("acme/widgets", prs[depBotRedIssueMaxPerPass].Number)
+	// Attempts 2 and 3 of every stuck PR fill the budget; the healthy PR
+	// waits without spending an attempt.
+	for i := 1; i <= depBotRedIssueMaxAttempts-1; i++ {
+		h.redIssuePassAt(at.Add(time.Duration(i)*time.Minute), depBotAdoptPolicy{}, f.policy(), parked...)
+		if f.creates != 0 || !h.store.redHeadPending(healthy, "sha-ok") {
+			t.Fatalf("parked pass %d: creates=%d, want the healthy PR still waiting", i, f.creates)
+		}
+	}
+	for i := 0; i < depBotRedIssueMaxPerPass; i++ {
+		if key := escalation.Key("acme/widgets", prs[i].Number); !h.store.redHeadJudged(key, prs[i].HeadSHA) {
+			t.Fatalf("stuck PR %d not judged after %d attempts", prs[i].Number, depBotRedIssueMaxAttempts)
+		}
+	}
+	h.redIssuePassAt(at.Add(time.Hour), depBotAdoptPolicy{}, f.policy(), parked...)
+	if f.creates != 1 || !h.store.redHeadJudged(healthy, "sha-ok") {
+		t.Fatalf("after the stuck PRs gave up: creates=%d, want the healthy PR filed", f.creates)
+	}
+	if want := depBotRedIssueMaxPerPass*depBotRedIssueMaxAttempts + 1; f.runReads != want {
+		t.Fatalf("run reads = %d, want %d (each stuck head capped, one for the healthy PR)", f.runReads, want)
+	}
+	reads := f.reads()
+	h.redIssuePassAt(at.Add(2*time.Hour), depBotAdoptPolicy{}, f.policy(), parked...)
+	if f.reads() != reads || f.creates != 1 {
+		t.Fatalf("later pass: reads=%d (was %d) creates=%d, want nothing", f.reads(), reads, f.creates)
+	}
+}
+
+// On the parked path the filer's cheap refusals come first: a repository
+// not on GitHub, or a refused issue_file gate, reads nothing at all (not
+// even the label events) and is final for the head.
+func TestDependencyBotRedIssueParkedHeadCheapRefusalsFirst(t *testing.T) {
+	newTestEscalationStore(t)
+	parked := depBotParked(depBotCrossHeadPR("sha-2"))
+	past := depBotT0.Add(depBotRedCIGrace)
+	for name, mut := range map[string]func(*depBotRedIssueFake, *depBotRedIssuePolicy){
+		"not on GitHub": func(_ *depBotRedIssueFake, p *depBotRedIssuePolicy) { p.OnGitHub = func(string) bool { return false } },
+		"gate refused":  func(f *depBotRedIssueFake, _ *depBotRedIssuePolicy) { f.gateClosed = true },
+	} {
+		f := newDepBotCrossHeadFake()
+		pol := f.policy()
+		mut(f, &pol)
+		store := depBotParkedStore()
+		for _, at := range []time.Time{depBotT0, past, past.Add(time.Hour)} {
+			newDepBotRedIssuePass(pol, nil).fileForParkedHead(context.Background(), store, "acme/widgets", depBotKey, parked, at, discardLogger())
+		}
+		if f.reads() != 0 || f.creates != 0 || !store.redHeadJudged(depBotKey, "sha-2") {
+			t.Fatalf("%s: reads=%d creates=%d judged=%v, want no read and a final answer", name, f.reads(), f.creates, store.redHeadJudged(depBotKey, "sha-2"))
+		}
+	}
+}
+
+// An "own label" answer is not kept: after a temporary failure the label
+// events are read again, and a needs-human a person put back in between
+// files nothing.
+func TestDependencyBotRedIssueParkedHeadLabelReadEachAttempt(t *testing.T) {
+	newTestEscalationStore(t)
+	parked := depBotParked(depBotCrossHeadPR("sha-2"))
+	past := depBotT0.Add(depBotRedCIGrace)
+	ctx := context.Background()
+	f := newDepBotCrossHeadFake()
+	f.runsErr = errors.New("502")
+	store := depBotParkedStore()
+	newDepBotRedIssuePass(f.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, depBotT0, discardLogger())
+	newDepBotRedIssuePass(f.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, past, discardLogger())
+	if f.labelReads != 1 || !store.redHeadPending(depBotKey, "sha-2") {
+		t.Fatalf("first attempt: label reads=%d pending=%v, want one read and a retry", f.labelReads, store.redHeadPending(depBotKey, "sha-2"))
+	}
+	f.runsErr, f.labelNotOwn = nil, true
+	newDepBotRedIssuePass(f.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, past.Add(time.Hour), discardLogger())
+	if f.creates != 0 || f.labelReads != 2 || !store.redHeadJudged(depBotKey, "sha-2") {
+		t.Fatalf("person's label after a retry: creates=%d label reads=%d judged=%v, want nothing filed", f.creates, f.labelReads, store.redHeadJudged(depBotKey, "sha-2"))
+	}
+}
+
+// The attempt counter: a spent budget is no attempt, a new head starts
+// over, and the last attempt judges the head.
+func TestDependencyBotRedHeadPendingAttempts(t *testing.T) {
+	s := loadDepBotConflictStore("")
+	if s.markRedHeadPending("k", "a", false) || s.markRedHeadPending("k", "a", false) {
+		t.Fatal("budget deferrals used up the head")
+	}
+	for i := 1; i < depBotRedIssueMaxAttempts; i++ {
+		if s.markRedHeadPending("k", "a", true) {
+			t.Fatalf("attempt %d used up the head", i)
+		}
+	}
+	if s.markRedHeadPending("k", "b", true) || s.redHeads["k"].Attempts != 1 {
+		t.Fatal("a new head did not start over")
+	}
+	for i := 2; i < depBotRedIssueMaxAttempts; i++ {
+		s.markRedHeadPending("k", "b", true)
+	}
+	if !s.markRedHeadPending("k", "b", true) || !s.redHeadJudged("k", "b") || s.redHeadPending("k", "b") {
+		t.Fatal("the last attempt did not judge the head")
 	}
 }

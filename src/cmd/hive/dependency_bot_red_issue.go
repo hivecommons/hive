@@ -118,6 +118,9 @@ const (
 	depBotRedIssueSkipNotRepro     = "failure-not-reproduced"
 	depBotRedIssueSkipNoMergeBase  = "cross-head-merge-base-unknown"
 	depBotRedIssueSkipNoBaseUpdate = "cross-head-no-base-update"
+	depBotRedIssueSkipPrevCompare  = "cross-head-previous-head-compare-failed"
+	depBotRedIssueSkipLabelNotOwn  = "needs-human-not-the-hand-off-label"
+	depBotRedIssueSkipLabelRead    = "label-events-unreadable"
 	depBotRedIssueSkipBuiltOnRed   = "cross-head-base-commit-not-green"
 	depBotRedIssueSkipPrevPassed   = "cross-head-previous-head-passed"
 	depBotRedIssueSkipPassed       = "check-passed-on-head"
@@ -258,14 +261,24 @@ func (p *depBotRedIssuePass) baseFor(ctx context.Context, repo, baseRef string) 
 // depBotRedIssueOutcome is what the filer tells the hand-off: the issue the
 // hand-off links (0: none) and the sentence the hand-off gains for it.
 // Retry: no verdict for this head yet, only a temporary refusal (the
-// per-pass budget spent, a GitHub read that failed, own accounts not known
-// yet), so a later pass may judge it again (fileForParkedHead retries it; a
-// hand-off does not wait). Any other outcome is final for the head.
+// per-pass budget spent, a GitHub call that failed for a reason other than a
+// lasting 4xx, own accounts not known yet), so a later pass may judge it
+// again (fileForParkedHead retries it, at most depBotRedIssueMaxAttempts
+// times; a hand-off does not wait). Budget: the refusal was only the spent
+// per-pass budget, which is no attempt of the head's own. Any other outcome
+// is final for the head.
 type depBotRedIssueOutcome struct {
 	Number int
 	Line   string
 	Retry  bool
+	Budget bool
 }
+
+// depBotRedIssueMaxAttempts caps the attempts that ended in a temporary
+// refusal for one head (the hand-off's and the parked path's together);
+// after that the head is judged, so a lasting error cannot take an
+// evaluation slot every pass.
+const depBotRedIssueMaxAttempts = 3
 
 // depBotRedIssueChecks is the failing required check set on pr's head: the
 // branch-protection list when it is known and names some, else every failing
@@ -380,6 +393,14 @@ func dependencyBotRedIssueLine(pr github.PullRequest, number int, regenerated bo
 // files nothing and returns no issue, and the hand-off posts as it would
 // with the switch off. It never holds the hand-off.
 func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflictStore, repo, key string, pr github.PullRequest, rerun depBotTransientRerun, now time.Time, logger *slog.Logger) depBotRedIssueOutcome {
+	return p.judge(ctx, store, repo, key, pr, rerun, false, now, logger)
+}
+
+// judge is issueFor; parked (fileForParkedHead) adds one read after the
+// cheap refusals, inside the per-pass budget: the PR's needs-human label
+// events, which must show the App's own label (the sweep's hand-off), not
+// one a person took off and put back.
+func (p *depBotRedIssuePass) judge(ctx context.Context, store *depBotConflictStore, repo, key string, pr github.PullRequest, rerun depBotTransientRerun, parked bool, now time.Time, logger *slog.Logger) depBotRedIssueOutcome {
 	if !p.on() || pr.HeadSHA == "" {
 		return depBotRedIssueOutcome{}
 	}
@@ -392,6 +413,15 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 		out := skip(why, args...)
 		out.Retry = true
 		return out
+	}
+	// failed: a GitHub call failed. A lasting 4xx (not 429, not a rate
+	// limit) is final for the head; anything else may pass later.
+	failed := func(why string, err error, args ...any) depBotRedIssueOutcome {
+		args = append([]any{"error", err}, args...)
+		if github.DependencyBotRedFinalError(err) {
+			return skip(why, args...)
+		}
+		return retry(why, args...)
 	}
 	gh := p.policy.GitHub
 	// Cheap refusals first: none of these reads the PR or the base.
@@ -446,13 +476,28 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 	// The read-heavy part is budgeted per pass; over the budget the PR is
 	// handed off now without the issue.
 	if p.evaluated >= depBotRedIssueMaxPerPass {
-		return retry(depBotRedIssueSkipBudget)
+		out := retry(depBotRedIssueSkipBudget)
+		out.Budget = true
+		return out
 	}
 	p.evaluated++
 
+	if parked && !store.staleRedLabelNotOwn(key, pr.HeadSHA) {
+		own, err := gh.StaleRedNeedsHumanLabeledByApp(ctx, repo, pr.Number)
+		if err != nil {
+			return failed(depBotRedIssueSkipLabelRead, err)
+		}
+		if !own {
+			store.rememberStaleRedLabelNotOwn(key, pr.HeadSHA)
+			return skip(depBotRedIssueSkipLabelNotOwn)
+		}
+	} else if parked {
+		return skip(depBotRedIssueSkipLabelNotOwn)
+	}
+
 	base, exists, err := p.baseFor(ctx, repo, pr.BaseRef)
 	if err != nil {
-		return retry(depBotRedIssueSkipNoBase, "error", err)
+		return failed(depBotRedIssueSkipNoBase, err)
 	}
 	if !exists || base.SHA == "" {
 		return skip(depBotRedIssueSkipNoBase)
@@ -471,7 +516,7 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 	// the head does contain, must pass the checks itself (crossHeadProof).
 	cmp, err := gh.DependencyBotRedCompare(ctx, repo, base.SHA, pr.HeadSHA)
 	if err != nil {
-		return retry(depBotRedIssueSkipNoBase, "error", err)
+		return failed(depBotRedIssueSkipNoBase, err)
 	}
 	behind := cmp.BehindBy
 	prev, crossHead := store.redHeadBefore(key, pr.HeadSHA, checks)
@@ -481,7 +526,7 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 
 	runs, err := gh.DependencyBotRedRunFacts(ctx, repo, pr.HeadSHA, checks)
 	if err != nil {
-		return retry(depBotRedIssueSkipRunsRead, "error", err)
+		return failed(depBotRedIssueSkipRunsRead, err)
 	}
 	allReproduced := true
 	var errorLines []string
@@ -515,8 +560,8 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 	case crossHead:
 		proof := p.crossHeadProof(ctx, repo, checks, base, cmp, prev)
 		switch {
-		case proof.reason != "" && proof.temporary:
-			return retry(proof.reason, append([]any{"previous_head", prev.HeadSHA, "merge_base", proof.mergeBase}, proof.args...)...)
+		case proof.err != nil:
+			return failed(proof.reason, proof.err, "previous_head", prev.HeadSHA, "merge_base", proof.mergeBase)
 		case proof.reason != "":
 			return skip(proof.reason, append([]any{"previous_head", prev.HeadSHA, "merge_base", proof.mergeBase}, proof.args...)...)
 		}
@@ -529,7 +574,7 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 	found, err := gh.LookupDependencyBotRedIssue(ctx, repo, marker, checks, now)
 	switch {
 	case err != nil:
-		return retry(depBotRedIssueSkipLookup, "error", err)
+		return failed(depBotRedIssueSkipLookup, err)
 	case found.SharedCI > 0:
 		return skip(depBotRedIssueSkipSharedCI, "incident", found.SharedCI)
 	case found.Open > 0 && !found.OpenOwned:
@@ -569,7 +614,7 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 	case err != nil:
 		logger.Warn("dependency-bot red CI: filing the repository issue failed; handing off without it",
 			"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "error", err)
-		return retry(depBotRedIssueSkipCreate)
+		return failed(depBotRedIssueSkipCreate, err)
 	case res.RejectedTwin || res.Number <= 0:
 		// A maintainer recently rejected the same finding.
 		return skip(depBotRedIssueSkipRecentClosed, "rejected_issue", res.Number)
@@ -579,7 +624,7 @@ func (p *depBotRedIssuePass) issueFor(ctx context.Context, store *depBotConflict
 		// saying who wrote it: link it only if it is the hive's own.
 		own, err := gh.DependencyBotRedIssueIsOwn(ctx, repo, res.Number, marker)
 		if err != nil {
-			return retry(depBotRedIssueSkipNotOwned, "issue", res.Number, "error", err)
+			return failed(depBotRedIssueSkipNotOwned, err, "issue", res.Number)
 		}
 		if !own {
 			return skip(depBotRedIssueSkipNotOwned, "issue", res.Number)
@@ -789,11 +834,12 @@ func (s *depBotConflictStore) saveRedIssuesLocked() {
 
 // depBotCrossHeadProof is what crossHeadProof found: the merge base the
 // head contains on success, or the reason the cross-head path files
-// nothing (temporary: a failed read, so a later pass may try again).
+// nothing (with err when a GitHub call failed; the caller decides whether a
+// later pass may try again).
 type depBotCrossHeadProof struct {
 	mergeBase string
 	reason    string
-	temporary bool
+	err       error
 	args      []any
 }
 
@@ -824,7 +870,7 @@ func (p *depBotRedIssuePass) crossHeadProof(ctx context.Context, repo string, ch
 	out := depBotCrossHeadProof{mergeBase: m}
 	lacks, err := gh.DependencyBotRedCompare(ctx, repo, m, prev.HeadSHA)
 	if err != nil {
-		out.reason, out.temporary, out.args = depBotRedIssueSkipNoBase, true, []any{"error", err}
+		out.reason, out.err = depBotRedIssueSkipPrevCompare, err
 		return out
 	}
 	if lacks.BehindBy == 0 {
@@ -834,7 +880,7 @@ func (p *depBotRedIssuePass) crossHeadProof(ctx context.Context, repo string, ch
 	if !strings.EqualFold(m, tip.SHA) {
 		at, err := gh.DependencyBotRedBaseStateAt(ctx, repo, m)
 		if err != nil {
-			out.reason, out.temporary, out.args = depBotRedIssueSkipNoBase, true, []any{"error", err}
+			out.reason, out.err = depBotRedIssueSkipNoBase, err
 			return out
 		}
 		for _, check := range checks {
@@ -846,7 +892,7 @@ func (p *depBotRedIssuePass) crossHeadProof(ctx context.Context, repo string, ch
 	}
 	passed, err := gh.DependencyBotRedAnyPassed(ctx, repo, prev.HeadSHA, checks)
 	if err != nil {
-		out.reason, out.temporary, out.args = depBotRedIssueSkipRunsRead, true, []any{"error", err}
+		out.reason, out.err = depBotRedIssueSkipRunsRead, err
 		return out
 	}
 	if passed != "" {
@@ -893,13 +939,12 @@ type depBotRedHeads struct {
 	Skipped bool   `json:"skipped,omitempty"`
 	// Judged is the head the filer reached a final outcome for after its
 	// hand-off (fileForParkedHead), so it is judged once. Pending is a head
-	// whose hand-off went out while the filer only had a temporary answer
-	// (budget, a failed read), so fileForParkedHead retries it. LabelOwn
-	// is the head whose needs-human label events showed the App's own
-	// label, read once.
+	// whose filer answer was only temporary (budget, a failed call), so
+	// fileForParkedHead retries it, and Attempts counts its temporary
+	// answers other than the budget (capped by depBotRedIssueMaxAttempts).
 	Judged   string `json:"judged,omitempty"`
 	Pending  string `json:"pending,omitempty"`
-	LabelOwn string `json:"label_own,omitempty"`
+	Attempts int    `json:"attempts,omitempty"`
 }
 
 // depBotRedHeadNotEvidence is why pr's red is not the bump's own, "" when
@@ -1058,7 +1103,7 @@ func (s *depBotConflictStore) markRedHeadJudged(key, headSHA string) {
 	r := s.redHeadsForLocked(key, headSHA)
 	r.Judged = headSHA
 	if strings.EqualFold(r.Pending, headSHA) {
-		r.Pending = ""
+		r.Pending, r.Attempts = "", 0
 	}
 	s.saveRedIssuesLocked()
 }
@@ -1073,32 +1118,36 @@ func (s *depBotConflictStore) redHeadPending(key, headSHA string) bool {
 }
 
 // markRedHeadPending records that headSHA's filer answer was temporary.
-func (s *depBotConflictStore) markRedHeadPending(key, headSHA string) {
+// attempt counts it against depBotRedIssueMaxAttempts (a spent per-pass
+// budget is no attempt). It reports whether the head has now used its
+// attempts: it is then judged, and nothing retries it.
+func (s *depBotConflictStore) markRedHeadPending(key, headSHA string, attempt bool) (exhausted bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := s.redHeadsForLocked(key, headSHA)
-	if strings.EqualFold(r.Pending, headSHA) {
-		return
+	if !strings.EqualFold(r.Pending, headSHA) {
+		r.Pending, r.Attempts = headSHA, 0
+	} else if !attempt {
+		return false
 	}
-	r.Pending = headSHA
+	if attempt {
+		r.Attempts++
+	}
+	if r.Attempts >= depBotRedIssueMaxAttempts {
+		r.Judged, r.Pending, r.Attempts = headSHA, "", 0
+		exhausted = true
+	}
 	s.saveRedIssuesLocked()
+	return exhausted
 }
 
-// redHeadLabelOwn reports whether headSHA's needs-human was already read
-// as the App's own; markRedHeadLabelOwn records that.
-func (s *depBotConflictStore) redHeadLabelOwn(key, headSHA string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r := s.redHeads[key]
-	return r != nil && r.LabelOwn != "" && strings.EqualFold(r.LabelOwn, headSHA)
-}
-
-func (s *depBotConflictStore) markRedHeadLabelOwn(key, headSHA string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	r := s.redHeadsForLocked(key, headSHA)
-	r.LabelOwn = headSHA
-	s.saveRedIssuesLocked()
+// retryRedHead records a temporary filer answer for headSHA and logs, once,
+// when that used up the head's attempts.
+func retryRedHead(store *depBotConflictStore, repo, key string, pr github.PullRequest, out depBotRedIssueOutcome, logger *slog.Logger) {
+	if store.markRedHeadPending(key, pr.HeadSHA, !out.Budget) {
+		logger.Warn("dependency-bot red CI: giving up on a repository issue for this head after repeated temporary failures",
+			"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "attempts", depBotRedIssueMaxAttempts)
+	}
 }
 
 // noteRedHeads keeps the red-head history for every dependency-bot PR in
@@ -1140,11 +1189,13 @@ func (p *depBotRedIssuePass) noteRedHeads(store *depBotConflictStore, seen map[s
 // (budget, a failed read). The hand-off ends only when the PR goes green,
 // so without this the newer head, the one the cross-head rule is about,
 // would never be judged. A newer head waits the same red-CI grace and
-// transient re-run as the hand-off. Before filing it reads the label
-// events once per head (as the stale-red pass does): a needs-human a
-// person took off and put back is not the sweep's, and nothing is filed.
-// A temporary answer is retried on a later pass, within the per-pass
-// budget; a final one is recorded so the head is judged once. It files the
+// transient re-run as the hand-off. After the filer's cheap refusals and
+// inside the per-pass budget, it reads the label events on every attempt
+// (as the stale-red pass does, keeping only a "not own" answer): a
+// needs-human a person took off and put back is not the sweep's, and
+// nothing is filed. A temporary answer is retried on a later pass, at most
+// depBotRedIssueMaxAttempts times per head (the spent budget does not
+// count); a final one is recorded so the head is judged once. It files the
 // issue and posts nothing on the PR. It reports whether the head's grace
 // clock must be kept.
 func (p *depBotRedIssuePass) fileForParkedHead(ctx context.Context, store *depBotConflictStore, repo, key string, pr github.PullRequest, now time.Time, logger *slog.Logger) bool {
@@ -1177,28 +1228,9 @@ func (p *depBotRedIssuePass) fileForParkedHead(ctx context.Context, store *depBo
 			return true
 		}
 	}
-	if p.evaluated >= depBotRedIssueMaxPerPass {
-		// No read at all past the budget; a later pass takes it.
-		return true
-	}
-	if !store.redHeadLabelOwn(key, pr.HeadSHA) {
-		own, err := p.policy.GitHub.StaleRedNeedsHumanLabeledByApp(ctx, repo, pr.Number)
-		if err != nil {
-			logger.Info("dependency-bot red CI: label events unreadable; will retry next pass",
-				"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "error", err)
-			return true
-		}
-		if !own {
-			store.rememberStaleRedLabelNotOwn(key, pr.HeadSHA)
-			logger.Info("dependency-bot red CI: no repository issue filed",
-				"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "reason", "needs-human-not-the-hand-off-label")
-			return false
-		}
-		store.markRedHeadLabelOwn(key, pr.HeadSHA)
-	}
-	if out := p.issueFor(ctx, store, repo, key, pr, rerun, now, logger); out.Retry {
-		store.markRedHeadPending(key, pr.HeadSHA)
-		return true
+	if out := p.judge(ctx, store, repo, key, pr, rerun, true, now, logger); out.Retry {
+		retryRedHead(store, repo, key, pr, out, logger)
+		return !store.redHeadJudged(key, pr.HeadSHA)
 	}
 	store.markRedHeadJudged(key, pr.HeadSHA)
 	return false

@@ -525,10 +525,10 @@ func sweepDependencyBotHandoffs(
 			}
 			if issues.on() {
 				if out.Retry {
-					// Only a temporary answer (budget, a failed read):
+					// Only a temporary answer (budget, a failed call):
 					// the parked-head path tries this head again once it
-					// is handed off.
-					store.markRedHeadPending(key, pr.HeadSHA)
+					// is handed off, within the head's attempts.
+					retryRedHead(store, repo, key, pr, out, logger)
 				} else if store.redHeadPending(key, pr.HeadSHA) {
 					store.markRedHeadJudged(key, pr.HeadSHA)
 				}

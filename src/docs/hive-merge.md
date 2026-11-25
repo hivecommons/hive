@@ -988,6 +988,11 @@ come first, so a refused or impossible case costs no API call:
 
 Then, for at most 3 PRs per pass (the evaluation budget), it reads GitHub:
 
+- for a parked head only (below), first the PR's `needs-human` label
+  events: the newest must be the App's own `labeled`, as the stale-red pass
+  checks. One a person took off and put back files nothing for that head.
+  This read is never made for a refused case above, and it counts toward
+  the budget;
 - the base tip and its check runs, once per repository and base branch per
   pass. The newest run of every failing check there must have concluded
   `success`. A check that is red there, has not run there, or was skipped or
@@ -1039,8 +1044,18 @@ Then, for at most 3 PRs per pass (the evaluation budget), it reads GitHub:
 
 Any PR past the evaluation budget, and any PR that fails a condition, is
 handed off at once exactly as with the switch off. No hand-off waits for the
-filer. A parked newer head past the budget is judged on a later pass; any
-other newer head is judged once.
+filer. A parked head past the budget is judged on a later pass; any other
+case is judged once.
+
+A temporary refusal (the budget, own accounts not yet known, or a GitHub
+call that failed with a 5xx, a 429, a rate-limited 403 or a network error)
+leaves the head pending: the parked path tries it again on a later pass,
+the hand-off's own head included, with no new grace. Each head gets at most
+3 such attempts (the hand-off's and the parked path's together; a spent
+budget is no attempt), then it is judged and logged once, so a lasting
+error cannot take an evaluation slot every pass and keep other PRs waiting.
+Any other 4xx (for example 410 when issues are disabled, or 422) is final
+for the head at once.
 
 #### Reproduced across heads
 
@@ -1149,19 +1164,19 @@ Limitations:
   The first issue gets its "closed without merging" note.
 - Once the hand-off adds `needs-human`, a case refused for good at hand-off
   time (for example a failure seen only once) is not filed later for that
-  head. Only a temporary refusal (the per-pass budget, a failed read) is
-  retried for the same head, and a newer red head is judged again (across
-  heads, or in-suite).
+  head. Only a temporary refusal is retried for the same head (at most 3
+  attempts), and a newer red head is judged again (across heads, or
+  in-suite).
 - Turning the switch off and on again within 24 hours keeps the red-head
   history from before; heads that came and went while it was off are not
   seen, so a head red before the toggle may count as the previous head of
   the next red head. Off for longer, the chain breaks.
-- A temporary refusal for a parked head (the budget, a GitHub read that
-  failed, own accounts not yet known) is retried on later passes, one
-  evaluation slot per pass; anything else is final for that head.
-- The parked-head path reads the PR's needs-human label events once per
-  head (as the stale-red pass does). If a person took the label off and put
-  it back, it is not the hand-off's, and nothing is filed for that head.
+- After 3 temporary refusals a head is given up even if the cause was
+  short-lived; its next head is judged afresh.
+- The parked-head path reads the PR's needs-human label events on every
+  attempt and keeps only a "not own" answer (as the stale-red pass does),
+  so a label a person put back between attempts is seen. That memo is in
+  memory; after a restart a judged head is not read again anyway.
 
 ```yaml
 auto_merge:

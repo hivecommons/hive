@@ -488,6 +488,38 @@ func (c *Client) DependencyBotRedAnyPassed(ctx context.Context, repo, headSHA st
 	return "", nil
 }
 
+// DependencyBotRedFinalError reports whether err is GitHub refusing a call
+// for good: a 4xx answer other than 429 and other than a rate limit (a 403
+// carrying Retry-After, X-RateLimit-Remaining: 0 or a rate-limit message,
+// or go-github's rate-limit errors). The red-CI issue filer then stops
+// retrying the head. A 5xx, a network error, a rate limit or anything
+// unknown is temporary.
+func DependencyBotRedFinalError(err error) bool {
+	if err == nil || isRateLimitErr(err) {
+		return false
+	}
+	var ghErr *gh.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response == nil {
+		return false
+	}
+	code := ghErr.Response.StatusCode
+	switch {
+	case code == 429:
+		return false
+	case code == 403 && dependencyBotRedRateLimited(ghErr):
+		return false
+	}
+	return code >= 400 && code < 500
+}
+
+func dependencyBotRedRateLimited(e *gh.ErrorResponse) bool {
+	h := e.Response.Header
+	if h.Get("Retry-After") != "" || h.Get("X-RateLimit-Remaining") == "0" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(e.Message), "rate limit")
+}
+
 // DependencyBotRedNotFound reports whether err is GitHub answering 404 or
 // 410: the issue, PR or repository is gone, so a record about it can go.
 func DependencyBotRedNotFound(err error) bool {
