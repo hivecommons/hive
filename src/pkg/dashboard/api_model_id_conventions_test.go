@@ -170,6 +170,7 @@ func TestHandleSwitch_KeepsValidAndNonClaudeModels(t *testing.T) {
 // agent and returns the warning for the UI to show.
 func TestHandleAgentConfigModels_NormalizesDottedClaudeModel(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	rec := doPut(s, "/api/config/agent/scanner/models", map[string]any{"model": dottedClaudeModel})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())

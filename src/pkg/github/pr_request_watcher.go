@@ -437,6 +437,16 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		return
 	}
 
+	// Per-repo open-PRs mode (repo_policies[].open_prs). Same reasoning as
+	// the two gates above: this relay is the only way an agent opens a PR,
+	// so the mode is enforced here, before any GitHub call. For
+	// workflow_only the gate checks the hive's own hand-off record for this
+	// agent and repo (and the issues the request names), never PR text.
+	if reason, refused := c.refuseOpenPRs(req.Agent, req.Repo, req.IssueN, "relay"); refused {
+		c.rejectPRRequest(path, req, GateOpenPRs, reason, nowFn)
+		return
+	}
+
 	// A head that can never be a branch (the literal HEAD of a detached
 	// checkout, an empty or malformed name) is refused before any GitHub call:
 	// no retry can fix it and every later gate would judge the wrong ref.

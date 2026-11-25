@@ -1,1 +1,0 @@
-- A codex agent whose project lacks access to its configured model (the `■ Project ... does not have access to model` pane line) is now recorded as a backend auth denial with a backoff instead of ending every kick as `ended_no_visible_action`; only the model name is kept, not the project id. (#19810)

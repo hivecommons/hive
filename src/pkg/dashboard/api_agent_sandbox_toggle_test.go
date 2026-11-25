@@ -39,6 +39,7 @@ func TestSandboxToggleRefusalListsCopySources(t *testing.T) {
 
 func TestSandboxTogglePrefillsFromDefaults(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	deps.Config.AgentSandbox = config.AgentSandboxConfig{Enabled: true, Image: "registry.example/sandbox:1", Runtime: "job", Job: &config.SandboxJobConfig{WorkspaceClaim: "hive-data"}}
 	rec := doPut(s, "/api/config/agent/scanner/general", map[string]any{"sandboxEnabled": true})
 	if rec.Code != http.StatusOK {
@@ -55,6 +56,7 @@ func TestSandboxTogglePrefillsFromDefaults(t *testing.T) {
 
 func TestSandboxToggleCopiesFromAnotherAgent(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	deps.Config.Agents["spyre"] = config.AgentConfig{Backend: "claude", Sandbox: &config.AgentSandboxOverride{
 		Image:   "spyre-img",
 		Runtime: "job",
@@ -100,6 +102,7 @@ func TestSandboxToggleCopyFromRefusals(t *testing.T) {
 
 func TestSandboxToggleOffKeepsBlock(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	on := true
 	sc := deps.Config.Agents["scanner"]
 	sc.Sandbox = &config.AgentSandboxOverride{Enabled: &on, Image: "img", Runtime: "podman"}

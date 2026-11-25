@@ -21,6 +21,7 @@ func completeBlock() *config.AgentSandboxOverride {
 
 func TestSandboxFieldsEditable(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	rec := doPut(s, "/api/config/agent/scanner/general", map[string]any{
 		"sandboxImage": "registry.example/sbx:2", "sandboxRuntime": "job",
 		"sandboxJob": map[string]any{"workspaceClaim": "hive-data", "serviceAccount": "sbx", "ttlSeconds": 600, "envFromSecrets": []string{"gh-token", " llm-key "}},
@@ -77,6 +78,7 @@ func TestSandboxFieldValidation(t *testing.T) {
 
 func TestSandboxEnabledWithoutImageRefusedNamingField(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	on := true
 	sc := deps.Config.Agents["scanner"]
 	sc.Sandbox = &config.AgentSandboxOverride{Enabled: &on, Image: "img", Runtime: "podman"}
@@ -102,6 +104,7 @@ func TestSandboxEnabledWithoutImageRefusedNamingField(t *testing.T) {
 
 func TestSandboxCopyWithoutToggleClearsWarning(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	deps.Config.Agents["deps"] = config.AgentConfig{Backend: "claude", Sandbox: completeBlock()}
 	before := decodeJSON(t, doGet(s, "/api/config/agent/scanner"))["general"].(map[string]any)
 	if p, _ := before["sandboxDefaultsProblem"].(string); !strings.Contains(p, "no sandbox image") {
@@ -141,6 +144,7 @@ func TestSandboxCopySourcesOnlyListCompleteBlocks(t *testing.T) {
 
 func TestSecuritySectionSetsDefaultSandboxImageAndJobSecrets(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	rec := doPut(s, "/api/config/governor/security", map[string]any{
 		"agentSandboxImage": "registry.example/default:1", "agentSandboxRuntime": "job",
 		"agentSandboxJobWorkspaceClaim": "hive-data", "agentSandboxJobEnvFromSecrets": []string{"gh-token"},

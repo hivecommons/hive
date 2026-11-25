@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -340,7 +341,7 @@ func newHivesAddCommand(env *commandEnv) *cobra.Command {
 			"use 'just contribute-setup' for a first-time machine.\n\n" +
 			"If you are already registered with this hive on another machine, the hub will not hand the token " +
 			"back (register is unauthenticated, so it must not). On a profile-store machine, use " +
-			"'hivectl hives reissue <name> --hub <url>' to rotate and save only that profile, or move the " +
+			"'hivectl hives reissue <name> --hub <url>' to rotate and save the shared credential, or move the " +
 			"credential from the holding machine with 'hivectl hives export' and 'hivectl hives import'. " +
 			"'just contribute-move' is unsafe with profiles because it rewrites contributor.env behind profiles.yml. " +
 			"Pass --token-stdin --contributor-id <id> only when you already have the credential in hand.",
@@ -494,7 +495,7 @@ token to whoever asks. If you already hold that credential, add it directly:
 
 The token and id are the HIVE_REGISTRATION_TOKEN / CONTRIBUTOR_ID entries for
 this hub in ~/.config/hive/contributor.env on the machine already registered.
-On a profile-store machine, rotate and save only this profile with:
+On a profile-store machine, rotate and save the shared contributor credential with:
 
     hivectl hives reissue %s --hub %s
 
@@ -519,10 +520,10 @@ func newHivesReissueCommand(env *commandEnv) *cobra.Command {
 	opts := &hivesReissueOptions{}
 	cmd := &cobra.Command{
 		Use:   "reissue <name> [--hub <url>]",
-		Short: "Reissue one hive profile's registration token",
+		Short: "Reissue a contributor registration token for a hive",
 		Long: "Calls the hive hub's authenticated POST /api/contribute/reissue-token endpoint with your gh identity, " +
 			"then saves the new registration token through profiles.yml and regenerates contributor.env. " +
-			"Only the named profile is replaced; every other profile token is left untouched.\n\n" +
+			"The token is updated for local profiles that share the same contributor identity on that hive.\n\n" +
 			"--hub is required when the profile does not already exist locally. If the profile exists and has a hub, " +
 			"the saved hub is used by default.",
 		Example: `  hivectl hives reissue acme
@@ -576,23 +577,47 @@ func (e *commandEnv) runHivesReissue(cmd *cobra.Command, name string, opts *hive
 		return err
 	}
 
-	profile := hivectl.Profile{
-		Name:              name,
-		Hub:               hub,
-		ContributorID:     strings.TrimSpace(reg.ContributorID),
-		RegistrationToken: strings.TrimSpace(reg.RegistrationToken),
-		AddedAt:           deps.now().UTC().Truncate(time.Second),
+	contributorID := strings.TrimSpace(reg.ContributorID)
+	newToken := strings.TrimSpace(reg.RegistrationToken)
+	if newToken == "" {
+		return fmt.Errorf("hub %s returned no registration token while reissuing", base)
 	}
-	if existing != nil {
+
+	profile := hivectl.Profile{Name: name, ContributorID: contributorID}
+	hiveKey := reissueHiveKey(hub)
+	if existing == nil {
+		profile.AddedAt = deps.now().UTC().Truncate(time.Second)
+	} else {
 		profile = *existing
-		profile.Hub = hub
-		profile.RegistrationToken = strings.TrimSpace(reg.RegistrationToken)
-		if id := strings.TrimSpace(reg.ContributorID); id != "" {
-			profile.ContributorID = id
+		if contributorID != "" || hiveKey != reissueHiveKey(existing.Hub) {
+			profile.ContributorID = contributorID
 		}
 	}
-	if profile.RegistrationToken == "" {
-		return fmt.Errorf("hub %s returned no registration token while reissuing", base)
+	profile.Hub = hub
+	profile.RegistrationToken = newToken
+
+	if contributorID != "" {
+		// A saved ID links an old token to the authenticated contributor.
+		// A conflicting ID makes the token ambiguous for legacy aliases.
+		tokenMatchesContributor := make(map[string]bool)
+		for _, sibling := range set.Profiles {
+			if sibling.ContributorID == "" || sibling.RegistrationToken == "" || hiveKey != reissueHiveKey(sibling.Hub) {
+				continue
+			}
+			previousMatch, seen := tokenMatchesContributor[sibling.RegistrationToken]
+			tokenMatchesContributor[sibling.RegistrationToken] = sibling.ContributorID == contributorID && (!seen || previousMatch)
+		}
+
+		for i := range set.Profiles {
+			sibling := &set.Profiles[i]
+			if i == index || hiveKey != reissueHiveKey(sibling.Hub) {
+				continue
+			}
+			if sibling.ContributorID == contributorID || (sibling.ContributorID == "" && tokenMatchesContributor[sibling.RegistrationToken]) {
+				sibling.RegistrationToken = newToken
+				sibling.ContributorID = contributorID
+			}
+		}
 	}
 	if existing == nil {
 		if err := set.Add(profile, false); err != nil {
@@ -615,8 +640,37 @@ func (e *commandEnv) runHivesReissue(cmd *cobra.Command, name string, opts *hive
 		_, _ = fmt.Fprintf(out, "  contributor id: %s\n", profile.ContributorID)
 	}
 	_, _ = fmt.Fprintf(out, "  saved to %s; %s regenerated\n", deps.store.Path(), deps.store.EnvPath())
-	_, _ = fmt.Fprintln(out, "  restart the relay ('just contribute-stop' then 'just contribute-hive') to use the new token")
+	if active := set.ActiveProfile(); active != nil &&
+		active.RegistrationToken != "" && active.RegistrationToken != newToken &&
+		(contributorID == "" || active.ContributorID == "") && reissueHiveKey(active.Hub) == hiveKey {
+		stderr := cmd.ErrOrStderr()
+		_, _ = fmt.Fprintf(stderr, "warning: cannot verify whether the active profile %q shares the rotated credential. "+
+			"To switch to the refreshed profile, run 'hivectl hives use -- %s' while the relay is stopped.\n", active.Name, profile.Name)
+		if profile.Disabled {
+			_, _ = fmt.Fprintf(stderr, "The refreshed profile is disabled. To let it accept work, run 'hivectl hives enable -- %s'.\n", profile.Name)
+		}
+	}
+	_, _ = fmt.Fprintln(out, "  restart the relay ('just contribute-stop' then 'just contribute-hive') to load the active profile's credential and session settings")
 	return nil
+}
+
+// A host can serve separate reissue endpoints under different path prefixes.
+func reissueHiveKey(hub string) string {
+	base, _ := hivectl.HubHTTPBase(hub)
+	endpoint, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	if origin, err := hivectl.NormalizeHiveID(hub); err == nil {
+		return origin + endpoint.EscapedPath()
+	}
+	// Internal hostnames can be valid hub URLs without meeting NormalizeHiveID's DNS rules.
+	port := endpoint.Port()
+	if endpoint.Scheme == "http" && port == "80" || endpoint.Scheme == "https" && port == "443" {
+		endpoint.Host = strings.TrimSuffix(endpoint.Host, ":"+port)
+		return endpoint.String()
+	}
+	return base
 }
 
 func readTokenFrom(in io.Reader) (string, error) {
