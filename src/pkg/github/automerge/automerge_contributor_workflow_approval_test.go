@@ -721,6 +721,12 @@ func TestWorkflowApprovalCommentActor(t *testing.T) {
 		{name: "typed decision approve then a condition on a later line", comment: comment("clubanderson", "/hive decision approve\n\nbut rename the job when you next touch it", after), wantLogin: "clubanderson", wantOK: true},
 		{name: "typed decision approve only after", comment: comment("clubanderson", "/hive decision approve only after CI is green", after)},
 		{name: "typed decision approve however", comment: comment("clubanderson", "/hive decision approve however rename the job", after)},
+		// A condition anywhere on the command line holds, not only right
+		// after the command.
+		{name: "typed decision approve with a later caveat", comment: comment("clubanderson", "/hive decision approve the pin bump, with the caveat that CI reruns", after)},
+		{name: "typed decision approve with a later but", comment: comment("clubanderson", "/hive decision approve the rename, but keep the old job", after)},
+		{name: "typed decision approve with a later once", comment: comment("clubanderson", "/hive decision approve this pin bump once CI is green", after)},
+		{name: "typed decision approve with a hyphenated lookalike", comment: comment("clubanderson", "/hive decision approve the after-hours job fix", after), wantLogin: "clubanderson", wantOK: true},
 		{name: "typed decision approve with butter", comment: comment("clubanderson", "/hive decision approve butterfly effect is fine", after), wantLogin: "clubanderson", wantOK: true},
 		{name: "typed decision approved", comment: comment("clubanderson", "/hive decision approved", after)},
 		{name: "typed decision approvefoo", comment: comment("clubanderson", "/hive decision approvefoo", after)},

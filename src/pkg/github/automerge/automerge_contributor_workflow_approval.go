@@ -483,19 +483,29 @@ var workflowApprovalConditionWords = map[string]bool{
 	"until": true, "unless": true, "pending": true, "provided": true,
 	"only": true, "however": true, "though": true, "although": true,
 	"except": true, "contingent": true, "conditional": true, "assuming": true,
+	"caveat": true,
 }
 
 // typedApprovalConditional reports whether the reason on a typed
-// `/hive decision approve` command line opens with a condition word. Only
-// the command line is read: a reason in a later paragraph is commentary,
-// and the bare command alone on its line released the fence before a
-// same-line reason was accepted.
+// `/hive decision approve` command line carries a condition word anywhere
+// ("approve only after the rename", "approve, with the caveat that ..."),
+// not only right after the command: the heuristic leans to holding, since a
+// wrong hold costs the merger one bare `/hive decision approve` while a
+// wrong release merges a workflow change early. Only the command line is
+// read: a reason in a later paragraph is commentary, and the bare command
+// alone on its line released the fence before a same-line reason was
+// accepted.
 func typedApprovalConditional(body string) bool {
 	words := strings.Fields(firstCommentLine(body))
 	if len(words) < 4 {
 		return false
 	}
-	return workflowApprovalConditionWords[strings.ToLower(strings.Trim(words[3], ".,:;!?()[]\"'"))]
+	for _, w := range words[3:] {
+		if workflowApprovalConditionWords[strings.ToLower(strings.Trim(w, ".,:;!?()[]\"'"))] {
+			return true
+		}
+	}
+	return false
 }
 
 // firstCommentLine returns the first non-empty line of body, trimmed; a
