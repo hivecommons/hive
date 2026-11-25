@@ -326,7 +326,7 @@ func TestWorkflowSpecIngestPreservesUnindexedDraft(t *testing.T) {
 	}
 	var resp specResponse
 	wfDecode(t, rec, &resp)
-	if resp.Entry == nil || resp.Entry.Version != "2" || resp.Model == nil || resp.Model.Spec.Meta.Version != "2" {
+	if resp.Entry == nil || resp.Entry.Version != "2" || resp.Model.Spec.Meta.Version != "2" {
 		t.Fatalf("expected version 2: %s", rec.Body)
 	}
 	rec = wfReq(s, http.MethodGet, "/api/workflows/"+draft.Metadata.Name+"/1", nil, false)

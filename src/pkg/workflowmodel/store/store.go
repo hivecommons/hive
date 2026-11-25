@@ -416,18 +416,25 @@ func backupModel(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	backup := filepath.Join(dir, "model")
+	const backupName = "model"
+	backup := filepath.Join(dir, backupName)
 	if err := os.Link(path, backup); err == nil {
 		return backup, nil
 	}
 	// Some filesystems lack hard links. Keep a copy with the original mode.
+	backupDir, err := os.OpenRoot(dir)
+	if err != nil {
+		os.Remove(dir)
+		return "", err
+	}
 	previous, err := os.ReadFile(path)
 	if err == nil {
-		err = os.WriteFile(backup, previous, 0o600)
+		err = backupDir.WriteFile(backupName, previous, 0o600)
 	}
 	if err == nil {
-		err = os.Chmod(backup, info.Mode())
+		err = backupDir.Chmod(backupName, info.Mode())
 	}
+	_ = backupDir.Close()
 	if err != nil {
 		os.Remove(backup)
 		os.Remove(dir)
