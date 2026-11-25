@@ -433,7 +433,7 @@ func (s *githubProjectsSource) AddIssueToColumn(ctx context.Context, owner, repo
 // when the item should be skipped (non-issue, filtered out by state, or not
 // in the current iteration).
 func (s *githubProjectsSource) mapItem(item gqlItem) (Issue, bool) {
-	if item.Type != "ISSUE" || item.IsArchived {
+	if item.Type != "ISSUE" || item.IsArchived || item.Content.State != "OPEN" {
 		return Issue{}, false
 	}
 
