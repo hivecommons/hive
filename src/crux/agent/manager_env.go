@@ -343,10 +343,8 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 		vars = append(vars, agentEnvPair{"GH_HOST", m.project.GHHost, false})
 	}
 	if m.routableBackend(backend) {
-		const inferenceTranslatePort = 18444
 		vars = append(vars, agentEnvPair{"ANTHROPIC_API_KEY", "sk-hive-" + agent.Name, false})
-		baseURL := fmt.Sprintf("http://127.0.0.1:%d", inferenceTranslatePort)
-		vars = append(vars, agentEnvPair{"ANTHROPIC_BASE_URL", baseURL, false})
+		vars = append(vars, agentEnvPair{"ANTHROPIC_BASE_URL", inferenceTranslatorBaseURL, false})
 		// Cap the CLI output-token budget at a value every commercial model
 		// litellm may front will accept. A prior 128000 (chosen so verbose
 		// OSS models would not truncate) exceeds Azure GPT-4o's 16384
