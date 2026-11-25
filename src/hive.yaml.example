@@ -1089,6 +1089,7 @@ dashboard:
   # authorized_users: [owner, reviewer:read, maintainer:read-write]
   # hub_proxied: false                    # True when trusted hub nginx injects identity headers
   # agent_poll_interval_s: 5
+  # attribute_label_actions: true       # comment naming the dashboard user when a hold/triage/approval label change is made for them (GitHub shows the Hive App as actor)
   # sessions:                           # Inception (spek): interactive named CLI terminals in the dashboard (default on)
   #   enabled: true                     # set false to hide Inception (spek); env HIVE_SESSIONS_ENABLED overrides; owner/read-write only, no bypass-permissions flags
   #   max_sessions: 12                  # live sessions per spoke (env HIVE_SESSIONS_MAX)

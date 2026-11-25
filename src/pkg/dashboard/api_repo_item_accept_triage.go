@@ -248,6 +248,8 @@ func (s *Server) handleRepoItemAcceptTriage(w http.ResponseWriter, r *http.Reque
 		out.Added = add
 	}
 	s.auditFromRequest(r, acceptTriageAuditAction, auditDetail("repo", repoFull, "number", strconv.Itoa(number), "added", strings.Join(add, ","), "removed", strings.Join(remove, ",")), "")
+	s.noteDashboardActor(ctx, repoFull, number, dashboardActorKindTriage,
+		dashboardActorEntry("Triage accepted", r.Header.Get("X-Hive-User"), dashboardActorLabelChange(add, remove), time.Now()))
 	out.MinStatusSeq, err = s.refreshAcceptedTriage(ctx, repoFull, number)
 	if err != nil {
 		jsonError(w, "Triage labels were saved on GitHub, but the work handoff could not be refreshed: "+err.Error(), http.StatusBadGateway)

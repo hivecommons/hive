@@ -36,6 +36,21 @@ func (c *Client) EditIssueMarkerComment(ctx context.Context, repo string, number
 	if c == nil {
 		return IssueMarkerCommentResult{}, ErrNoGitHubClient
 	}
+	return c.editIssueMarkerComment(ctx, repo, number, marker, render, c.CreateIssueCommentBudgeted)
+}
+
+// EditOperatorMarkerComment is EditIssueMarkerComment for a comment that
+// answers a person's dashboard action (hivecommons/hive#19852): a new
+// comment is not charged to the per-issue bot comment budget, which bounds
+// unattended producers only.
+func (c *Client) EditOperatorMarkerComment(ctx context.Context, repo string, number int, marker string, render func(previous string) string) (IssueMarkerCommentResult, error) {
+	if c == nil {
+		return IssueMarkerCommentResult{}, ErrNoGitHubClient
+	}
+	return c.editIssueMarkerComment(ctx, repo, number, marker, render, c.CreateIssueComment)
+}
+
+func (c *Client) editIssueMarkerComment(ctx context.Context, repo string, number int, marker string, render func(previous string) string, create func(context.Context, string, int, string) error) (IssueMarkerCommentResult, error) {
 	if render == nil {
 		return IssueMarkerCommentResult{}, fmt.Errorf("editing marker comment on %s#%d: no renderer", repo, number)
 	}
@@ -57,7 +72,7 @@ func (c *Client) EditIssueMarkerComment(ctx context.Context, repo string, number
 		if strings.TrimSpace(body) == "" {
 			return IssueMarkerCommentResult{}, nil
 		}
-		if err := c.CreateIssueCommentBudgeted(ctx, owner+"/"+repoName, number, body); err != nil {
+		if err := create(ctx, owner+"/"+repoName, number, body); err != nil {
 			return IssueMarkerCommentResult{}, err
 		}
 		return IssueMarkerCommentResult{Created: true}, nil
