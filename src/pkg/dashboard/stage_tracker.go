@@ -710,6 +710,13 @@ type StageTrackerItem struct {
 	// named in the stage reason first) with everything the tracker needs
 	// to draw each as a sub-row nested under the issue.
 	LinkedPRs []StageTrackerLinkedPR `json:"linked_prs,omitempty"`
+	// TriagePR is, on an issue waiting on a maintainer's triage (015, the
+	// needs-triage pill, or a 000-new reporter-trust hold), the open
+	// contributor PR that covers it: the row reads "Triage needed ·
+	// contributor PR #N open" and its menu links the PR beside Accept
+	// triage (hivecommons/hive#19843). Display only — the triage gate and
+	// the PR's merge-side reporter-trust hold are unchanged.
+	TriagePR *StageTrackerTriagePR `json:"triage_pr,omitempty"`
 	// NestedUnder is, on a PR, the issue in the same repo whose row nests
 	// it (0 when the PR has no listed issue and stands on its own).
 	NestedUnder int `json:"nested_under,omitempty"`
