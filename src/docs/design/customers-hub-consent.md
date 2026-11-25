@@ -53,6 +53,33 @@ The operator's decision on #19088, followed exactly:
 organization now cross labeled, without per-person consent, to a hive's grant
 holders.
 
+## Project hive gate (2026-11-25)
+
+The operator, on 2026-11-25: the hub and the project's own hive are one trust
+domain. What the hub knows about a person (country, affiliation, enrichment)
+may be shared with that hive's Customers records, labeled with its source.
+Other spokes get nothing from the hub about their customers; they only record
+their own interactions.
+
+What changes:
+
+- `HIVE_HUB_CUSTOMERS_PROJECT_HIVES` lists the project hives (default: the
+  project's own hive on the public hub; `none` or empty answers no hive).
+  `POST /api/customers/match` refuses every other hive with `403` after the
+  bearer check and before any consent record or user is read. A person's
+  consent for a non-project hive no longer causes a delivery.
+- For a project hive, the labeled public country and organization cross for
+  every hub person it asks about, not only its grant holders.
+- An organization from the hub's own affiliation lookup crosses when the
+  person has none set, labeled `profile_company`, `org_membership`,
+  `identity_provider` or `ghe_account`. A `contributions` affiliation names a
+  repository, not an employer, and never crosses.
+- Real name, location, notes, email and Slack ids are unchanged: a real name
+  still needs consent, the rest never cross.
+
+The 2026-11-19 decision below is otherwise unchanged; where it says "grant
+holders", read "every hub person, for a project hive".
+
 ## Decision change (2026-11-19)
 
 Issue [#19306](https://github.com/hivecommons/hive/issues/19306). The operator,

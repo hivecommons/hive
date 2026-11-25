@@ -59,6 +59,14 @@ const (
 	// ProfileSourceHubUnrecorded: a hub value saved before the hub recorded
 	// who supplied it.
 	ProfileSourceHubUnrecorded = "hub_unrecorded"
+	// The hub's own affiliation lookup, by how it found the organization: the
+	// person's public profile company, a public organization membership, the
+	// sign-in identity provider, or a GitHub Enterprise account. Only a
+	// project hive is sent these (pkg/hub customer_match_project.go).
+	ProfileSourceHubProfileCompany   = "hub_profile_company"
+	ProfileSourceHubOrgMembership    = "hub_org_membership"
+	ProfileSourceHubIdentityProvider = "hub_identity_provider"
+	ProfileSourceHubGHEAccount       = "hub_ghe_account"
 	// HubImportInterval is how often the bounded import pass runs.
 	HubImportInterval = time.Hour
 	// HubImportMaxAge is how long a hub value is kept without being
@@ -101,12 +109,16 @@ var HubFields = []string{FieldRealName, FieldOrganization, FieldCountry}
 // hubLabelRules maps the hub's wire source labels (pkg/hub
 // customerMatchSource*) to the Rule a hub value carries here.
 var hubLabelRules = map[string]string{
-	"consent":          ProfileSourceHub,
-	"person":           ProfileSourceHubPerson,
-	"admin":            ProfileSourceHubAdmin,
-	"email_domain":     ProfileSourceHubEmailDomain,
-	"browser_language": ProfileSourceHubBrowserLanguage,
-	"unrecorded":       ProfileSourceHubUnrecorded,
+	"consent":           ProfileSourceHub,
+	"person":            ProfileSourceHubPerson,
+	"admin":             ProfileSourceHubAdmin,
+	"email_domain":      ProfileSourceHubEmailDomain,
+	"browser_language":  ProfileSourceHubBrowserLanguage,
+	"unrecorded":        ProfileSourceHubUnrecorded,
+	"profile_company":   ProfileSourceHubProfileCompany,
+	"org_membership":    ProfileSourceHubOrgMembership,
+	"identity_provider": ProfileSourceHubIdentityProvider,
+	"ghe_account":       ProfileSourceHubGHEAccount,
 }
 
 // hubPublicFields are the fields the hub may send under a public label;
@@ -140,6 +152,14 @@ func HubLabel(rule string) string {
 		return "from hub: inferred from browser language"
 	case ProfileSourceHubUnrecorded:
 		return "from hub: source not recorded"
+	case ProfileSourceHubProfileCompany:
+		return "from hub: public profile company"
+	case ProfileSourceHubOrgMembership:
+		return "from hub: public organization membership"
+	case ProfileSourceHubIdentityProvider:
+		return "from hub: sign-in identity provider"
+	case ProfileSourceHubGHEAccount:
+		return "from hub: GitHub Enterprise account"
 	}
 	return "from hub: entered by the person, shared with consent"
 }

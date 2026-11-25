@@ -42,9 +42,10 @@ func matchByHash(resp customerMatchResponse) map[string]customerMatchEntry {
 	return out
 }
 
-// Country and organization pass labeled for grant holders without consent;
-// real name, notes, email, email domains and Slack ids do not. The hub holds
-// no location for a person, so none can cross.
+// Country and organization pass labeled to a project hive without consent,
+// whether or not the person holds a grant on it; real name, notes, email,
+// email domains and Slack ids do not. The hub holds no location for a
+// person, so none can cross.
 func TestCustomerMatchPublicFieldsLabeledWithoutConsent(t *testing.T) {
 	defer helperSetupTempDirs(t)()
 	t.Setenv(customersShareEnv, "true")
@@ -88,6 +89,7 @@ func TestCustomerMatchPublicFieldsLabeledWithoutConsent(t *testing.T) {
 		"inferred":  {"", "", "FR", customerMatchSourceBrowserLanguage},
 		"legacy":    {"Old Co", customerMatchSourceUnrecorded, "", ""},
 		"org-mail":  {"IBM", customerMatchSourceEmailDomain, "", ""},
+		"no-grant":  {"Other Co", customerMatchSourcePerson, "", ""},
 	}
 	for login, w := range want {
 		e, ok := got[matchHash("one", login)]
@@ -103,8 +105,8 @@ func TestCustomerMatchPublicFieldsLabeledWithoutConsent(t *testing.T) {
 		}
 	}
 	// A free-mail domain (even if listed), a listed domain with no name, an
-	// explicit clear, no grant and a blocked person are silence.
-	for _, login := range []string{"free-mail", "vanity-mail", "cleared-org", "no-grant", "blocked"} {
+	// explicit clear and a blocked person are silence.
+	for _, login := range []string{"free-mail", "vanity-mail", "cleared-org", "blocked"} {
 		if e, ok := got[matchHash("one", login)]; ok {
 			t.Fatalf("%s: crossed: %+v", login, e)
 		}
@@ -193,6 +195,9 @@ func TestCustomerMatchLabelsSpokeParity(t *testing.T) {
 	}
 	labels := []string{customerMatchSourcePerson, customerMatchSourceAdmin, customerMatchSourceEmailDomain,
 		customerMatchSourceBrowserLanguage, customerMatchSourceUnrecorded}
+	for _, src := range customerMatchAffiliationLabels {
+		labels = append(labels, src)
+	}
 	for _, src := range labels {
 		resp := customerMatchResponse{Matches: []customerMatchEntry{{
 			MatchHash: strings.Repeat("a", customerMatchHashLen), Organization: "Org", Country: "GB",

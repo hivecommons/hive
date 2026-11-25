@@ -119,6 +119,34 @@ func TestDecodeHubMatchReplyLabels(t *testing.T) {
 	}
 }
 
+// The hub's affiliation labels (sent only to a project hive) decode to their
+// own rules, carry their own provenance text, and yield to a forge value:
+// none of them is a value the person entered on the hub.
+func TestDecodeHubMatchReplyAffiliationLabels(t *testing.T) {
+	for label, want := range map[string]struct{ rule, text string }{
+		"profile_company":   {ProfileSourceHubProfileCompany, "public profile company"},
+		"org_membership":    {ProfileSourceHubOrgMembership, "public organization membership"},
+		"identity_provider": {ProfileSourceHubIdentityProvider, "sign-in identity provider"},
+		"ghe_account":       {ProfileSourceHubGHEAccount, "GitHub Enterprise account"},
+	} {
+		body := `{"matches":[{"match_hash":"a","organization":"Org","sources":{"organization":"` + label + `"}}]}`
+		reply, err := DecodeHubMatchReply(strings.NewReader(body))
+		if err != nil || len(reply.Matches) != 1 {
+			t.Fatalf("%s: decode %v %+v", label, err, reply)
+		}
+		rule := reply.Matches[0].rule(FieldOrganization)
+		if rule != want.rule {
+			t.Fatalf("%s: rule %q, want %q", label, rule, want.rule)
+		}
+		if got := HubLabel(rule); got != "from hub: "+want.text {
+			t.Fatalf("%s: HubLabel = %q", label, got)
+		}
+		if HubRuleEnteredByPerson(rule) || !HubValueYieldsToForge(ProfileField{Value: "Org", Source: SourceHub, Rule: rule}) {
+			t.Fatalf("%s: an affiliation value must yield to a forge value", label)
+		}
+	}
+}
+
 // A forge profile fill that runs after the hub import replaces a hub derived
 // or admin-set value, but never one the person entered or a manual one (#19088).
 func TestApplyAutoProfileHubYield(t *testing.T) {

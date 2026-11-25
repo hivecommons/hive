@@ -6,10 +6,10 @@ package hub
 // A hive posts salted hashes of the GitHub logins of its confirmed customers
 // and the hub answers for people who consented to share fields with that
 // hive and, when the hive asks for labels, with the labeled public country
-// and organization of that hive's grant holders (#19306,
-// customer_match_public.go). Unknown, unconsented, non-grant-holder and
-// never-delivered people are the same silence, so the reply is not an oracle
-// for who exists on the hub. A cleared entry is
+// and organization of every hub person (#19306, customer_match_public.go).
+// Only a project hive is answered at all (customer_match_project.go); every
+// other hive is refused with no data. Unknown, unconsented and
+// never-delivered people are the same silence. A cleared entry is
 // the only statement about a past consent, and only to a hive that already
 // received that person's data.
 
@@ -187,11 +187,14 @@ func (s *HubServer) customerMatchIndexFor(hiveID string, keys []string, now time
 		}
 	}
 
-	// Grant holders answer with labeled public fields without a consent
-	// record (#19306). Whether they answer at all is decided per request:
-	// a hive that did not ask for labels still hears only consented people.
+	// Every hub person answers a project hive with labeled public fields,
+	// without a consent record and without holding a grant on it: the hub
+	// and a project hive are one trust domain (customer_match_project.go;
+	// the handler refuses every other hive before this runs). Whether they
+	// answer at all is decided per request: a hive that did not ask for
+	// labels still hears only consented people.
 	for _, u := range listAllSaaSUsers() {
-		if u.Blocked || u.Hives[hiveID] == "" {
+		if u.Blocked {
 			continue
 		}
 		path, err := customerConsentPath(&u)
@@ -365,6 +368,13 @@ func (s *HubServer) handleCustomerMatch(w http.ResponseWriter, r *http.Request) 
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
+	// Only a project hive shares the hub's trust domain (customer_match_project.go).
+	// Any other hive is refused before a consent record or a user is read.
+	if !customersProjectHive(hiveID) {
+		s.logger.Info("audit: customer match refused", "hive", hiveID, "reason", "not a project hive")
+		writeJSONError(w, http.StatusForbidden, "customer matching is limited to the project hive")
+		return
+	}
 	if wait, ok := customerMatchStore.allow(hiveID, time.Now()); !ok {
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
 		writeJSONError(w, http.StatusTooManyRequests, "match rate limit exceeded")
@@ -425,7 +435,7 @@ func (s *HubServer) handleCustomerMatch(w http.ResponseWriter, r *http.Request) 
 			entry, sent = customerMatchShareable(c, user)
 		}
 		if labels {
-			entry, public = customerMatchPublic(entry, user, hiveID, orgDomains, sent)
+			entry, public = customerMatchPublic(entry, user, orgDomains, sent)
 		}
 		// cleared: fields this hive was sent before that do not cross now.
 		if d := c.DeliveredFields; hasConsent && d != nil {

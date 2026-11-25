@@ -38,6 +38,9 @@ type matchHarness struct {
 func newMatchHarness(t *testing.T) *matchHarness {
 	t.Helper()
 	resetCustomerMatchStore(t)
+	// The test hives are project hives; customer_match_project_test.go
+	// covers the refusal of every other hive.
+	t.Setenv(customersProjectHivesEnv, "one,two")
 	s := newHandlerHub()
 	s.mux = http.NewServeMux()
 	s.registerCustomerSharingRoutes()

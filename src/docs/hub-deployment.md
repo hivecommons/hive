@@ -100,8 +100,9 @@ People can enter or clear their real name, organization, and country, then
 confirm or withdraw their own selections separately for each hive. A real name
 is shared only with that consent, and only if the person entered it
 themselves. Country and organization are treated as public and are sent,
-labeled with their source, to the hives where the person holds a grant,
-without a consent record ([#19306](https://github.com/hivecommons/hive/issues/19306)). A
+labeled with their source, to the project hives named in
+`HIVE_HUB_CUSTOMERS_PROJECT_HIVES` (by default the project's own hive),
+without a consent record or a grant ([#19306](https://github.com/hivecommons/hive/issues/19306)). A
 material disclosure change requires reconfirmation: disclosure version 2, which
 replaced the version that said nothing was sent yet, suspends every earlier
 consent until the person confirms again.
@@ -110,12 +111,15 @@ A hive asks for these values only when its owner turns on
 `customers.hub_import.enabled` (see
 [Customers hub import](telemetry.md#customers-hub-import)). The hive posts
 salted hashes of its confirmed customers' GitHub logins to
-`POST /api/customers/match` with its per-hive bearer. The hub answers only for
-people with an effective consent for that hive (real name) and for grant
-holders of that hive (labeled public country and organization; set
-`HIVE_HUB_CUSTOMERS_ORG_DOMAINS` to let an organization be derived from a
-listed email domain); an unknown, blocked or non-grant-holder person gets the
-same empty answer. A withdrawal, a lost grant, a
+`POST /api/customers/match` with its per-hive bearer. The hub answers only a
+hive listed in `HIVE_HUB_CUSTOMERS_PROJECT_HIVES`: the hub and that hive are
+one trust domain. Every other hive gets `403` and no data, and records only
+its own interactions. For a listed hive the hub answers people with an
+effective consent for that hive (real name) and every hub person it asks
+about (labeled public country and organization; the organization may come
+from the person, an admin, a listed email domain in
+`HIVE_HUB_CUSTOMERS_ORG_DOMAINS`, or the hub's own affiliation lookup); an
+unknown or blocked person gets the same empty answer. A withdrawal, a lost grant, a
 blocked account or a deleted hub user makes the next answer tell the hive to
 clear what it was sent.
 

@@ -55006,7 +55006,11 @@ function burnAreaChart() {
       hub_admin: 'from hub: set by a hub admin',
       hub_email_domain: 'from hub: derived from an organization email domain',
       hub_browser_language: 'from hub: inferred from browser language',
-      hub_unrecorded: 'from hub: source not recorded'
+      hub_unrecorded: 'from hub: source not recorded',
+      hub_profile_company: 'from hub: public profile company',
+      hub_org_membership: 'from hub: public organization membership',
+      hub_identity_provider: 'from hub: sign-in identity provider',
+      hub_ghe_account: 'from hub: GitHub Enterprise account'
     };
     function customersHubLabel(f) {
       return CUSTOMERS_HUB_LABELS[(f && f.rule) || ''] || CUSTOMERS_HUB_LABELS.hub_consent;

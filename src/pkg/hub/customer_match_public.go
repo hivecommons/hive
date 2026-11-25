@@ -3,9 +3,11 @@ package hub
 // Labeled public fields in the customer match answer (#19306, the 2026-11-19
 // decision change in src/docs/design/customers-hub-consent.md).
 //
-// Country and organization are public information. For a hive's grant
-// holders the hub may answer them without a per-person consent record, each
-// labeled with where the value came from. Real name still needs consent;
+// Country and organization are public information. For every hub person the
+// hub may answer them to a project hive (customer_match_project.go) without
+// a per-person consent record, each labeled with where the value came from;
+// an organization the hub's own affiliation lookup found crosses with the
+// label of how it was found. Real name still needs consent;
 // location, notes, email and Slack ids never cross. An organization derived
 // from an email domain crosses only for a domain the operator listed as an
 // organization's (HIVE_HUB_CUSTOMERS_ORG_DOMAINS); a free-mail, personal or
@@ -59,7 +61,24 @@ const (
 	// customerMatchSourceUnrecorded: a legacy value saved before the hub
 	// recorded who supplied it.
 	customerMatchSourceUnrecorded = "unrecorded"
+	// The hub's own affiliation lookup (top_repo.go), one label per way it
+	// found the organization. The "contributions" affiliation (the owner of
+	// the repository a person contributes to most) names a repository, not
+	// an employer, and never crosses as an organization.
+	customerMatchSourceProfileCompany   = "profile_company"
+	customerMatchSourceOrgMembership    = "org_membership"
+	customerMatchSourceIdentityProvider = "identity_provider"
+	customerMatchSourceGHE              = "ghe_account"
 )
+
+// customerMatchAffiliationLabels maps a hub affiliation source to the label
+// its organization crosses with. A source not listed here does not cross.
+var customerMatchAffiliationLabels = map[string]string{
+	affiliationSourceCompany:       customerMatchSourceProfileCompany,
+	affiliationSourceOrgMembership: customerMatchSourceOrgMembership,
+	affiliationSourceIDP:           customerMatchSourceIdentityProvider,
+	affiliationSourceGHE:           customerMatchSourceGHE,
+}
 
 func customerMatchWantsLabels(r *http.Request) bool {
 	return strings.TrimSpace(r.Header.Get(customerMatchLabelsHeader)) == customerMatchLabelsV1
@@ -135,6 +154,11 @@ func customerPublicOrganization(u *SaaSUser, domains map[string]string) (string,
 	if v := orgFromEmailDomain(u.Email, domains); v != "" {
 		return v, customerMatchSourceEmailDomain
 	}
+	if label := customerMatchAffiliationLabels[u.AffiliationSource]; label != "" {
+		if v := truncateRunes(strings.TrimSpace(u.Affiliation), maxContactCompanyLen); v != "" {
+			return v, label
+		}
+	}
 	return "", ""
 }
 
@@ -156,12 +180,14 @@ func customerPublicCountry(u *SaaSUser) (string, string) {
 }
 
 // customerMatchPublic adds the labeled public fields to an answer entry for a
-// current grant holder of hiveID. It never adds real_name, location, notes,
+// hub person who is not blocked. The handler only reaches it for a project
+// hive (customer_match_project.go), which shares the hub's trust domain, so
+// no grant on that hive is needed. It never adds real_name, location, notes,
 // email or Slack ids, and it labels a consented real_name as such. It returns
 // the public fields it set.
-func customerMatchPublic(e customerMatchEntry, u *SaaSUser, hiveID string, domains map[string]string, consented customerConsentFields) (customerMatchEntry, customerConsentFields) {
+func customerMatchPublic(e customerMatchEntry, u *SaaSUser, domains map[string]string, consented customerConsentFields) (customerMatchEntry, customerConsentFields) {
 	var public customerConsentFields
-	if u == nil || u.Blocked || u.Hives[hiveID] == "" {
+	if u == nil || u.Blocked {
 		return e, public
 	}
 	sources := make(map[string]string)
