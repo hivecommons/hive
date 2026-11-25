@@ -25,14 +25,6 @@ func requiredGreenPR(headSHA string) github.PullRequest {
 	return pr
 }
 
-// requiredGreenConfig declares the required-check set the merge classifier
-// needs before it treats a red PR as optional-only.
-func requiredGreenConfig() *config.Config {
-	cfg := escalationTestConfig()
-	cfg.AutoMerge.RequiredChecks = []string{"test"}
-	return cfg
-}
-
 // provenanceWriter is depBotFakeWriter that can also answer whether the
 // newest needs-human event is the App's own `labeled`.
 type provenanceWriter struct {
@@ -50,21 +42,25 @@ func (w *provenanceWriter) StaleRedNeedsHumanLabeledByApp(context.Context, strin
 var _ staleRedLabelActorReader = (*provenanceWriter)(nil)
 
 func TestEscalationObservationRequiredGreen(t *testing.T) {
-	cfg := requiredGreenConfig()
+	cfg := escalationTestConfig()
 	with := func(edit func(*github.PullRequest)) github.PullRequest {
 		pr := requiredGreenPR("abc")
 		edit(&pr)
 		return pr
 	}
-	advisoryRequired := escalationTestConfig()
-	advisoryRequired.AutoMerge.RequiredChecks = []string{advisoryCheck}
+	declared := escalationTestConfig()
+	declared.AutoMerge.RequiredChecks = []string{"test"}
 	for _, tc := range []struct {
 		name string
 		cfg  *config.Config
 		pr   github.PullRequest
 		want bool
 	}{
+		// No auto_merge.required_checks declared: the set was resolved from
+		// rulesets or classic protection (ProtectionFacts), as on the hive
+		// behind Danathar/tududi#658, whose lane merged it on that set.
 		{"every required check green, advisory red, unstable", cfg, requiredGreenPR("abc"), true},
+		{"declared required set, same head", declared, requiredGreenPR("abc"), true},
 		{"required set unknown", cfg, with(func(p *github.PullRequest) { p.Protection = nil }), false},
 		{"known-empty required set", cfg, with(func(p *github.PullRequest) {
 			p.Protection = &github.ProtectionFacts{RequiredChecksKnown: true}
@@ -86,13 +82,10 @@ func TestEscalationObservationRequiredGreen(t *testing.T) {
 			p.CIStatus = "pending"
 			p.FailingChecks = nil
 		}), false},
-		// With no declared set the merge classifier files a red PR as
-		// failing, so a lift would only hand it to FIX-BEFORE-NEW.
-		{"no declared required set", escalationTestConfig(), requiredGreenPR("abc"), false},
-		{"declared set names the failing check", advisoryRequired, requiredGreenPR("abc"), false},
 		{"mergeable_state blocked", cfg, with(func(p *github.PullRequest) { p.MergeableState = "blocked" }), false},
 		{"mergeable_state clean", cfg, with(func(p *github.PullRequest) { p.MergeableState = "clean" }), false},
 		{"mergeability unknown", cfg, with(func(p *github.PullRequest) { p.Mergeable = github.MergeableUnknown }), false},
+		{"not mergeable", cfg, with(func(p *github.PullRequest) { p.Mergeable = github.MergeableNo }), false},
 		{"reviewer-recommend-close", cfg, with(func(p *github.PullRequest) {
 			p.Labels = []string{escalation.NeedsHumanLabel, scheduler.ReviewerRecommendCloseLabel}
 		}), false},
@@ -142,7 +135,7 @@ func (f *depBotFakeWriter) written() (int, int) { return len(f.comments), len(f.
 // read nothing, write nothing and count nothing.
 func TestRunEscalationSweep_RequiredGreenLiftsHiveEscalation(t *testing.T) {
 	store, clock := newTestEscalationStore(t)
-	cfg := requiredGreenConfig()
+	cfg := escalationTestConfig()
 	w := &provenanceWriter{byApp: true}
 	ctx := context.Background()
 	prKey := escalation.Key("acme/widgets", 7)
@@ -185,7 +178,7 @@ func TestRunEscalationSweep_RequiredGreenLiftsHiveEscalation(t *testing.T) {
 // is not the App's) is never lifted, and the ledger stops asking.
 func TestRunEscalationSweep_RequiredGreenLeavesRelabeledPR(t *testing.T) {
 	newTestEscalationStore(t)
-	cfg := requiredGreenConfig()
+	cfg := escalationTestConfig()
 	w := &provenanceWriter{byApp: false}
 	escalateWidgets(t, cfg, w)
 
@@ -209,7 +202,7 @@ func TestRunEscalationSweep_RequiredGreenLeavesRelabeledPR(t *testing.T) {
 // all, fails closed: no lift on that pass. The failed read is retried.
 func TestRunEscalationSweep_RequiredGreenFailsClosedOnProvenance(t *testing.T) {
 	newTestEscalationStore(t)
-	cfg := requiredGreenConfig()
+	cfg := escalationTestConfig()
 	w := &provenanceWriter{byApp: true, err: errors.New("events: 502")}
 	escalateWidgets(t, cfg, w)
 
@@ -231,7 +224,7 @@ func TestRunEscalationSweep_RequiredGreenFailsClosedOnProvenance(t *testing.T) {
 	// A writer with no label-event reader never lifts.
 	newTestEscalationStore(t)
 	plain := &depBotFakeWriter{}
-	cfg = requiredGreenConfig()
+	cfg = escalationTestConfig()
 	escalateWidgets(t, cfg, plain)
 	runEscalationSweep(context.Background(), cfg, plain, actionableWith(pr), nil, nil, discardLogger())
 	if len(plain.removes) != 0 {
@@ -243,7 +236,7 @@ func TestRunEscalationSweep_RequiredGreenFailsClosedOnProvenance(t *testing.T) {
 // and its provenance is never read.
 func TestRunEscalationSweep_RequiredGreenLeavesPersonsLabel(t *testing.T) {
 	newTestEscalationStore(t)
-	cfg := requiredGreenConfig()
+	cfg := escalationTestConfig()
 	w := &provenanceWriter{byApp: true}
 	pr := requiredGreenPR("sha-1")
 	pr.Labels = []string{escalation.NeedsHumanLabel}

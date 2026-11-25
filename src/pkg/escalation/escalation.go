@@ -337,11 +337,10 @@ type Observation struct {
 	// outside the base branch's required set while every required check
 	// passed: the required set is known and non-empty, each required check
 	// completed on the head with conclusion success, neutral or skipped, and
-	// no check is still running. The caller also requires that its merge
-	// classifier files the PR as merge-eligible with optional checks red,
-	// that the forge reports it mergeable with only unrequired checks
-	// failing, that no reviewer verdict keeps needs-human on purpose, and,
-	// before a label is removed, that the hive itself added the label last.
+	// no check is still running. The caller also requires that the forge
+	// reports the PR mergeable with only unrequired checks failing, that no
+	// reviewer verdict keeps needs-human on purpose, and, before a label is
+	// removed, that the hive itself added the label last.
 	// Such a head is Pending, not Red (nothing for a fixer to repair, and
 	// nothing that proves the loop converged), so the plain green lift never
 	// fires for it. Sweep reads RequiredGreen to lift a needs-human the hive

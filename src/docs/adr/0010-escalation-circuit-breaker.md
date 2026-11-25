@@ -89,13 +89,12 @@ An escalation the hive raised itself (the ledger records that when it posts
 the escalation comment) is also un-parked on a head red only on optional
 checks, when all of these hold:
 
-- every check in the base branch's required set completed on the head with
-  success, neutral or skipped, and no check is still running;
-- the merge classifier treats the PR as merge-eligible with optional checks
-  red: `auto_merge.required_checks` is declared for the repository, none of
-  the failing checks is in it, and GitHub reports the PR mergeable;
-- GitHub's `mergeable_state` is `unstable` (mergeable, only checks it does
-  not require failing);
+- the required set the hive resolved for the base branch (rulesets, classic
+  branch protection, or a declared `auto_merge.required_checks`) is known and
+  non-empty, none of the failing checks is in it, every check in it completed
+  on the head with success, neutral or skipped, and no check is still running;
+- GitHub reports the PR mergeable, with `mergeable_state` `unstable`
+  (mergeable, only checks it does not require failing);
 - the PR carries neither `reviewer-recommend-close` nor `reviewer-handoff`,
   the reviewer verdicts that leave `needs-human` in place on purpose;
 - the newest `needs-human` label event on the PR is the hive App's own
@@ -104,10 +103,14 @@ checks, when all of these hold:
   label a person put back last is theirs from then on and is never lifted.
 
 Such a head draws no re-dispatch from the stuck-red reaper and counts no
-attempt, and with the declared set the merge classifier files it as
-merge-eligible rather than failing, so it gets no FIX-BEFORE-NEW block either.
-The PR follow-up router may still send the owner one CI-failure follow-up for
-that head, as it does for any settled red head that is not escalated.
+attempt. The PR merges through the lane, which gates on the same resolved set.
+Where `auto_merge.required_checks` is declared, the merge-eligible classifier
+also files it as merge-eligible. In a repository with no declared set that
+classifier (which reads the declared set only) still lists the PR as CI
+failing, so its owner may still get a FIX-BEFORE-NEW nudge for the optional
+red check, exactly as when a person removes the label. The PR follow-up router
+may likewise send the owner one CI-failure follow-up for that head, as it does
+for any settled red head that is not escalated.
 Without this lift the label stayed on a PR GitHub would merge as it stands
 until a person removed it (Danathar/tududi#658). A `needs-human` a person
 applied, or one the ledger only observed, keeps waiting for a fully green head

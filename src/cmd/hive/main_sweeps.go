@@ -133,40 +133,35 @@ func escalationObservation(cfg *config.Config, pr github.PullRequest, owners map
 		Agent:              owners[escalation.Key(repo, pr.Number)],
 		IndependentControl: isIndependentCIControl(cfg, pr),
 		TransientTriaged:   red && pr.TransientCITriaged,
-		RequiredGreen:      !red && requiredChecksGreenOnly(cfg, repo, pr),
+		RequiredGreen:      !red && requiredChecksGreenOnly(pr),
 	}
 }
 
 // requiredChecksGreenOnly reports a head whose CI has settled red while
 // every failing check lies outside the base branch's required set and every
-// required check passed, on a PR the merge classifier will file as
-// merge-eligible rather than failing once needs-human is gone. All of these
-// must hold:
+// required check passed, on a PR GitHub reports mergeable with only checks it
+// does not require failing. All of these must hold:
 //   - CI concluded failure with no check still running (CIChecksRunning; a
 //     head with no failure that is still running is "pending", never this);
-//   - the required set read from the base branch is known, non-empty and
-//     fully reported with none failing (OnlyNonRequiredChecksFailing), and
-//     each required check completed on the head with conclusion success,
-//     neutral or skipped (ProtectionFacts.RequiredChecksPassed), so a
-//     required check that was cancelled, timed out, never ran or is still
-//     queued keeps it false;
-//   - the merge classifier's own optional-only test passes
-//     (onlyOptionalChecksRed over the declared auto_merge.required_checks),
-//     so a repository with no declared set, where the classifier files
-//     every red PR as failing, never qualifies;
-//   - GitHub reports the PR "unstable": mergeable, with only checks it does
-//     not require failing;
+//   - the required set the hive resolved for the base branch (rulesets,
+//     classic protection, or declared auto_merge.required_checks) is known,
+//     non-empty and fully reported with none failing
+//     (OnlyNonRequiredChecksFailing), and each required check completed on
+//     the head with conclusion success, neutral or skipped
+//     (ProtectionFacts.RequiredChecksPassed), so a required check that was
+//     cancelled, timed out, never ran or is still queued keeps it false;
+//   - GitHub reports the PR mergeable, with mergeable_state "unstable":
+//     mergeable, with only checks it does not require failing;
 //   - the reviewer lane left no verdict that keeps needs-human in place on
 //     purpose (reviewer-recommend-close, reviewer-handoff).
 //
-// The facts come from the enumeration pass's own CI enrichment and the
-// configuration: no API call.
-func requiredChecksGreenOnly(cfg *config.Config, fullRepo string, pr github.PullRequest) bool {
+// The facts come from the enumeration pass's own CI enrichment: no API call.
+func requiredChecksGreenOnly(pr github.PullRequest) bool {
 	return pr.CIStatus == "failure" &&
 		!pr.CIChecksRunning &&
 		pr.OnlyNonRequiredChecksFailing() &&
 		pr.Protection.RequiredChecksPassed &&
-		onlyOptionalChecksRed(pr, declaredRequiredChecks(cfg, fullRepo)) &&
+		pr.Mergeable == github.MergeableYes &&
 		strings.EqualFold(pr.MergeableState, "unstable") &&
 		!hasAnyLabel(pr.Labels, scheduler.ReviewerRecommendCloseLabel, scheduler.ReviewerHandoffLabel)
 }
