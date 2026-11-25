@@ -288,7 +288,9 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 		return m.deliverAgyHeadlessKickLocked(agent, message, trigger)
 	}
 	if backend != "goose" {
-		if backend != codexBackend {
+		// codex and opencode quit on Ctrl+C at an empty prompt, so a kick
+		// clears the input line with Ctrl+U alone for them.
+		if backend != codexBackend && backend != "opencode" {
 			if err := m.tmuxSendKeysForAgent(agent, "C-c"); err != nil {
 				return m.kickDeliveryFailedLocked(agent, "clear input", err)
 			}

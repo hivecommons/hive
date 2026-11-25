@@ -43,6 +43,10 @@ var CLIPaneMarkers = []string{
 	// healthy. "%/" matches the fixed "%%/1.0M" context-meter suffix pi
 	// renders at every context size.
 	PiContextMarker,
+	// opencode's marker. Its TUI draws no "❯" and none of the strings above;
+	// without this a healthy opencode pane reads as a crashed CLI and every kick
+	// restarts it before delivery.
+	OpenCodeInputFooterMarker,
 	// bob's markers. NONE of the entries above match a running bob: verified
 	// against the installed bundle (bobshell 1.0.6 bundle/bob.js), which
 	// contains zero "❯" characters and no "esc cancel" / "/ commands" /
@@ -141,6 +145,14 @@ var agentWorkingMarkers = []string{
 	BobBusyMarker,
 }
 
+// OpenCodeInputFooterMarker is the command hint opencode's TUI keeps in its
+// footer while idle ("ctrl+p commands"; the prompt box itself is a bare "┃"
+// gutter with an "Ask anything…" placeholder, which no other backend shares).
+// While a turn runs the footer swaps in "esc interrupt", which
+// agentWorkingMarkers already treats as busy, so readiness callers must check
+// ShowsAgentWorking first, as they do for every backend.
+const OpenCodeInputFooterMarker = "ctrl+p commands"
+
 // BobBusyMarker is the steer hint bob 2.x shows only while it is processing a
 // request. Verified live on Bob-Shell 2.0.5 (#15864).
 const BobBusyMarker = "Enter to steer"
@@ -212,6 +224,7 @@ func ShowsInputPrompt(output string) bool {
 		strings.Contains(output, AgyHeadlessReadyMarker) ||
 		strings.Contains(output, cline.ReadyMarker) ||
 		strings.Contains(output, "π >") ||
+		strings.Contains(output, OpenCodeInputFooterMarker) ||
 		strings.Contains(output, "╰─")
 }
 

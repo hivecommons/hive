@@ -858,6 +858,8 @@ func toolRulesToLaunchCmdWithBobSession(binary, model, backend string, tools *co
 		return agyLaunchCmd(binary, model, effort)
 	case "omp":
 		return ompLaunchCmd(binary, model, effort)
+	case "opencode":
+		return opencodeLaunchCmd(binary)
 	default:
 		return binary + config.ModelFlag(model)
 	}
@@ -939,6 +941,8 @@ func backendLaunchCmdWithBobSession(binary, model, backend string, isInference b
 		launchCmd = codexUnattendedLaunchCmd(binary) + config.ModelFlag(model) + codexEffortFlag(effort)
 	case "omp":
 		launchCmd = ompLaunchCmd(binary, model, effort)
+	case "opencode":
+		launchCmd = opencodeLaunchCmd(binary)
 	default:
 		launchCmd = binary
 	}
@@ -1104,6 +1108,17 @@ func agyHeadlessTurnShellCommand(hiveBinary, agyBinary, model, effort, promptFil
 }
 
 const ompDefaultApprovalMode = "yolo"
+
+// opencodeLaunchCmd starts opencode's TUI for a hive agent. --standalone gives
+// each agent its own private server instead of sharing one background service
+// across agent UIDs; --auto approves permissions that are not explicitly
+// denied, because nobody is attached to an unattended pane to answer a prompt
+// (the pod and its egress proxy are the boundary, as for claude and codex). The
+// TUI has no --model flag: the model rides in OPENCODE_CONFIG_CONTENT, set by
+// agentEnvPairs.
+func opencodeLaunchCmd(binary string) string {
+	return binary + " --standalone --auto"
+}
 
 func ompLaunchCmd(binary, model, effort string) string {
 	approval := strings.TrimSpace(os.Getenv("HIVE_OMP_APPROVAL_MODE"))
