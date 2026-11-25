@@ -11,6 +11,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.366.7)
+
+### Changed
+
+- CI now runs the Forgejo JWT live check against a real Forgejo 17 in a nightly lane on GitHub-hosted runners (schedule and manual dispatch only, never a required check), so the per-tier JWT path no longer depends on a manual run; `forgejo-live.sh` accepts `RUNTIME=docker` and a host Go toolchain, and the check also confirms a write-scope integration can push (#19494).
+
+### Fixed
+
+- A codex agent whose project lacks access to its configured model (the `■ Project ... does not have access to model` pane line) is now recorded as a backend auth denial with a backoff instead of ending every kick as `ended_no_visible_action`; only the model name is kept, not the project id. (#19810)
+- A forgotten hold on an all-green pull request no longer reads as a CI failure, and it no longer waits unnoticed. On a PR event, `native-queue-policy` now reports a head held only by `hold` or `do-not-merge/hold` as held: it still validates every policy provider, and when they are green the check passes with a `HELD:` notice instead of failing. Every merge-group run still refuses held PRs, and other blocking labels, drafts and moved heads still fail. The hive now raises a PR that has sat behind a hold label with every check green for longer than `escalation.stale_hold_after` (default 2h, `HIVE_STALE_HOLD_AFTER` overrides, `off` disables) once per held head, as a high-priority notification and a blocked lifecycle stage. A PR that also carries the opt-in `escalation.release_when_green_label` (default `hold/until-green`) has its hold labels removed once every check is green; a plain hold is never removed, and no approval or lgtm label is added. (#19839)
+- The contributor relay no longer assigns an issue a maintainer has put on hold or that is awaiting triage. Before, `selectTask` picked from the cached snapshot and only re-read the issue after the lease, claim and token mint, so a `hold` added half a minute earlier was logged as "claim refused" while the task was still sent. Now the chosen issue is read live before anything is committed: the hold family and configured hold labels, contribute skip labels, a closed state and the reporter-trust triage gate (configured trusted associations, logins and triage labels) all refuse it, and a failed read refuses too. The contribute admission also withholds cached rows whose webhook-patched labels show a hold or fail the triage gate, so they leave the Ready queue within seconds. An issue that gains a hold or loses its triage label while a contributor is working on it has its task revoked ("the maintainer put this issue on hold"), with the lease, claim and pending credential released and the contributor's branch and PR left alone. This happens from the `issues` webhook, and a two-minute reconcile catches a missed webhook. The ledger's fresh-claim admission applies the same triage gate. (#19846)
+- Fix the Ask Hive panel: it now sits below the dashboard header with a title and close button, uses one type scale, renders answers as markdown with numbered source citations, shows progress while a question is answered (with Retry on failure), and keeps scrolling inside the panel.
+
 ## 2026-11-25 (v5.366.6)
 
 ### Fixed
