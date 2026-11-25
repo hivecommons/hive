@@ -304,7 +304,7 @@ asks colony after the GitHub footprint (`src/pkg/hub/affiliation_colony.go`).
 them. A colony value records `affiliation_source` and
 `affiliation_confidence`.
 
-[telemetry.md](../telemetry.md#hub-affiliation-from-colony) lists both hub
+[telemetry.md](../telemetry.md) (section "Hub affiliation from colony", added with P1) lists both hub
 paths.
 
 ### Spoke (P3)
