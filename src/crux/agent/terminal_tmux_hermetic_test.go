@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux/internal/testutil"
 )
 
 type attachFakeTmux struct {
@@ -33,7 +35,21 @@ type attachFakeTmux struct {
 // on whichever subtest configuration is live at process start.
 func installAttachFakeTmux(t *testing.T) attachFakeTmux {
 	t.Helper()
-	dir := t.TempDir()
+	// Not t.TempDir(): background tmux probes that inherited this PATH can
+	// still append to tmux.log while cleanup runs, recreating the file and
+	// making a single RemoveAll fail with "directory not empty". Retry the
+	// removal until the stragglers exit.
+	dir, err := os.MkdirTemp("", "attach-fake-tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		var rmErr error
+		testutil.EventuallyEveryFunc(t, time.Second, 20*time.Millisecond, func() bool {
+			rmErr = os.RemoveAll(dir)
+			return rmErr == nil
+		}, func() string { return fmt.Sprintf("remove fake tmux dir: %v", rmErr) })
+	})
 	fake := attachFakeTmux{
 		logPath:     filepath.Join(dir, "tmux.log"),
 		clientsPath: filepath.Join(dir, "clients.out"),
