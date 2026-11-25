@@ -1014,19 +1014,18 @@ Then, for at most 3 PRs per pass (the evaluation budget), it reads GitHub:
     check before the hand-off is enough to qualify;
   - **across heads** (the head may be behind the base tip): every failing
     check also failed on the PR's previous head, whoever pushed the newer head
-    (the bot regenerating it, or a hive base refresh), and the newer head
-    contains the base commit the PR reported while that previous head was red
-    (a second compare, skipped when that commit is the base tip the head
-    already contains). The base run that passed after the newer head's
-    failure started (next item) is the freshness proof, so the newer head
-    need not contain the current tip. This is the usual case where the hive
-    cannot re-run a job (its App has no Actions write) and a busy
-    repository's bot PRs are nearly always behind after 4 hours;
+    (the bot regenerating it, or a hive base refresh); the newer head contains
+    a base commit the previous head lacks; and every failing check passed on
+    that base commit itself, not only on the tip (see "Reproduced across
+    heads" below). This is the usual case where the hive cannot re-run a job
+    (its App has no Actions write) and a busy repository's bot PRs are nearly
+    always behind after 4 hours;
 
   A single failed attempt on a single head files nothing;
 - each base tip's successful run must have finished after the head's newest
   failing run started. An older base proof, or a missing time on either side,
-  is unknown: nothing is filed. This holds on both paths;
+  is unknown: nothing is filed. This holds on both paths; on the cross-head
+  path it is not enough by itself when the head is behind the tip (below);
 - the newest failing runs must carry at least one failure-level annotation
   beyond the bare exit code; warnings do not count;
 - one open-issue listing: no open `[shared-ci] <check> failing across <repo>`
@@ -1049,8 +1048,11 @@ The previous head comes from a red-head history the sweep keeps itself, in
 the same sidecar file as the filed issues, only while the switch is on. On
 every pass, before any hand-off, each dependency-bot PR in the snapshot is
 noted: a settled red head (a failing required check, CI no longer running)
-with its failing checks and the base commit GitHub reports for the PR, a head
-still in CI as the next head, and a green head clears the history. A newer
+with its failing checks, a head still in CI as the next head, and a green
+head clears the history. A red head that was triaged transient, deferred to
+external CI or to a `[shared-ci]` incident, or had a check red on the base
+too, on any sighting, is kept in the chain but is never a previous head. A
+newer
 red head keeps the red head before it as its previous head only when it
 directly followed it: no third head was seen between them, and it was first
 seen red within 24 hours of the earlier head's last red sighting. The rule
@@ -1058,15 +1060,26 @@ then needs, for the current head:
 
 - the previous head is a different SHA, and every check failing now failed
   on it (a different check, or one more check, files nothing);
-- the base commit reported while the previous head was red is known, and the
-  current head contains it (it is not behind it). That is "brought up to
-  date with the base" read from data the hive already has: a hive base
-  refresh merges the then-current tip, and a bot regeneration rebases onto
-  it, so either way the newer head contains a base commit at least as new as
-  the one the previous head was judged against. A new commit on the same old
-  base does not;
-- all the other conditions above, including the base run that passed after
+- "brought up to date with the base": the merge base of the current head
+  with the base tip (from the compare already made; the newest base commit
+  the head contains, the one a hive base refresh merged or a bot rebased
+  onto) is a commit the previous head lacks (one compare of that commit with
+  the previous head). A new commit stacked on the previous head, with no
+  base update, is not evidence, and neither is a regeneration onto the same
+  base commit;
+- every failing check's newest run on that merge base itself concluded
+  `success`. When the head is up to date, the merge base is the tip and its
+  run had to finish after the head's failure started (above). When the head
+  is behind the tip, that commit's own check runs are read (one listing): a
+  success there at any time counts, since it is the very commit the head
+  contains, and a pass on the tip alone counts for nothing, because the fix
+  may have reached the base after the head was made;
+- no run of these checks passed on the previous head (one listing per
+  check), so its failure was not a flake;
+- all the other conditions above, including the tip's run that passed after
   the newer head's failure started and no passing run on the newer head.
+
+These reads stay inside the PR's evaluation budget.
 
 Fail closed: a PR missing from one snapshot loses its history, a restart
 keeps it (persisted), and anything unknown is no evidence. The issue's
@@ -1134,14 +1147,21 @@ Limitations:
   one for the same dependency (a newer version supersedes it), the new PR is a
   new number, so one breakage can end up with two open issues, one per PR.
   The first issue gets its "closed without merging" note.
-- Once the hand-off adds `needs-human`, the same head is not looked at
-  again, so a case skipped at hand-off time (for example a failure seen only
-  once, or a PR past the per-pass budget) is not filed later for that head.
-  Only a newer red head is judged again (across heads, or in-suite).
-- The cross-head path trusts the base commit GitHub reports on the PR while
-  the previous head was red. If that report lags, the check is weaker (an
-  older base commit is easier to contain), never wrong in the other
-  direction; the timing proof on the base still applies.
+- Once the hand-off adds `needs-human`, a case refused for good at hand-off
+  time (for example a failure seen only once) is not filed later for that
+  head. Only a temporary refusal (the per-pass budget, a failed read) is
+  retried for the same head, and a newer red head is judged again (across
+  heads, or in-suite).
+- Turning the switch off and on again within 24 hours keeps the red-head
+  history from before; heads that came and went while it was off are not
+  seen, so a head red before the toggle may count as the previous head of
+  the next red head. Off for longer, the chain breaks.
+- A temporary refusal for a parked head (the budget, a GitHub read that
+  failed, own accounts not yet known) is retried on later passes, one
+  evaluation slot per pass; anything else is final for that head.
+- The parked-head path reads the PR's needs-human label events once per
+  head (as the stale-red pass does). If a person took the label off and put
+  it back, it is not the hand-off's, and nothing is filed for that head.
 
 ```yaml
 auto_merge:

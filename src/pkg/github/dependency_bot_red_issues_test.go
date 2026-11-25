@@ -113,12 +113,13 @@ func TestRenderDependencyBotRedIssueBodyCrossHead(t *testing.T) {
 		BaseSHA:         "fedcba9876543210fedc",
 		Checks:          []string{"Build Utah"},
 		PreviousHeadSHA: "b00c45bcd70a5e114a04",
+		MergeBaseSHA:    "0a1b2c3d4e5f60718293",
 		Regenerated:     true,
 		Reproduced:      reproduced,
 	})
 	for _, want := range []string{
 		"- Reproduced: " + reproduced,
-		"- The previous head `b00c45bcd70a` failed the same checks, and this head was brought up to date with the base after that failure",
+		"- The previous head `b00c45bcd70a` failed the same checks. This head contains base commit `0a1b2c3d4e5f` that the previous head did not, every one of these checks passed on that base commit itself, and it fails them again.",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body has no %q:\n%s", want, body)
@@ -316,6 +317,59 @@ func TestStaleRedBaseStateForSucceededAt(t *testing.T) {
 	}
 	if v, _ := StaleRedBaseVerdictFor([]string{"lint"}, st); v != StaleRedBaseClears {
 		t.Fatalf("stale-red verdict for a skipped base run = %s, want unchanged (clears)", v)
+	}
+}
+
+// The compare returns the head's lag and the merge base; the base state at
+// a commit reads that commit's runs; a passing run of a check on a head is
+// found among every attempt.
+func TestDependencyBotRedCompareBaseAtAndPassed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/widgets/compare/tip1...h2":
+			_, _ = io.WriteString(w, `{"behind_by":3,"ahead_by":2,"merge_base_commit":{"sha":"mb1"}}`)
+		case "/repos/acme/widgets/commits/mb1/check-runs":
+			_, _ = io.WriteString(w, `{"total_count":2,"check_runs":[
+				{"id":1,"name":"build","head_sha":"mb1","status":"completed","conclusion":"success","completed_at":"2026-11-25T12:00:00Z","app":{"id":15368}},
+				{"id":2,"name":"test","head_sha":"mb1","status":"completed","conclusion":"failure","completed_at":"2026-11-25T12:00:00Z","app":{"id":15368}}]}`)
+		case "/repos/acme/widgets/commits/h1/check-runs":
+			if r.URL.Query().Get("filter") != "all" {
+				t.Errorf("filter = %q, want all", r.URL.Query().Get("filter"))
+			}
+			switch r.URL.Query().Get("check_name") {
+			case "test":
+				_, _ = io.WriteString(w, `{"total_count":2,"check_runs":[
+					{"id":5,"name":"test","head_sha":"h1","status":"completed","conclusion":"failure"},
+					{"id":6,"name":"test","head_sha":"h1","status":"completed","conclusion":"success"}]}`)
+			default:
+				_, _ = io.WriteString(w, `{"total_count":1,"check_runs":[
+					{"id":7,"name":"build","head_sha":"h1","status":"completed","conclusion":"failure"},
+					{"id":8,"name":"build","head_sha":"h1","status":"in_progress"}]}`)
+			}
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv, "acme", []string{"widgets"})
+	cmp, err := c.DependencyBotRedCompare(context.Background(), "acme/widgets", "tip1", "h2")
+	if err != nil || cmp.BehindBy != 3 || cmp.MergeBase != "mb1" {
+		t.Fatalf("compare = %+v, %v; want behind 3 and merge base mb1", cmp, err)
+	}
+	st, err := c.DependencyBotRedBaseStateAt(context.Background(), "acme/widgets", "mb1")
+	if err != nil || st.SHA != "mb1" || st.SucceededAt["build"].IsZero() || !st.Red["test"] {
+		t.Fatalf("base state at mb1 = %+v, %v; want build passed and test red", st, err)
+	}
+	if got, err := c.DependencyBotRedAnyPassed(context.Background(), "acme/widgets", "h1", []string{"build"}); err != nil || got != "" {
+		t.Fatalf("build passed = %q, %v; want none", got, err)
+	}
+	if got, err := c.DependencyBotRedAnyPassed(context.Background(), "acme/widgets", "h1", []string{"build", "test"}); err != nil || got != "test" {
+		t.Fatalf("passed = %q, %v; want test", got, err)
+	}
+	var nilClient *Client
+	if _, err := nilClient.DependencyBotRedCompare(context.Background(), "acme/widgets", "a", "b"); err == nil {
+		t.Fatal("a nil client compared")
 	}
 }
 

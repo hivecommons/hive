@@ -48,10 +48,25 @@ type depBotRedIssueFake struct {
 	baseGone   bool
 	behind     int
 	behindErr  error
-	// behindBy overrides behind per base SHA compared, and behindErrBase
-	// limits behindErr to one base SHA.
+	// behindBy overrides behind per "<base>..<head>" or per base SHA
+	// compared, and behindErrBase limits behindErr to one base SHA.
+	// mergeBase is the merge base per head (default: the base itself when
+	// the head is not behind it, else none).
 	behindBy      map[string]int
 	behindErrBase string
+	mergeBase     map[string]string
+	// baseAt is the check-run state per base commit read by SHA.
+	baseAt    map[string]github.StaleRedBaseState
+	baseAtErr error
+	// passedOn names a check with a passing run per head.
+	passedOn  map[string]string
+	passedErr error
+	passReads int
+	// labelNotOwn: the needs-human label events do not show the App's own
+	// label; labelErr: they cannot be read.
+	labelNotOwn bool
+	labelErr    error
+	labelReads  int
 	// runs overrides the run facts per check; any other check failed twice
 	// in one suite, never passed, started at depBotRedFailStart and left one
 	// error annotation.
@@ -105,7 +120,7 @@ func (f *depBotRedIssueFake) policy() depBotRedIssuePolicy {
 }
 
 func (f *depBotRedIssueFake) reads() int {
-	return f.baseReads + f.compares + f.runReads + f.lookups
+	return f.baseReads + f.compares + f.runReads + f.lookups + f.passReads + f.labelReads
 }
 
 func (f *depBotRedIssueFake) DependencyBotRedIssueOwnAccountsKnown() bool { return !f.ownUnknown }
@@ -126,15 +141,44 @@ func (f *depBotRedIssueFake) StaleRedBaseStateFor(context.Context, string, strin
 	return f.base, true, nil
 }
 
-func (f *depBotRedIssueFake) StaleRedBehindBy(_ context.Context, _ string, baseSHA, _ string) (int, error) {
+func (f *depBotRedIssueFake) DependencyBotRedCompare(_ context.Context, _ string, baseSHA, headSHA string) (github.DependencyBotRedComparison, error) {
 	f.compares++
 	if f.behindErr != nil && (f.behindErrBase == "" || f.behindErrBase == baseSHA) {
-		return 0, f.behindErr
+		return github.DependencyBotRedComparison{}, f.behindErr
 	}
-	if n, ok := f.behindBy[baseSHA]; ok {
-		return n, nil
+	behind := f.behind
+	if n, ok := f.behindBy[baseSHA+".."+headSHA]; ok {
+		behind = n
+	} else if n, ok := f.behindBy[baseSHA]; ok {
+		behind = n
 	}
-	return f.behind, nil
+	mb, ok := f.mergeBase[headSHA]
+	if !ok && behind == 0 {
+		mb = baseSHA
+	}
+	return github.DependencyBotRedComparison{BehindBy: behind, MergeBase: mb}, nil
+}
+
+func (f *depBotRedIssueFake) DependencyBotRedBaseStateAt(_ context.Context, _ string, sha string) (github.StaleRedBaseState, error) {
+	f.baseReads++
+	if f.baseAtErr != nil {
+		return github.StaleRedBaseState{}, f.baseAtErr
+	}
+	st, ok := f.baseAt[sha]
+	if !ok {
+		st = github.StaleRedBaseState{SHA: sha}
+	}
+	return st, nil
+}
+
+func (f *depBotRedIssueFake) DependencyBotRedAnyPassed(_ context.Context, _ string, headSHA string, _ []string) (string, error) {
+	f.passReads++
+	return f.passedOn[headSHA], f.passedErr
+}
+
+func (f *depBotRedIssueFake) StaleRedNeedsHumanLabeledByApp(context.Context, string, int) (bool, error) {
+	f.labelReads++
+	return !f.labelNotOwn && f.labelErr == nil, f.labelErr
 }
 
 func (f *depBotRedIssueFake) DependencyBotRedRunFacts(_ context.Context, _ string, _ string, checks []string) (map[string]github.DependencyBotRedCheckRuns, error) {
@@ -1047,14 +1091,24 @@ func TestDependencyBotRedIssueLifecycleForgetsGoneRecords(t *testing.T) {
 }
 
 // newDepBotCrossHeadFake is the projectbluefin/utah#1486 shape on the GitHub
-// side: the base tip base-3 passes both checks after the failure, the head
-// is 3 commits behind it, the previous head's base base-1 is contained, and
-// each check failed once per head (no re-run in one suite, so the in-suite
-// rule cannot fire).
+// side: the base tip base-3 passes both checks after the failure; the newer
+// head sha-2 is 3 commits behind it, built on base-2 (its merge base), which
+// the previous head sha-1 lacks and where both checks passed; and each check
+// failed once per head (no re-run in one suite, so the in-suite rule cannot
+// fire).
 func newDepBotCrossHeadFake() *depBotRedIssueFake {
 	f := newDepBotRedIssueFake()
 	f.base.SHA = "base-3"
-	f.behindBy = map[string]int{"base-3": 3, "base-1": 0}
+	f.behindBy = map[string]int{"base-3": 3, "base-2..sha-1": 1}
+	f.mergeBase = map[string]string{"sha-2": "base-2"}
+	builtOn := github.StaleRedBaseState{SHA: "base-2", Completed: map[string]bool{}, Red: map[string]bool{}, Reported: map[string]bool{}, SucceededAt: map[string]time.Time{}}
+	for _, c := range []string{"build", "test"} {
+		builtOn.Completed[c], builtOn.Reported[c] = true, true
+		// Before the newer head's failure started: the same commit, so
+		// the time does not matter.
+		builtOn.SucceededAt[c] = depBotRedFailStart.Add(-2 * time.Hour)
+	}
+	f.baseAt = map[string]github.StaleRedBaseState{"base-2": builtOn}
 	f.runs = map[string]github.DependencyBotRedCheckRuns{
 		"build": {FailureStartedAt: depBotRedFailStart, Errors: []string{"build broke: undefined: lib.OldName"}},
 		"test":  {FailureStartedAt: depBotRedFailStart, Errors: []string{"test broke"}},
@@ -1062,11 +1116,10 @@ func newDepBotCrossHeadFake() *depBotRedIssueFake {
 	return f
 }
 
-// depBotCrossHeadPR is a red mergeraptor PR head on the base commit baseSHA.
-func depBotCrossHeadPR(sha, baseSHA string) github.PullRequest {
+// depBotCrossHeadPR is a red mergeraptor PR head.
+func depBotCrossHeadPR(sha string) github.PullRequest {
 	pr := depBotRedBump(sha)
 	pr.Author = "mergeraptor[bot]"
-	pr.BaseSHA = baseSHA
 	return pr
 }
 
@@ -1076,21 +1129,20 @@ func depBotParked(pr github.PullRequest) github.PullRequest {
 }
 
 // The utah#1486 shape: the first head is handed off red without an issue
-// (one failed attempt, behind the base), the hive's base refresh pushes a
-// newer head while the hand-off's needs-human is still on, and the newer
-// head fails the same checks while still behind the current tip. One issue
-// is filed for the newer head, the PR gets no second comment, and later
-// passes file nothing more.
+// (one failed attempt, behind the base), a newer head arrives while the
+// hand-off's needs-human is still on, and it fails the same checks while
+// still behind the current tip. One issue is filed for the newer head, the
+// PR gets no second comment, and later passes file nothing more.
 func TestDependencyBotRedIssueCrossHeadParkedPR(t *testing.T) {
 	h := newDepBotHarness(t)
 	f := newDepBotCrossHeadFake()
-	at := h.redIssuePastGrace(depBotT0, f.policy(), depBotCrossHeadPR("sha-1", "base-1"))
+	at := h.redIssuePastGrace(depBotT0, f.policy(), depBotCrossHeadPR("sha-1"))
 	h.wantPlainHandoff(f, "first head")
 	if f.runReads != 0 {
 		t.Fatalf("first head read runs %d times, want none (behind, no earlier head)", f.runReads)
 	}
 
-	parked := depBotParked(depBotCrossHeadPR("sha-2", "base-2"))
+	parked := depBotParked(depBotCrossHeadPR("sha-2"))
 	h.redIssuePassAt(at.Add(time.Hour), depBotAdoptPolicy{}, f.policy(), parked)
 	if f.creates != 0 {
 		t.Fatalf("filed before the newer head's grace: creates=%d", f.creates)
@@ -1102,10 +1154,13 @@ func TestDependencyBotRedIssueCrossHeadParkedPR(t *testing.T) {
 	if len(h.writer.comments) != 1 || len(h.writer.adds) != 1 {
 		t.Fatalf("comments=%v adds=%v, want only the first head's hand-off", h.writer.comments, h.writer.adds)
 	}
+	if f.labelReads != 1 {
+		t.Fatalf("label reads = %d, want one before filing", f.labelReads)
+	}
 	body := f.issues[0].body
 	for _, want := range []string{
 		"- Reproduced: " + github.DependencyBotRedCrossHeadReproduced("sha-1"),
-		"The previous head `sha-1` failed the same checks",
+		"The previous head `sha-1` failed the same checks. This head contains base commit `base-2` that the previous head did not",
 		"head `sha-2`",
 		"`base-3`",
 	} {
@@ -1128,18 +1183,37 @@ func TestDependencyBotRedIssueCrossHeadParkedPR(t *testing.T) {
 	}
 }
 
-// When the newer head is handed off itself (the first head was refreshed
+// The review's case: the newer head was made on base-2, the fix for the
+// check reached the base later as base-3 (the tip), so the tip passes after
+// the newer head's failure while base-2, the commit the head contains, does
+// not. The tip's pass is the only proof: nothing is filed.
+func TestDependencyBotRedIssueCrossHeadFixLandedAfterHead(t *testing.T) {
+	h := newDepBotHarness(t)
+	f := newDepBotCrossHeadFake()
+	builtOn := f.baseAt["base-2"]
+	builtOn.Red["test"] = true
+	delete(builtOn.SucceededAt, "test")
+	h.redIssuePassAt(depBotT0, depBotAdoptPolicy{}, f.policy(), depBotCrossHeadPR("sha-1"))
+	h.redIssuePastGrace(depBotT0.Add(time.Hour), f.policy(), depBotCrossHeadPR("sha-2"))
+	h.wantPlainHandoff(f, "fix landed after the head")
+	if f.baseReads != 2 {
+		t.Fatalf("base reads = %d, want the tip and the merge base", f.baseReads)
+	}
+}
+
+// When the newer head is handed off itself (the first head was replaced
 // before its grace), the hand-off names the issue with the cross-head
 // reason, and a head that sat in CI between the two still counts as the
-// direct successor.
+// direct successor. A newer head up to date with the tip uses the tip as
+// its merge base, with no extra base read.
 func TestDependencyBotRedIssueCrossHeadHandoff(t *testing.T) {
 	h := newDepBotHarness(t)
 	f := newDepBotCrossHeadFake()
-	h.redIssuePassAt(depBotT0, depBotAdoptPolicy{}, f.policy(), depBotCrossHeadPR("sha-1", "base-1"))
-	pending := depBotCrossHeadPR("sha-2", "base-2")
+	h.redIssuePassAt(depBotT0, depBotAdoptPolicy{}, f.policy(), depBotCrossHeadPR("sha-1"))
+	pending := depBotCrossHeadPR("sha-2")
 	pending.CIStatus, pending.FailingChecks, pending.MergeableState = "pending", nil, "clean"
 	h.redIssuePassAt(depBotT0.Add(time.Hour), depBotAdoptPolicy{}, f.policy(), pending)
-	h.redIssuePastGrace(depBotT0.Add(2*time.Hour), f.policy(), depBotCrossHeadPR("sha-2", "base-2"))
+	h.redIssuePastGrace(depBotT0.Add(2*time.Hour), f.policy(), depBotCrossHeadPR("sha-2"))
 	if f.creates != 1 {
 		t.Fatalf("creates = %d, want one", f.creates)
 	}
@@ -1157,6 +1231,18 @@ func TestDependencyBotRedIssueCrossHeadHandoff(t *testing.T) {
 			t.Errorf("emitted text contains %q", bad)
 		}
 	}
+
+	h2 := newDepBotHarness(t)
+	f2 := newDepBotCrossHeadFake()
+	f2.behindBy = map[string]int{"base-3..sha-1": 2}
+	f2.mergeBase = map[string]string{}
+	h2.redIssuePassAt(depBotT0, depBotAdoptPolicy{}, f2.policy(), depBotCrossHeadPR("sha-1"))
+	h2.redIssuePastGrace(depBotT0.Add(time.Hour), f2.policy(), depBotCrossHeadPR("sha-2"))
+	// sha-2 is not behind the tip but failed once: in-suite does not
+	// fire, cross-head does, on the tip's own timed pass.
+	if f2.creates != 1 || f2.baseReads != 1 {
+		t.Fatalf("up-to-date newer head: creates=%d base reads=%d, want one issue and only the tip read", f2.creates, f2.baseReads)
+	}
 }
 
 // Every cross-head case without the proof files nothing, and the hand-off
@@ -1172,9 +1258,17 @@ func TestDependencyBotRedIssueCrossHeadFailsClosed(t *testing.T) {
 			p.CIFailureExcerpt = "lint: unused import"
 		}},
 		{"the previous head failed only one of the checks", nil, func(p *github.PullRequest) { p.FailingChecks = []string{"build"} }},
-		{"the previous head's base unknown", nil, func(p *github.PullRequest) { p.BaseSHA = "" }},
-		{"the newer head lacks the previous head's base", func(f *depBotRedIssueFake) { f.behindBy["base-1"] = 2 }, nil},
-		{"the previous base compare failed", func(f *depBotRedIssueFake) { f.behindErr, f.behindErrBase = errors.New("502"), "base-1" }, nil},
+		{"the previous head was triaged transient", nil, func(p *github.PullRequest) { p.TransientCITriaged = true }},
+		{"the previous head was deferred to external CI", nil, func(p *github.PullRequest) { p.ExternalCIDeferred = true }},
+		{"the previous head was under a shared-ci incident", nil, func(p *github.PullRequest) { p.SharedCIIncident = 9 }},
+		{"the previous head's check was red on the base", nil, func(p *github.PullRequest) { p.BaseRedChecks = []string{"test"} }},
+		{"a run passed on the previous head", func(f *depBotRedIssueFake) { f.passedOn = map[string]string{"sha-1": "test"} }, nil},
+		{"the previous head's runs unreadable", func(f *depBotRedIssueFake) { f.passedErr = errors.New("502") }, nil},
+		{"no base update: the previous head already had the merge base", func(f *depBotRedIssueFake) { f.behindBy["base-2..sha-1"] = 0 }, nil},
+		{"merge base unknown", func(f *depBotRedIssueFake) { f.mergeBase = map[string]string{} }, nil},
+		{"the previous-head compare failed", func(f *depBotRedIssueFake) { f.behindErr, f.behindErrBase = errors.New("502"), "base-2" }, nil},
+		{"the merge base never ran a check", func(f *depBotRedIssueFake) { delete(f.baseAt["base-2"].SucceededAt, "test") }, nil},
+		{"the merge base unreadable", func(f *depBotRedIssueFake) { f.baseAtErr = errors.New("502") }, nil},
 		{"base proof older than the newer failure", func(f *depBotRedIssueFake) { f.base.SucceededAt["test"] = depBotRedFailStart.Add(-time.Minute) }, nil},
 		{"a run passed on the newer head", func(f *depBotRedIssueFake) {
 			f.runs["test"] = github.DependencyBotRedCheckRuns{Passed: true, FailureStartedAt: depBotRedFailStart, Errors: []string{"test broke"}}
@@ -1192,12 +1286,12 @@ func TestDependencyBotRedIssueCrossHeadFailsClosed(t *testing.T) {
 			if tc.fake != nil {
 				tc.fake(f)
 			}
-			first := depBotCrossHeadPR("sha-1", "base-1")
+			first := depBotCrossHeadPR("sha-1")
 			if tc.first != nil {
 				tc.first(&first)
 			}
 			h.redIssuePassAt(depBotT0, depBotAdoptPolicy{}, f.policy(), first)
-			h.redIssuePastGrace(depBotT0.Add(time.Hour), f.policy(), depBotCrossHeadPR("sha-2", "base-2"))
+			h.redIssuePastGrace(depBotT0.Add(time.Hour), f.policy(), depBotCrossHeadPR("sha-2"))
 			h.wantPlainHandoff(f, tc.name)
 		})
 	}
@@ -1208,7 +1302,7 @@ func TestDependencyBotRedIssueCrossHeadFailsClosed(t *testing.T) {
 func TestDependencyBotRedIssueCrossHeadSameHeadTwice(t *testing.T) {
 	h := newDepBotHarness(t)
 	f := newDepBotCrossHeadFake()
-	pr := depBotCrossHeadPR("sha-1", "base-1")
+	pr := depBotCrossHeadPR("sha-1")
 	h.redIssuePassAt(depBotT0, depBotAdoptPolicy{}, f.policy(), pr)
 	h.redIssuePassAt(depBotT0.Add(2*time.Hour), depBotAdoptPolicy{}, f.policy(), pr)
 	h.redIssuePassAt(depBotT0.Add(depBotRedCIGrace), depBotAdoptPolicy{}, f.policy(), pr)
@@ -1226,8 +1320,8 @@ func TestDependencyBotRedIssueCrossHeadSameHeadTwice(t *testing.T) {
 func TestDependencyBotRedIssueCrossHeadGreenBreaksChain(t *testing.T) {
 	h := newDepBotHarness(t)
 	f := newDepBotCrossHeadFake()
-	h.redIssuePassAt(depBotT0, depBotAdoptPolicy{}, f.policy(), depBotCrossHeadPR("sha-1", "base-1"))
-	green := depBotPR("mergeraptor[bot]", "sha-2", func(p *github.PullRequest) { p.BaseSHA = "base-2" })
+	h.redIssuePassAt(depBotT0, depBotAdoptPolicy{}, f.policy(), depBotCrossHeadPR("sha-1"))
+	green := depBotPR("mergeraptor[bot]", "sha-2", nil)
 	h.redIssuePassAt(depBotT0.Add(time.Hour), depBotAdoptPolicy{}, f.policy(), green)
 	h.redIssuePassAt(depBotT0.Add(time.Hour+depBotRedCIGrace), depBotAdoptPolicy{}, f.policy(), green)
 	if len(h.writer.comments) != 0 || f.creates != 0 || f.reads() != 0 {
@@ -1236,17 +1330,18 @@ func TestDependencyBotRedIssueCrossHeadGreenBreaksChain(t *testing.T) {
 	if _, ok := h.store.redHeads[depBotKey]; ok {
 		t.Fatal("history kept after the head went green")
 	}
-	h.redIssuePastGrace(depBotT0.Add(2*depBotRedCIGrace), f.policy(), depBotCrossHeadPR("sha-3", "base-2"))
+	h.redIssuePastGrace(depBotT0.Add(2*depBotRedCIGrace), f.policy(), depBotCrossHeadPR("sha-3"))
 	h.wantPlainHandoff(f, "red after green")
 }
 
 // The red-head history: a direct successor (even after a CI-pending
 // sighting of it) keeps the previous red head; a second other head between
 // them, or a gap over depBotRedHeadMaxGap, does not; the checks must all
-// have failed on the previous head.
+// have failed on the previous head, and a head whose red was not the bump's
+// own on any sighting is never the previous head.
 func TestDependencyBotRedHeadHistory(t *testing.T) {
 	red := func(sha string, at time.Time, checks ...string) depBotRedHead {
-		return depBotRedHead{HeadSHA: sha, Checks: checks, BaseSHA: "base-" + sha, SeenAt: at}
+		return depBotRedHead{HeadSHA: sha, Checks: checks, SeenAt: at}
 	}
 	s := loadDepBotConflictStore("")
 	s.noteRedHead("k", red("a", depBotT0, "build", "test"))
@@ -1254,7 +1349,7 @@ func TestDependencyBotRedHeadHistory(t *testing.T) {
 	s.noteOtherHead("k", "b")
 	s.noteRedHead("k", red("b", depBotT0.Add(3*time.Hour), "build"))
 	prev, ok := s.redHeadBefore("k", "b", []string{"Build"})
-	if !ok || prev.HeadSHA != "a" || prev.BaseSHA != "base-a" {
+	if !ok || prev.HeadSHA != "a" {
 		t.Fatalf("successor: prev=%+v ok=%v, want a", prev, ok)
 	}
 	if _, ok := s.redHeadBefore("k", "b", []string{"build", "lint"}); ok {
@@ -1276,16 +1371,32 @@ func TestDependencyBotRedHeadHistory(t *testing.T) {
 		t.Fatal("a successor past the gap counts")
 	}
 
-	// The same head refreshes its checks and keeps a known base.
-	s.noteRedHead("k", depBotRedHead{HeadSHA: "e", Checks: []string{"build", "test"}, SeenAt: depBotT0.Add(30 * time.Hour)})
-	if got := s.redHeads["k"].Last; got.BaseSHA != "base-e" || len(got.Checks) != 2 {
-		t.Fatalf("refreshed head = %+v, want two checks and base-e kept", got)
+	// A reason the red is not the bump's sticks to the head through later
+	// clean sightings, and keeps it from being the previous head.
+	triaged := red("e", depBotT0.Add(30*time.Hour), "build", "test")
+	triaged.NotEvidence = "transient-triage"
+	s.noteRedHead("k", triaged)
+	s.noteRedHead("k", red("e", depBotT0.Add(32*time.Hour), "build", "test"))
+	if got := s.redHeads["k"].Last; got.NotEvidence != "transient-triage" || len(got.Checks) != 2 {
+		t.Fatalf("refreshed head = %+v, want two checks and the triage kept", got)
+	}
+	s.noteRedHead("k", red("f", depBotT0.Add(33*time.Hour), "build"))
+	if _, ok := s.redHeadBefore("k", "f", []string{"build"}); ok {
+		t.Fatal("a triaged previous head counts")
 	}
 
-	s.markRedHeadJudged("k", "e")
+	s.markRedHeadPending("k", "f")
+	if !s.redHeadPending("k", "f") || s.redHeadPending("k", "e") {
+		t.Fatal("pending mark wrong")
+	}
+	s.markRedHeadJudged("k", "f")
 	s.markRedHeadJudged("other", "z")
-	if !s.redHeadJudged("k", "e") || !s.redHeadJudged("other", "z") || s.redHeadJudged("k", "d") {
-		t.Fatal("judged marks wrong")
+	if !s.redHeadJudged("k", "f") || !s.redHeadJudged("other", "z") || s.redHeadJudged("k", "d") || s.redHeadPending("k", "f") {
+		t.Fatal("judged marks wrong, or judging kept the pending retry")
+	}
+	s.markRedHeadLabelOwn("k", "f")
+	if !s.redHeadLabelOwn("k", "f") || s.redHeadLabelOwn("k", "e") {
+		t.Fatal("label mark wrong")
 	}
 	if _, ok := s.redHeadBefore("other", "z", []string{"build"}); ok {
 		t.Fatal("a judged-only record is cross-head evidence")
@@ -1297,17 +1408,35 @@ func TestDependencyBotRedHeadHistory(t *testing.T) {
 	}
 }
 
+// What makes a red not the bump's own.
+func TestDependencyBotRedHeadNotEvidence(t *testing.T) {
+	for want, mut := range map[string]func(*github.PullRequest){
+		"":                   func(*github.PullRequest) {},
+		"transient-triage":   func(p *github.PullRequest) { p.TransientCITriaged = true },
+		"external-ci":        func(p *github.PullRequest) { p.ExternalCIDeferred = true },
+		"shared-ci-incident": func(p *github.PullRequest) { p.SharedCIIncident = 3 },
+		"base-red":           func(p *github.PullRequest) { p.BaseRedChecks = []string{"test"} },
+	} {
+		pr := depBotRedBump("sha-1")
+		mut(&pr)
+		if got := depBotRedHeadNotEvidence(pr); got != want {
+			t.Fatalf("not evidence = %q, want %q", got, want)
+		}
+	}
+}
+
 // The history and the issues share the sidecar and survive a restart; a
 // sidecar in the first layout (a bare map of issues) still loads its issues.
 func TestDependencyBotRedIssueSidecarPersistence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dependency-bot-conflicts.json")
 	s := loadDepBotConflictStore(path)
-	s.noteRedHead(depBotKey, depBotRedHead{HeadSHA: "a", Checks: []string{"build"}, BaseSHA: "base-1", SeenAt: depBotT0})
-	s.noteRedHead(depBotKey, depBotRedHead{HeadSHA: "b", Checks: []string{"build"}, BaseSHA: "base-2", SeenAt: depBotT0.Add(time.Hour)})
+	s.noteRedHead(depBotKey, depBotRedHead{HeadSHA: "a", Checks: []string{"build"}, SeenAt: depBotT0})
+	s.noteRedHead(depBotKey, depBotRedHead{HeadSHA: "b", Checks: []string{"build"}, SeenAt: depBotT0.Add(time.Hour)})
+	s.markRedHeadPending(depBotKey, "b")
 	s.markRedIssue(depBotKey, depBotRedIssueRecord{ChecksKey: "k", Checks: []string{"build"}, Issue: 7, HeadSHA: "b", PreviousHead: "a", FiledAt: depBotT0})
 	re := loadDepBotConflictStore(path)
-	if prev, ok := re.redHeadBefore(depBotKey, "b", []string{"build"}); !ok || prev.HeadSHA != "a" {
-		t.Fatalf("history after restart: prev=%+v ok=%v", prev, ok)
+	if prev, ok := re.redHeadBefore(depBotKey, "b", []string{"build"}); !ok || prev.HeadSHA != "a" || !re.redHeadPending(depBotKey, "b") {
+		t.Fatalf("history after restart: prev=%+v ok=%v pending=%v", prev, ok, re.redHeadPending(depBotKey, "b"))
 	}
 	if rec, ok := re.redIssue(depBotKey); !ok || rec.Issue != 7 || rec.PreviousHead != "a" {
 		t.Fatalf("issue after restart = %+v (ok=%v)", rec, ok)
@@ -1326,53 +1455,128 @@ func TestDependencyBotRedIssueSidecarPersistence(t *testing.T) {
 	}
 }
 
+// depBotParkedStore is a store whose sweep handed off sha-1 (red-ci, its
+// own label) and then saw sha-2 red directly after it.
+func depBotParkedStore() *depBotConflictStore {
+	store := loadDepBotConflictStore("")
+	store.markCommented(depBotKey, "sha-1", depBotHandoffRedCI, depBotT0.Add(-time.Hour))
+	store.setLabelApplied(depBotKey, true)
+	store.noteRedHead(depBotKey, depBotRedHead{HeadSHA: "sha-1", Checks: []string{"build", "test"}, SeenAt: depBotT0.Add(-time.Hour)})
+	store.noteRedHead(depBotKey, depBotRedHead{HeadSHA: "sha-2", Checks: []string{"build", "test"}, SeenAt: depBotT0})
+	return store
+}
+
 // fileForParkedHead runs only for the sweep's own earlier red-CI hand-off
-// on another head, and a spent per-pass budget keeps the head for a later
-// pass instead of judging it.
+// on another head; a spent budget, a failed read or an unreadable label
+// keeps the head for a later pass instead of judging it; a needs-human a
+// person put back files nothing.
 func TestDependencyBotRedIssueParkedHeadOnlyOwnHandoff(t *testing.T) {
 	newTestEscalationStore(t)
 	f := newDepBotCrossHeadFake()
-	parked := depBotParked(depBotCrossHeadPR("sha-2", "base-2"))
+	parked := depBotParked(depBotCrossHeadPR("sha-2"))
 	past := depBotT0.Add(depBotRedCIGrace)
+	ctx := context.Background()
 
 	// A person's needs-human (no hand-off record), or the hand-off on this
-	// very head: not judged, nothing read.
+	// very head with nothing pending: not judged, nothing read.
 	store := loadDepBotConflictStore("")
 	pass := newDepBotRedIssuePass(f.policy(), nil)
 	for _, at := range []time.Time{depBotT0, past} {
-		if pass.fileForParkedHead(context.Background(), store, "acme/widgets", depBotKey, parked, at, discardLogger()) {
+		if pass.fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, at, discardLogger()) {
 			t.Fatal("a person's label keeps a grace clock")
 		}
 	}
 	store.markCommented(depBotKey, "sha-2", depBotHandoffRedCI, depBotT0)
 	store.setLabelApplied(depBotKey, true)
 	for _, at := range []time.Time{depBotT0, past} {
-		pass.fileForParkedHead(context.Background(), store, "acme/widgets", depBotKey, parked, at, discardLogger())
+		pass.fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, at, discardLogger())
 	}
 	if f.reads() != 0 || f.gateChecks != 0 {
 		t.Fatalf("reads=%d gate=%d, want none", f.reads(), f.gateChecks)
 	}
 
 	// The hand-off was for sha-1: sha-2 waits the grace, a spent budget
-	// keeps it, and the next pass judges it once.
-	store = loadDepBotConflictStore("")
-	store.markCommented(depBotKey, "sha-1", depBotHandoffRedCI, depBotT0.Add(-time.Hour))
-	store.setLabelApplied(depBotKey, true)
-	store.noteRedHead(depBotKey, depBotRedHead{HeadSHA: "sha-1", Checks: []string{"build", "test"}, BaseSHA: "base-1", SeenAt: depBotT0.Add(-time.Hour)})
-	store.noteRedHead(depBotKey, depBotRedHead{HeadSHA: "sha-2", Checks: []string{"build", "test"}, BaseSHA: "base-2", SeenAt: depBotT0})
-	if !pass.fileForParkedHead(context.Background(), store, "acme/widgets", depBotKey, parked, depBotT0, discardLogger()) {
+	// keeps it without a read, a failed read keeps it, and the next pass
+	// judges it once.
+	store = depBotParkedStore()
+	if !pass.fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, depBotT0, discardLogger()) {
 		t.Fatal("inside the grace: the clock is not kept")
 	}
 	spent := newDepBotRedIssuePass(f.policy(), nil)
 	spent.evaluated = depBotRedIssueMaxPerPass
-	if !spent.fileForParkedHead(context.Background(), store, "acme/widgets", depBotKey, parked, past, discardLogger()) || store.redHeadJudged(depBotKey, "sha-2") {
-		t.Fatal("a spent budget judged the head or dropped its clock")
+	if !spent.fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, past, discardLogger()) || store.redHeadJudged(depBotKey, "sha-2") || f.reads() != 0 {
+		t.Fatal("a spent budget read, judged the head or dropped its clock")
 	}
-	if pass.fileForParkedHead(context.Background(), store, "acme/widgets", depBotKey, parked, past, discardLogger()) || !store.redHeadJudged(depBotKey, "sha-2") {
+	f.runsErr = errors.New("502")
+	if !newDepBotRedIssuePass(f.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, past, discardLogger()) ||
+		store.redHeadJudged(depBotKey, "sha-2") || f.creates != 0 {
+		t.Fatal("unreadable runs judged the head")
+	}
+	f.runsErr = nil
+	if newDepBotRedIssuePass(f.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, past, discardLogger()) || !store.redHeadJudged(depBotKey, "sha-2") {
 		t.Fatal("past the grace: the head is not judged once")
 	}
-	if f.creates != 1 {
-		t.Fatalf("creates = %d, want one", f.creates)
+	if f.creates != 1 || f.labelReads != 1 {
+		t.Fatalf("creates=%d label reads=%d, want one issue after one label read", f.creates, f.labelReads)
+	}
+
+	// The needs-human was taken off and put back by a person: nothing is
+	// filed, and the head is not read again.
+	fp := newDepBotCrossHeadFake()
+	fp.labelNotOwn = true
+	store = depBotParkedStore()
+	for i := 0; i < 2; i++ {
+		newDepBotRedIssuePass(fp.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, depBotT0.Add(time.Duration(i)*past.Sub(depBotT0)), discardLogger())
+	}
+	newDepBotRedIssuePass(fp.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, past.Add(time.Hour), discardLogger())
+	if fp.creates != 0 || fp.labelReads != 1 || fp.runReads != 0 {
+		t.Fatalf("a person's label: creates=%d label reads=%d run reads=%d, want one label read and nothing else", fp.creates, fp.labelReads, fp.runReads)
+	}
+
+	// Label events unreadable: kept for a later pass, nothing filed.
+	fe := newDepBotCrossHeadFake()
+	fe.labelErr = errors.New("502")
+	store = depBotParkedStore()
+	newDepBotRedIssuePass(fe.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, depBotT0, discardLogger())
+	if !newDepBotRedIssuePass(fe.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, past, discardLogger()) || fe.creates != 0 || store.redHeadJudged(depBotKey, "sha-2") {
+		t.Fatal("unreadable label events judged the head or filed")
+	}
+}
+
+// A hand-off whose issue attempt lost the per-pass budget is retried for
+// the same head on a later pass, through the parked path, once its
+// needs-human is on.
+func TestDependencyBotRedIssueBudgetLostHandoffRetried(t *testing.T) {
+	h := newDepBotHarness(t)
+	f := newDepBotRedIssueFake()
+	var prs []github.PullRequest
+	for i := 0; i < depBotRedIssueMaxPerPass+1; i++ {
+		check := fmt.Sprintf("check-%d", i)
+		f.baseGreen(check)
+		pr := depBotRedBump("sha-1")
+		pr.Number = 50 + i
+		pr.FailingChecks = []string{check}
+		pr.CIFailureExcerpt = check + ": failed to compile"
+		prs = append(prs, pr)
+	}
+	at := h.redIssuePastGrace(depBotT0, f.policy(), prs...)
+	if f.creates != depBotRedIssueMaxPerPass || len(h.writer.comments) != len(prs) {
+		t.Fatalf("creates=%d comments=%d, want %d issues and every hand-off", f.creates, len(h.writer.comments), depBotRedIssueMaxPerPass)
+	}
+	last := escalation.Key("acme/widgets", prs[len(prs)-1].Number)
+	if !h.store.redHeadPending(last, "sha-1") {
+		t.Fatal("the PR past the budget is not pending")
+	}
+	parked := make([]github.PullRequest, len(prs))
+	for i, pr := range prs {
+		parked[i] = depBotParked(pr)
+	}
+	h.redIssuePassAt(at.Add(time.Minute), depBotAdoptPolicy{}, f.policy(), parked...)
+	if f.creates != depBotRedIssueMaxPerPass+1 || len(h.writer.comments) != len(prs) {
+		t.Fatalf("retry pass: creates=%d comments=%d, want one more issue and no new comment", f.creates, len(h.writer.comments))
+	}
+	if h.store.redHeadPending(last, "sha-1") || !h.store.redHeadJudged(last, "sha-1") {
+		t.Fatal("the retried head is still pending, or not judged")
 	}
 }
 
@@ -1382,8 +1586,8 @@ func TestDependencyBotRedIssueCrossHeadSwitchOff(t *testing.T) {
 	f := newDepBotCrossHeadFake()
 	off := f.policy()
 	off.Enabled = false
-	at := h.redIssuePastGrace(depBotT0, off, depBotCrossHeadPR("sha-1", "base-1"))
-	parked := depBotParked(depBotCrossHeadPR("sha-2", "base-2"))
+	at := h.redIssuePastGrace(depBotT0, off, depBotCrossHeadPR("sha-1"))
+	parked := depBotParked(depBotCrossHeadPR("sha-2"))
 	h.redIssuePassAt(at.Add(time.Hour), depBotAdoptPolicy{}, off, parked)
 	h.redIssuePassAt(at.Add(time.Hour+depBotRedCIGrace), depBotAdoptPolicy{}, off, parked)
 	if len(h.store.redHeads) != 0 || f.reads() != 0 || f.gateChecks != 0 || f.creates != 0 || len(h.writer.comments) != 1 {

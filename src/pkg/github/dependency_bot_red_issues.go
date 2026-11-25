@@ -213,8 +213,10 @@ type DependencyBotRedIssueFacts struct {
 	// heads: the PR's previous head failed the same checks, and this head,
 	// brought up to date with the base since, fails them again. The head
 	// may then be behind BaseSHA, so the body says that instead of claiming
-	// it contains the tip.
+	// it contains the tip. MergeBaseSHA is the base commit this head
+	// contains (and the previous head did not), where the checks passed.
 	PreviousHeadSHA string
+	MergeBaseSHA    string
 	// Reproduced says how the failure was seen more than once ("Hive
 	// re-ran the failed jobs and they failed again", ...).
 	Reproduced string
@@ -311,7 +313,12 @@ func RenderDependencyBotRedIssueBody(f DependencyBotRedIssueFacts) string {
 	b.WriteString(", where the newest run of each of these checks passed, finishing after this head's failing run started.\n")
 	switch {
 	case strings.TrimSpace(f.PreviousHeadSHA) != "":
-		fmt.Fprintf(&b, "- The previous head `%s` failed the same checks, and this head was brought up to date with the base after that failure, so updating the branch did not change the result.\n", DependencyBotRedSafeText(shortSHA(strings.TrimSpace(f.PreviousHeadSHA))))
+		built := "a base commit"
+		if m := DependencyBotRedSafeText(shortSHA(strings.TrimSpace(f.MergeBaseSHA))); m != "" {
+			built = "base commit `" + m + "`"
+		}
+		fmt.Fprintf(&b, "- The previous head `%s` failed the same checks. This head contains %s that the previous head did not, every one of these checks passed on that base commit itself, and it fails them again.\n",
+			DependencyBotRedSafeText(shortSHA(strings.TrimSpace(f.PreviousHeadSHA))), built)
 	case f.Regenerated:
 		b.WriteString("- The bot already regenerated this branch once after Hive asked it to rebase, and the new head fails the same checks.\n")
 	default:
@@ -417,6 +424,68 @@ func dependencyBotRedSequentialFailures(failed []*gh.CheckRun) bool {
 		}
 	}
 	return false
+}
+
+// DependencyBotRedComparison is what one compare of a base commit with a
+// head says: how many commits of the base the head lacks, and the merge
+// base (the newest base commit the head contains; "" when GitHub gave
+// none).
+type DependencyBotRedComparison struct {
+	BehindBy  int
+	MergeBase string
+}
+
+// DependencyBotRedCompare compares baseSHA with headSHA (one call).
+func (c *Client) DependencyBotRedCompare(ctx context.Context, repo, baseSHA, headSHA string) (DependencyBotRedComparison, error) {
+	if c == nil || c.client == nil {
+		return DependencyBotRedComparison{}, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	cmp, _, err := c.client.Repositories.CompareCommits(WithRESTCaller(ctx, "hive:dependency_bot_red_issue"), owner, name, baseSHA, headSHA, &gh.ListOptions{PerPage: 1})
+	if err != nil {
+		return DependencyBotRedComparison{}, fmt.Errorf("comparing %s/%s@%s with %s: %w", owner, name, shortSHA(baseSHA), shortSHA(headSHA), err)
+	}
+	return DependencyBotRedComparison{BehindBy: cmp.GetBehindBy(), MergeBase: cmp.GetMergeBaseCommit().GetSHA()}, nil
+}
+
+// DependencyBotRedBaseStateAt reads the latest completed check run per name
+// on the base commit sha, as StaleRedBaseStateFor does for a branch tip.
+// The cross-head rule reads it for the merge base of the PR head, the base
+// commit that head actually contains.
+func (c *Client) DependencyBotRedBaseStateAt(ctx context.Context, repo, sha string) (StaleRedBaseState, error) {
+	if c == nil || c.client == nil {
+		return StaleRedBaseState{}, ErrNoGitHubClient
+	}
+	return c.staleRedBaseStateAt(WithRESTCaller(ctx, "hive:dependency_bot_red_issue"), repo, sha)
+}
+
+// DependencyBotRedAnyPassed returns the first of checks (in the order
+// given) with a run on headSHA that completed with success, "" when none
+// did: one listing per check (every attempt). The cross-head rule reads it
+// for the previous head, so a flaky check there is no evidence.
+func (c *Client) DependencyBotRedAnyPassed(ctx context.Context, repo, headSHA string, checks []string) (string, error) {
+	if c == nil || c.client == nil {
+		return "", ErrNoGitHubClient
+	}
+	ctx = WithRESTCaller(ctx, "hive:dependency_bot_red_issue")
+	owner, name := c.splitRepo(repo)
+	for _, check := range checks {
+		opts := &gh.ListCheckRunsOptions{CheckName: gh.Ptr(check), Filter: gh.Ptr("all"), ListOptions: gh.ListOptions{PerPage: 100}}
+		runs, _, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, name, headSHA, opts)
+		if err != nil {
+			return "", fmt.Errorf("listing %q runs on %s/%s at %s: %w", check, owner, name, shortSHA(headSHA), err)
+		}
+		if runs == nil {
+			continue
+		}
+		for _, cr := range runs.CheckRuns {
+			if cr != nil && cr.GetName() == check && (cr.GetHeadSHA() == "" || strings.EqualFold(cr.GetHeadSHA(), headSHA)) &&
+				cr.GetStatus() == "completed" && cr.GetConclusion() == "success" {
+				return check, nil
+			}
+		}
+	}
+	return "", nil
 }
 
 // DependencyBotRedNotFound reports whether err is GitHub answering 404 or

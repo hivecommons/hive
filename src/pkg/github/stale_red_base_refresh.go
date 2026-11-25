@@ -100,13 +100,23 @@ func (c *Client) StaleRedBaseStateFor(ctx context.Context, repo, baseRef string)
 	if err != nil || !exists {
 		return StaleRedBaseState{}, exists, err
 	}
+	st, err := c.staleRedBaseStateAt(ctx, repo, sha)
+	if err != nil {
+		return StaleRedBaseState{}, true, err
+	}
+	return st, true, nil
+}
+
+// staleRedBaseStateAt reads the latest completed check run per name on the
+// commit sha (meta checks excluded).
+func (c *Client) staleRedBaseStateAt(ctx context.Context, repo, sha string) (StaleRedBaseState, error) {
 	owner, name := c.splitRepo(repo)
 	var all []*gh.CheckRun
 	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
 	for {
 		runs, resp, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, name, sha, opts)
 		if err != nil {
-			return StaleRedBaseState{}, true, fmt.Errorf("listing check runs on %s/%s@%s: %w", owner, name, shortSHA(sha), err)
+			return StaleRedBaseState{}, fmt.Errorf("listing check runs on %s/%s@%s: %w", owner, name, shortSHA(sha), err)
 		}
 		if runs != nil {
 			all = append(all, runs.CheckRuns...)
@@ -134,7 +144,7 @@ func (c *Client) StaleRedBaseStateFor(ctx context.Context, repo, baseRef string)
 			st.Red[n] = true
 		}
 	}
-	return st, true, nil
+	return st, nil
 }
 
 // StaleRedBehindBy returns how many commits of baseSHA the head headSHA

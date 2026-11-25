@@ -523,6 +523,16 @@ func sweepDependencyBotHandoffs(
 			if out.Number > 0 && out.Line != "" {
 				comment += "\n\n" + out.Line
 			}
+			if issues.on() {
+				if out.Retry {
+					// Only a temporary answer (budget, a failed read):
+					// the parked-head path tries this head again once it
+					// is handed off.
+					store.markRedHeadPending(key, pr.HeadSHA)
+				} else if store.redHeadPending(key, pr.HeadSHA) {
+					store.markRedHeadJudged(key, pr.HeadSHA)
+				}
+			}
 		}
 		if err := writer.CreateIssueComment(ctx, repo, pr.Number, comment); err != nil { // writeback:gated
 			logger.Warn("dependency-bot hand-off comment failed; will retry next pass",
