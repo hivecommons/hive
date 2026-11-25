@@ -408,14 +408,18 @@ func TestReadyForHumanMergeAutoMergeOffRepoResolvesOwnThreads(t *testing.T) {
 			pass := func() {
 				t.Helper()
 				before := gql.count()
+				// The stage pass's own 090 label and entry comment from an
+				// earlier pass are in lane.writes too; only this pass's lanes
+				// count.
+				writesBefore := len(lane.writes)
 				if _, err := e.SweepSelfAuthoredAutoMerges(ctx, AutoMergeSweepOptions{}); err != nil {
 					t.Fatalf("self-authored lane: %v", err)
 				}
 				if _, err := e.SweepTrustedAuthorAutoMerges(ctx, AutoMergeSweepOptions{SelfAuthoredLaneActive: true}); err != nil {
 					t.Fatalf("trusted-author lane: %v", err)
 				}
-				if len(lane.writes) != 0 || gql.count() != before {
-					t.Fatalf("observe-only lanes wrote: %v (graphql %d)", lane.writes, gql.count()-before)
+				if len(lane.writes) != writesBefore || gql.count() != before {
+					t.Fatalf("observe-only lanes wrote: %v (graphql %d)", lane.writes[writesBefore:], gql.count()-before)
 				}
 				if _, err := e.ApplyStageLabels(ctx); err != nil {
 					t.Fatalf("ApplyStageLabels: %v", err)
