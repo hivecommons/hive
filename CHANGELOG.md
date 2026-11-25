@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.369.4)
+
+### Fixed
+
+- Continue self-authored automerge sweeps for accessible repositories when another repository returns 404.
+
 ## 2026-11-25 (v5.369.3)
 
 ### Fixed

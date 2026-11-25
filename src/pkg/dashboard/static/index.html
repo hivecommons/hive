@@ -59999,9 +59999,11 @@ function burnAreaChart() {
     }
 
     // ── Input bar ──
+    const _sessionsInputRevisions = new WeakMap();
     function sessionsInputChanged(el) {
       const bar = el && el.closest ? el.closest('.sessions-input') : null;
       if (!bar) return;
+      _sessionsInputRevisions.set(el, (_sessionsInputRevisions.get(el) || 0) + 1);
       const max = Number(_sessionsData.limits && _sessionsData.limits.max_input_bytes) || 0;
       const counter = bar.querySelector('.sessions-input-count');
       if (!counter || !max) return;
@@ -60022,12 +60024,16 @@ function burnAreaChart() {
       if (!s) return;
       const box = document.getElementById('sessions-input-text-' + s.id);
       if (!box) return;
-      const check = sessionsCheckInput(box.value, _sessionsData.limits);
+      const text = box.value;
+      const revision = _sessionsInputRevisions.get(box);
+      const check = sessionsCheckInput(text, _sessionsData.limits);
       if (!check.ok) { showToast(check.error, 'error'); return; }
       try {
-        const data = await sessionsPostInput(s.id, box.value, String(submit) === '1' || submit === true);
-        box.value = '';
-        sessionsInputChanged(box);
+        const data = await sessionsPostInput(s.id, text, String(submit) === '1' || submit === true);
+        if (box.value === text && _sessionsInputRevisions.get(box) === revision) {
+          box.value = '';
+          sessionsInputChanged(box);
+        }
         showToast(sessionsQueuedToast(s.name || s.id, data && data.queued), 'success');
       } catch (e) { showToast('Could not send: ' + e.message, 'error'); }
     }
