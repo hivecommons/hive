@@ -1,0 +1,85 @@
+# Forgejo JWT: the per-tier JWT path against a real Forgejo 17 (hivecommons/hive#19494).
+#
+# crux/forgejwt mints short-lived JWTs that a Forgejo authorized integration
+# accepts in place of a stored token (#19682). The unit tests encode our reading
+# of Forgejo's rules. This lane runs src/crux/forgejwt/testdata/forgejo-live.sh,
+# which publishes the key list made by `hive forge key-list` from nginx over
+# https with a private CA, starts a throwaway Forgejo that trusts only that host,
+# creates three authorized integrations, and runs TestForgejoAcceptsMintedTokens
+# (build tag forgejo_jwt_live). It shows that a read-scope advisor token reads
+# and cannot push, a write-scope integration pushes, and which claims and
+# Authorization schemes Forgejo accepts.
+#
+# Forgejo 17 is pinned here on its own: authorized integrations do not exist in
+# the 16.x image that forgejo-smoke.yml and forgejo-e2e.yml run. Move those lanes
+# to 17 together with this one when they upgrade, and keep the tag and digest in
+# step.
+#
+# NOT a required check. Promote it once it has run green for two weeks. No
+# secrets: the CA, signing key, admin and tokens are created per run inside the
+# throwaway containers. Images are pinned by digest.
+name: Forgejo JWT
+
+on:
+  schedule:
+    # Nightly at :40; :50 is the Forgejo smoke and :55 the Forgejo e2e.
+    - cron: '40 4 * * *'
+  push:
+    branches:
+      - v5
+    paths:
+      - 'src/crux/forgejwt/**'
+      - 'src/cmd/hive/forge_cmd*.go'
+      - 'src/cmd/hive/forge_remote*.go'
+      - 'src/crux/keystore/**'
+      - '.github/workflows/forgejo-jwt.yml'
+  pull_request:
+    branches:
+      - v5
+    paths:
+      - 'src/crux/forgejwt/**'
+      - 'src/cmd/hive/forge_cmd*.go'
+      - 'src/cmd/hive/forge_remote*.go'
+      - 'src/crux/keystore/**'
+      - '.github/workflows/forgejo-jwt.yml'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Build-cache isolation for the self-hosted pool (see
+# .github/scripts/go-cache-guard.sh).
+env:
+  GO_CACHE_GUARD_BUILD_CACHE: ${{ vars.HIVE_GO_BUILD_CACHE || 'job' }}
+
+jobs:
+  jwt:
+    if: github.repository == 'hivecommons/hive'
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON(vars.HIVE_RUNNER_LABELS || '["ubuntu-latest"]') || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Warm shared Go tool cache (serialize the cold-cache population)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          cache: false
+          go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+
+      - name: Check Forgejo accepts the minted JWTs
+        env:
+          RUNTIME: docker
+          HOST_GO: '1'
+          FORGEJO_IMAGE: codeberg.org/forgejo/forgejo:17.0.2@sha256:879f4f10a98e3e167b32cde5f7ae3af0163d50bfacf567559a27a0e95a95670c
+          NGINX_IMAGE: docker.io/library/nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+        run: bash src/crux/forgejwt/testdata/forgejo-live.sh
