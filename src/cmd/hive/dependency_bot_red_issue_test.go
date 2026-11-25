@@ -445,6 +445,9 @@ func TestDependencyBotRedIssueOnlyReproducedFailures(t *testing.T) {
 	f5 := newDepBotRedIssueFake()
 	f5.runs = map[string]github.DependencyBotRedCheckRuns{"test": {Reproduced: true, Passed: true, FailureStartedAt: depBotRedFailStart, Errors: []string{"boom"}}}
 	pass = newDepBotRedIssuePass(f5.policy(), nil)
+	// A fresh store: the one above recorded f4's issue for this head, and the
+	// same-head retry shortcut would link it without reading the runs.
+	store = loadDepBotConflictStore("")
 	if out := pass.issueFor(context.Background(), store, "acme/widgets", depBotKey, depBotRedBump("sha-1"), depBotTransientRerun{State: depBotRerunDone}, depBotT0, discardLogger()); out.Number != 0 || f5.creates != 0 {
 		t.Fatalf("re-run done but a run passed: out=%+v, want no issue", out)
 	}
