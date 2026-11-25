@@ -36,7 +36,7 @@ func (c *Client) EditIssueMarkerComment(ctx context.Context, repo string, number
 	if c == nil {
 		return IssueMarkerCommentResult{}, ErrNoGitHubClient
 	}
-	return c.editIssueMarkerComment(ctx, repo, number, marker, render, c.CreateIssueCommentBudgeted)
+	return c.editIssueMarkerComment(ctx, repo, number, marker, render, true)
 }
 
 // EditOperatorMarkerComment is EditIssueMarkerComment for a comment that
@@ -47,10 +47,13 @@ func (c *Client) EditOperatorMarkerComment(ctx context.Context, repo string, num
 	if c == nil {
 		return IssueMarkerCommentResult{}, ErrNoGitHubClient
 	}
-	return c.editIssueMarkerComment(ctx, repo, number, marker, render, c.CreateIssueComment)
+	return c.editIssueMarkerComment(ctx, repo, number, marker, render, false)
 }
 
-func (c *Client) editIssueMarkerComment(ctx context.Context, repo string, number int, marker string, render func(previous string) string, create func(context.Context, string, int, string) error) (IssueMarkerCommentResult, error) {
+// editIssueMarkerComment finds and edits the marker comment, creating it when
+// absent; a new comment is charged to the per-issue bot comment budget only
+// when budgeted.
+func (c *Client) editIssueMarkerComment(ctx context.Context, repo string, number int, marker string, render func(previous string) string, budgeted bool) (IssueMarkerCommentResult, error) {
 	if render == nil {
 		return IssueMarkerCommentResult{}, fmt.Errorf("editing marker comment on %s#%d: no renderer", repo, number)
 	}
@@ -72,7 +75,12 @@ func (c *Client) editIssueMarkerComment(ctx context.Context, repo string, number
 		if strings.TrimSpace(body) == "" {
 			return IssueMarkerCommentResult{}, nil
 		}
-		if err := create(ctx, owner+"/"+repoName, number, body); err != nil {
+		if budgeted {
+			err = c.CreateIssueCommentBudgeted(ctx, owner+"/"+repoName, number, body)
+		} else {
+			err = c.CreateIssueComment(ctx, owner+"/"+repoName, number, body)
+		}
+		if err != nil {
 			return IssueMarkerCommentResult{}, err
 		}
 		return IssueMarkerCommentResult{Created: true}, nil
