@@ -62,7 +62,9 @@ type BranchRulesResult struct {
 // and lists required checks: GitHub still enforces any classic rule at merge
 // time, so the lane's check stays additive. Other errors fail closed. A 403
 // or 404 from classic protection is remembered per repo and branch for
-// HIVE_REQUIRED_CHECKS_FORBIDDEN_TTL and replayed without a call.
+// HIVE_REQUIRED_CHECKS_FORBIDDEN_TTL and replayed without a call. "Branch not
+// protected" is remembered for HIVE_CLASSIC_NOT_PROTECTED_TTL and replays as
+// no classic checks while the rulesets are still read on every call.
 func ReadBranchRules(ctx context.Context, client *gh.Client, owner, repo, branch string, configSet map[string]bool, configKnown bool) BranchRulesResult {
 	res := BranchRulesResult{Required: map[string]bool{}, UpToDate: UpToDateUnknown}
 	if client == nil || strings.TrimSpace(branch) == "" {
@@ -78,13 +80,17 @@ func ReadBranchRules(ctx context.Context, client *gh.Client, owner, repo, branch
 	var problems []string
 	var classicErr error
 
-	// A remembered 403/404 stands in for the call (branchRulesClassicCache).
+	// A remembered 403/404 or "branch not protected" stands in for the call
+	// (branchRulesClassicCache).
 	var rsc *gh.RequiredStatusChecks
 	classicKey := requiredChecksForbiddenCacheKey(client, owner, repo, branch)
 	err := sharedBranchRulesClassicCache.get(classicKey)
 	if err == nil {
 		rsc, _, err = client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, branch)
-		if isRequiredChecksForbiddenCacheable(err) {
+		switch {
+		case rememberClassicNotProtected(classicKey, err):
+			err = gh.ErrBranchNotProtected
+		case isRequiredChecksForbiddenCacheable(err):
 			sharedBranchRulesClassicCache.put(classicKey, err)
 		}
 	}
@@ -165,15 +171,27 @@ func ReadBranchRules(ctx context.Context, client *gh.Client, owner, repo, branch
 // ReadBranchRules replays the same error instead of asking again. An App
 // without Administration permission gets a 403 there on every read, and the
 // red-main sweep reads every active repo each pass (~330 failed calls an hour
-// on one hive). "Branch not protected" and rate-limit errors are not
-// *gh.ErrorResponse 403/404 values, so they are never cached. The TTL is
-// HIVE_REQUIRED_CHECKS_FORBIDDEN_TTL (default 1h), shared with
-// RequiredStatusCheckPolicy's cache.
+// on one hive). That TTL is HIVE_REQUIRED_CHECKS_FORBIDDEN_TTL (default 1h),
+// shared with RequiredStatusCheckPolicy's cache.
+//
+// It also remembers "branch not protected" as gh.ErrBranchNotProtected, the
+// answer for every branch of a repo that uses rulesets and no classic
+// protection, for the shorter HIVE_CLASSIC_NOT_PROTECTED_TTL (default 15m; 0
+// turns it off). Only ReadBranchRules and nativeObservationRequired use that
+// entry: both read the rulesets on every call and treat a failed rules read
+// as unknown, so a remembered answer gives exactly the live result. The
+// required-check policy (requiredStatusChecksFromProtectionEndpoint) never
+// uses it, because there a failed rules read after "not protected" counts as
+// known-empty. Classic protection added within the TTL is seen when it runs
+// out; GitHub enforces it at merge time meanwhile. Rate-limit errors are not
+// *gh.ErrorResponse values and other errors are not 403/404, so neither is
+// cached.
 type branchRulesClassicCache struct {
-	mu      sync.Mutex
-	entries map[string]branchRulesClassicEntry
-	now     func() time.Time
-	ttl     time.Duration
+	mu              sync.Mutex
+	entries         map[string]branchRulesClassicEntry
+	now             func() time.Time
+	ttl             time.Duration
+	notProtectedTTL time.Duration
 }
 
 type branchRulesClassicEntry struct {
@@ -185,9 +203,10 @@ var sharedBranchRulesClassicCache = newBranchRulesClassicCache()
 
 func newBranchRulesClassicCache() *branchRulesClassicCache {
 	return &branchRulesClassicCache{
-		entries: map[string]branchRulesClassicEntry{},
-		now:     time.Now,
-		ttl:     durationFromEnv(requiredChecksForbiddenTTLEnv, defaultRequiredChecksForbiddenTTL),
+		entries:         map[string]branchRulesClassicEntry{},
+		now:             time.Now,
+		ttl:             durationFromEnv(requiredChecksForbiddenTTLEnv, defaultRequiredChecksForbiddenTTL),
+		notProtectedTTL: durationFromEnv(classicNotProtectedTTLEnv, defaultClassicNotProtectedTTL),
 	}
 }
 
@@ -207,8 +226,14 @@ func (c *branchRulesClassicCache) get(key string) error {
 	return ent.err
 }
 
+// put remembers err for key: "branch not protected" for notProtectedTTL,
+// anything else for ttl. A TTL of 0 or less remembers nothing.
 func (c *branchRulesClassicCache) put(key string, err error) {
-	if c.ttl <= 0 || err == nil {
+	ttl := c.ttl
+	if errors.Is(err, gh.ErrBranchNotProtected) {
+		ttl = c.notProtectedTTL
+	}
+	if ttl <= 0 || err == nil {
 		return
 	}
 	c.mu.Lock()
@@ -219,7 +244,48 @@ func (c *branchRulesClassicCache) put(key string, err error) {
 			delete(c.entries, k)
 		}
 	}
-	c.entries[key] = branchRulesClassicEntry{until: now.Add(c.ttl), err: err}
+	c.entries[key] = branchRulesClassicEntry{until: now.Add(ttl), err: err}
+}
+
+// isClassicBranchNotProtected reports the classic required_status_checks
+// endpoint's "Branch not protected" answer: go-github's
+// gh.ErrBranchNotProtected sentinel, or the raw 404 *gh.ErrorResponse a path
+// that bypasses go-github's conversion sees. A 404 with any other message
+// (a missing branch, a protected branch without required checks) is not it.
+func isClassicBranchNotProtected(err error) bool {
+	if errors.Is(err, gh.ErrBranchNotProtected) {
+		return true
+	}
+	var er *gh.ErrorResponse
+	return errors.As(err, &er) && er.Response != nil && er.Response.StatusCode == http.StatusNotFound && er.Message == classicBranchNotProtectedMessage
+}
+
+const (
+	classicNotProtectedTTLEnv     = "HIVE_CLASSIC_NOT_PROTECTED_TTL"
+	defaultClassicNotProtectedTTL = 15 * time.Minute
+)
+
+// classicBranchNotProtectedMessage is GitHub's message for that answer, the
+// one go-github matches before returning gh.ErrBranchNotProtected.
+const classicBranchNotProtectedMessage = "Branch not protected"
+
+// rememberClassicNotProtected records a "branch not protected" answer for key
+// in sharedBranchRulesClassicCache and reports whether err was one. The entry
+// is the gh.ErrBranchNotProtected sentinel whatever form err took. Only
+// readers that treat a failed rules read as unknown may use it
+// (branchRulesClassicCache).
+func rememberClassicNotProtected(key string, err error) bool {
+	if !isClassicBranchNotProtected(err) {
+		return false
+	}
+	sharedBranchRulesClassicCache.put(key, gh.ErrBranchNotProtected)
+	return true
+}
+
+// classicNotProtectedRemembered reports a remembered, unexpired "branch not
+// protected" answer for key. A remembered 403 or 404 is not one.
+func classicNotProtectedRemembered(key string) bool {
+	return errors.Is(sharedBranchRulesClassicCache.get(key), gh.ErrBranchNotProtected)
 }
 
 // isBranchRulesForbidden reports a 403 from GitHub, which an App without
