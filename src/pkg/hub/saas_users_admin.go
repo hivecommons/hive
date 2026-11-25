@@ -338,14 +338,16 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	type adminUserView struct {
 		SaaSUser
-		StatusTier        string `json:"status_tier"`
-		Affiliation       string `json:"affiliation"`
-		AffiliationSource string `json:"affiliation_source,omitempty"`
-		ProfileBio        string `json:"profile_bio,omitempty"`
-		ProfileLocation   string `json:"profile_location,omitempty"`
-		PublicActivity    string `json:"public_activity,omitempty"`
-		TopRepo           string `json:"top_repo"`
-		TopRepoURL        string `json:"top_repo_url,omitempty"`
+		StatusTier            string `json:"status_tier"`
+		Affiliation           string `json:"affiliation"`
+		AffiliationSource     string `json:"affiliation_source,omitempty"`
+		AffiliationConfidence string `json:"affiliation_confidence,omitempty"`
+		CNCFContributions     int    `json:"cncf_contributions,omitempty"`
+		ProfileBio            string `json:"profile_bio,omitempty"`
+		ProfileLocation       string `json:"profile_location,omitempty"`
+		PublicActivity        string `json:"public_activity,omitempty"`
+		TopRepo               string `json:"top_repo"`
+		TopRepoURL            string `json:"top_repo_url,omitempty"`
 		// Provider is always populated (derived via userProvider) so the Users
 		// table's auth-method badge never has to parse — a legacy github-only
 		// record resolves to "github". This shadows SaaSUser.Provider's
@@ -359,16 +361,18 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		name := users[i].GitHubUsername
 		topRepo := userTopRepoAssociation(&users[i], nil)
 		views = append(views, adminUserView{
-			SaaSUser:          users[i],
-			StatusTier:        userStatusTier(&users[i], live[name], engaged[name], now),
-			Affiliation:       topRepo.Affiliation,
-			AffiliationSource: topRepo.AffiliationSource,
-			ProfileBio:        topRepo.ProfileBio,
-			ProfileLocation:   topRepo.ProfileLocation,
-			PublicActivity:    topRepo.PublicActivity,
-			TopRepo:           topRepo.TopRepo,
-			TopRepoURL:        topRepo.TopRepoURL,
-			Provider:          userProvider(&users[i]),
+			SaaSUser:              users[i],
+			StatusTier:            userStatusTier(&users[i], live[name], engaged[name], now),
+			Affiliation:           topRepo.Affiliation,
+			AffiliationSource:     topRepo.AffiliationSource,
+			AffiliationConfidence: topRepo.AffiliationConfidence,
+			CNCFContributions:     topRepo.CNCFContributions,
+			ProfileBio:            topRepo.ProfileBio,
+			ProfileLocation:       topRepo.ProfileLocation,
+			PublicActivity:        topRepo.PublicActivity,
+			TopRepo:               topRepo.TopRepo,
+			TopRepoURL:            topRepo.TopRepoURL,
+			Provider:              userProvider(&users[i]),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")

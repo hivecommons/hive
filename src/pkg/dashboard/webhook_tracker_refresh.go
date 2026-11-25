@@ -449,6 +449,10 @@ func (s *Server) applyWebhookItemSnapshots(snaps []github.WebhookItemSnapshot) i
 	if changed > 0 {
 		s.invalidateStageTrackerForWebhook()
 	}
+	// A hold put on, or a triage label taken off, an issue a contributor is
+	// already working revokes that task now. Off the status lock: the
+	// revocation reassigns the session, which reads the snapshot.
+	s.preemptBlockedSnapshots(snaps)
 	return changed
 }
 

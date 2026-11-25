@@ -212,6 +212,12 @@ type issueClaimGateResult struct {
 	author      string
 	association string
 	createdAt   time.Time
+	// authorHuman is isHumanAuthor for the reporter: the reporter-trust
+	// triage gate judges only human-filed issues, as enumeration does.
+	authorHuman bool
+	// held is true when the refusal is needs-human or the hold family, the
+	// refusals a maintainer applies to say "nobody works this".
+	held bool
 }
 
 // issueClaimGate reads the issue once and applies every label-based refusal.
@@ -234,13 +240,16 @@ func (c *Client) issueClaimGate(ctx context.Context, repo string, number int) (i
 		author:         safeGetLogin(issue.GetUser()),
 		association:    strings.TrimSpace(issue.GetAuthorAssociation()),
 		createdAt:      issue.GetCreatedAt().Time,
+		authorHuman:    c.isHumanAuthor(issue.GetUser()),
 	}
 	labels := res.labels
 	switch {
 	case hasIssueNeedsHumanLabel(labels):
 		res.reason = "needs-human"
+		res.held = true
 	case c.isHeld(labels):
-		res.reason = "hold"
+		res.reason = ClaimBlockReasonHold
+		res.held = true
 	case hasBlockedLabel(labels):
 		res.reason = blockedClaimReason(issue.GetBody())
 	}
@@ -298,6 +307,13 @@ func (c *Client) dispatchBlockReason(ctx context.Context, repo string, number in
 	if err != nil || gate.reason != "" {
 		return gate.reason, err
 	}
+	// A stranger's issue that has not been triaged is not work to start,
+	// whatever the snapshot it was listed in says: the enumerator parks it,
+	// and a label removed since that listing must not slip through
+	// (hivecommons/hive#9665).
+	if reason := c.reporterTriageBlockReason(gate); reason != "" {
+		return reason, nil
+	}
 	if contributor {
 		if reason := c.ownerGraceReason(ctx, repo, number, gate, now); reason != "" {
 			return reason, nil
@@ -316,4 +332,80 @@ func (c *Client) dispatchBlockReason(ctx context.Context, repo string, number in
 	// cycle's claim ledger learns of a hand-opened PR one scan late; this
 	// reads the forge now.
 	return c.openPRLinkBlockReason(ctx, repo, number, gate.labels), nil
+}
+
+// ClaimBlockReasonHold is the IssueClaimBlockReason for an issue wearing a
+// hold label: the generic hold family (`hold`, `do-not-merge/hold`, ...) or
+// one of the operator's configured hold labels (SetHoldLabels).
+const ClaimBlockReasonHold = "hold"
+
+// ClaimBlockReasonAwaitingTriagePrefix prefixes the dispatch refusal for a
+// human-filed issue whose reporter is not trusted (reporter trust,
+// hivecommons/hive#9665) and that carries none of the configured triage
+// labels: "awaiting triage: needs one of triage/accepted".
+const ClaimBlockReasonAwaitingTriagePrefix = "awaiting triage: needs one of "
+
+// reporterTriageBlockReason applies the reporter-trust half of admission to
+// one live issue read, with the same predicate the enumerator uses
+// (ReporterAdmitter.AdmitsReporter over the configured trusted associations,
+// trusted logins and untrusted-require labels). "" when the gate is off,
+// the reporter is a bot or the hive itself, or the issue is admitted.
+func (c *Client) reporterTriageBlockReason(gate issueClaimGateResult) string {
+	if c == nil || !gate.authorHuman {
+		return ""
+	}
+	ra, ok := c.getIssueFilter().(ReporterAdmitter)
+	if !ok || !ra.ReporterTrustEnabled() {
+		return ""
+	}
+	if ra.AdmitsReporter(gate.labels, gate.author, gate.association) {
+		return ""
+	}
+	return ClaimBlockReasonAwaitingTriagePrefix + strings.Join(reporterTrustRequiredLabelsForNotice(ra), ", ")
+}
+
+// IssueAssignGate is what one live issue read tells the contributor relay
+// right before it hands the issue to a contributor (hivecommons/hive#9665,
+// the hold-on-assign incident): the refusal, if any, and the labels the
+// forge reports now, so the caller can apply its own label policy (the
+// contribute skip labels) to current labels rather than a cached copy.
+type IssueAssignGate struct {
+	// Reason is non-empty when the issue must not be assigned.
+	Reason string
+	// Labels are the issue's labels as the forge reports them now.
+	Labels []string
+	// Held is true for needs-human and the hold family.
+	Held bool
+	// AwaitingTriage is true for an untrusted reporter's untriaged issue.
+	AwaitingTriage bool
+	// Closed is true when the forge reports the issue closed.
+	Closed bool
+}
+
+// IssueAssignBlockReason reads the issue once and applies every refusal
+// that depends on the issue alone: the IssueClaimBlockReason label gates
+// (needs-human, the hold family with the configured hold labels, blocked,
+// parked, never-claim), the reporter-trust triage gate and the closed
+// state. It does not repeat the open-PR listing or the owner grace window:
+// the contribute queue's admission sweep applies both before it gets here.
+// A lookup error is returned with a zero gate, so the caller can refuse to
+// assign rather than read "unknown" as "free".
+func (c *Client) IssueAssignBlockReason(ctx context.Context, repo string, number int) (IssueAssignGate, error) {
+	gate, err := c.issueClaimGate(ctx, repo, number)
+	if err != nil {
+		return IssueAssignGate{}, err
+	}
+	out := IssueAssignGate{Reason: gate.reason, Labels: gate.labels, Held: gate.held, Closed: gate.closed}
+	if out.Reason != "" {
+		return out, nil
+	}
+	if reason := c.reporterTriageBlockReason(gate); reason != "" {
+		out.Reason = reason
+		out.AwaitingTriage = true
+		return out, nil
+	}
+	if gate.closed {
+		out.Reason = ClaimBlockReasonIssueClosed
+	}
+	return out, nil
 }

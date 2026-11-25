@@ -63,6 +63,12 @@ func webhookClaimFixture(t *testing.T) (*ContributeWSHub, *Server, *ghpkg.ClaimL
 	ghpkg.SetPRClaimsHook(func(d ghpkg.PRClaimDelivery) { ledger.ApplyPRDelivery(d) })
 	t.Cleanup(func() { ghpkg.SetPRClaimsHook(nil) })
 	s.deps.IssueClaimed = ledger.Lookup
+	// selectTask's live pre-assignment read is not the webhook receiver's
+	// call; admit every issue through the seam so the "receiver must not
+	// call GitHub" assertion above stays strict.
+	hub.assignGate = func(context.Context, string, int) (ghpkg.IssueAssignGate, error) {
+		return ghpkg.IssueAssignGate{}, nil
+	}
 	return hub, s, ledger
 }
 
