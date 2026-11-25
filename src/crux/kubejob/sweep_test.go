@@ -44,6 +44,8 @@ func (f *sweepAPI) handler(t *testing.T) http.HandlerFunc {
 			_, _ = w.Write([]byte(`{"kind":"Status","status":"Success"}`))
 		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/networkpolicies/"):
 			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/secrets/"):
+			w.WriteHeader(http.StatusNotFound)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL)
 			w.WriteHeader(http.StatusNotFound)

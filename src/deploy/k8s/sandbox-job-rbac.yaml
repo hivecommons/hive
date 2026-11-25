@@ -3,7 +3,10 @@
 # Job, polls it, reads the pod's log and exit code, and deletes it.
 # Namespace-scoped and nothing more: no exec, no secrets read. The Job's own
 # secrets are referenced by name in the pod template and resolved by
-# Kubernetes; hive never reads them.
+# Kubernetes; hive never reads them. The one secret grant is write-only
+# (create, delete; no get/list): workspace_transport: copy creates a per-Job
+# bridge token Secret and deletes it with the Job. Per-Job NetworkPolicies
+# (network none, copy mode) are likewise create/delete only.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -23,6 +26,14 @@ rules:
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get"]
+  # Per-Job bridge token Secret for workspace_transport: copy. Write-only.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete"]
+  # Per-Job deny-all NetworkPolicy, created and deleted with the Job.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
