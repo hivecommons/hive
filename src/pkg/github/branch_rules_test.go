@@ -209,7 +209,7 @@ func TestClassifyRequiredCheck(t *testing.T) {
 func resetBranchRulesClassicCacheForTest(t *testing.T, now func() time.Time, ttl time.Duration) {
 	t.Helper()
 	old := sharedBranchRulesClassicCache
-	sharedBranchRulesClassicCache = &branchRulesClassicCache{entries: map[string]branchRulesClassicEntry{}, now: now, ttl: ttl}
+	sharedBranchRulesClassicCache = &branchRulesClassicCache{entries: map[string]branchRulesClassicEntry{}, now: now, ttl: ttl, notProtectedTTL: defaultClassicNotProtectedTTL}
 	t.Cleanup(func() { sharedBranchRulesClassicCache = old })
 }
 
@@ -290,15 +290,14 @@ func TestReadBranchRulesRemembersNotFoundClassicProtection(t *testing.T) {
 	}
 }
 
-// "Branch not protected" is an answer, not a permission failure, and a 500 is
-// transient: neither is remembered.
+// A 500 is transient and is not remembered. ("Branch not protected" is
+// remembered as its own answer: TestReadBranchRulesRemembersBranchNotProtected.)
 func TestReadBranchRulesDoesNotRememberOtherClassicAnswers(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		status int
 		body   string
 	}{
-		{"branch not protected", http.StatusNotFound, classicNotProtected},
 		{"server error", http.StatusInternalServerError, `{"message":"boom"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -310,5 +309,74 @@ func TestReadBranchRulesDoesNotRememberOtherClassicAnswers(t *testing.T) {
 				t.Fatalf("classic protection calls = %d, want 2 (not remembered)", *classicCalls)
 			}
 		})
+	}
+}
+
+// A repo that uses rulesets and no classic protection answers the classic
+// endpoint with 404 "Branch not protected" on every read; the lane view and
+// the red-main sweep asked it again each time. The answer is remembered for
+// HIVE_CLASSIC_NOT_PROTECTED_TTL (15m), not the 1h forbidden TTL, and
+// replayed with exactly the live result (no classic checks), while the
+// rulesets are still read on every call.
+func TestReadBranchRulesRemembersBranchNotProtected(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		rules        string
+		wantKnown    bool
+		wantRequired []string
+		wantReason   string
+	}{
+		{name: "ruleset checks", rules: rulesetStrict, wantKnown: true, wantRequired: []string{"test"}},
+		{name: "no checks anywhere", rules: `[]`, wantRequired: []string{}, wantReason: "no required checks found in config, branch protection or rulesets"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Unix(1_800_000_000, 0)
+			resetBranchRulesClassicCacheForTest(t, func() time.Time { return now }, time.Hour)
+			client, classicCalls, rulesCalls := countingBranchRulesClient(t, http.StatusNotFound, classicNotProtected, tc.rules)
+
+			first := ReadBranchRules(context.Background(), client, "o", "r", "main", nil, false)
+			if first.Known != tc.wantKnown || first.Reason != tc.wantReason || !reflect.DeepEqual(first.SortedRequired(), tc.wantRequired) || !first.RulesetsRead {
+				t.Fatalf("live read = %+v, want known=%v required=%v reason=%q", first, tc.wantKnown, tc.wantRequired, tc.wantReason)
+			}
+			for i := 1; i < 3; i++ {
+				if got := ReadBranchRules(context.Background(), client, "o", "r", "main", nil, false); !reflect.DeepEqual(got, first) {
+					t.Fatalf("remembered read %d = %+v, want the live result %+v", i, got, first)
+				}
+			}
+			if *classicCalls != 1 {
+				t.Fatalf("classic protection calls = %d, want 1 (branch not protected remembered)", *classicCalls)
+			}
+			if *rulesCalls != 3 {
+				t.Fatalf("rules calls = %d, want 3 (rulesets still read every call)", *rulesCalls)
+			}
+
+			now = now.Add(defaultClassicNotProtectedTTL - time.Second)
+			_ = ReadBranchRules(context.Background(), client, "o", "r", "main", nil, false)
+			if *classicCalls != 1 {
+				t.Fatalf("classic protection calls just inside 15m = %d, want 1", *classicCalls)
+			}
+			now = now.Add(2 * time.Second)
+			if got := ReadBranchRules(context.Background(), client, "o", "r", "main", nil, false); !reflect.DeepEqual(got, first) {
+				t.Fatalf("read after TTL = %+v, want %+v", got, first)
+			}
+			if *classicCalls != 2 {
+				t.Fatalf("classic protection calls after 15m = %d, want 2", *classicCalls)
+			}
+		})
+	}
+}
+
+// A rate-limited classic read is not remembered: the next read asks again.
+func TestReadBranchRulesDoesNotRememberRateLimitedClassicRead(t *testing.T) {
+	resetBranchRulesClassicCacheForTest(t, time.Now, time.Hour)
+	api := newClassicChecksAPI(t, classicRateLimited, rulesetStrict)
+	for i := 0; i < 2; i++ {
+		got := ReadBranchRules(context.Background(), api.client, "o", "r", "main", nil, false)
+		if got.Known || !strings.HasPrefix(got.Reason, "classic branch protection unreadable: ") {
+			t.Fatalf("read %d = %+v, want unknown with the rate-limit error", i, got)
+		}
+	}
+	if n := api.classic.Load(); n != 2 {
+		t.Fatalf("classic protection calls = %d, want 2 (rate limit not remembered)", n)
 	}
 }
