@@ -596,29 +596,29 @@ type SaaSHive struct {
 
 	// Forge names the forge FAMILY this hive is recorded as running against:
 	// "" / "github" / "github-enterprise" (the GitHub App path), or "gitlab" /
-	// "gitea". Empty means GitHub, preserving every existing hive. GitLab/Gitea
-	// carry no PendingAppConfig (no App).
+	// "gitea" / "forgejo". Empty means GitHub, preserving every existing hive.
+	// GitLab, Gitea and Forgejo carry no PendingAppConfig (no App).
 	//
 	// WHAT THIS FIELD ACTUALLY DOES TODAY: it is hub-side bookkeeping only. It
-	// is written by handleForgeSwitch (forge.go) and read by hub code to
-	// classify a hive — e.g. saas.go excludes non-"github" hives from
-	// github.com-scoped sweeps. It is NOT delivered to any spoke: no heartbeat
-	// struct carries a forge field, and HeartbeatResponse has no way to convey
-	// one, so the value never reaches a spoke at all.
+	// is written by handleSwitchForge (forge.go) and read by hub code to
+	// classify a hive — e.g. saas_hives_api.go excludes non-"github" hives
+	// from github.com-scoped sweeps. It is NOT delivered to any spoke: no
+	// heartbeat struct carries a forge field, and HeartbeatResponse has no way
+	// to convey one, so the value never reaches a spoke at all.
 	//
-	// NO SPOKE SELECTS AN ADAPTER FROM THIS. The pkg/forge adapter package has
-	// zero non-test importers anywhere in the tree — nothing constructs a
-	// GitLab or Gitea adapter in any running code path. Setting this to
-	// "gitlab" or "gitea" changes hub classification and what the dashboard
-	// displays; it does not change what any agent executes against. See
-	// src/docs/forge-app-setup.md for the verified support matrix.
+	// A SPOKE SELECTS ITS ADAPTER FROM ITS OWN CONFIG, NOT FROM THIS FIELD.
+	// src/cmd/hive/forgewire.go builds the gitlab, gitea or forgejo pkg/forge
+	// adapter from the spoke's project.forge (or a repo_policies[].forge
+	// override) for the governor's comment, label and hold writes; the forge
+	// request relay builds the same adapter to file issues and PRs, and
+	// Forgejo repos get their own automerge and close-on-merge sweeps. Setting
+	// this field changes hub classification and dashboard display only; what
+	// agents execute against comes from the spoke's hive.yaml.
+	// See src/docs/forge-app-setup.md for the verified support matrix.
 	//
-	// FOR THE ADAPTER-SELECTION PATH TO EXIST, three things would have to be
-	// built: (1) a forge field on HeartbeatResponse (and the hub code to
-	// populate it), (2) a spoke-side consumer that reads it and constructs the
-	// matching pkg/forge adapter, and (3) CreateIssue/CreatePR on the
-	// pkg/forge.Forge interface — it has neither today, so even a fully wired
-	// adapter could comment and label but could not file the work.
+	// FOR THE HUB TO DRIVE ADAPTER SELECTION, a forge field would have to be
+	// added to HeartbeatResponse (and the hub code to populate it), and a
+	// spoke-side consumer would have to apply it to project.forge.
 	Forge string `json:"forge,omitempty"`
 
 	// PendingAppConfig is a GitHub App identity queued for delivery to the
