@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.366.5)
+
+### Changed
+
+- Scoped-token tier names now have a named Go type (`agentmode.TokenTier`) instead of a bare string; no behavior change ([#19566](https://github.com/hivecommons/hive/pull/19566)).
+
+### Fixed
+
+- The post-merge DCO monitor no longer fails a contributor's private-email squash because the pull request also held GitHub "Update branch" merges made by the hive App. The merged-PR evidence rule from #19660 required every PR commit to belong to the PR author, so the squash of #19766 (69794fd) was reported as `pr-commit-not-by-pr-author`; it now ignores only verified web-flow merge commits authored by the hive App (`hivecommons-hive[bot]`, login and id), which carry base-branch content and none of the change. Merges by humans or any other GitHub App, unverified or single-parent bot commits, and PRs with no commit of the author's own still fail. (#19775)
+- Clear Inbox selections when items are hidden or removed, and list the affected items in the delete confirmation.
+
 ## 2026-11-25 (v5.366.4)
 
 ### Fixed

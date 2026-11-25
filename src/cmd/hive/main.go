@@ -2370,6 +2370,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
 	autoMergeOpts.HumanMergePinOnly = func(repo string) (config.PinOnlyException, bool) { return humanMergePinOnlyFor(b.cfg, repo) }
+	// Decision gate: credential, keystore, auth and secret paths, and
+	// sentinel-flagged PRs, wait for a person's decision on the head in
+	// every lane (auto_merge.decision_gate, default on).
+	autoMergeOpts.DecisionGate = func(repo string) automerge.DecisionGatePolicy { return decisionGateFor(b.cfg, repo) }
 	autoMergeOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(b.cfg) }
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 	autoMergeOpts.RequireCurrentBaseStrict = func(repo string) bool {

@@ -52,6 +52,8 @@ type Item struct {
 	FactSlug string `json:"fact_slug"`
 	FactPath string `json:"fact_path,omitempty"`
 	Layer    string `json:"layer,omitempty"`
+	// FactSourceLayer identifies the connected vault for dashboard fact links.
+	FactSourceLayer string `json:"fact_source_layer,omitempty"`
 	// FactState is what the backing fact holds: "ready" (the source's own
 	// text), "pending" (metadata only, no text yet) or "machine" (this
 	// hive's machine transcript). Empty when no fact exists yet.

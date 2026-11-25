@@ -900,6 +900,7 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.RepoOnGitHub = func(repo string) bool { return cfg.RepoOnGitHub(repo) }
 		opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
 		opts.HumanMergePinOnly = func(repo string) (config.PinOnlyException, bool) { return humanMergePinOnlyFor(cfg, repo) }
+		opts.DecisionGate = func(repo string) automerge.DecisionGatePolicy { return decisionGateFor(cfg, repo) }
 		opts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(cfg) }
 		opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 		opts.RequireCurrentBaseStrict = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseStrictFor(repo) }
@@ -1511,6 +1512,7 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 		approveOpts.RepoAutoMergeEnabled = cfg.RepoAutoMergeEnabled
 		approveOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
 		approveOpts.HumanMergePinOnly = func(repo string) (config.PinOnlyException, bool) { return humanMergePinOnlyFor(cfg, repo) }
+		approveOpts.DecisionGate = func(repo string) automerge.DecisionGatePolicy { return decisionGateFor(cfg, repo) }
 		approveOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(cfg) }
 		approveOpts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 		approveOpts.TrustedBotSkipReview = func() bool { return cfg.AutoMerge.TrustedBotSkipsReview() }
