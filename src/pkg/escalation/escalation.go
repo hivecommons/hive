@@ -133,6 +133,16 @@ type Entry struct {
 	// Escalated is set once the escalation actions (comment + label) have
 	// fired, so they never repeat for the same PR.
 	Escalated bool `json:"escalated"`
+	// RaisedHere records that the hive itself raised this escalation: it is
+	// set only by MarkEscalated, which runs after the escalation comment was
+	// posted, and cleared wherever the entry un-parks or resets. Escalated
+	// alone cannot say this, because a needs-human label a person applied is
+	// adopted into the ledger as Escalated too, and LabelApplied is set by
+	// observing the label as well as by adding it. The required-green lift
+	// (Observation.RequiredGreen) only ever removes a needs-human the hive
+	// raised. An entry written before the field existed reads false, so it
+	// keeps the label until the head goes fully green or a person lifts it.
+	RaisedHere bool `json:"raised_here,omitempty"`
 	// LabelApplied records that the needs-human label was confirmed on the
 	// forge (either we added it successfully or we observed it present). It
 	// is what lets a LATER absence of the label be read as "a human removed
@@ -323,6 +333,19 @@ type Observation struct {
 	// infrastructure, not this change. The fix loop re-runs the failed jobs
 	// once instead of kicking a fixer (transient_rerun.go).
 	TransientTriaged bool
+	// RequiredGreen reports a settled head that is red only on checks
+	// outside the base branch's required set while every required check
+	// passed: the required set is known and non-empty, each required check
+	// completed on the head with conclusion success, neutral or skipped, and
+	// no check is still running. The caller also requires that the forge
+	// reports the PR mergeable with only unrequired checks failing, that no
+	// reviewer verdict keeps needs-human on purpose, and, before a label is
+	// removed, that the hive itself added the label last.
+	// Such a head is Pending, not Red (nothing for a fixer to repair, and
+	// nothing that proves the loop converged), so the plain green lift never
+	// fires for it. Sweep reads RequiredGreen to lift a needs-human the hive
+	// raised itself (Entry.RaisedHere) from it.
+	RequiredGreen bool
 }
 
 // MarkSharedFailures classifies each red observation's failing checks as
@@ -548,6 +571,22 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 				}
 				continue
 			}
+			// Auto-un-park #1b: every required check passed on the head and
+			// only checks outside the required set are red. Such a head is
+			// Pending (since hivecommons/hive#15803 an advisory-only red
+			// draws no fix kick and counts no attempt), so #1 never fires for
+			// it and the label stayed until a person took it off, although
+			// GitHub would merge the PR as it stands. Only an escalation the
+			// hive raised itself is lifted here: a person's needs-human, or
+			// one this ledger merely observed, waits for a fully green head.
+			if e.RaisedHere && o.RequiredGreen {
+				s.unparkLocked(e)
+				results[key] = Result{
+					Unparked:     true,
+					UnparkReason: RequiredGreenUnparkReason,
+				}
+				continue
+			}
 			// Auto-un-park #2: this PR was escalated over shared breakage (a
 			// red base branch, a runner outage) and those checks are no longer
 			// shared. The PR was never the problem, so it must not need a human
@@ -606,6 +645,20 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 		if e != nil && e.AutoUnparked {
 			e.AutoUnparked = false
 		}
+		// The hive raised this escalation but its needs-human never landed
+		// (the AddLabels call failed, so NeedsLabel would retry it), and the
+		// head now qualifies for the required-green lift. Adding the label
+		// only for the next pass to remove it again would page a person and
+		// then retract it, so the entry is returned to the automated lane
+		// here, quietly: no label to remove and no comment. AutoUnparked
+		// stays false, because there is no removal to retry and a later
+		// needs-human on this PR is not the hive's.
+		if e != nil && e.Escalated && e.RaisedHere && !e.LabelApplied && o.RequiredGreen {
+			s.unparkLocked(e)
+			e.AutoUnparked = false
+			results[key] = Result{}
+			continue
+		}
 		// Label absent but the ledger says we escalated AND confirmed the
 		// label: a human took the label off to return the PR to the automated
 		// lane ("Remove the needs-human label after addressing the root
@@ -614,6 +667,7 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 		// hands-off forever, which is what happened before.
 		if e != nil && e.Escalated && e.LabelApplied && s.now().Sub(e.LabelAppliedAt) >= LabelUnparkGrace {
 			e.Escalated = false
+			e.RaisedHere = false
 			e.LabelApplied = false
 			e.LabelAppliedAt = time.Time{}
 			e.RedSHAs = nil
@@ -682,6 +736,7 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 			e.ReEngagements = 0
 			e.LastReEngagedAt = time.Time{}
 			e.Escalated = false
+			e.RaisedHere = false
 			e.LabelApplied = false
 			e.RedSHAs = nil
 			e.RedTrees = nil
@@ -703,6 +758,7 @@ func (s *Store) Sweep(obs []Observation, threshold int) map[string]Result {
 		// than back to the reviewer.
 		if e.Escalated && containsLabel(o.Labels, ReviewerPassedLabel) && !containsLabel(o.Labels, NeedsHumanLabel) {
 			e.Escalated = false
+			e.RaisedHere = false
 			e.RedSHAs = nil
 			e.RedTrees = nil
 			e.ReEngagements = 0
@@ -910,6 +966,7 @@ func (s *Store) recordRedHeadLocked(e *Entry, o Observation) {
 // removal is retried until a pass observes the label gone.
 func (s *Store) unparkLocked(e *Entry) {
 	e.Escalated = false
+	e.RaisedHere = false
 	e.LabelApplied = false
 	e.LabelAppliedAt = time.Time{}
 	e.RedSHAs = nil
@@ -945,15 +1002,45 @@ func appendSHA(shas []string, sha string) []string {
 }
 
 // MarkEscalated records that escalation side effects fired for the PR, so they
-// are never repeated.
+// are never repeated. The caller reaches it only after the hive posted its own
+// escalation comment, so it is also the one place that sets RaisedHere.
 func (s *Store) MarkEscalated(repo string, number int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e := s.entries[Key(repo, number)]; e != nil {
 		e.Escalated = true
+		e.RaisedHere = true
 		e.UpdatedAt = s.now()
 	}
 	s.saveLocked()
+}
+
+// RequiredGreenLiftDue reports that Sweep would lift the PR's needs-human
+// on a required-green head (Observation.RequiredGreen): the hive raised the
+// escalation itself, no reporter-trust hold stands, and no earlier un-park is
+// still waiting for its label removal. The caller reads it to decide whether
+// the label's provenance is worth one forge read before the observation
+// reaches Sweep, so the read happens at most once per un-park.
+func (s *Store) RequiredGreenLiftDue(repo string, number int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.entries[Key(repo, number)]
+	return e != nil && e.ReporterTrustReason == "" && e.Escalated && e.RaisedHere && !e.AutoUnparked
+}
+
+// DisownEscalation clears RaisedHere: the needs-human now on the PR was not
+// last added by the hive (a person removed it and put it back), so it is
+// theirs, and the required-green lift must never remove it. The entry stays
+// escalated. Clearing it also stops the caller from reading the label's
+// provenance again on later passes.
+func (s *Store) DisownEscalation(repo string, number int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e := s.entries[Key(repo, number)]; e != nil && e.RaisedHere {
+		e.RaisedHere = false
+		e.UpdatedAt = s.now()
+		s.saveLocked()
+	}
 }
 
 // MarkLabelApplied records that the needs-human label is confirmed present
@@ -1293,6 +1380,7 @@ func (s *Store) reEngageEligibleLocked(repo string, number int, headSHA string, 
 		e.ReEngagements = 0
 		e.LastReEngagedAt = time.Time{}
 		e.Escalated = false
+		e.RaisedHere = false
 		e.LabelApplied = false
 		e.LabelAppliedAt = time.Time{}
 		e.RedSHAs = nil
@@ -1447,6 +1535,11 @@ func BaseRedHoldCommentBody(checks []string, incident int) string {
 	b.WriteString("\n")
 	return b.String()
 }
+
+// RequiredGreenUnparkReason words the auto-un-park of an escalation the hive
+// raised once every required check is green on the head and only checks
+// outside the required set are still red (Observation.RequiredGreen).
+const RequiredGreenUnparkReason = "Every required check is green on the current head; only non-required checks are red, so this PR returns to the automated lane."
 
 // baseRedUnparkReason words the auto-un-park of an escalation the hive
 // raised over a red base branch.
