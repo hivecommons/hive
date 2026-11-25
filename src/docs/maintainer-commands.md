@@ -335,7 +335,8 @@ refuses the Approve review, so this is the owner's command. On a PR that
 edits workflow files it also releases the workflow-path fence, which
 `/hive approve` never does, unless the reason on the command line opens with
 a condition (`but`, `after`, `once`, `if`, `when`, `until`, `unless`,
-`pending`, `provided`): the fence then waits for an unconditional approval. The
+`pending`, `provided`, `only`, `however`, `though`, `although`, `except`,
+`contingent`, `conditional`, `assuming`): the fence then waits for an unconditional approval. The
 contributor lane records it as the answer on every PR it evaluates — when it
 reads the comment for the fence, and on a PR no fence trips while the verdict
 still asks for a person — so it counts even where the PR carries no stage label

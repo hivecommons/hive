@@ -719,6 +719,8 @@ func TestWorkflowApprovalCommentActor(t *testing.T) {
 		{name: "typed decision approve: If", comment: comment("clubanderson", "/hive decision approve: If the pin holds", after)},
 		{name: "typed decision approve (after", comment: comment("clubanderson", "/hive decision approve (after the rename)", after)},
 		{name: "typed decision approve then a condition on a later line", comment: comment("clubanderson", "/hive decision approve\n\nbut rename the job when you next touch it", after), wantLogin: "clubanderson", wantOK: true},
+		{name: "typed decision approve only after", comment: comment("clubanderson", "/hive decision approve only after CI is green", after)},
+		{name: "typed decision approve however", comment: comment("clubanderson", "/hive decision approve however rename the job", after)},
 		{name: "typed decision approve with butter", comment: comment("clubanderson", "/hive decision approve butterfly effect is fine", after), wantLogin: "clubanderson", wantOK: true},
 		{name: "typed decision approved", comment: comment("clubanderson", "/hive decision approved", after)},
 		{name: "typed decision approvefoo", comment: comment("clubanderson", "/hive decision approvefoo", after)},

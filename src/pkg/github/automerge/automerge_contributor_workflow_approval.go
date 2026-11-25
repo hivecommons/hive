@@ -481,6 +481,8 @@ func workflowApprovalCommentActor(comment *gh.IssueComment, headSHA string, head
 var workflowApprovalConditionWords = map[string]bool{
 	"but": true, "after": true, "once": true, "if": true, "when": true,
 	"until": true, "unless": true, "pending": true, "provided": true,
+	"only": true, "however": true, "though": true, "although": true,
+	"except": true, "contingent": true, "conditional": true, "assuming": true,
 }
 
 // typedApprovalConditional reports whether the reason on a typed
