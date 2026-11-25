@@ -600,6 +600,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		return ""
 	})
 	stageTrackerResolveLinkedPRs(resp.Items, prOpen)
+	stageTrackerApplyTriagePR(resp.Items)
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)
 	stageTrackerResolveHumanAttention(resp.Items)

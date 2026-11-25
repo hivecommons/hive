@@ -1,13 +1,12 @@
 package proxy
 
 import (
-	"bufio"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
-	"time"
 )
 
 // errNoInferenceModel is the translator's refusal when neither the agent nor
@@ -21,15 +20,16 @@ var errNoInferenceModel = errors.New("no inference model configured: select an a
 // preamble, when non-empty, is prepended to the system message to steer
 // open-source models toward agentic tool-calling behaviour. Pass "" to
 // leave the system prompt unchanged (used by tests and non-inference paths).
-func translateAnthropicToOpenAI(body []byte, targetModel string, maxContextLen int, preamble string) ([]byte, error) {
+// stream reports whether the CLI asked for a streamed response.
+func translateAnthropicToOpenAI(body []byte, targetModel string, maxContextLen int, preamble string) (out []byte, stream bool, err error) {
 	// The CLI's model is a Claude alias, not necessarily a gateway model ID.
 	// Never use it as a fallback or send an empty model to the provider.
 	if strings.TrimSpace(targetModel) == "" {
-		return nil, errNoInferenceModel
+		return nil, false, errNoInferenceModel
 	}
 	var req anthropicRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		return nil, fmt.Errorf("unmarshal anthropic request: %w", err)
+		return nil, false, fmt.Errorf("unmarshal anthropic request: %w", err)
 	}
 
 	openaiReq := openaiRequest{
@@ -93,7 +93,8 @@ func translateAnthropicToOpenAI(body []byte, targetModel string, maxContextLen i
 
 	openaiReq.MaxTokens = capMaxTokensForInput(req.MaxTokens, maxContextLen, totalChars)
 
-	return json.Marshal(openaiReq)
+	out, err = json.Marshal(openaiReq)
+	return out, req.Stream, err
 }
 
 // translateAnthropicMessage converts a single Anthropic message into one or
@@ -273,11 +274,21 @@ func extractOpenAIUsageDetailed(body []byte) gatewayUsage {
 }
 
 // translateOpenAIResponseToAnthropic converts a non-streaming OpenAI Chat
-// Completions response into an Anthropic Messages response.
+// Completions response into an Anthropic Messages response body.
 func translateOpenAIResponseToAnthropic(body []byte, model string) ([]byte, error) {
+	msg, err := openAIResponseToAnthropic(body, model)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(msg)
+}
+
+// openAIResponseToAnthropic converts a non-streaming OpenAI Chat Completions
+// response into an Anthropic Messages response.
+func openAIResponseToAnthropic(body []byte, model string) (anthropicResponse, error) {
 	var resp openaiResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal openai response: %w", err)
+		return anthropicResponse{}, fmt.Errorf("unmarshal openai response: %w", err)
 	}
 
 	anthropicResp := anthropicResponse{
@@ -330,7 +341,7 @@ func translateOpenAIResponseToAnthropic(body []byte, model string) ([]byte, erro
 		anthropicResp.Usage = &anthropicUsage{}
 	}
 
-	return json.Marshal(anthropicResp)
+	return anthropicResp, nil
 }
 
 // translateOpenAISSEToAnthropic reads an OpenAI SSE stream and writes the
@@ -347,152 +358,7 @@ func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) (inpu
 // translateOpenAISSEToAnthropicUsage is translateOpenAISSEToAnthropic that
 // also reports the cached part of the prompt from the final usage chunk.
 func translateOpenAISSEToAnthropicUsage(r io.Reader, w io.Writer, model string) (gatewayUsage, error) {
-	msgID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
-
-	writeSSE(w, "message_start", anthropicSSEMessageStart{
-		Type: "message_start",
-		Message: anthropicSSEMessage{
-			ID:      msgID,
-			Type:    "message",
-			Role:    "assistant",
-			Model:   model,
-			Content: []anthropicContentBlock{},
-			Usage:   &anthropicUsage{},
-		},
-	})
-
-	scanner := bufio.NewScanner(r)
-	const maxSSELine = 256 * 1024
-	scanner.Buffer(make([]byte, maxSSELine), maxSSELine)
-
-	var totalInputTokens int
-	var totalOutputTokens int
-	var totalCachedTokens int
-	var contentBlockIndex int
-	textBlockStarted := false
-	toolCallState := make(map[int]*sseToolCallAccumulator)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := line[len("data: "):]
-		if data == "[DONE]" {
-			break
-		}
-
-		var chunk openaiSSEChunk
-		if json.Unmarshal([]byte(data), &chunk) != nil {
-			continue
-		}
-
-		if chunk.Usage != nil {
-			totalOutputTokens = chunk.Usage.CompletionTokens
-			if chunk.Usage.PromptTokens > 0 {
-				totalInputTokens = chunk.Usage.PromptTokens
-			}
-			if c := chunk.Usage.cachedTokens(); c > 0 {
-				totalCachedTokens = c
-			}
-		}
-
-		if len(chunk.Choices) > 0 {
-			delta := chunk.Choices[0].Delta
-
-			if delta.Content != "" {
-				if !textBlockStarted {
-					writeSSE(w, "content_block_start", map[string]interface{}{
-						"type":          "content_block_start",
-						"index":         contentBlockIndex,
-						"content_block": map[string]string{"type": "text", "text": ""},
-					})
-					textBlockStarted = true
-				}
-				writeSSE(w, "content_block_delta", map[string]interface{}{
-					"type":  "content_block_delta",
-					"index": contentBlockIndex,
-					"delta": map[string]string{
-						"type": "text_delta",
-						"text": delta.Content,
-					},
-				})
-			}
-
-			for _, tc := range delta.ToolCalls {
-				acc, exists := toolCallState[tc.Index]
-				if !exists {
-					if textBlockStarted {
-						writeSSE(w, "content_block_stop", map[string]interface{}{
-							"type":  "content_block_stop",
-							"index": contentBlockIndex,
-						})
-						contentBlockIndex++
-						textBlockStarted = false
-					}
-
-					acc = &sseToolCallAccumulator{
-						id:         tc.ID,
-						name:       tc.Function.Name,
-						blockIndex: contentBlockIndex,
-					}
-					toolCallState[tc.Index] = acc
-
-					writeSSE(w, "content_block_start", map[string]interface{}{
-						"type":  "content_block_start",
-						"index": contentBlockIndex,
-						"content_block": map[string]interface{}{
-							"type":  "tool_use",
-							"id":    tc.ID,
-							"name":  tc.Function.Name,
-							"input": map[string]interface{}{},
-						},
-					})
-					contentBlockIndex++
-				}
-
-				if tc.Function.Arguments != "" {
-					acc.args.WriteString(tc.Function.Arguments)
-					writeSSE(w, "content_block_delta", map[string]interface{}{
-						"type":  "content_block_delta",
-						"index": acc.blockIndex,
-						"delta": map[string]interface{}{
-							"type":         "input_json_delta",
-							"partial_json": tc.Function.Arguments,
-						},
-					})
-				}
-			}
-
-			if chunk.Choices[0].FinishReason != "" {
-				if textBlockStarted {
-					writeSSE(w, "content_block_stop", map[string]interface{}{
-						"type":  "content_block_stop",
-						"index": contentBlockIndex,
-					})
-				}
-				for _, acc := range toolCallState {
-					writeSSE(w, "content_block_stop", map[string]interface{}{
-						"type":  "content_block_stop",
-						"index": acc.blockIndex,
-					})
-				}
-
-				writeSSE(w, "message_delta", map[string]interface{}{
-					"type": "message_delta",
-					"delta": map[string]string{
-						"stop_reason": mapFinishReason(chunk.Choices[0].FinishReason),
-					},
-					"usage": map[string]int{
-						"output_tokens": totalOutputTokens,
-					},
-				})
-			}
-		}
-	}
-
-	writeSSE(w, "message_stop", map[string]string{"type": "message_stop"})
-	return gatewayUsage{Input: int64(totalInputTokens), Output: int64(totalOutputTokens), Cached: int64(totalCachedTokens)}, scanner.Err()
+	return newAnthropicStream(w, model).relayOpenAISSE(r)
 }
 
 type sseToolCallAccumulator struct {
@@ -502,11 +368,16 @@ type sseToolCallAccumulator struct {
 	args       strings.Builder
 }
 
+// writeSSE writes one SSE event and flushes it when w can flush, so the CLI
+// sees each event (a ping included) as it is written.
 func writeSSE(w io.Writer, eventType string, data interface{}) {
 	jsonData, _ := json.Marshal(data)
 	// Best effort: the client may have disconnected mid-stream; the request
 	// was already authorized, so a broken pipe here is not a policy concern.
 	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, jsonData)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func extractSystemText(raw json.RawMessage) string {
@@ -742,8 +613,11 @@ type gatewayUsage struct {
 type openaiSSEChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string              `json:"content"`
-			ToolCalls []openaiSSEToolCall `json:"tool_calls,omitempty"`
+			Content string `json:"content"`
+			// ReasoningContent is the model's reasoning as vLLM, SGLang and
+			// LiteLLM stream it; the translator forwards it as a thinking block.
+			ReasoningContent string              `json:"reasoning_content"`
+			ToolCalls        []openaiSSEToolCall `json:"tool_calls,omitempty"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`

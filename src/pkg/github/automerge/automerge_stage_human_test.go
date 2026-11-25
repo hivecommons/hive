@@ -471,12 +471,13 @@ func TestRequiresHumanLandsAt085WithSummary(t *testing.T) {
 	}
 }
 
-// TestRequiresHumanOnPersonPRRoutesToAuthor: a requires_human verdict on a
-// PR a person pushed themselves is the author's question to answer, not a
-// maintainer's decision (hivecommons/hive#15202). It lands at 071, the
-// author is told what the reviewer asked whatever their role, and nothing
-// ever queues adoption. A hive-authored PR has nobody to ask and keeps 085.
-func TestRequiresHumanOnPersonPRRoutesToAuthor(t *testing.T) {
+// TestRequiresHumanOnPersonPRRoutesToMaintainer: a requires_human /
+// needs-decision verdict on a PR a person pushed themselves is a
+// maintainer's decision (085) with the reviewer's question, whatever the
+// author's role (hivecommons/hive#19843). It used to land at 071 Needs
+// author (hivecommons/hive#15202), so the row read "waiting on the author
+// to push" while the maintainer was the one owed the answer.
+func TestRequiresHumanOnPersonPRRoutesToMaintainer(t *testing.T) {
 	api, closeAPI := seededStageAPI(t)
 	defer closeAPI()
 	clock := &contributorLaneClock{at: time.Date(2026, 10, 28, 20, 24, 0, 0, time.UTC)}
@@ -505,37 +506,35 @@ func TestRequiresHumanOnPersonPRRoutesToAuthor(t *testing.T) {
 	}
 
 	sweep(21, stagelabels.RoleContributor, "role/contributor", "author/human", "stage/050-review-pending")
-	if got := stageOf(t, store, 21); got != stagelabels.NeedsAuthor {
-		t.Fatalf("stage=%v want 071", got)
+	if got := stageOf(t, store, 21); got != stagelabels.NeedsDecision {
+		t.Fatalf("stage=%v want 085", got)
 	}
-	if !reflect.DeepEqual(api.added, [][]string{{"stage/071-needs-author"}}) {
+	if !reflect.DeepEqual(api.added, [][]string{{"stage/085-needs-decision"}}) {
 		t.Fatalf("added=%v", api.added)
 	}
-	if rec, _ := store.Get(stageKey("acme", "widget", 21)); rec.Reason != stagelabels.LaneReasonReviewerQuestion {
-		t.Fatalf("recorded reason = %q", rec.Reason)
+	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], stagelabels.DecisionCommentMarker) ||
+		!strings.Contains(api.comments[0], "should this groundwork land before its consumer?") ||
+		strings.Contains(api.comments[0], "hive:human-071-note") {
+		t.Fatalf("085 entry comment = %q", api.comments)
 	}
-	if len(api.comments) != 1 || !strings.HasPrefix(api.comments[0], "<!-- hive:human-071-note") ||
-		!strings.Contains(api.comments[0], "@clubanderson") ||
-		!strings.Contains(api.comments[0], "the reviewer asked you: should this groundwork land before its consumer?") ||
-		strings.Contains(api.comments[0], stagelabels.DecisionCommentMarker) {
-		t.Fatalf("071 note = %q", api.comments)
-	}
-	// Same head again: told once.
-	sweep(21, stagelabels.RoleContributor, "role/contributor", "author/human", "stage/071-needs-author")
+	// Same head again: no second entry comment, no writes.
+	sweep(21, stagelabels.RoleContributor, "role/contributor", "author/human", "stage/085-needs-decision")
 	if len(api.comments) != 0 || api.writes() != 0 {
-		t.Fatalf("071 dedupe: comments=%q writes=%d", api.comments, api.writes())
+		t.Fatalf("085 dedupe: comments=%q writes=%d", api.comments, api.writes())
 	}
 
-	// An owner (trusted role) gets the same route and note.
+	// An owner's (trusted role) own PR is a decision too, never a 071 note.
 	sweep(22, stagelabels.RoleTrusted, "role/trusted", "author/human", "stage/050-review-pending")
-	if got := stageOf(t, store, 22); got != stagelabels.NeedsAuthor {
-		t.Fatalf("owner stage=%v want 071", got)
+	if got := stageOf(t, store, 22); got != stagelabels.NeedsDecision {
+		t.Fatalf("owner stage=%v want 085", got)
 	}
-	if len(api.comments) != 1 || !strings.Contains(api.comments[0], "the reviewer asked you:") {
-		t.Fatalf("owner 071 note = %q", api.comments)
+	for _, c := range api.comments {
+		if strings.Contains(c, "hive:human-071-note") {
+			t.Fatalf("owner got a 071 note: %q", api.comments)
+		}
 	}
 
-	// A hive-authored PR has no person to ask: still a decision.
+	// A hive-authored PR: a decision as before.
 	sweep(23, stagelabels.RoleTrusted, "role/trusted", "author/hive", "stage/050-review-pending")
 	if got := stageOf(t, store, 23); got != stagelabels.NeedsDecision {
 		t.Fatalf("hive-authored stage=%v want 085", got)
@@ -900,10 +899,10 @@ func TestApplyStageLabelsHumanPRNeverAskedSupersededCloser(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The reviewer's question on a person's own PR goes to the author
-	// (071, hivecommons/hive#15202); the point here is that the closer is
-	// never asked and no PR read happens.
-	if len(spy.calls) != 0 || res.ClosedSuperseded != 0 || !reflect.DeepEqual(api.added, [][]string{{"stage/071-needs-author"}}) {
+	// The reviewer's question on a person's own PR is a maintainer's
+	// decision (085, hivecommons/hive#19843); the point here is that the
+	// closer is never asked and no PR read happens.
+	if len(spy.calls) != 0 || res.ClosedSuperseded != 0 || !reflect.DeepEqual(api.added, [][]string{{"stage/085-needs-decision"}}) {
 		t.Fatalf("calls=%v result=%+v added=%v", spy.calls, res, api.added)
 	}
 }

@@ -1,1 +1,0 @@
-- Update sibling named sessions when reissuing their shared contributor token with `hivectl`.

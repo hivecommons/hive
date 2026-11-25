@@ -14,7 +14,7 @@ import (
 // forwardToInference sends an Anthropic Messages API request to an
 // OpenAI-compatible endpoint, translating the request and response formats.
 func forwardToInference(clientReq *http.Request, clientBody []byte, w http.ResponseWriter, route *InferenceRoute, agentName string) error {
-	openaiBody, err := translateAnthropicToOpenAI(clientBody, route.Model, route.MaxContextLen, resolveInferencePreamble(route, agentName))
+	openaiBody, _, err := translateAnthropicToOpenAI(clientBody, route.Model, route.MaxContextLen, resolveInferencePreamble(route, agentName))
 	if err != nil {
 		return fmt.Errorf("translate request: %w", err)
 	}
@@ -59,10 +59,6 @@ func forwardToInference(clientReq *http.Request, clientBody []byte, w http.Respo
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
 		w.WriteHeader(http.StatusOK)
-		if f, ok := w.(http.Flusher); ok {
-			_, _, err := translateOpenAISSEToAnthropic(resp.Body, flushResponseWriter{w: w, f: f}, route.Model)
-			return err
-		}
 		_, _, err := translateOpenAISSEToAnthropic(resp.Body, w, route.Model)
 		return err
 	}
@@ -79,15 +75,4 @@ func forwardToInference(clientReq *http.Request, clientBody []byte, w http.Respo
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write(translated)
 	return err
-}
-
-type flushResponseWriter struct {
-	w io.Writer
-	f http.Flusher
-}
-
-func (fw flushResponseWriter) Write(p []byte) (int, error) {
-	n, err := fw.w.Write(p)
-	fw.f.Flush()
-	return n, err
 }

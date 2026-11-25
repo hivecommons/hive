@@ -60,6 +60,8 @@
         let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
         if (state === 'active' && n === 50) word = 'CI + Review';
         if (state === 'active' && n === 10 && cur === 10 && typeof stageTrackerTrackingWord === 'function') { const tw = stageTrackerTrackingWord(item); if (tw) word = tw; }
+        // 015 with an open contributor PR names it (hivecommons/hive#19843).
+        if (state === 'active' && cur === 15 && typeof stageTrackerTriagePRSuffix === 'function') word += stageTrackerTriagePRSuffix(item);
         if (state === 'active' && n === 30 && cur === 70 && !codeWorking) word = 'PR in progress';
         // A merge-train member's word is its place in the train (#15117).
         if (state === 'active' && !detour && n > 0 && typeof stageTrackerTrainWord === 'function') { const tw = stageTrackerTrainWord(item, trains); if (tw) word = tw; }
@@ -91,7 +93,7 @@
         else if (openBlocked) word = 'Open · blocked';
         else if (advisory) word = advisory.chip || 'Advisory · read & close';
         else if (openDraft) word = 'Draft';
-        else if (openTriage) word = 'Triage needed';
+        else if (openTriage) word = 'Triage needed' + (typeof stageTrackerTriagePRSuffix === 'function' ? stageTrackerTriagePRSuffix(item) : '');
         else if (openNew) word = 'New';
         // A plain, blocked or draft Open step (no stage label, not held)
         // says how long it has sat there, from the same instant the since
@@ -374,6 +376,20 @@
       if (!fresh || fresh.next_mover !== 'maintainer') return false;
       const gates = Array.isArray(fresh.gates) ? fresh.gates : [];
       return gates.some(g => g && g.name === 'triage' && g.state === 'next');
+    }
+    // Pure: the open contributor PR on an issue waiting on triage — the
+    // payload's triage_pr block — or null (hivecommons/hive#19843). An
+    // untriaged issue whose reporter already opened a PR asks the
+    // maintainer "accept the issue and review PR #N", not a bare triage.
+    function stageTrackerTriagePROf(item) {
+      if (!item || item.kind === 'pr' || !item.triage_pr || typeof item.triage_pr !== 'object') return null;
+      return Number(item.triage_pr.number) > 0 ? item.triage_pr : null;
+    }
+    // Pure: " · contributor PR #N open" for the "Triage needed" chevron
+    // word, or '' when the issue has no open contributor PR.
+    function stageTrackerTriagePRSuffix(item) {
+      const pr = stageTrackerTriagePROf(item);
+      return pr ? ' · contributor PR #' + Number(pr.number) + ' open' : '';
     }
     // "Next: …" and "Gates ahead: triage ✓ → actionable → claimed" for the
     // row tooltip and the lit chevron. nowMs refreshes the next-pass countdown.

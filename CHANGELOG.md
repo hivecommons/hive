@@ -11,6 +11,23 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.368.0)
+
+### Added
+
+- A hive configured with `forge: gitea` (project-wide or in `project.repo_policies[]`) now reads `/api/v1/version` from each Gitea instance it points at and, when the instance reports a Forgejo version, logs one warning per instance suggesting `forge: forgejo` — the only kind that gets the Forgejo automerge and close-on-merge sweeps ([#19832](https://github.com/hivecommons/hive/issues/19832)).
+
+### Fixed
+
+- Exclude closed GitHub issues from GitHub Projects work queues even when they still have a matching board status.
+- Update sibling named sessions when reissuing their shared contributor token with `hivectl`.
+
+## 2026-11-25 (v5.367.1)
+
+### Fixed
+
+- **Agent config saves no longer report success when the config was not written** ([#19847](https://github.com/hivecommons/hive/issues/19847)). `PUT /api/config/agent/{name}/general`, `.../cadences` and `.../models` used to log a failed save and still answer `200`, so the dashboard showed the change as saved while it lived only in memory and vanished on the next restart or reload. They now answer `500` when the write fails and `409` when the hive has no writable config source, and put the in-memory config back as it was. The whole request is validated before anything is applied, and a cadence for a governor mode the hive does not define is refused with `400` instead of being skipped silently.
+
 ## 2026-11-25 (v5.367.0)
 
 ### Added

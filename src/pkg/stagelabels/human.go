@@ -325,11 +325,12 @@ const (
 	LaneReasonDCOMissing             = "dco-missing"
 	LaneReasonHiveSignoffAttribution = "hive-signoff-attribution"
 	LaneReasonConflicting            = "conflicting"
-	// LaneReasonReviewerQuestion is the 071 reason when the reviewer's
-	// requires_human verdict lands on a PR a person pushed themselves
-	// (hivecommons/hive#15202): the human the reviewer wants is the author,
-	// so the question goes to them — not to a decision queue, and never to
-	// adoption.
+	// LaneReasonReviewerQuestion was the 071 reason when the reviewer's
+	// requires_human verdict landed on a PR a person pushed themselves
+	// (hivecommons/hive#15202). RouteHuman no longer writes it: that verdict
+	// is a maintainer's decision (085, hivecommons/hive#19843). It is kept
+	// so a record written before the change still reads as the reviewer's
+	// question until the next pass re-routes it.
 	LaneReasonReviewerQuestion = "reviewer-verdict:requires_human"
 	laneReasonCheckFailing     = "check-failing:"
 	// LaneReasonSupersededByMerge is the ledger reason when the hive closes
@@ -537,25 +538,13 @@ func routeProgress(e Evidence) Route {
 	if len(fix) > 0 {
 		return Route{Stage: fixing, Reasons: fix, LaneReason: laneReason, Summary: summary}
 	}
-	// A person's own PR with a requires_human verdict and nothing else
-	// outstanding: the reviewer's question is the author's to answer. It
-	// routes to 071 Needs author with the question, like a change request
-	// (hivecommons/hive#15202). A hold, sentinel or lane rule still makes it
-	// a decision below; a hive-authored or clanker PR has no human author
-	// to ask, so it keeps the 085 route.
-	if HumanAuthorOwesAnswer(e) {
-		reasons := []string{"the reviewer asked the author a question @" + ShortSHA(e.Head)}
-		if q := strings.TrimSpace(e.DecisionQuestion); q != "" {
-			reasons = append(reasons, "reviewer question: "+q)
-		} else {
-			for _, summary := range e.HumanSummaries {
-				if s := strings.TrimSpace(summary); s != "" {
-					reasons = append(reasons, "reviewer summary: "+s)
-				}
-			}
-		}
-		return Route{Stage: fixing, Reasons: reasons, LaneReason: LaneReasonReviewerQuestion, Summary: summary, Head: e.Head, Verdict: e.Verdict}
-	}
+	// The stage follows the reviewer's verdict, whoever pushed the PR
+	// (hivecommons/hive#19843): only changes_requested (above) sends it back
+	// to the author; a requires_human / needs-decision verdict is a
+	// maintainer's decision (085), a person's own PR included. The 071 route
+	// hivecommons/hive#15202 gave it read "waiting on the author to push" on
+	// a PR whose reviewers had asked the maintainer a question.
+	//
 	// A fresh head waits for its verdict — unless the reviewer has already
 	// answered requires_human for this very head, in which case the person
 	// is owed a decision now, not after CI reports (hivecommons/hive#13115).
@@ -914,29 +903,6 @@ func DecisionActions(r Route) string {
 		return ""
 	}
 	return "**What to do:** approve this head (`" + ShortSHA(r.Head) + "`) to merge as-is, or leave a *changes requested* review (or reply `/hive decision <what to change>`) and the hive will push the fix."
-}
-
-// HumanAuthorOwesAnswer reports whether a requires_human verdict on a PR a
-// person pushed themselves routes to the author (071) rather than to a
-// decision (085): the author is human and not this hive, no trusted merger
-// has approved the head, and nothing else — a fork guard, a human-only
-// lane rule — asks a maintainer for a decision. A sentinel alert or a hold
-// label is a gate riding the route, not a decision (hivecommons/hive#17327).
-func HumanAuthorOwesAnswer(e Evidence) bool {
-	if e.SelfAuthored || e.AuthorKind != authorkind.Human || e.Verdict != VerdictRequiresHuman {
-		return false
-	}
-	if strings.TrimSpace(e.HumanApprover) != "" || len(e.ForkGuard) > 0 {
-		return false
-	}
-	return e.Cause != CauseDecision || strings.TrimSpace(e.CauseReason) == "" || IsDecisionRequestedReason(e.CauseReason)
-}
-
-// IsDecisionRequestedReason matches the lane reason the reviewer's
-// decision-request verdict is recorded under; it names no lane rule of
-// its own, so it never turns a human author's question into a decision.
-func IsDecisionRequestedReason(reason string) bool {
-	return strings.EqualFold(strings.TrimSpace(reason), "contributor-lane:decision-requested")
 }
 
 // AlreadyLandedReason is LaneReasonAlreadyLanded with the PR that landed
