@@ -42,6 +42,14 @@ func verifyDepsFor(t *testing.T, owner, repo, author string) *Dependencies {
 			},
 		})
 	})
+	// selectTask reads the chosen issue live before assigning it; serve every
+	// issue as open and unlabelled so assignment proceeds.
+	issuesPrefix := "/repos/" + full + "/issues/"
+	mux.HandleFunc(issuesPrefix, func(w http.ResponseWriter, r *http.Request) {
+		n, _ := strconv.Atoi(strings.TrimPrefix(r.URL.Path, issuesPrefix))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "labels": []any{}})
+	})
 	ts := httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	return &Dependencies{
