@@ -3,10 +3,13 @@ package automerge
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -132,6 +135,8 @@ func observeOnlyStageReason(lane, reason string) string {
 // then foldRecordedDecision's, on both drains.
 // Skipping it left an approved mergeraptor PR flipping 050 (this pass, no
 // verdict) and 060 or 090 (the lane's noted verdict) on every split drain.
+// foldLaneNotedVerdict covers the same race for the lane's own review and
+// CI reasons, on a repo whose auto-merge is on or off.
 func (c *Engine) foldObserveOnlyVerdict(list []stageObservation) {
 	if c == nil || c.contributorLaneVerdict == nil {
 		return
@@ -169,4 +174,111 @@ func (c *Engine) foldObserveOnlyVerdict(list []stageObservation) {
 		o.Detail.Verdict, o.Detail.VerdictKnown = verdict, true
 		o.Detail = normalizeStageDetail(o.Detail)
 	}
+}
+
+// foldLaneNotedVerdict gives a contributor-lane or trusted-author-lane
+// observation the reviewer verdict for its head when the drain carried
+// none, for a reason the lane returns only after it noted that verdict
+// (laneNotedVerdictReason). It is foldObserveOnlyVerdict's race on a repo
+// whose auto-merge is on: the lane notes the verdict (noteStageVerdict) but
+// records its observation only once trySweepContributorLanePR or
+// trySweepTrustedAuthorPR returns, so a drain by the other driver in
+// between takes the note and the next drain holds the observation alone.
+// contributor-lane:no-verdict on a requires_human head then classified as
+// 050 instead of 085, and the next whole pass routed it back: one PR
+// flipped 050 and 085 on one head all night. Because the lane reached the
+// note on this pass, the fold reads what the lane noted: the same
+// review-verdicts record through contributorLaneVerdictFor, which both
+// lanes call, for the observation's own head, so a verdict recorded only
+// for an older head is not applied (the head is the sweep listing's; a push
+// between the listing and the lane's fetch is corrected by the next
+// listing, as in foldObserveOnlyVerdict). An observation recorded with an
+// error, or for a reason the lane can also return before the note, is left
+// alone, so the fold never gives a verdict the lane did not read.
+//
+// The split also takes a trusted person's approval of the head, which the
+// lane notes beside the verdict (noteStageTrustedHumanApproval) and which
+// clears a requires_human verdict. A reason the lane returns only while no
+// such approval stands (answerKnown) folds any verdict. Any other reason
+// folds a verdict only when it would not route the head to 085 on its own:
+// folding the question without the answer would invent an 085 that the
+// drain holding both would not derive. A recorded decision is not lost
+// that way: contributorLaneVerdictFor applies it, and foldRecordedDecision
+// runs next on every drain.
+func (c *Engine) foldLaneNotedVerdict(list []stageObservation) {
+	if c == nil || c.contributorLaneVerdict == nil {
+		return
+	}
+	for i := range list {
+		o := &list[i]
+		if o.Detail.VerdictKnown || o.HeadSHA == "" || o.Err {
+			continue
+		}
+		noted, answerKnown := laneNotedVerdictReason(o.Lane, o.Reason)
+		if !noted {
+			continue
+		}
+		folded := *o
+		folded.Detail.Verdict, folded.Detail.VerdictKnown = c.contributorLaneVerdictFor(o.Owner+"/"+o.Repo, o.Number, o.HeadSHA), true
+		folded.Detail = normalizeStageDetail(folded.Detail)
+		if _, asks := stageengine.RequiresHumanStage(folded, stageRankOwned); asks && !answerKnown {
+			continue
+		}
+		o.Detail = folded.Detail
+	}
+}
+
+// laneNotedVerdictReason reports whether lane returns reason only after it
+// noted the head's reviewer verdict on this pass (noted), and whether it
+// returns it only while no trusted person's approval clears a requires_human
+// verdict on the head (answerKnown; see foldLaneNotedVerdict). Only reasons
+// whose stage the verdict decides are listed:
+//
+//   - Contributor lane. evaluateContributorLanePR notes the verdict once
+//     admitContributor returns without an error. contributor-lane:no-verdict
+//     is returned after the note and only when no approval cleared the
+//     verdict (the !humanApproved branch of the review gate), so its answer
+//     is known. contributor-lane:soaking (the soak gate) and a CI wait or red
+//     check from commitGreenForPR come after the note too, but the approval
+//     was read before them. A lane-owned reason never counts as CI here: the
+//     adoption-intent gate returns contributor-lane:adoption-intent-pending
+//     before the note, and its "-pending" suffix reads as CI pending.
+//   - Trusted-author lane. trySweepTrustedAuthorPRAdmitting notes the verdict
+//     once the author is admitted. review-gate:<outcome> comes from
+//     mergeReviewGate after the note, which holds only when no trusted
+//     approval of the head was found, so its answer is known. A CI wait or
+//     red check from commitGreenForPR comes after the note.
+//
+// A merge-train position never counts: both lanes record it before they
+// evaluate the head. Reasons left out either place the head without the
+// verdict (workflow-path, no-reviewer, review-off, changes-requested) or are
+// returned on both sides of the note (an admission reason, conflicting,
+// gone), so a drain holding one cannot tell whether the lane read a
+// verdict. Keep this in step with the order of the gates in those lanes.
+func laneNotedVerdictReason(lane, reason string) (noted, answerKnown bool) {
+	// A label prefilter returns before the note, and an operator's label
+	// name can end in "-pending" and read as CI.
+	if reason == "" || prstage.IsMergeTrainReason(reason) || strings.HasPrefix(reason, "label:") || strings.HasPrefix(reason, "excluded-label:") {
+		return false, false
+	}
+	ci := classifyCIReason(reason) != ciReasonNone
+	switch lane {
+	case stageLaneContributor:
+		switch {
+		case reason == contributorLaneReasonNoVerdict:
+			return true, true
+		case reason == contributorLaneReasonSoaking:
+			return true, false
+		case ci && !strings.HasPrefix(reason, contributorLaneReasonPrefix):
+			return true, false
+		}
+	case stageLaneTrusted:
+		switch {
+		case strings.HasPrefix(reason, autoMergeReasonReviewGatePrefix):
+			return true, true
+		case ci:
+			return true, false
+		}
+	}
+	return false, false
 }

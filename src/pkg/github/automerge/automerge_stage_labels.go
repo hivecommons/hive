@@ -1281,6 +1281,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		result.Items++
 		c.foldHumanReturnLabel(ctx, store, list)
 		c.foldObserveOnlyVerdict(list)
+		c.foldLaneNotedVerdict(list)
 		c.foldRecordedDecision(ctx, list)
 		c.foldForkGuard(ctx, tracker, store, list, now)
 		c.foldBaseRed(ctx, tracker, list, now)
