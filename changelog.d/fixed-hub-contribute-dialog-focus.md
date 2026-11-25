@@ -1,1 +1,0 @@
-- The Hive Hub Contribute dialog keeps keyboard focus inside and restores it when closed.
