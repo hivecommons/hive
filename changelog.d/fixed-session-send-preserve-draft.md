@@ -1,0 +1,1 @@
+- Preserve follow-up drafts typed in a session while an earlier send is being queued.
