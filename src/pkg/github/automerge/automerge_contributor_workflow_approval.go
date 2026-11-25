@@ -466,10 +466,36 @@ func workflowApprovalCommentActor(comment *gh.IssueComment, headSHA string, head
 		}
 		return author, true
 	}
-	if _, ok := hgithub.ParseTypedDecisionApproval(body); !ok || !boundToHead("") {
+	if _, ok := hgithub.ParseTypedDecisionApproval(body); !ok || typedApprovalConditional(body) || !boundToHead("") {
 		return "", false
 	}
 	return author, true
+}
+
+// workflowApprovalConditionWords open a reason that makes the approval
+// conditional ("approve but rename the job first", "approve once CI is
+// green"). The un-park sweep still records such a reply as the approval,
+// but a gate that lets a person's approval merge a change unattended (the
+// workflow fence, the human-merge owner approval) waits for an
+// unconditional one.
+var workflowApprovalConditionWords = map[string]bool{
+	"but": true, "after": true, "once": true, "if": true, "when": true,
+	"until": true, "unless": true, "pending": true, "provided": true,
+	"only": true, "however": true, "though": true, "although": true,
+	"except": true, "contingent": true, "conditional": true, "assuming": true,
+}
+
+// typedApprovalConditional reports whether the reason on a typed
+// `/hive decision approve` command line opens with a condition word. Only
+// the command line is read: a reason in a later paragraph is commentary,
+// and the bare command alone on its line released the fence before a
+// same-line reason was accepted.
+func typedApprovalConditional(body string) bool {
+	words := strings.Fields(firstCommentLine(body))
+	if len(words) < 4 {
+		return false
+	}
+	return workflowApprovalConditionWords[strings.ToLower(strings.Trim(words[3], ".,:;!?()[]\"'"))]
 }
 
 // firstCommentLine returns the first non-empty line of body, trimmed; a
