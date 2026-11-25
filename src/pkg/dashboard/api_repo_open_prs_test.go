@@ -41,7 +41,7 @@ func TestRepoOpenPRsEndpointRoundTrip(t *testing.T) {
 	}
 
 	repos := buildRepos(cfg, nil, governor.State{})
-	if len(repos) != 1 || repos[0].OpenPRs != "workflow_only" || repos[0].OpenPRsEffective != "workflow_only" {
+	if len(repos) != 1 || repos[0].OpenPRsMode != "workflow_only" || repos[0].OpenPRsModeEffective != "workflow_only" {
 		t.Fatalf("repo card = %+v", repos)
 	}
 

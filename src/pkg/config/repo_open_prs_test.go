@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,7 +102,7 @@ func TestRepoOpenPRsWidens(t *testing.T) {
 
 func TestSetRepoOpenPRsForRepoAndSave(t *testing.T) {
 	cfg := newPauseTestConfig(t, "api", "web")
-	changed, err := cfg.SetRepoOpenPRsForRepoAndSave("api", RepoOpenPRsWorkflowOnly)
+	changed, err := cfg.SetRepoOpenPRsForRepoAndSave("api", RepoOpenPRsWorkflowOnly, false)
 	if err != nil || !changed {
 		t.Fatalf("set workflow_only: changed=%v err=%v", changed, err)
 	}
@@ -118,27 +119,39 @@ func TestSetRepoOpenPRsForRepoAndSave(t *testing.T) {
 	if got := reloaded.RepoOpenPRsMode("web"); got != RepoOpenPRsOn {
 		t.Fatalf("other repo changed: %q", got)
 	}
-	changed, err = cfg.SetRepoOpenPRsForRepoAndSave("ACME/API", "workflow-only")
+	changed, err = cfg.SetRepoOpenPRsForRepoAndSave("ACME/API", "workflow-only", false)
 	if err != nil || changed {
 		t.Fatalf("idempotent set: changed=%v err=%v", changed, err)
 	}
-	if _, err := cfg.SetRepoOpenPRsForRepoAndSave("api", "sometimes"); err == nil {
+	if _, err := cfg.SetRepoOpenPRsForRepoAndSave("api", "sometimes", true); err == nil {
 		t.Fatal("unknown mode must be refused")
 	}
-	if changed, err = cfg.SetRepoOpenPRsForRepoAndSave("api", RepoOpenPRsOn); err != nil || !changed {
-		t.Fatalf("clear: changed=%v err=%v", changed, err)
+	// Widening without the right is refused, and nothing moves.
+	if changed, err = cfg.SetRepoOpenPRsForRepoAndSave("api", RepoOpenPRsOn, false); !errors.Is(err, ErrRepoOpenPRsWidenRefused) || changed {
+		t.Fatalf("widen without right: changed=%v err=%v", changed, err)
 	}
-	if _, ok := cfg.RepoPolicyFor("api"); ok {
-		t.Fatal("empty repo policy should be pruned once open_prs is cleared")
+	if got := cfg.RepoOpenPRsMode("api"); got != RepoOpenPRsWorkflowOnly {
+		t.Fatalf("refused widen moved the mode: %q", got)
+	}
+	if changed, err = cfg.SetRepoOpenPRsForRepoAndSave("api", RepoOpenPRsOn, true); err != nil || !changed {
+		t.Fatalf("set on: changed=%v err=%v", changed, err)
+	}
+	// On is stored explicitly so the overlay can carry it over a seed.
+	if rp, ok := cfg.RepoPolicyFor("api"); !ok || rp.OpenPRs != "on" {
+		t.Fatalf("on must be stored explicitly: %+v ok=%v", rp, ok)
+	}
+	// A repo with no row that is set to on gains no row.
+	if changed, err = cfg.SetRepoOpenPRsForRepoAndSave("web", RepoOpenPRsOn, false); err != nil || changed {
+		t.Fatalf("on for a rowless repo: changed=%v err=%v", changed, err)
 	}
 }
 
-// Clearing open_prs must not prune a policy row that still carries a forge
+// Changing open_prs must not drop a policy row that carries a forge
 // override.
 func TestSetRepoOpenPRsKeepsForgeRow(t *testing.T) {
 	cfg := newPauseTestConfig(t, "api")
 	cfg.Project.RepoPolicies = []RepoPolicy{{Repo: "api", Forge: "github", OpenPRs: "off"}}
-	if _, err := cfg.SetRepoOpenPRsForRepoAndSave("api", RepoOpenPRsOn); err != nil {
+	if _, err := cfg.SetRepoOpenPRsForRepoAndSave("api", RepoOpenPRsOn, true); err != nil {
 		t.Fatal(err)
 	}
 	rp, ok := cfg.RepoPolicyFor("api")
@@ -232,6 +245,23 @@ project:
 	}
 	if got := merged.RepoOpenPRsMode("api"); got != RepoOpenPRsWorkflowOnly {
 		t.Errorf("silent overlay clobbered the seed's open_prs: %q", got)
+	}
+
+	// The owner switched the repo back to on in the dashboard: the explicit
+	// on in the overlay outranks the seed's workflow_only.
+	if err := os.WriteFile(overlayPath, []byte("project:\n  org: testorg\n  repos: [docs, api]\n  repo_policies:\n    - repo: api\n      open_prs: \"on\"\n    - repo: gone\n      open_prs: \"off\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	merged, err = LoadWithDashboardOverlay(seedPath)
+	if err != nil {
+		t.Fatalf("LoadWithDashboardOverlay (overlay on): %v", err)
+	}
+	if got := merged.RepoOpenPRsMode("api"); got != RepoOpenPRsOn {
+		t.Errorf("overlay on did not beat the seed: %q", got)
+	}
+	// A row for a repo the hive no longer watches is not revived.
+	if _, ok := merged.RepoPolicyFor("gone"); ok {
+		t.Error("overlay row for an unwatched repo was adopted")
 	}
 }
 

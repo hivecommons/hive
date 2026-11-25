@@ -24,9 +24,9 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/openrouter/models` | Dashboard auth/session | Open Router Models | `pkg/dashboard/openrouter.go:47` |
 | `GET` | `/api/openrouter/credit` | Dashboard auth/session | Open Router Credit | `pkg/dashboard/openrouter.go:48` |
 | `GET` | `/openrouter/callback` | Public | Open Router Callback | `pkg/dashboard/openrouter.go:49` |
-| `POST` | `/api/github-app/recheck` | Dashboard auth/session | GitHub App Recheck | `pkg/dashboard/server.go:1815` |
-| `POST` | `/api/github-app/install-clicked` | Dashboard auth/session | GitHub App Install Clicked | `pkg/dashboard/server.go:1816` |
-| `GET` | `/gh-setup` | Public | GitHub App Setup Callback | `pkg/dashboard/server.go:1817` |
+| `POST` | `/api/github-app/recheck` | Dashboard auth/session | GitHub App Recheck | `pkg/dashboard/server.go:1816` |
+| `POST` | `/api/github-app/install-clicked` | Dashboard auth/session | GitHub App Install Clicked | `pkg/dashboard/server.go:1817` |
+| `GET` | `/gh-setup` | Public | GitHub App Setup Callback | `pkg/dashboard/server.go:1818` |
 | `GET` | `/api/github-owner-identity` | Owner only | The hive owner's GitHub identity for remote repos ([#18197](https://github.com/hivecommons/hive/issues/18197)): `connected`, `login`, `scope`, `connected_at`, `usable`, `reason`, `verified_at`, `scope_required` (`public_repo`), `private_repos_supported` (false) and `file` (the token file path on the spoke). Never the token | `pkg/dashboard/api.go:581` |
 | `POST` | `/api/github-owner-identity/start` | Owner only | Start the consent: a GitHub device flow with the spoke's `oauth_client_id` asking for `public_repo`, separate from the scope-free login flow. Returns `user_code`, `verification_uri`, `expires_in`, `interval`, `scope` and the `flow_id` the poll must present. 502 when GitHub refused the device-code request | `pkg/dashboard/api.go:582` |
 | `POST` | `/api/github-owner-identity/poll` | Owner only | Poll the consent with `{"flow_id"}`: `status` `pending` / `slow_down` (poll again), `complete` (with `login` and the identity) or `error`. On completion the granted scope must cover `public_repo`, the token must validate and the account must be the logged-in owner's; the identity is then stored on the spoke (`/data/secrets/github-owner-token`, `HIVE_GITHUB_OWNER_TOKEN_FILE` overrides) and the reference-repo policies re-resolve. 400 without a live flow or with the wrong `flow_id`; audited as `github_owner_identity_connected` / `_rejected` | `pkg/dashboard/api.go:583` |

@@ -35920,6 +35920,89 @@
         }
       }
     },
+    "/api/repos/open-prs": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Set the open-PRs mode for one repository",
+        "description": "Persists project.repo_policies[].open_prs for one watched repository, at every ACMM level: on (default) lets agents open PRs, off lets agents analyse, comment and file issues but open no PR, workflow_only lets only workflow hand-off PRs open. project.open_prs: false still makes every repo off. Narrowing needs the owner role or repository write permission (as for repository hold chips); widening needs a verified owner. Enforced by the hive-open-pr relay, the forge relay and the sandbox PR path. The live config is updated before the response.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "mode"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "description": "Repository as project.repos spells it: a bare name or owner/repo."
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "on",
+                      "off",
+                      "workflow_only"
+                    ],
+                    "description": "The repo's new open-PRs mode."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Open-PRs mode result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "mode": {
+                      "type": "string"
+                    },
+                    "effective": {
+                      "type": "string",
+                      "description": "The mode in force after project.open_prs."
+                    },
+                    "changed": {
+                      "type": "boolean"
+                    },
+                    "persisted": {
+                      "type": "boolean"
+                    },
+                    "minStatusSeq": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing repo, unknown mode, or a repo not listed in project.repos"
+          },
+          "403": {
+            "description": "Owner or repository write permission required; widening requires a verified owner"
+          },
+          "503": {
+            "description": "No config loaded"
+          }
+        }
+      }
+    },
     "/api/repos/{owner}/{repo}/hold-permission": {
       "get": {
         "tags": [

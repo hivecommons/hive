@@ -2,6 +2,8 @@ package dashboard
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -25,7 +27,7 @@ type repoOpenPRsRequest struct {
 // Asymmetric gate, as for auto-merge (#9070): narrowing (on to
 // workflow_only or off, workflow_only to off) only reduces what agents do,
 // so the pause tier (owner or repo write) may do it; widening gives agents
-// back PR rights on the repo, which is the owner's decision.
+// back PR rights on the repo, which is a verified owner's decision.
 func (s *Server) handleRepoOpenPRs(w http.ResponseWriter, r *http.Request) {
 	if s.deps == nil || s.deps.Config == nil {
 		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
@@ -47,23 +49,30 @@ func (s *Server) handleRepoOpenPRs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := s.deps.Config
-	prev := cfg.RepoOpenPRsSetting(body.Repo)
-	if mode.Widens(prev) {
-		if !requireOwnerRole(w, r) {
-			return
-		}
-	} else if !s.requireRepoPausePermission(w, r, body.Repo) {
+	// A verified owner may change the mode either way; anyone else needs the
+	// pause tier and may only narrow it. The widening check itself runs in
+	// the setter, under the config lock, so two requests cannot race a
+	// repo-write user into widening.
+	owner := isOwnerRole(r.Header.Get("X-Hive-Role")) && r.Header.Get(ownerRoleVerifiedHeader) == "true"
+	if !owner && !s.requireRepoPausePermission(w, r, body.Repo) {
 		return
 	}
 	if !s.watchesRepo(body.Repo) {
 		jsonError(w, "repo "+body.Repo+" is not in project.repos — nothing would be updated", http.StatusBadRequest)
 		return
 	}
-	changed, err := cfg.SetRepoOpenPRsForRepoAndSave(body.Repo, mode)
+	prev := cfg.RepoOpenPRsSetting(body.Repo)
+	changed, err := cfg.SetRepoOpenPRsForRepoAndSave(body.Repo, mode, owner)
+	if errors.Is(err, config.ErrRepoOpenPRsWidenRefused) {
+		jsonError(w, "owner access required to widen the open-PRs mode", http.StatusForbidden)
+		return
+	}
 	if err != nil && s.logger != nil {
 		s.logger.Error("failed to persist repo open-PRs mode", "repo", body.Repo, "mode", string(mode), "error", err)
 	}
-	s.auditFromRequest(r, "repo_open_prs", auditDetail("repo", body.Repo, "mode", string(mode), "previous", string(prev)), "")
+	if changed {
+		s.auditFromRequest(r, "repo_open_prs", auditDetail("repo", body.Repo, "mode", string(mode), "previous", string(prev), "persisted", fmt.Sprintf("%t", err == nil)), "")
+	}
 	floor := s.refreshAndPersistSeq()
 	repo := body.Repo
 	if normalized, ok := config.NormalizeRepoForOrg(cfg.Project.Org, body.Repo); ok {

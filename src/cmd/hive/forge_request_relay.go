@@ -95,7 +95,7 @@ type forgeRequestRelay struct {
 	attempts   map[string]int
 	// openPRs is the per-repo open-PRs gate (repo_open_prs.go): the repo's
 	// mode and, when the PR may not open, why.
-	openPRs func(agent, repo string, issues []int) (string, string)
+	openPRs func(agent, repo string, issues []int, via string) (string, string)
 }
 
 func newForgeRequestRelay(cfg func() *config.Config, prAuthz github.PRRequestAuthorizer, issueAuthz github.IssueRequestAuthorizer, logger *slog.Logger) *forgeRequestRelay {
@@ -271,7 +271,8 @@ func (r *forgeRequestRelay) handlePR(ctx context.Context, path string) {
 		return
 	}
 	if r.openPRs != nil {
-		if mode, reason := r.openPRs(req.Agent, req.Repo, req.IssueN); reason != "" {
+		if mode, reason := r.openPRs(req.Agent, req.Repo, req.IssueN, "forge-relay"); reason != "" {
+			auditOpenPRsRefusal(req.Agent, req.Repo, mode, "forge-relay", reason)
 			fail("PR " + github.GateOpenPRs + " rejected: " + reason)
 			r.settle(path, ".rejected", false)
 			r.logger.Warn("forge request relay: PR REJECTED (open-prs)", "agent", req.Agent, "repo", req.Repo, "mode", mode, "reason", reason)

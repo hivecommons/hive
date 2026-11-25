@@ -1101,7 +1101,7 @@
         // like the repo card's auto-merge switch (POST /api/repos/open-prs).
         const opPolicy = (_configState.data.repoOpenPRs || {})[r] || {};
         const opSetting = opPolicy.value || 'on';
-        const opRow = repoOpenPRsSelectHtml(r, opSetting, _configState.data.openPRsHiveWide === false, dashboardRoleAtLeast(window._hiveRole || 'read', 'write'), 'rt-check');
+        const opRow = repoOpenPRsSelectHtml(r, opSetting, _configState.data.openPRsHiveWide === false, dashboardRoleAtLeast(window._hiveRole || 'read', 'read-write'), 'rt-check');
         const cbRow = '<label title="' + cbTitle + '" class="rt-check"><input type="checkbox" ' + (cbEffective ? 'checked' : '') + ' data-change-action="toggleRepoCurrentBase" data-arg0="' + esc(r) + '" data-arg-types="s,c"> Merge only on current base</label>' + cbInherit;
         // #11313 label-driven approvals (Prow-style): opt-in per repo, with the
         // sub-row (approval labels + help) only while the toggle is on.

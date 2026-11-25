@@ -15,6 +15,12 @@ func repoOpenPRsKickNotes(cfg *config.Config, org string, repos []string) string
 	if cfg == nil {
 		return ""
 	}
+	if !cfg.Project.PRsAllowed() {
+		if len(repos) == 0 {
+			return ""
+		}
+		return "🚫 PRs are off for this hive (project.open_prs: false): do not open pull requests in any repo (hive-open-pr refuses them). Analyse, comment, and file findings as issues instead.\n"
+	}
 	var b strings.Builder
 	for _, repo := range repos {
 		full := config.QualifyRepo(org, repo)

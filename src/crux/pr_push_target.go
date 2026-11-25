@@ -18,6 +18,11 @@ import "context"
 // callback only when its PR client could not record it itself.
 const AuditActionAgentPRCreated = "agent_pr_created"
 
+// AuditActionAgentWriteRefused is the audit action of a write the host
+// refused for an agent (the same string as pkg/github's): the sandbox
+// manager records it when the per-repo open-PRs mode refuses a kick's PR.
+const AuditActionAgentWriteRefused = "agent_write_refused"
+
 // AgentPRCreator opens a pull request for a sandboxed kick and credits it to
 // agent through the host's PR-authorship record, the path the host's relay
 // uses for a PR an agent opens from its pane: the attribution trailer on the

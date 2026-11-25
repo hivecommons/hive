@@ -3,6 +3,8 @@ package agent
 import (
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/crux"
 )
 
 // A repo whose open-PRs mode refuses a new PR gets a sandboxed kick without
@@ -13,16 +15,16 @@ func TestManagerSandboxRepoPRRefusalSkipsPushAndPR(t *testing.T) {
 	m, lines, mu := newSandboxTargetManager(t, pr, &sandboxFakeRunner{commits: 1})
 	var asked []string
 	m.mu.Lock()
-	m.project.RepoPRRefusal = func(agent, repo string) string {
-		asked = append(asked, agent+"@"+repo)
+	m.project.RepoPRRefusal = func(agent, repo, message string) string {
+		asked = append(asked, agent+"@"+repo+":"+message)
 		return "pull requests are off for o/r"
 	}
 	m.mu.Unlock()
 	if err := m.SendKick(targetAgent, "harden the tests"); err != nil {
 		t.Fatalf("SendKick: %v", err)
 	}
-	refused := waitSandboxAudit(t, lines, mu, "sandbox_pr_refused")
-	if !strings.Contains(refused.detail, "repo=o/r") || !strings.Contains(refused.detail, "gate=open-prs") {
+	refused := waitSandboxAudit(t, lines, mu, crux.AuditActionAgentWriteRefused)
+	if !strings.Contains(refused.detail, "repo=o/r") || !strings.Contains(refused.detail, "gate=open-prs") || !strings.Contains(refused.detail, "op=open_pr") {
 		t.Fatalf("refusal audit detail = %q", refused.detail)
 	}
 	waitSandboxAudit(t, lines, mu, "sandbox_complete")
@@ -31,7 +33,7 @@ func TestManagerSandboxRepoPRRefusalSkipsPushAndPR(t *testing.T) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if len(asked) != 1 || asked[0] != targetAgent+"@o/r" {
+	if len(asked) != 1 || asked[0] != targetAgent+"@o/r:harden the tests" {
 		t.Fatalf("gate asked %v, want one call for %s@o/r", asked, targetAgent)
 	}
 }
@@ -41,7 +43,7 @@ func TestManagerSandboxRepoPRRefusalAllows(t *testing.T) {
 	pr := &countingPR{}
 	m, lines, mu := newSandboxTargetManager(t, pr, &sandboxFakeRunner{commits: 1})
 	m.mu.Lock()
-	m.project.RepoPRRefusal = func(agent, repo string) string { return "" }
+	m.project.RepoPRRefusal = func(agent, repo, message string) string { return "" }
 	m.mu.Unlock()
 	if err := m.SendKick(targetAgent, "fix"); err != nil {
 		t.Fatalf("SendKick: %v", err)

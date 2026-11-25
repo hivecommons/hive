@@ -347,10 +347,10 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	// that cannot become a PR. A push to an existing PR opens nothing and
 	// is left alone.
 	if pushEnabled && spec.TargetPR == 0 && m.project.RepoPRRefusal != nil {
-		if reason := m.project.RepoPRRefusal(agent.Name, m.project.Org+"/"+repo); reason != "" {
+		if reason := m.project.RepoPRRefusal(agent.Name, m.project.Org+"/"+repo, message); reason != "" {
 			pushMinter, prClient, pushEnabled = nil, nil, false
 			m.logger.Info("sandbox kick runs without push: the repo's open-PRs mode refuses a new PR", "name", agent.Name, "repo", repo, "reason", reason)
-			m.auditSandbox(agent.Name, "sandbox_pr_refused", "repo="+m.project.Org+"/"+repo+", gate=open-prs, reason="+reason)
+			m.auditSandbox(agent.Name, crux.AuditActionAgentWriteRefused, "repo="+m.project.Org+"/"+repo+", op=open_pr, gate=open-prs, via=sandbox, outcome=refused, reason="+reason)
 		}
 	}
 	go m.runSandboxKick(runCtx, agent.Name, runtime, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, prReader, targetReader, mutationBoundary)

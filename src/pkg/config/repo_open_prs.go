@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -117,10 +118,18 @@ func (c *Config) RepoOpenPRsRefusal(repo string, workflowHandoff bool) string {
 	return ""
 }
 
+// ErrRepoOpenPRsWidenRefused is returned by SetRepoOpenPRsForRepoAndSave
+// when the change would widen the repo's mode and the caller may not widen.
+var ErrRepoOpenPRsWidenRefused = errors.New("widening the open-PRs mode requires the owner role")
+
 // SetRepoOpenPRsForRepoAndSave records and persists one repo's open-PRs
-// mode. "on" (or empty) clears the override so the repo inherits the
-// default. changed is false when nothing moved.
-func (c *Config) SetRepoOpenPRsForRepoAndSave(repo string, mode RepoOpenPRsMode) (bool, error) {
+// mode. "on" is stored explicitly rather than cleared, so a dashboard switch
+// back to on outranks a seed that says off when the overlay is reloaded
+// (adoptOverlayRepoOpenPRs). The widening check runs under the same lock as
+// the write, so a caller that may not widen (widenOK false) cannot race
+// another request into widening: it gets ErrRepoOpenPRsWidenRefused.
+// changed is false when nothing moved.
+func (c *Config) SetRepoOpenPRsForRepoAndSave(repo string, mode RepoOpenPRsMode, widenOK bool) (bool, error) {
 	if c == nil {
 		return false, fmt.Errorf("no config loaded")
 	}
@@ -146,26 +155,29 @@ func (c *Config) SetRepoOpenPRsForRepoAndSave(repo string, mode RepoOpenPRsMode)
 			break
 		}
 	}
-	changed := false
-	if parsed == RepoOpenPRsOn {
-		if idx >= 0 && strings.TrimSpace(c.Project.RepoPolicies[idx].OpenPRs) != "" {
-			c.Project.RepoPolicies[idx].OpenPRs = ""
-			if repoPolicyHasNoOverrides(c.Project.RepoPolicies[idx]) {
-				c.Project.RepoPolicies = append(c.Project.RepoPolicies[:idx:idx], c.Project.RepoPolicies[idx+1:]...)
-			}
-			changed = true
-		}
-	} else {
-		v := string(parsed)
-		if idx >= 0 {
-			if c.Project.RepoPolicies[idx].OpenPRs != v {
-				c.Project.RepoPolicies[idx].OpenPRs = v
-				changed = true
-			}
+	prev := RepoOpenPRsOn
+	if idx >= 0 {
+		if m, ok := ParseRepoOpenPRsMode(c.Project.RepoPolicies[idx].OpenPRs); ok {
+			prev = m
 		} else {
-			c.Project.RepoPolicies = append(c.Project.RepoPolicies, RepoPolicy{Repo: name, OpenPRs: v})
+			prev = RepoOpenPRsOff
+		}
+	}
+	if parsed.Widens(prev) && !widenOK {
+		repoPauseMu.Unlock()
+		return false, ErrRepoOpenPRsWidenRefused
+	}
+	changed := false
+	v := string(parsed)
+	if idx >= 0 {
+		if c.Project.RepoPolicies[idx].OpenPRs != v {
+			c.Project.RepoPolicies[idx].OpenPRs = v
 			changed = true
 		}
+	} else if parsed != RepoOpenPRsOn {
+		// A repo with no row is already on; only a narrowing adds one.
+		c.Project.RepoPolicies = append(c.Project.RepoPolicies, RepoPolicy{Repo: name, OpenPRs: v})
+		changed = true
 	}
 	repoPauseMu.Unlock()
 
@@ -189,8 +201,9 @@ func (c *Config) validateRepoOpenPRs() error {
 // adoptOverlayRepoOpenPRs carries the dashboard overlay's per-repo open_prs
 // modes onto cfg (hivecommons/hive#19740 shape): the dashboard saves the
 // mode into the overlay, and a reload that starts from the seed must not
-// drop it. Only entries that set open_prs are read, and only that field is
-// copied, so the seed's other per-repo fields are untouched.
+// drop it. Only entries that set open_prs (including an explicit "on") for a
+// repo the hive still watches are read, and only that field is copied, so
+// the seed's other per-repo fields are untouched.
 func adoptOverlayRepoOpenPRs(cfg, overlay *Config) {
 	if cfg == nil || overlay == nil {
 		return
@@ -202,7 +215,7 @@ func adoptOverlayRepoOpenPRs(cfg, overlay *Config) {
 			continue
 		}
 		key := repoPauseKey(org, orp.Repo)
-		if key == "" {
+		if key == "" || !watchesRepoKey(cfg, key) {
 			continue
 		}
 		found := false
@@ -217,4 +230,14 @@ func adoptOverlayRepoOpenPRs(cfg, overlay *Config) {
 			cfg.Project.RepoPolicies = append(cfg.Project.RepoPolicies, RepoPolicy{Repo: orp.Repo, OpenPRs: mode})
 		}
 	}
+}
+
+// watchesRepoKey reports whether a repoPauseKey is one of project.repos.
+func watchesRepoKey(cfg *Config, key string) bool {
+	for _, r := range cfg.Project.Repos {
+		if repoPauseKey(cfg.Project.Org, r) == key {
+			return true
+		}
+	}
+	return false
 }

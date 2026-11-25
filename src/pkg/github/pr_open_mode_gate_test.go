@@ -13,9 +13,11 @@ import (
 type fakeOpenModeGate struct {
 	calls  int
 	issues []int
+	via    string
 }
 
-func (g *fakeOpenModeGate) gate(agent, repo string, issues []int) (string, string) {
+func (g *fakeOpenModeGate) gate(agent, repo string, issues []int, via string) (string, string) {
+	g.via = via
 	g.calls++
 	g.issues = issues
 	if !strings.EqualFold(repo, "o/r") {
@@ -52,6 +54,9 @@ func TestPRRequestWatcher_OpenPRsGateRefusesAndAudits(t *testing.T) {
 	}
 	if g.calls != 1 || len(g.issues) != 1 || g.issues[0] != 1 {
 		t.Errorf("gate must see the request's issues: calls=%d issues=%v", g.calls, g.issues)
+	}
+	if g.via != "relay" {
+		t.Errorf("gate via = %q, want relay", g.via)
 	}
 	if _, err := os.Stat(reqPath + ".rejected"); err != nil {
 		t.Errorf("refused request was not quarantined: %v", err)

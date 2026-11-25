@@ -13,9 +13,10 @@ import "strconv"
 
 // PROpenModeGate decides whether agent may open a PR in repo. issues are
 // the issue numbers the request names (hive-open-pr --issues); nil when the
-// path has none. It returns the repo's mode and, when the PR is refused, the
-// reason ("" allows).
-type PROpenModeGate func(agent, repo string, issues []int) (mode, reason string)
+// path has none. via names the path ("relay", or SandboxPRVia for the
+// sandbox create call). It returns the repo's mode and, when the PR is
+// refused, the reason ("" allows).
+type PROpenModeGate func(agent, repo string, issues []int, via string) (mode, reason string)
 
 // GateOpenPRs is the gate name a refused pr-request result and its log line
 // carry.
@@ -45,7 +46,7 @@ func (c *Client) refuseOpenPRs(agent, repo string, issues []int, via string) (st
 	if gate == nil || *gate == nil {
 		return "", false
 	}
-	mode, reason := (*gate)(agent, repo, issues)
+	mode, reason := (*gate)(agent, repo, issues, via)
 	if reason == "" {
 		return "", false
 	}

@@ -39236,8 +39236,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const autoMergeBtn = `<label class="config-toggle repo-automerge-toggle" title="${esc(autoMergeTip)}"><span class="config-toggle-label">auto-merge</span><span class="config-toggle-switch repo-automerge-switch ${autoMergeOn ? 'on' : ''} ${canSetAutoMerge ? '' : 'disabled'}" role="switch" tabindex="0" aria-checked="${autoMergeOn ? 'true' : 'false'}" aria-label="${esc('auto-merge for ' + cardRepo)}" data-disabled="${canSetAutoMerge ? 'false' : 'true'}" ${canSetAutoMerge ? `data-action="toggleRepoAutoMerge" data-keydown-action="toggleRepoAutoMerge" data-keys="Enter, " data-arg0="${esc(cardRepo)}" data-arg1="${autoMergeOn ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1"` : ''}></span></label>`;
         // Per-repo open-PRs mode (repo_policies[].open_prs), next to the
         // auto-merge switch and shown at every level.
-        const openPrsSetting = r.openPrs || 'on';
-        const openPrsCtl = repoOpenPRsSelectHtml(cardRepo, openPrsSetting, r.openPrsEffective === 'off' && openPrsSetting !== 'off', canPauseRepo, 'repo-open-prs-card');
+        const openPrsSetting = r.openPrsMode || 'on';
+        const openPrsCtl = repoOpenPRsSelectHtml(cardRepo, openPrsSetting, r.openPrsModeEffective === 'off' && openPrsSetting !== 'off', canPauseRepo, 'repo-open-prs-card');
         const writebackCtl = repoWritebackControlHtml(cardRepo, status);
         const pauseBtn = canPauseRepo
           ? `<button class="repo-pause-btn" data-action="toggleRepoPause" data-arg0="${esc(cardRepo)}" data-arg1="${r.paused ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${r.paused ? 'Resume agent activity on this repo' : 'Quiet this repo — agents stop writing to it and stop being handed work on it — without stopping the rest of the hive'}">${r.paused ? '▶ resume' : '⏸ pause'}</button>`
@@ -73446,7 +73446,7 @@ function burnAreaChart() {
         // like the repo card's auto-merge switch (POST /api/repos/open-prs).
         const opPolicy = (_configState.data.repoOpenPRs || {})[r] || {};
         const opSetting = opPolicy.value || 'on';
-        const opRow = repoOpenPRsSelectHtml(r, opSetting, _configState.data.openPRsHiveWide === false, dashboardRoleAtLeast(window._hiveRole || 'read', 'write'), 'rt-check');
+        const opRow = repoOpenPRsSelectHtml(r, opSetting, _configState.data.openPRsHiveWide === false, dashboardRoleAtLeast(window._hiveRole || 'read', 'read-write'), 'rt-check');
         const cbRow = '<label title="' + cbTitle + '" class="rt-check"><input type="checkbox" ' + (cbEffective ? 'checked' : '') + ' data-change-action="toggleRepoCurrentBase" data-arg0="' + esc(r) + '" data-arg-types="s,c"> Merge only on current base</label>' + cbInherit;
         // #11313 label-driven approvals (Prow-style): opt-in per repo, with the
         // sub-row (approval labels + help) only while the toggle is on.

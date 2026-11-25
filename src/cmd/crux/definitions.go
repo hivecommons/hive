@@ -121,8 +121,8 @@ func validateDefinitionName(name string) error {
 // record, so a workflow_only repo refuses every new sandbox PR here (fail
 // closed), and an off repo refuses them as in the hive. The hive's callback
 // (cruxhost CreatePR) applies the same rule.
-func runtimeRepoPRRefusal(cfg *config.Config) func(agent, repo string) string {
-	return func(_, repo string) string { return cfg.RepoOpenPRsRefusal(repo, false) }
+func runtimeRepoPRRefusal(cfg *config.Config) func(agent, repo, message string) string {
+	return func(_, repo, _ string) string { return cfg.RepoOpenPRsRefusal(repo, false) }
 }
 
 // projectContextFromConfig builds the ProjectContext cmd/hive builds in

@@ -73,12 +73,16 @@ project:
 ```
 
 - `project.open_prs: false` (env `PROJECT_OPEN_PRS`) still wins: every repo is then off, whatever its own mode.
-- The mode is enforced where agent PRs open, not only in the prompt: the `hive-open-pr` relay, the forge relay for non-GitHub repos, and the sandbox PR path all refuse a PR the mode forbids. The request result says why, and the refusal is audited as `agent_write_refused` with `gate=open-prs`.
-- For **Workflow only**, the hive decides whether a PR comes from a workflow hand-off by its own hand-off record: the hand-off it delivered to that agent for an item in that repo within the last 8 hours, not marked as not started. When the PR request names issues (`hive-open-pr --issues`), one of them must be the handed-off item. The PR's title, body and branch name are never read for this.
-- A runtime outside the hive process (the sidecar callback) cannot read that record, so a sandboxed kick there opens no PR in a **Workflow only** repo.
+- The mode is enforced where agent PRs open, not only in the prompt: the `hive-open-pr` relay, the forge relay for non-GitHub repos, the sandbox PR path and the sidecar callback all refuse a PR the mode forbids. The request result says why, and the refusal is audited as `agent_write_refused` with `gate=open-prs`.
+- For **Workflow only**, the hive decides whether a PR comes from a workflow hand-off by its own records of the hand-off kicks it planned and delivered, never by the PR's title, body or branch name:
+  - A `hive-open-pr` request must name the handed-off issue (`--issues <n>`, which the hand-off kick tells the agent to pass). The hand-off must have gone to that agent for that repo within the last 8 hours, and must not yet be settled (its deliverable has not shown up, and it was not marked as not started). A request that names no issue, or another issue, is refused, so the same agent's cadence PRs stay off.
+  - A sandboxed kick may push and open its PR only when its kick text is exactly a hand-off kick the hive planned for that agent and repo.
+  - A hand-off of a pull-request item (rather than an issue) cannot open a new PR through `hive-open-pr` in a **Workflow only** repo.
+- A runtime outside the hive process (the sidecar callback) cannot see those records, so a sandboxed kick there opens no PR in a **Workflow only** repo.
+- Who can trigger a hand-off matters: a hand-off is planned when an item enters a workflow state, so anyone who can move items into that state can cause the hive to hand work to the profile's agent.
 - Each kick tells the agent about a limited repo: "PRs are off for `<repo>`" or "only workflow hand-off PRs".
 - A workflow profile that opens a PR resolves to no agent in an **Off** repo.
-- Narrowing the mode needs repo write or the owner role. Widening it needs the owner role, as for switching auto-merge back on.
+- Narrowing the mode needs repo write or the owner role. Widening it needs a verified owner, as for switching auto-merge back on. Switching back to **On** is stored as `open_prs: on`, so it also outranks a seed `hive.yaml` that says otherwise.
 - Pushing more commits to a PR that is already open is not opening a PR, and the mode does not stop it.
 
 ## Budget

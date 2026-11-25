@@ -36,9 +36,7 @@ func TestBuildReposSectionFor_RepoOpenPRsNotes(t *testing.T) {
 	off := false
 	s.cfg.Project.OpenPRs = &off
 	section = s.buildReposSectionFor("scanner")
-	for _, repo := range []string{"console", "dashboard", "docs"} {
-		if !strings.Contains(section, "PRs are off for my-org/"+repo) {
-			t.Errorf("project.open_prs=false: kick lacks the off note for %s\n%s", repo, section)
-		}
+	if strings.Count(section, "PRs are off for this hive") != 1 || strings.Contains(section, "PRs are off for my-org/") {
+		t.Errorf("project.open_prs=false: want one hive-wide line, not per-repo lines\n%s", section)
 	}
 }

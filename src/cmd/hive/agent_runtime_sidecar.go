@@ -529,7 +529,13 @@ func (b *boot) hiveCallbackCapabilities() *cruxhost.Capabilities {
 		// Per-repo open-PRs mode (repo_open_prs.go). The callback names no
 		// agent, so the hand-off record cannot vouch for a workflow PR here:
 		// a workflow_only repo refuses, as an off one does.
-		deps.RepoPRRefusal = func(repo string) string { return b.cfg.RepoOpenPRsRefusal(repo, false) }
+		deps.RepoPRRefusal = func(repo string) string {
+			reason := b.cfg.RepoOpenPRsRefusal(repo, false)
+			if reason != "" {
+				auditOpenPRsRefusal("", repo, string(b.cfg.RepoOpenPRsMode(repo)), "sidecar", reason)
+			}
+			return reason
+		}
 	}
 	if sh, ok := b.agentMgr.(*sidecarHost); ok {
 		deps.Policy = func() callback.Policy { return sh.policy(b.gatewayNames) }
