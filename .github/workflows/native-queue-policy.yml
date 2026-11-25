@@ -54,7 +54,11 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const { isCosmeticLabelFlip, replayLastVerdict, isTransientAPIError, isHeldVerdict } = require('./.github/scripts/native-queue-policy.cjs');
+            const policy = require('./.github/scripts/native-queue-policy.cjs');
+            const { isCosmeticLabelFlip, replayLastVerdict, isTransientAPIError } = policy;
+            // The validator comes from the trusted base, which can predate
+            // held verdicts: without the export nothing is ever held.
+            const isHeldVerdict = typeof policy.isHeldVerdict === 'function' ? policy.isHeldVerdict : () => false;
             let cosmetic = isCosmeticLabelFlip(context);
             if (cosmetic) {
               core.info('Label "' + context.payload.label.name + '" is not read by the policy; replaying the last completed verdict instead of waiting for evidence.');
@@ -88,7 +92,11 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const { evaluate, isHeldVerdict, PendingEvidence, ProviderUnavailable, ProviderVerdict } = require('./.github/scripts/native-queue-policy.cjs');
+            const policy = require('./.github/scripts/native-queue-policy.cjs');
+            const { evaluate, PendingEvidence, ProviderUnavailable, ProviderVerdict } = policy;
+            // The validator comes from the trusted base, which can predate
+            // held verdicts: without the export nothing is ever held.
+            const isHeldVerdict = typeof policy.isHeldVerdict === 'function' ? policy.isHeldVerdict : () => false;
             const attempts = 90;
             const intervalMs = 15000;
             for (let attempt = 0; attempt < attempts; attempt++) {

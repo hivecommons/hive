@@ -232,7 +232,7 @@ func releaseGreenHold(ctx context.Context, a stalehold.Action, writer forge.Issu
 		return
 	}
 	for _, l := range a.HoldLabels {
-		if err := remover.RemoveLabel(ctx, a.Repo, a.Number, l); err != nil {
+		if err := remover.RemoveLabel(ctx, a.Repo, a.Number, l); err != nil { // writeback:solicited the PR carries the opt-in release-when-green label
 			logger.Warn("release-when-green: hold label removal failed; will retry next pass",
 				"repo", a.Repo, "pr", a.Number, "label", l, "error", err)
 			return
@@ -241,11 +241,11 @@ func releaseGreenHold(ctx context.Context, a stalehold.Action, writer forge.Issu
 	if len(a.HoldLabels) > 0 {
 		// Said once, on the pass that removed the hold: a retry that only
 		// removes the opt-in label has no hold left to report.
-		if err := writer.CreateIssueComment(ctx, a.Repo, a.Number, staleHoldReleaseComment(a)); err != nil {
+		if err := writer.CreateIssueComment(ctx, a.Repo, a.Number, staleHoldReleaseComment(a)); err != nil { // writeback:solicited the PR carries the opt-in release-when-green label
 			logger.Warn("release-when-green: comment failed", "repo", a.Repo, "pr", a.Number, "error", err)
 		}
 	}
-	if err := remover.RemoveLabel(ctx, a.Repo, a.Number, a.ReleaseLabel); err != nil {
+	if err := remover.RemoveLabel(ctx, a.Repo, a.Number, a.ReleaseLabel); err != nil { // writeback:solicited the PR carries the opt-in release-when-green label
 		logger.Warn("release-when-green: opt-in label removal failed; will retry next pass",
 			"repo", a.Repo, "pr", a.Number, "label", a.ReleaseLabel, "error", err)
 		return

@@ -249,6 +249,9 @@ debug.pprof_addr # loopback-only pprof bind address, operator/debug knob, not a 
 dedupe.advisory_autoclose # advisory-checklist sweep; yaml-only (#15754)
 deployment.runtime # set via HIVE_DEPLOYMENT_RUNTIME env var or auto-detected, not a Settings control (#14072)
 duplicate_sweep.bot_authors[] # TODO #11854
+escalation.release_when_green_label # stale-hold opt-in release label; yaml/env only, Settings control pending (#19839)
+escalation.stale_hold_after # stale-hold threshold; yaml or HIVE_STALE_HOLD_AFTER, Settings control pending (#19839)
+escalation.stale_hold_labels[] # stale-hold watched labels; yaml-only, Settings control pending (#19839)
 evidence.complexity.enabled # TODO #11854
 evidence.complexity.static_analysis # TODO #11854
 forgejo.integration.audiences.<key> # Forgejo JWT signer setup is yaml-only for now; see docs/forge-app-setup.md (#19679)

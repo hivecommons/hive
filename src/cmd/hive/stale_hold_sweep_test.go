@@ -62,7 +62,7 @@ func greenHeldPR(labels ...string) github.PullRequest {
 	return github.PullRequest{Repo: "widgets", Number: staleHoldTestNumber, HeadSHA: staleHoldTestHead, Labels: labels, CIStatus: "success"}
 }
 
-func heldActionable(prs ...github.PullRequest) *github.ActionableResult {
+func staleHoldActionable(prs ...github.PullRequest) *github.ActionableResult {
 	a := &github.ActionableResult{}
 	a.PRs.Held = prs
 	return a
@@ -115,7 +115,7 @@ func TestRunStaleHoldSweepRaisesOnceWithBlockedJourney(t *testing.T) {
 	rec := &fakeLifecycleRecorder{store: timeline.NewStore()}
 	var sent []sentNotice
 	ctx := context.Background()
-	act := heldActionable(greenHeldPR("do-not-merge/hold"))
+	act := staleHoldActionable(greenHeldPR("do-not-merge/hold"))
 
 	runStaleHoldSweep(ctx, cfg, act, staleHoldTestDeps(w, store, rec, &sent, staleHoldTestStart), discardLogger())
 	if len(sent) != 0 {
@@ -154,7 +154,7 @@ func TestRunStaleHoldSweepHonoursTheConfiguredThreshold(t *testing.T) {
 	cfg.Escalation.StaleHoldAfter = "off"
 	store := stalehold.Load("")
 	var sent []sentNotice
-	act := heldActionable(greenHeldPR("hold"))
+	act := staleHoldActionable(greenHeldPR("hold"))
 	for _, at := range []time.Time{staleHoldTestStart, staleHoldTestStart.Add(100 * config.DefaultStaleHoldAfter)} {
 		runStaleHoldSweep(context.Background(), cfg, act, staleHoldTestDeps(&fakeHoldWriter{}, store, nil, &sent, at), discardLogger())
 	}
@@ -187,7 +187,7 @@ func TestRunStaleHoldSweepReleasesOnlyOptedInGreenHolds(t *testing.T) {
 	// Opt-in but red: nothing is removed.
 	red := greenHeldPR("do-not-merge/hold", config.DefaultReleaseWhenGreenLabel)
 	red.CIStatus = "failure"
-	runStaleHoldSweep(ctx, cfg, heldActionable(red), staleHoldTestDeps(w, store, nil, &sent, staleHoldTestStart), discardLogger())
+	runStaleHoldSweep(ctx, cfg, staleHoldActionable(red), staleHoldTestDeps(w, store, nil, &sent, staleHoldTestStart), discardLogger())
 	if len(w.removed) != 0 {
 		t.Fatalf("released while red: %v", w.removed)
 	}
@@ -195,7 +195,7 @@ func TestRunStaleHoldSweepReleasesOnlyOptedInGreenHolds(t *testing.T) {
 	// Green: the hold labels come off first, then the opt-in label, with one
 	// comment. Nothing is added.
 	pr := greenHeldPR("do-not-merge/hold", "size/L", config.DefaultReleaseWhenGreenLabel, "hold")
-	runStaleHoldSweep(ctx, cfg, heldActionable(pr), staleHoldTestDeps(w, store, nil, &sent, staleHoldTestStart), discardLogger())
+	runStaleHoldSweep(ctx, cfg, staleHoldActionable(pr), staleHoldTestDeps(w, store, nil, &sent, staleHoldTestStart), discardLogger())
 	want := []string{"do-not-merge/hold", "hold", config.DefaultReleaseWhenGreenLabel}
 	if strings.Join(w.removed, ",") != strings.Join(want, ",") {
 		t.Fatalf("removed %v, want %v", w.removed, want)
@@ -214,7 +214,7 @@ func TestRunStaleHoldSweepReleasesOnlyOptedInGreenHolds(t *testing.T) {
 	// Only the opt-in label left (an earlier pass removed the hold): it is
 	// removed without a second comment.
 	w2 := &fakeHoldWriter{}
-	runStaleHoldSweep(ctx, cfg, heldActionable(greenHeldPR(config.DefaultReleaseWhenGreenLabel)), staleHoldTestDeps(w2, store, nil, &sent, staleHoldTestStart), discardLogger())
+	runStaleHoldSweep(ctx, cfg, staleHoldActionable(greenHeldPR(config.DefaultReleaseWhenGreenLabel)), staleHoldTestDeps(w2, store, nil, &sent, staleHoldTestStart), discardLogger())
 	if strings.Join(w2.removed, ",") != config.DefaultReleaseWhenGreenLabel || len(w2.comments) != 0 {
 		t.Fatalf("retry: removed=%v comments=%v", w2.removed, w2.comments)
 	}
@@ -222,7 +222,7 @@ func TestRunStaleHoldSweepReleasesOnlyOptedInGreenHolds(t *testing.T) {
 	// Releases switched off: the opt-in label is just another label.
 	cfg.Escalation.ReleaseWhenGreenLabel = "off"
 	w3 := &fakeHoldWriter{}
-	runStaleHoldSweep(ctx, cfg, heldActionable(pr), staleHoldTestDeps(w3, store, nil, &sent, staleHoldTestStart), discardLogger())
+	runStaleHoldSweep(ctx, cfg, staleHoldActionable(pr), staleHoldTestDeps(w3, store, nil, &sent, staleHoldTestStart), discardLogger())
 	if len(w3.removed) != 0 {
 		t.Fatalf("released with releases off: %v", w3.removed)
 	}
@@ -237,14 +237,14 @@ func TestReleaseGreenHoldStopsOnFailure(t *testing.T) {
 	// The hold label cannot be removed: no comment, and the opt-in label
 	// stays so the next pass retries.
 	w := &fakeHoldWriter{failLabel: "do-not-merge/hold"}
-	runStaleHoldSweep(ctx, cfg, heldActionable(pr), staleHoldTestDeps(w, stalehold.Load(""), nil, &sent, staleHoldTestStart), discardLogger())
+	runStaleHoldSweep(ctx, cfg, staleHoldActionable(pr), staleHoldTestDeps(w, stalehold.Load(""), nil, &sent, staleHoldTestStart), discardLogger())
 	if len(w.removed) != 0 || len(w.comments) != 0 {
 		t.Fatalf("partial release: removed=%v comments=%v", w.removed, w.comments)
 	}
 
 	// The opt-in label cannot be removed: the hold is already gone and said so.
 	w = &fakeHoldWriter{failLabel: config.DefaultReleaseWhenGreenLabel}
-	runStaleHoldSweep(ctx, cfg, heldActionable(pr), staleHoldTestDeps(w, stalehold.Load(""), nil, &sent, staleHoldTestStart), discardLogger())
+	runStaleHoldSweep(ctx, cfg, staleHoldActionable(pr), staleHoldTestDeps(w, stalehold.Load(""), nil, &sent, staleHoldTestStart), discardLogger())
 	if strings.Join(w.removed, ",") != "do-not-merge/hold" || len(w.comments) != 1 {
 		t.Fatalf("opt-in failure: removed=%v comments=%v", w.removed, w.comments)
 	}
@@ -253,7 +253,7 @@ func TestReleaseGreenHoldStopsOnFailure(t *testing.T) {
 	c := &commentOnlyWriter{}
 	deps := staleHoldTestDeps(nil, stalehold.Load(""), nil, &sent, staleHoldTestStart)
 	deps.writer = c
-	runStaleHoldSweep(ctx, cfg, heldActionable(pr), deps, discardLogger())
+	runStaleHoldSweep(ctx, cfg, staleHoldActionable(pr), deps, discardLogger())
 	if c.comments != 0 {
 		t.Fatalf("comment-only writer commented %d times", c.comments)
 	}
@@ -262,12 +262,12 @@ func TestReleaseGreenHoldStopsOnFailure(t *testing.T) {
 func TestRunStaleHoldSweepGuards(t *testing.T) {
 	var sent []sentNotice
 	deps := staleHoldTestDeps(&fakeHoldWriter{}, nil, nil, &sent, staleHoldTestStart)
-	runStaleHoldSweep(context.Background(), escalationTestConfig(), heldActionable(greenHeldPR("hold")), deps, discardLogger())
+	runStaleHoldSweep(context.Background(), escalationTestConfig(), staleHoldActionable(greenHeldPR("hold")), deps, discardLogger())
 	deps.store = stalehold.Load("")
 	runStaleHoldSweep(context.Background(), escalationTestConfig(), nil, deps, discardLogger())
 	// A zero clock and a nil config fall back to now and the defaults.
 	deps.now = time.Time{}
-	runStaleHoldSweep(context.Background(), nil, heldActionable(greenHeldPR("hold")), deps, discardLogger())
+	runStaleHoldSweep(context.Background(), nil, staleHoldActionable(greenHeldPR("hold")), deps, discardLogger())
 	if _, ok := deps.store.Entry("widgets", staleHoldTestNumber); !ok {
 		t.Fatal("nil config: held PR not tracked")
 	}
