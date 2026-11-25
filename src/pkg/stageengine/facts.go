@@ -301,6 +301,24 @@ type PRPassFacts struct {
 	// Prior is the store record before this pass (the normalized-fixing
 	// guard reads Stage, Reason and ActivityHead).
 	Prior *PriorStage
+	// SentinelAlert says the PR wears the configured sentinel alert label;
+	// AuthorKindByRegistry that AuthorKind is Clanker only through the
+	// contributor registry (authorkind.RuleRegistry), a read that can fail;
+	// HeadChecksGreen that the pass read the head's check digest and it
+	// reports checks, none red, pending or missing, DCO not failing.
+	// SplitByAuthorKind sends an agent's fork-workflow-update back to it
+	// only when the head is green, no alert stands and the kind does not
+	// rest on the registry. AuthorUpdateLapsed says that branch update went
+	// unpushed for the 072 dwell spent at 072 on this head, so the PR goes
+	// back to the 085 hand-off (AuthorUpdateLapsedStage).
+	//
+	// These four are left out of JSON, and so of stageWriteEvidence: the
+	// flap guard's evidence stays what it was for every PR, and a sentinel
+	// label or a check digest is not evidence there today.
+	SentinelAlert        bool `json:"-"`
+	AuthorKindByRegistry bool `json:"-"`
+	HeadChecksGreen      bool `json:"-"`
+	AuthorUpdateLapsed   bool `json:"-"`
 	// Route is the human-route evidence (stagelabels.RouteHuman's input)
 	// when the resolved opinion was a hand-off (085/090); nil otherwise.
 	Route *stagelabels.Evidence
@@ -390,6 +408,11 @@ type PriorStage struct {
 	// AdmittedHead is the head a trusted person admitted (`/hive decision
 	// approve`); it releases a same-head 085 hold (#16974).
 	AdmittedHead string
+	// AuthorUpdateOwedHead is the head the record's owed branch-update
+	// clock is set for (stagelabels.Record.AuthorUpdateOwedHead): an
+	// agent's fork-workflow-update head already sent back at 072, which a
+	// pass that lost the verdict keeps there (SplitByAuthorKind).
+	AuthorUpdateOwedHead string
 }
 
 // ReviewFacts is THE "what counts as reviewed" fact (ADR-0025 Decision §6).

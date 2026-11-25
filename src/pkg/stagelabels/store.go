@@ -446,6 +446,14 @@ type Record struct {
 	// ForkRehomeRefusedHead is the head of a fork PR the hive declined to
 	// move into a branch of the base repository (supersede / re-home).
 	ForkRehomeRefusedHead string `json:"fork_rehome_refused_head,omitempty"`
+	// AuthorUpdateOwedHead / AuthorUpdateOwedAt record the head of an
+	// agent author's fork PR that was sent back at 072 for a branch update
+	// the App could not push (fork-workflow-update), and when that stage was
+	// written for that head. The clock is cleared when the head leaves 072
+	// for anything else and restarts on a new head; after the 072 dwell the
+	// PR goes back to the 085 hand-off.
+	AuthorUpdateOwedHead string    `json:"author_update_owed_head,omitempty"`
+	AuthorUpdateOwedAt   time.Time `json:"author_update_owed_at,omitzero"`
 	// TrustAnnouncedAt is set on a TrustPromotionKey record when the
 	// contributor lane posted its one "now trusted for contributor-lane
 	// merging in this hive" comment for the author
@@ -2013,6 +2021,45 @@ func (s *Store) MarkForkRehomeRefused(key, head string) {
 		return
 	}
 	r.ForkRehomeRefusedHead = head
+	s.items[key] = r
+	s.dirty = true
+}
+
+// AuthorUpdateOwedSince is when head was first sent back to its agent
+// author for a branch update the App could not push, or zero when the
+// record holds no such note for head.
+func (r Record) AuthorUpdateOwedSince(head string) time.Time {
+	if head == "" || r.AuthorUpdateOwedHead != head {
+		return time.Time{}
+	}
+	return r.AuthorUpdateOwedAt
+}
+
+// NoteAuthorUpdateOwed records that head was sent back to its agent author
+// for a branch update the App could not push. The first note for a head
+// keeps its time; a new head replaces it.
+func (s *Store) NoteAuthorUpdateOwed(key, head string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || r.AuthorUpdateOwedHead == head {
+		return
+	}
+	r.AuthorUpdateOwedHead, r.AuthorUpdateOwedAt = head, now
+	s.items[key] = r
+	s.dirty = true
+}
+
+// ClearAuthorUpdateOwed drops the owed branch-update clock: the head left
+// 072 for that reason, so a later return starts a fresh clock.
+func (s *Store) ClearAuthorUpdateOwed(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || (r.AuthorUpdateOwedHead == "" && r.AuthorUpdateOwedAt.IsZero()) {
+		return
+	}
+	r.AuthorUpdateOwedHead, r.AuthorUpdateOwedAt = "", time.Time{}
 	s.items[key] = r
 	s.dirty = true
 }
