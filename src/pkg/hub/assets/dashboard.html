@@ -14291,7 +14291,10 @@
       var location = String((u && u.profile_location) || '').trim();
       if (!affiliation && !repo && !activity && !bio && !location) return '<span class="text-muted">—</span>';
       var source = String((u && u.affiliation_source) || '').trim();
-      var tips = [source ? 'Affiliation source: ' + source : 'Likely affiliation from GitHub/GHE profile'];
+      var confidence = String((u && u.affiliation_confidence) || '').trim();
+      var tips = [source ? 'Affiliation source: ' + source + (confidence ? ' (' + confidence + ' confidence)' : '') : 'Likely affiliation from GitHub/GHE profile'];
+      var cncf = Number((u && u.cncf_contributions) || 0);
+      if (cncf > 0) tips.push('CNCF contributions (devstats): ' + cncf);
       if (activity) tips.push('Public GitHub activity: ' + activity);
       if (bio) tips.push('Bio: ' + bio);
       if (location) tips.push('Location: ' + location);

@@ -42,9 +42,14 @@ type topRepoAssociation struct {
 	TopRepoURL        string
 	Affiliation       string
 	AffiliationSource string
-	ProfileBio        string
-	ProfileLocation   string
-	PublicActivity    string
+	// AffiliationConfidence is colony's confidence for a colony:<provider>
+	// source ("high", "medium" or "low"); empty for every other source.
+	AffiliationConfidence string
+	ProfileBio            string
+	ProfileLocation       string
+	PublicActivity        string
+	// CNCFContributions is the colony devstats all-time CNCF total.
+	CNCFContributions int
 }
 
 type topRepoResolver struct {
@@ -57,17 +62,25 @@ func userTopRepoAssociation(u *SaaSUser, _ []RegistryEntry) topRepoAssociation {
 		return topRepoAssociation{}
 	}
 	assoc := topRepoAssociation{
-		TopRepo:           strings.TrimSpace(u.TopRepo),
-		TopRepoURL:        strings.TrimSpace(u.TopRepoURL),
-		Affiliation:       strings.TrimSpace(u.Affiliation),
-		AffiliationSource: strings.TrimSpace(u.AffiliationSource),
-		ProfileBio:        strings.TrimSpace(u.ProfileBio),
-		ProfileLocation:   strings.TrimSpace(u.ProfileLocation),
-		PublicActivity:    strings.TrimSpace(u.PublicActivity),
+		TopRepo:               strings.TrimSpace(u.TopRepo),
+		TopRepoURL:            strings.TrimSpace(u.TopRepoURL),
+		Affiliation:           strings.TrimSpace(u.Affiliation),
+		AffiliationSource:     strings.TrimSpace(u.AffiliationSource),
+		AffiliationConfidence: strings.TrimSpace(u.AffiliationConfidence),
+		ProfileBio:            strings.TrimSpace(u.ProfileBio),
+		ProfileLocation:       strings.TrimSpace(u.ProfileLocation),
+		PublicActivity:        strings.TrimSpace(u.PublicActivity),
+		CNCFContributions:     u.CNCFContributions,
 	}
 	if assoc.Affiliation == "" && assoc.TopRepo != "" {
 		assoc.Affiliation = repoOwner(assoc.TopRepo)
 		assoc.AffiliationSource = affiliationSourceContributions
+	}
+	// A value set on the hub by the person or an admin outranks anything a
+	// refresh derived (affiliation_colony.go). Applied on read, so the
+	// refresh can never overwrite it.
+	if org, source, ok := hubSetAffiliation(u); ok {
+		assoc.Affiliation, assoc.AffiliationSource, assoc.AffiliationConfidence = org, source, ""
 	}
 	return assoc
 }
@@ -127,7 +140,9 @@ func topRepoRefreshDue(u *SaaSUser, now time.Time) bool {
 
 func (s *HubServer) refreshUserTopRepo(ctx context.Context, u *SaaSUser, now time.Time) error {
 	resolver := topRepoResolver{client: hubGitHubHTTPClient()}
-	assoc, err := resolver.resolve(ctx, s.topRepoProfile(u))
+	profile := s.topRepoProfile(u)
+	assoc, err := resolver.resolve(ctx, profile)
+	assoc, err = mergeColonyAffiliation(assoc, err, s.colonyAffiliationLookup(profile, now))
 	if err != nil {
 		if errors.Is(err, errTopRepoNoData) {
 			_ = saveUserTopRepoCache(u, topRepoAssociation{}, now)
@@ -152,6 +167,8 @@ func saveUserTopRepoCache(u *SaaSUser, assoc topRepoAssociation, now time.Time) 
 	latest.TopRepoURL = assoc.TopRepoURL
 	latest.Affiliation = assoc.Affiliation
 	latest.AffiliationSource = assoc.AffiliationSource
+	latest.AffiliationConfidence = assoc.AffiliationConfidence
+	latest.CNCFContributions = assoc.CNCFContributions
 	latest.ProfileBio = assoc.ProfileBio
 	latest.ProfileLocation = assoc.ProfileLocation
 	latest.PublicActivity = assoc.PublicActivity
