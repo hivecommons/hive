@@ -141,9 +141,15 @@ func TestKeysAreChecked(t *testing.T) {
 	if _, err := s.Save(m, "", t0); !errors.Is(err, ErrBadName) {
 		t.Fatal(err)
 	}
+	if _, err := s.SaveNextVersion(m, "", t0); !errors.Is(err, ErrBadName) {
+		t.Fatal(err)
+	}
 	m = techdocs(t)
 	m.Spec.Meta.Version = "1/../x"
 	if _, err := s.Save(m, "", t0); !errors.Is(err, ErrBadVersion) {
+		t.Fatal(err)
+	}
+	if _, err := s.SaveImportedVersion(m, "", t0); !errors.Is(err, ErrBadVersion) {
 		t.Fatal(err)
 	}
 	if _, _, err := s.Get("Bad Name", "1"); !errors.Is(err, ErrBadName) {
@@ -238,6 +244,12 @@ func TestUnreadableModelAndIndex(t *testing.T) {
 	}
 	if _, err := s.Save(techdocs(t), "", t0); err == nil {
 		t.Fatal("saved over a corrupt index")
+	}
+	if _, err := s.SaveNextVersion(techdocs(t), "", t0); err == nil {
+		t.Fatal("saved the next version over a corrupt index")
+	}
+	if _, err := s.NextVersion("cncf-techdocs"); err == nil {
+		t.Fatal("allocated a version from a corrupt index")
 	}
 	if err := s.Delete("cncf-techdocs", "1"); err == nil {
 		t.Fatal("deleted over a corrupt index")
@@ -355,13 +367,64 @@ func TestSaveNextVersionCountsUnindexedFile(t *testing.T) {
 	}
 }
 
+func TestSaveImportedVersionChoosesFreeSlot(t *testing.T) {
+	for _, tc := range []struct {
+		name, requested, want string
+		unindexed             bool
+	}{
+		{name: "free requested version", requested: "release-2", want: "release-2"},
+		{name: "indexed collision", requested: "release-1", want: "1"},
+		{name: "unindexed collision", requested: "release-1", want: "1", unindexed: true},
+		{name: "no requested version", want: "1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := Open(t.TempDir())
+			original := techdocs(t)
+			original.Spec.Meta.Version = "release-1"
+			if _, err := s.Save(original, "original", t0); err != nil {
+				t.Fatal(err)
+			}
+			if tc.unindexed {
+				if err := os.Remove(filepath.Join(s.dir(), IndexFile)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			draft := *original
+			draft.Spec.Meta.Version = tc.requested
+			draft.Spec.Meta.Description = "imported draft"
+			saved, err := s.SaveImportedVersion(&draft, "importer", t0)
+			if err != nil || saved.Version != tc.want || draft.Spec.Meta.Version != tc.requested {
+				t.Fatalf("saved %+v with input version %q: %v", saved, draft.Spec.Meta.Version, err)
+			}
+			got, _, err := s.Get(draft.Metadata.Name, tc.want)
+			if err != nil || got.Spec.Meta.Version != tc.want || got.Spec.Meta.Description != draft.Spec.Meta.Description {
+				t.Fatalf("imported model was not persisted at version %s: %v", tc.want, err)
+			}
+			prior, _, err := s.Get(original.Metadata.Name, original.Spec.Meta.Version)
+			if err != nil || prior.Hash() != original.Hash() {
+				t.Fatalf("existing model was not preserved: %v", err)
+			}
+		})
+	}
+}
+
 func TestNextVersionIgnoresNumericDirectoriesExceptAtCandidate(t *testing.T) {
 	s := Open(t.TempDir())
-	name := "draft"
+	m := techdocs(t)
+	name := m.Metadata.Name
 	for _, blocked := range []string{"1", "99999999999999999999999999999999"} {
 		if err := os.MkdirAll(s.modelPath(name, blocked), 0o755); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(s.modelPath(name, "99")+".tmp", []byte("staged"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Save(m, "", t0); err == nil {
+		t.Fatal("saved over a directory at the requested model path")
+	}
+	if _, _, err := s.Get(name, "1"); err == nil {
+		t.Fatal("read a directory as a workflow model")
 	}
 	if next, err := s.NextVersion(name); err != nil || next != "2" {
 		t.Fatalf("next version = %q, %v; want 2", next, err)
@@ -398,17 +461,27 @@ func TestSaveNextVersionWideDecimals(t *testing.T) {
 	}
 }
 
-func TestSaveIndexStageFailureKeepsPreviousState(t *testing.T) {
+func TestSaveStageFailuresKeepPreviousState(t *testing.T) {
 	s := Open(t.TempDir())
 	m := techdocs(t)
 	original, err := s.Save(m, "original", t0)
 	if err != nil {
 		t.Fatal(err)
 	}
+	m.Spec.Meta.Description = "updated draft"
+	modelStage := s.modelPath(m.Metadata.Name, original.Version) + ".tmp"
+	if err := os.Mkdir(modelStage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Save(m, "update", t0); err == nil {
+		t.Fatal("explicit update succeeded with blocked model write")
+	}
+	if err := os.Remove(modelStage); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Mkdir(filepath.Join(s.dir(), IndexFile+".tmp"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	m.Spec.Meta.Description = "updated draft"
 	if _, err := s.Save(m, "update", t0); err == nil {
 		t.Fatal("explicit update succeeded with blocked index write")
 	}
@@ -421,6 +494,31 @@ func TestSaveIndexStageFailureKeepsPreviousState(t *testing.T) {
 	}
 	if _, _, err := s.Get(m.Metadata.Name, "2"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("failed automatic save became visible: %v", err)
+	}
+}
+
+func TestCopyModelBackupPreservesContentsAndMode(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "draft.json")
+	const mode = 0o640
+	if err := os.WriteFile(source, []byte("original"), mode); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := copyModelBackup(source, dir, mode); err != nil {
+		t.Fatal(err)
+	}
+	backup := filepath.Join(dir, modelBackupFile)
+	if got, err := os.ReadFile(backup); err != nil || string(got) != "original" {
+		t.Fatalf("backup = %q, %v", got, err)
+	}
+	if info, err := os.Stat(backup); err != nil || info.Mode().Perm() != mode {
+		t.Fatalf("backup mode: %v, %v", info, err)
+	}
+	if err := copyModelBackup(source, filepath.Join(dir, "missing"), mode); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("copy into missing directory: %v", err)
+	}
+	if err := copyModelBackup(filepath.Join(dir, "missing.json"), dir, mode); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("copy missing model: %v", err)
 	}
 }
 

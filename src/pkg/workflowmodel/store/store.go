@@ -400,6 +400,8 @@ func (s *Store) saveModelAndIndex(path string, model []byte, idx []Entry) error 
 	return nil
 }
 
+const modelBackupFile = "model"
+
 // backupModel preserves the original inode when hard links are available.
 func backupModel(path string) (string, error) {
 	info, err := os.Lstat(path)
@@ -416,31 +418,33 @@ func backupModel(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	const backupName = "model"
-	backup := filepath.Join(dir, backupName)
+	backup := filepath.Join(dir, modelBackupFile)
 	if err := os.Link(path, backup); err == nil {
 		return backup, nil
 	}
 	// Some filesystems lack hard links. Keep a copy with the original mode.
-	backupDir, err := os.OpenRoot(dir)
-	if err != nil {
-		os.Remove(dir)
-		return "", err
-	}
-	previous, err := os.ReadFile(path)
-	if err == nil {
-		err = backupDir.WriteFile(backupName, previous, 0o600)
-	}
-	if err == nil {
-		err = backupDir.Chmod(backupName, info.Mode())
-	}
-	_ = backupDir.Close()
-	if err != nil {
+	if err := copyModelBackup(path, dir, info.Mode()); err != nil {
 		os.Remove(backup)
 		os.Remove(dir)
 		return "", err
 	}
 	return backup, nil
+}
+
+func copyModelBackup(path, dir string, mode os.FileMode) error {
+	backupDir, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer backupDir.Close()
+	previous, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err := backupDir.WriteFile(modelBackupFile, previous, 0o600); err != nil {
+		return err
+	}
+	return backupDir.Chmod(modelBackupFile, mode)
 }
 
 // Delete removes one version. Whether a repository is bound to it is the
