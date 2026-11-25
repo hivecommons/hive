@@ -1168,6 +1168,14 @@ func resolveStage(list []stageObservation) (stageVerdict, stagelabels.Role, stag
 // source saying the author runs a registered relay here); it ORs with the
 // policy's RelayKnown hook.
 func (c *Engine) stageAuthorKind(obs stageObservation, policy StageLabelPolicy, relayKnown bool) authorkind.Kind {
+	kind, _ := c.stageAuthorKindRule(obs, policy, relayKnown)
+	return kind
+}
+
+// stageAuthorKindRule is stageAuthorKind with the authorkind rule that
+// decided it (authorkind.Explain), so the pass can tell a kind read from
+// the PR itself from one only the contributor registry supplied.
+func (c *Engine) stageAuthorKindRule(obs stageObservation, policy StageLabelPolicy, relayKnown bool) (authorkind.Kind, string) {
 	appLogin := c.transport.AppBotLogin()
 	stray := strayOwnershipLabels(obs.Labels, obs.Author, appLogin, policy.HiveID)
 	labels := obs.Labels
@@ -1189,7 +1197,39 @@ func (c *Engine) stageAuthorKind(obs stageObservation, policy StageLabelPolicy, 
 	}
 	kind, rule := authorkind.Explain(in)
 	c.debug("stage labels: author kind", "repo", obs.Display, "pr", obs.Number, "author", obs.Author, "kind", kind.String(), "rule", rule)
-	return kind
+	return kind, rule
+}
+
+// headChecksGreen reports whether the head's check digest (headChecks, the
+// one the human route reads) is known and reports checks, none of them
+// red, pending or missing, with no failing DCO context: the evidence on
+// which the human route would park an approved fork-workflow-update at 085
+// for the decision cause alone.
+func (c *Engine) headChecksGreen(ctx context.Context, tracker *StageTracker, key string, obs stageObservation, now time.Time) bool {
+	summary, known := c.headChecks(ctx, tracker, key, obs, now)
+	return known && summary.Total > 0 && len(summary.Red) == 0 && summary.Pending == 0 && len(summary.MissingRequired) == 0 && summary.DCO >= 0
+}
+
+// authorUpdateLapsed reports whether head, sent back to its agent author at
+// 072 for a branch update the App could not push, has spent the 072 dwell
+// there with no fork escalation armed. When the adoption pass declined
+// the fork and the author was nudged on this head, escalateUnadoptableFork
+// hands the PR on after the same dwell with its own note, so this fallback
+// stands aside. A zero 072 dwell (never stalled) still ends: the stage
+// table's dwell applies, so the PR never waits on its author forever.
+func authorUpdateLapsed(rec stagelabels.Record, head string, policy StageLabelPolicy, now time.Time) bool {
+	since := rec.AuthorUpdateOwedSince(head)
+	if since.IsZero() {
+		return false
+	}
+	wait := stagelabels.Dwell(stagelabels.ReturnedToContributor, policy.Dwell)
+	if wait > 0 && rec.ForkRehomeRefused(head) && !rec.AdoptionLive(head) && rec.NudgeHead == head && !rec.NudgeStart().IsZero() {
+		return false
+	}
+	if wait <= 0 {
+		wait = stagelabels.ReturnedToContributor.Dwell()
+	}
+	return wait > 0 && !now.Before(since.Add(wait))
 }
 
 // missingStageLanes names the lanes that evaluate every PR of displayRepo
@@ -1298,12 +1338,31 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				continue
 			}
 		}
-		obs.AuthorKind = c.stageAuthorKind(obs, policy, false)
-		if verdict.Stage == stagelabels.NeedsAuthor || verdict.Stage == stagelabels.ReturnedToContributor {
-			// classifyStage ran before the author kind was known: split
-			// the author-blocked outcome by kind now (human 071 / clanker 072).
-			verdict.Stage = fixingStage(obs)
+		kind, kindRule := c.stageAuthorKindRule(obs, policy, false)
+		obs.AuthorKind = kind
+		// pass is what this pass learns past resolveStage; it rides on the
+		// Facts so the engine's DerivePR reproduces the stage written here.
+		pass := &stageengine.PRPassFacts{
+			AuthorIsApp:          normalizeBotLogin(obs.Author) == normalizeBotLogin(c.transport.AppBotLogin()),
+			SentinelAlert:        c.sentinelLabelPresent(obs.Labels),
+			AuthorKindByRegistry: kind == authorkind.Clanker && kindRule == authorkind.RuleRegistry,
 		}
+		// The record this pass starts from; the split reads it to keep an
+		// agent's 072 on a pass that lost the head's verdict.
+		prevRec, hadPrev := store.Get(key)
+		if hadPrev {
+			pass.Prior = &stageengine.PriorStage{Stage: prevRec.Stage, Reason: prevRec.Reason, ActivityHead: prevRec.ActivityHead, AdmittedHead: prevRec.AdmittedHead, AuthorUpdateOwedHead: prevRec.AuthorUpdateOwedHead}
+		}
+		if !verdict.Terminal && verdict.Stage == stagelabels.NeedsDecision && obs.Reason == autoMergeReasonForkWorkflowUpdate && kind == authorkind.Clanker && obs.Lane != stageLaneSelf {
+			// The agent route needs a green head; the digest is the one the
+			// human route reads for the same PR (cached per head).
+			pass.HeadChecksGreen = c.headChecksGreen(ctx, tracker, key, obs, now)
+		}
+		// classifyStage ran before the author kind was known: split the
+		// author-blocked outcome by kind now (human 071 / clanker 072), and
+		// send an agent author's approved, green fork-workflow-update back to
+		// it (072).
+		verdict = stageengine.SplitByAuthorKind(verdict, obs, pass)
 		current, hadCurrent := store.Get(key)
 		owner, ownerKnown := tracker.owner(key)
 		if stageOwnerHolds(owner, ownerKnown, list, obs, verdict, current.Stage, hadCurrent, now) {
@@ -1315,12 +1374,21 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		if verdict.Reason != "" {
 			obs.Reason = verdict.Reason
 		}
-		prevRec, hadPrev := store.Get(key)
-		// pass is what this pass learns past resolveStage; it rides on the
-		// Facts so the engine's DerivePR reproduces the stage written here.
-		pass := &stageengine.PRPassFacts{AuthorIsApp: normalizeBotLogin(obs.Author) == normalizeBotLogin(c.transport.AppBotLogin())}
-		if hadPrev {
-			pass.Prior = &stageengine.PriorStage{Stage: prevRec.Stage, Reason: prevRec.Reason, ActivityHead: prevRec.ActivityHead, AdmittedHead: prevRec.AdmittedHead}
+		// An agent author owes the branch update GitHub refused the App on
+		// its fork; the clock is kept below once the record exists.
+		authorUpdateOwed := stageengine.AuthorUpdateOwed(verdict)
+		if authorUpdateOwed && hadPrev && authorUpdateLapsed(prevRec, obs.HeadSHA, policy, now) {
+			// Nobody pushed the update on this head for the 072 dwell spent
+			// at 072, and no fork escalation is armed to hand it on
+			// (adoption or the nudge off, maintainer_policy, a person's
+			// claim): it goes back to the 085 hand-off, routed by the
+			// head's evidence like any fork-workflow-update.
+			if prevRec.Stage == stagelabels.ReturnedToContributor && prevRec.Reason == autoMergeReasonForkWorkflowUpdate {
+				// Logged once: on the pass that moves the stage off 072.
+				c.info("stage labels: agent fork PR still owes the branch update past the 072 dwell; handing it to a person", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "owed_since", prevRec.AuthorUpdateOwedSince(obs.HeadSHA))
+			}
+			verdict = stageengine.AuthorUpdateLapsedStage()
+			pass.AuthorUpdateLapsed = true
 		}
 		if replacement, ok := preserveNormalizedFixingStage(prevRec, hadPrev, obs, verdict); ok {
 			verdict = replacement
@@ -1736,6 +1804,22 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			// list "PRs returned to this contributor" from the store alone.
 			store.NoteAuthor(key, obs.Author)
 			store.NoteHold(key, obs.Hold)
+			// The owed clock is time at 072 for this reason on this head:
+			// it starts when that stage is written for the head, and any
+			// pass that sends the head elsewhere clears it, so the next
+			// return starts afresh. The one exception is the hand-off the
+			// lapse itself makes, which keeps it so the PR stays handed
+			// off. A pass that lost the head's verdict keeps 072 for a head
+			// already there (stageengine.SplitByAuthorKind), so it does
+			// not send it elsewhere; when it cannot (a new head, a red
+			// check) it is a pass like any other.
+			switch {
+			case pass.AuthorUpdateLapsed:
+			case authorUpdateOwed && verdict.Stage == stagelabels.ReturnedToContributor:
+				store.NoteAuthorUpdateOwed(key, obs.HeadSHA, now)
+			default:
+				store.ClearAuthorUpdateOwed(key)
+			}
 			// The head's trusted approval, for the Activity monitor's 085
 			// row (hivecommons/hive#18849 follow-up): the reason carries no
 			// approver there.

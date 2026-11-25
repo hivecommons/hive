@@ -250,9 +250,7 @@ func runStageGoldenWithFacts(in stageGoldenInput) (stageGoldenWant, Facts) {
 	obs.AuthorKind = authorkind.Kind(in.AuthorKind)
 	pass := &PRPassFacts{AuthorKind: obs.AuthorKind}
 	facts.PR.Pass = pass
-	if verdict.Stage == stagelabels.NeedsAuthor || verdict.Stage == stagelabels.ReturnedToContributor {
-		verdict.Stage = FixingStage(obs)
-	}
+	verdict = SplitByAuthorKind(verdict, obs, pass)
 	obs.LaneReason = obs.Reason
 	if verdict.Reason != "" {
 		obs.Reason = verdict.Reason

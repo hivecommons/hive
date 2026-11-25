@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v6.61.9)
+
+### Fixed
+
+- A reason that opens with a condition word (`but`, `only`, `however`, `once`, ...) on the `/hive decision approve` line (`/hive decision approve but rename the job first`) is still recorded as the approval but no longer releases the contributor lane's workflow-path fence or the owner approval; those wait for an unconditional approval.
+
 ## 2026-11-25 (v6.61.8)
 
 ### Fixed
