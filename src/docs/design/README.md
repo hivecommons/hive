@@ -31,6 +31,19 @@ that status is the thing to check before treating a page as current behaviour:
   agent context block, and the position on personal data of people who never
   signed up. Nothing leaves the hive.
 
+- [Colony as the customer-data backend](colony-customer-data-backend.md) -
+  **design only / proposed; phase 1 built.** Tracking issue
+  [#19851](https://github.com/hivecommons/hive/issues/19851): hivecommons/colony
+  grows an embedded store package (one schema for person, identities, facts
+  with source, confidence and rank, consent and tombstones) that the hub and
+  every spoke embed, not a service. Records the hub and own-hive trust domain
+  enforced on the hub by hive ID, the field mapping from the hub SaaSUser
+  record and spoke people.json, the precedence user > admin > hub-shared >
+  enrichment, the import, shadow and rollback migration, the provider
+  defaults (hub gitdm on, devstats off), the privacy table per flow, and how
+  customer data can shape a hive's issue priorities and roadmap without
+  leaving the hive.
+
 - [Customers: opt-in, consent-first import of hub-held person fields](customers-hub-consent.md) -
   **design only / decided.** Issue
   [#19088](https://github.com/hivecommons/hive/issues/19088): the person
