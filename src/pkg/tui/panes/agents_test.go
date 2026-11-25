@@ -114,6 +114,34 @@ func TestAgentsSelectionMovement(t *testing.T) {
 	assertSelected(0)
 }
 
+func TestAgentsSelectionFollowsAgentAcrossRefreshes(t *testing.T) {
+	scanner := agent("scanner")
+	quality := agent("quality")
+	scanner.DisplayName = "Shared label"
+	quality.DisplayName = scanner.DisplayName
+	reviewer := agent("reviewer")
+
+	p, _ := NewAgents().Update(AgentsMsg{Agents: []client.Agent{scanner, quality, reviewer}})
+	p, _ = p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+
+	for _, snapshot := range []struct {
+		agents []client.Agent
+		want   string
+	}{
+		{[]client.Agent{quality, scanner, reviewer}, "quality"},
+		{[]client.Agent{agent("new"), quality, scanner, reviewer}, "quality"},
+		{[]client.Agent{reviewer, scanner, quality}, "quality"},
+		{[]client.Agent{reviewer, scanner}, "scanner"},
+		{nil, ""},
+	} {
+		p, _ = p.Update(AgentsMsg{Agents: snapshot.agents})
+		name, _, ok := p.(Agents).SelectedAgent()
+		if name != snapshot.want || ok != (snapshot.want != "") {
+			t.Fatalf("SelectedAgent() = (%q, ok=%t) after refresh, want %q", name, ok, snapshot.want)
+		}
+	}
+}
+
 func TestAgentsSelectedAgentUsesDisplayedState(t *testing.T) {
 	next, _ := NewAgents().Update(AgentsMsg{
 		Agents: []client.Agent{
