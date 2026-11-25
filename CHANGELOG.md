@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v6.62.0)
+
+### Added
+
+- Hive and hive-hub images now carry the `org.opencontainers.image.source` label pointing at this repository, so Renovate and GitHub can link release notes, compare views, and the GHCR package to the source (#19801).
+
+### Fixed
+
+- A condition word anywhere on the `/hive decision approve` line (`/hive decision approve the pin bump, with the caveat that CI reruns`), not only right after the command, now keeps the contributor lane's workflow-path fence and the owner approval shut until an unconditional approval; `caveat` joins the condition words. The heuristic leans to holding: a wrong hold costs the merger one bare `/hive decision approve` on its own line, a wrong release merges a workflow change early.
+- An agent's fork PR that GitHub refused to update because the base changed `.github/workflows/` files (`fork-workflow-update`) now goes back to its author at `stage/072-returned-to-contributor` when the branch update is all that is owed, instead of waiting on a maintainer at `stage/085-needs-decision`. The Hive App cannot push workflow files to a fork, but the author's relay can push to its own fork branch: on [projectbluefin/utah-packages#1294](https://github.com/projectbluefin/utah-packages/pull/1294) the relay merged the base in and the PR recovered with no person, while [#1296](https://github.com/projectbluefin/utah-packages/pull/1296) and [#1298](https://github.com/projectbluefin/utah-packages/pull/1298), approved and green, sat at 085 all night with nothing sent to their authors. The route applies only when the head's reviewer verdict is known and approves it (or a trusted person approved a `requires_human` on the head), its checks read green, no fork guard was read for it, nothing else waits for a person (sentinel alert, hold-class label, `needs-human`, decision question, change request), and the author is an agent by the PR itself rather than only by the contributor registry. A pass that lost the verdict keeps a head that is already at 072 for the update on the same head there, so the label does not flip. Every other head, and every person's PR, keeps the hand-off it had, routed by the head's evidence as before. For the heads it sends to 072, and only those, the contributor nudge asks the relay to merge the base branch into its branch and push (or run `gh pr update-branch`), never to rebase, its comment posts even when the relay is offline or not registered, and its last reminder names the maintainer hand-off instead of an adoption the hive will not make; every other nudge is unchanged. An approved head the agent does not update returns to that hand-off once it has spent the 072 dwell at 072 for this reason on that head (any pass that sends it elsewhere, a brief not-green check read included, restarts the clock): as `adoption-stalled:fork-rehome-refused` with the update named when the hive declined to adopt the fork after nudging its author, otherwise as `fork-workflow-update`, placed by the head's evidence (085 with the usual entry comment on a head still approved and green). Display only: the activity monitor now captions every `fork-workflow-update` row in words, at 072 or 085, instead of the bare reason.
+
 ## 2026-11-25 (v6.61.9)
 
 ### Fixed

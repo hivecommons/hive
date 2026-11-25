@@ -1,1 +1,0 @@
-- Hive and hive-hub images now carry the `org.opencontainers.image.source` label pointing at this repository, so Renovate and GitHub can link release notes, compare views, and the GHCR package to the source (#19801).
