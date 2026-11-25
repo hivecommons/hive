@@ -822,6 +822,13 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				filtered[filterOperatorHold]++
 				return
 			}
+			// The live gate below refused this item moments ago (a hold, a
+			// lost triage label, a failed read): leave it out without
+			// another forge read until the refusal lapses.
+			if h.assignBlockedActive(itemKey, time.Now()) {
+				filtered[filterLiveGate]++
+				return
+			}
 			if h.isTaskInCooldownKey(itemKey) {
 				filtered[filterCooldown]++
 				return
@@ -913,6 +920,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			// next eval cycle, which closes that hole regardless of what the
 			// relay managed to report.
 			issueClaim, claimed := h.claimFromIssueMap(issue, time.Now())
+			reporter, reporterHuman, reporterAssociation := reporterFieldsFromIssueMap(issue)
 			decision := h.evaluateContributorNeutralAdmission(admissionSweep, contributorAdmissionCandidate{
 				repoFull:   repo.Full,
 				repoName:   repo.Name,
@@ -923,6 +931,10 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				issueClaim: issueClaim,
 				claimed:    claimed,
 				createdAt:  issueCreatedAtFromMap(issue),
+
+				author:            reporter,
+				authorIsHuman:     reporterHuman,
+				authorAssociation: reporterAssociation,
 			})
 			if !decision.admitted {
 				switch decision.reason {
@@ -974,6 +986,12 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 				case contributorAdmissionReasonLabelSkipped:
 					h.logger.Info("[contribute-ws] skip: issue has contribute skip label",
 						"repo", repo.Full, "number", number, "label", decision.skippedLabel)
+				case contributorAdmissionReasonHeld:
+					h.logger.Info("[contribute-ws] skip: issue is on hold",
+						"repo", repo.Full, "number", number)
+				case contributorAdmissionReasonAwaitingTriage:
+					h.logger.Info("[contribute-ws] skip: untrusted reporter's issue awaits triage",
+						"repo", repo.Full, "number", number)
 				// #3845: a declared dependency is not satisfied (or cannot be
 				// resolved), so this issue is not admissible work yet. Only THIS
 				// candidate is withheld — the scan continues and unrelated ready
@@ -1188,7 +1206,44 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		return false // equal keys → SliceStable preserves original scan order
 	})
 
-	chosen := ownFirst[0]
+	// Live gate (the hold-on-assign incident): the candidates above were
+	// judged on the cached status snapshot, which a maintainer's `hold` or a
+	// removed triage label can be ahead of. Read the chosen issue from the
+	// forge now — BEFORE the lease, the claim and the token mint — and move
+	// on to the next candidate when it refuses. A failed read refuses too:
+	// an unknown verdict is never permission to assign. Nothing has been
+	// committed yet, so a refusal needs no rollback. The reads run under
+	// selectMu so no other selection can reserve the item between the read
+	// and the claim; assignGatePassBudget bounds them.
+	gateCtx, gateCancel := context.WithTimeout(context.Background(), assignGatePassBudget)
+	defer gateCancel()
+	chosenIdx := -1
+	for i, cand := range ownFirst {
+		if i >= maxAssignGateCandidates {
+			break
+		}
+		reason, err := h.assignGateRefusal(gateCtx, cand.repoFull, cand.number, cand.ref)
+		if err == nil && reason == "" {
+			chosenIdx = i
+			break
+		}
+		filtered[filterLiveGate]++
+		if err != nil {
+			h.markAssignBlocked(cand.ref.Key(), time.Now(), assignGateErrorTTL)
+			h.logger.Warn("[contribute-ws] skip: live issue check failed; not assigning on an unknown verdict",
+				"repo", cand.repoFull, "number", cand.number, "error", err)
+			continue
+		}
+		h.markAssignBlocked(cand.ref.Key(), time.Now(), assignGateBlockedTTL)
+		h.logger.Info("[contribute-ws] skip: issue refused by the live check before assignment",
+			"repo", cand.repoFull, "number", cand.number, "reason", reason)
+	}
+	if chosenIdx < 0 {
+		msg := h.taskUnavailable(taskUnavailableNoMatchingWork)
+		msg.Filtered = filtered
+		return msg
+	}
+	chosen := ownFirst[chosenIdx]
 	if chosen.isOwn {
 		h.logger.Info("[contribute-ws] prioritizing contributor's own work (#2390)",
 			"username", ownUsername, "repo", chosen.repoFull, "number", chosen.number)
