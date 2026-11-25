@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/api/callback"
 	cruxconfig "github.com/hivecommons/hive/crux/config"
@@ -264,7 +265,7 @@ func (h *sidecarHost) Enabled() bool {
 	return m != nil && m.Enabled()
 }
 
-func (h *sidecarHost) MintAgentToken(agentName, tier string) (string, error) {
+func (h *sidecarHost) MintAgentToken(agentName string, tier agentmode.TokenTier) (string, error) {
 	h.mu.Lock()
 	m := h.mint
 	h.mu.Unlock()

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/github"
 )
@@ -59,7 +60,7 @@ func (b *boot) currentGitHubClient() *github.Client {
 // broker takes a pushbroker.TokenScoper interface, so a nil *AppAuth must be
 // left as a nil interface here rather than stored as a typed nil the minter's
 // nil check would miss.
-func appMinter(auth *github.AppAuth, tier string) pushbroker.GitHubAppMinter {
+func appMinter(auth *github.AppAuth, tier agentmode.TokenTier) pushbroker.GitHubAppMinter {
 	m := pushbroker.GitHubAppMinter{Tier: tier}
 	if auth != nil {
 		m.Auth = auth

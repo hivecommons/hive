@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -17,7 +18,7 @@ type syncedMinter struct {
 	calls int
 }
 
-func (s *syncedMinter) WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error {
+func (s *syncedMinter) WriteAgentToken(ctx context.Context, agentName string, tier agentmode.TokenTier, agentUID int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++

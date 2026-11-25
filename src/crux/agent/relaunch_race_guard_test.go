@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -33,7 +34,7 @@ func newBlockingMinter() *blockingMinter {
 	return &blockingMinter{entered: make(chan struct{}), release: make(chan struct{})}
 }
 
-func (b *blockingMinter) WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error {
+func (b *blockingMinter) WriteAgentToken(ctx context.Context, agentName string, tier agentmode.TokenTier, agentUID int) error {
 	b.enterOnce.Do(func() { close(b.entered) })
 	<-b.release
 	return nil

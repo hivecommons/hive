@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -23,10 +24,10 @@ type fakeMinter struct {
 	calls    int
 	fail     bool
 	err      error
-	lastTier string
+	lastTier agentmode.TokenTier
 }
 
-func (f *fakeMinter) WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error {
+func (f *fakeMinter) WriteAgentToken(ctx context.Context, agentName string, tier agentmode.TokenTier, agentUID int) error {
 	f.calls++
 	f.lastTier = tier
 	if f.err != nil {

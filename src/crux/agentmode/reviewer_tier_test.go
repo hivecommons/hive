@@ -30,7 +30,7 @@ func TestTokenTierForRole_ReviewerGetsCommentCapableTier(t *testing.T) {
 func TestTokenTierForRole_HigherModesAreUnchanged(t *testing.T) {
 	for _, tc := range []struct {
 		mode AgentMode
-		want string
+		want TokenTier
 	}{
 		{ModeIssuesOnly, "newcomer"},
 		{ModeIssuesAndPRs, "contributor"},
@@ -79,7 +79,7 @@ func TestTokenTierForRole_SecCheckGetsAlertsCapableTier(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		mode AgentMode
-		want string
+		want TokenTier
 	}{
 		{ModeAdvisory, "advisor"},
 		{ModeIssuesOnly, "newcomer"},

@@ -29,6 +29,6 @@ const ReviewerRole = agentmode.ReviewerRole
 // TokenTierForRole returns the scoped-token tier for a mode and role. See
 // agentmode.TokenTierForRole: an ADVISORY agent whose role is "reviewer" mints
 // a tier that may post a PR review, which a plain advisor may not.
-func TokenTierForRole(m AgentMode, role string) string {
+func TokenTierForRole(m AgentMode, role string) agentmode.TokenTier {
 	return agentmode.TokenTierForRole(m, role)
 }

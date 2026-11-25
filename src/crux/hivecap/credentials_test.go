@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/api/callback"
 )
 
@@ -306,7 +307,7 @@ func TestAppTokenWriterSharedUIDReadCache(t *testing.T) {
 	if err := os.Chmod(path, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.WriteAgentToken(context.Background(), "scanner", crux.SharedUIDReadTokenTier, 0); err != nil {
+	if err := w.WriteAgentToken(context.Background(), "scanner", agentmode.TokenTierSharedUIDRead, 0); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
@@ -316,7 +317,7 @@ func TestAppTokenWriterSharedUIDReadCache(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("mode = %o, want 600", info.Mode().Perm())
 	}
-	if len(d.mints) != 1 || d.mints[0].Tier != crux.SharedUIDReadTokenTier {
+	if len(d.mints) != 1 || d.mints[0].Tier != string(agentmode.TokenTierSharedUIDRead) {
 		t.Fatalf("wrong mint scope: %+v", d.mints)
 	}
 	data, err := os.ReadFile(path)

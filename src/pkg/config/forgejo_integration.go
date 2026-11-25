@@ -55,8 +55,8 @@ func (c *ForgejoIntegrationConfig) Validate() error {
 		return fmt.Errorf("%s.audiences: at least one token tier needs the audience of its Forgejo integration", field)
 	}
 	for _, tier := range c.tiers() {
-		if !slices.Contains(agentmode.KnownTokenTiers, tier) {
-			return fmt.Errorf("%s.audiences: unknown token tier %q (want one of %s)", field, tier, strings.Join(agentmode.KnownTokenTiers, ", "))
+		if !slices.Contains(agentmode.KnownTokenTiers, agentmode.TokenTier(tier)) {
+			return fmt.Errorf("%s.audiences: unknown token tier %q (want one of %s)", field, tier, knownTokenTierList())
 		}
 		if strings.TrimSpace(c.Audiences[tier]) == "" {
 			return fmt.Errorf("%s.audiences.%s: audience is empty", field, tier)
@@ -80,4 +80,13 @@ func (c *ForgejoIntegrationConfig) tiers() []string {
 	}
 	sort.Strings(tiers)
 	return tiers
+}
+
+// knownTokenTierList is agentmode.KnownTokenTiers joined for an error message.
+func knownTokenTierList() string {
+	names := make([]string, 0, len(agentmode.KnownTokenTiers))
+	for _, t := range agentmode.KnownTokenTiers {
+		names = append(names, string(t))
+	}
+	return strings.Join(names, ", ")
 }
