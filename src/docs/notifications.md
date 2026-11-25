@@ -644,7 +644,7 @@ without a class. Review submissions and review requests are always counted as
 | `main.factCheckSweep.needsHuman` | `attention` | one note per PR when the analysis fact-check loop stops without a passing verdict (#19074) |
 | `main.liveTriageCommenter.CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.noteHeldPRUpdateStopped` | `attention` |  |
-| `main.sweepDependencyBotConflictsWith` | `attention` | asks a person to rebase or retry a dependency-bot PR, or to comment `@dependabot recreate` on a stranded Dependabot PR (the hive never posts that command: Dependabot refuses commands from apps) |
+| `main.sweepDependencyBotHandoffs` | `attention` | asks a person to rebase or retry a dependency-bot PR, or to comment `@dependabot recreate` on a stranded Dependabot PR (the hive never posts that command: Dependabot refuses commands from apps) |
 | `mention.(*Responder).HandleAgentEvent` | `attention` | solicited completion reply to an explicit mention |
 | `mergelane.(*round).ensureForkWaitComment` | `attention` | asks the fork author to refresh the branch |
 | `worksource.(*forgeWorkSource).AddComment` | `attention` | passthrough wrapper; attributed to its caller |
