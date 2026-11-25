@@ -17,7 +17,7 @@ func TestTranslateAnthropicToOpenAI_StringSystem(t *testing.T) {
 		"stream": true
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "Qwen/Qwen2.5-1.5B-Instruct", 0, "")
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "Qwen/Qwen2.5-1.5B-Instruct", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestTranslateAnthropicToOpenAI_ModelPassthrough(t *testing.T) {
 		"aws/anthropic.claude-3-5-sonnet",
 		"Qwen/Qwen2.5-1.5B-Instruct",
 	} {
-		result, err := translateAnthropicToOpenAI([]byte(body), target, 0, "")
+		result, _, err := translateAnthropicToOpenAI([]byte(body), target, 0, "")
 		if err != nil {
 			t.Fatalf("target %q: %v", target, err)
 		}
@@ -96,7 +96,7 @@ func TestTranslateAnthropicToOpenAI_BlockSystem(t *testing.T) {
 		]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestTranslateAnthropicToOpenAI_WithTools(t *testing.T) {
 		]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestTranslateAnthropicToOpenAI_ToolUseInAssistantMessage(t *testing.T) {
 		]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +232,7 @@ func TestTranslateAnthropicToOpenAI_ToolResultWithBlocks(t *testing.T) {
 		]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -485,7 +485,7 @@ func TestTranslateAnthropicToOpenAI_MixedTextAndToolResultInUser(t *testing.T) {
 		]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -524,7 +524,7 @@ func TestTranslateAnthropicToOpenAI_InferencePreamble(t *testing.T) {
 
 	preamble := "You are an autonomous agent.\n\n"
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, preamble)
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, preamble)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -559,7 +559,7 @@ func TestTranslateAnthropicToOpenAI_NoPreamble(t *testing.T) {
 		]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -585,7 +585,7 @@ func TestTranslateAnthropicToOpenAI_PreambleNoSystem(t *testing.T) {
 
 	preamble := "You are an autonomous agent.\n"
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, preamble)
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, preamble)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -615,7 +615,7 @@ func TestTranslateAnthropicToOpenAI_DefaultToolInjection(t *testing.T) {
 	}`
 	preamble := "You are an agent.\n\n"
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "qwen-72b", 0, preamble)
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "qwen-72b", 0, preamble)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -658,7 +658,7 @@ func TestTranslateAnthropicToOpenAI_NoToolInjectionWithoutPreamble(t *testing.T)
 		"messages": [{"role": "user", "content": "Hello"}]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "claude-sonnet-4-6", 0, "")
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "claude-sonnet-4-6", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,7 +682,7 @@ func TestTranslateAnthropicToOpenAI_CLIToolsPreserved(t *testing.T) {
 		"tools": [{"name": "MyCustomTool", "description": "Custom tool", "input_schema": {"type": "object"}}]
 	}`
 
-	result, err := translateAnthropicToOpenAI([]byte(body), "qwen-72b", 0, "preamble\n")
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "qwen-72b", 0, "preamble\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -718,7 +718,7 @@ func TestTranslateAnthropicToOpenAI_ToolResultFollowsToolCallsWhenUserAlsoHasTex
 				{"role":"assistant","content":[{"type":"text","text":"Listing."},{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"ls"}}]},
 				{"role":"user","content":` + userContent + `}
 			]}`
-			result, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
+			result, _, err := translateAnthropicToOpenAI([]byte(body), "test-model", 0, "")
 			if err != nil {
 				t.Fatal(err)
 			}
