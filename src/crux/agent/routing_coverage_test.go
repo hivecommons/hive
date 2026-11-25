@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"os"
 	"path/filepath"
 	"strings"
@@ -582,7 +583,7 @@ func TestSeedClaudeProjectTrustMergesExistingProject(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestAgentModeTokenTier(t *testing.T) {
-	cases := map[AgentMode]string{
+	cases := map[AgentMode]agentmode.TokenTier{
 		ModeAdvisory:       "advisor",
 		ModeIssuesOnly:     "newcomer",
 		ModeIssuesAndPRs:   "contributor",

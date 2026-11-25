@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/kubejob"
@@ -349,7 +350,7 @@ func (m *Manager) sandboxWorkspaceDirLocked() string {
 	return sandbox.WorkspaceRoot(m.sandboxConfig.WorkspaceDir, m.workDir)
 }
 
-func (m *Manager) tieredSandboxMinterLocked(tier string) pushbroker.TokenMinter {
+func (m *Manager) tieredSandboxMinterLocked(tier agentmode.TokenTier) pushbroker.TokenMinter {
 	return pushbroker.WithTier(m.sandboxGit.pushMinter, tier)
 }
 

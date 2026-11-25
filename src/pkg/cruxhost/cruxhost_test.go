@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/api/callback"
 	"github.com/hivecommons/hive/crux/toolapprove"
 )
@@ -22,7 +23,7 @@ const secret = "ghs_private_token_value"
 
 type fakeDeps struct {
 	mu        sync.Mutex
-	mintTier  string
+	mintTier  agentmode.TokenTier
 	mintRepos []string
 	mintErr   error
 	mintEmpty bool
@@ -33,7 +34,7 @@ type fakeDeps struct {
 	prErr     error
 }
 
-func (f *fakeDeps) ScopedTokenForRepos(_ context.Context, tier string, repos []string) (string, error) {
+func (f *fakeDeps) ScopedTokenForRepos(_ context.Context, tier agentmode.TokenTier, repos []string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.mintTier, f.mintRepos = tier, repos
@@ -446,8 +447,8 @@ type fakeMint struct {
 }
 
 func (f *fakeMint) Enabled() bool { return f.enabled }
-func (f *fakeMint) MintAgentToken(agent, tier string) (string, error) {
-	f.calls = append(f.calls, agent+"@"+tier)
+func (f *fakeMint) MintAgentToken(agent string, tier agentmode.TokenTier) (string, error) {
+	f.calls = append(f.calls, agent+"@"+string(tier))
 	if f.err != nil {
 		return "", f.err
 	}

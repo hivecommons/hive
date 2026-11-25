@@ -11,6 +11,36 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.366.4)
+
+### Fixed
+
+- **A contributor's expired CLI login no longer files a fleet self-report against the hub** ([#19816](https://github.com/hivecommons/hive/issues/19816)). When a relay fails a `fix-pr` task because its own agent CLI cannot authenticate (an expired OAuth session, a missing login, a rejected API key) or declares `failure_kind: environment`, the hub's "fix-pr task failed; giving up on relay delivery" line is now logged at INFO instead of WARN, so it stays out of the `unclassified_error_repeated` feed. Retries, cooldowns and the stage engine's re-nudge/adoption hand-off are unchanged; a give-up for any other reason still warns.
+
+## 2026-11-25 (v5.366.3)
+
+### Fixed
+
+- The Hive Hub Contribute dialog keeps keyboard focus inside and restores it when closed.
+
+## 2026-11-25 (v5.366.2)
+
+### Fixed
+
+- An agent switched off an inference gateway backend while stopped or paused no longer keeps sending its requests to the inference translator, which failed every one with "inference no route"; its next start rebuilds the tmux session for the new backend.
+
+## 2026-11-25 (v5.366.1)
+
+### Fixed
+
+- The supersession sweep no longer fails or warns on every tick when a PR claims an issue that does not exist; the claim is skipped quietly.
+
+## 2026-11-25 (v5.366.0)
+
+### Added
+
+- Run `opencode` as a hub/spoke agent backend, not only a contributor one: both images now ship it (pinned, checksummed), the launcher starts the TUI unattended with the model passed through inline config, its pane is recognised as a live CLI, and the dashboard model picker lists its models. Also creates the shared opencode XDG bridge target that previously dangled and crashed opencode at startup.
+
 ## 2026-11-25 (v5.365.7)
 
 ### Fixed

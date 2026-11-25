@@ -25,7 +25,11 @@ function extractFunction(name) {
   throw new Error(`unterminated ${name}`);
 }
 
-const NAMES = ['inboxRoleKnown', 'inboxOnRoleReady', 'inboxCanShare', 'inboxViewerCanPlay', 'renderInbox', 'hiveFetchRoleOnce', 'hiveRoleSettled', 'hiveApplyRoleData', 'hiveRetryRole'];
+const NAMES = [
+  'inboxRoleKnown', 'inboxOnRoleReady', 'inboxCanShare', 'inboxViewerCanPlay',
+  'inboxItemKey', 'inboxShownItems', 'inboxPruneSelection', 'renderInbox',
+  'hiveFetchRoleOnce', 'hiveRoleSettled', 'hiveApplyRoleData', 'hiveRetryRole',
+];
 
 function makeSandbox(opts) {
   const panel = { innerHTML: '' };
@@ -37,6 +41,7 @@ function makeSandbox(opts) {
     _inboxSelected: new Set(),
     _inboxShowProcessed: false,
     _inboxFocusKey: '',
+    _inboxShareMenu: null,
     refreshSectionCardShell: () => {},
     setSidebarCountBadge: () => {},
     setSectionSummary: () => {},

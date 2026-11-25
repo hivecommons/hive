@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
@@ -334,7 +335,7 @@ func TestIssueClaimsSetting(t *testing.T) {
 // The dashboard seam: tier -> may-comment follows the agentmode ladder
 // (ISSUES_ONLY rung) and unknown tiers fail closed.
 func TestIssueClaimTierCanComment(t *testing.T) {
-	for tier, want := range map[string]bool{
+	for tier, want := range map[agentmode.TokenTier]bool{
 		"advisor": false, "reviewer": false, "newcomer": true, "contributor": true,
 		"trusted": true, "merger": true, "revoked": false, "": false,
 	} {

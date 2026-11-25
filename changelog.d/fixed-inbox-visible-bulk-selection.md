@@ -1,0 +1,1 @@
+- Clear Inbox selections when items are hidden or removed, and list the affected items in the delete confirmation.

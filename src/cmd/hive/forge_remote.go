@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/forgejwt"
 	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/crux/pushbroker"
@@ -76,9 +77,9 @@ func forgejoRemote(cfg *config.Config, repo string) (pushbroker.ForgeRemote, boo
 // the forgejo block's access token, the same one the REST adapter sends.
 func forgejoMinter(cfg *config.Config) pushbroker.TokenMinter {
 	if in := cfg.Forgejo.Integration; in != nil {
-		auds := make(map[string]forgejwt.Audience, len(in.Audiences))
+		auds := make(map[agentmode.TokenTier]forgejwt.Audience, len(in.Audiences))
 		for tier, aud := range in.Audiences {
-			auds[tier] = forgejwt.Audience(strings.TrimSpace(aud))
+			auds[agentmode.TokenTier(tier)] = forgejwt.Audience(strings.TrimSpace(aud))
 		}
 		return forgejwt.Minter{
 			Signer:    forgejwt.Signer{Issuer: forgejwt.Issuer(in.IssuerOrigin()), KeyFile: strings.TrimSpace(in.KeyFile)},

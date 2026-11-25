@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
@@ -30,7 +31,7 @@ var releaseSentinelRetagDir = "/data/release-sentinel-git"
 // which GitHub requires when the commit range a ref moves across touches
 // .github/workflows/ (the tier falls back without it when the installation
 // has not granted it).
-const releaseSentinelRetagTokenTier = "trusted"
+const releaseSentinelRetagTokenTier = agentmode.TokenTierTrusted
 
 // newReleaseSentinelRetagger builds the tag mover. Only called when
 // release_sentinel.retag_enabled is on; a var so tests can observe that.

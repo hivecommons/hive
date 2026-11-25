@@ -1483,7 +1483,7 @@
         renderStats(_allMainHives);
         renderTicker(_allMainHives);
       } catch (e) {
-        document.getElementById('hive-table-container').innerHTML = '<div class="loading">Unable to load hive registry</div>';
+        replaceHiveTable('<div class="loading">Unable to load hive registry</div>');
       }
     }
 
@@ -1599,7 +1599,7 @@
       if (_isLoggedIn) {
         return '<button class="hv-btn btn-secondary btn-sm" onclick="requestAccessInline(\'' + esc(hid) + '\',this)" >Request Access</button>';
       }
-      return '<button class="hv-btn btn-secondary btn-sm" onclick="openContributeInfo(\'' + esc(h.name || h.id) + '\',\'' + esc(hid) + '\')" >Contribute</button>';
+      return '<button id="contrib-trigger-' + encodeURIComponent(hid) + '" class="hv-btn btn-secondary btn-sm" onclick="openContributeInfo(\'' + esc(h.name || h.id) + '\',\'' + esc(hid) + '\')" >Contribute</button>';
     }
 
     async function requestAccessInline(hiveId, btn) {
@@ -1613,6 +1613,24 @@
         btn.outerHTML = '<span class="badge-status" data-status="attention">Pending</span>';
         hiveToast('Access request sent!', 'success');
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); btn.textContent = 'Request Access'; btn.disabled = false; }
+    }
+
+    function isInViewport(el) {
+      var rect = el.getBoundingClientRect();
+      return rect.bottom > 0 && rect.top < window.innerHeight &&
+        rect.right > 0 && rect.left < window.innerWidth;
+    }
+
+    function replaceHiveTable(markup) {
+      var focused = document.activeElement;
+      var focusedId = focused && focused.id;
+      var hadContribFocus = focusedId && focusedId.startsWith('contrib-trigger-');
+      var wasVisible = hadContribFocus && isInViewport(focused);
+      document.getElementById('hive-table-container').innerHTML = markup;
+      if (!hadContribFocus) return;
+      var target = contribFocusTarget(focusedId);
+      var preserveScroll = target.id === focusedId && (!wasVisible || isInViewport(target));
+      target.focus({preventScroll: preserveScroll});
     }
 
     function renderHives() {
@@ -1629,7 +1647,7 @@
       }
       if (!pub.length) {
         var message = q ? 'No public hives match your search' : 'No public hives registered yet';
-        document.getElementById('hive-table-container').innerHTML = '<div class="loading">' + message + '</div>';
+        replaceHiveTable('<div class="loading">' + message + '</div>');
         return;
       }
       var rows = pub.map(function(h, i) {
@@ -1656,10 +1674,10 @@
           '<td>' + link + '</td>' +
           '</tr>';
       }).join('');
-      document.getElementById('hive-table-container').innerHTML =
+      replaceHiveTable(
         '<table class="hive-table"><thead><tr>' +
         '<th></th><th onclick="sortMainHives(\'name\')" style="cursor:pointer">Hive ⇅</th><th onclick="sortMainHives(\'hiveType\')" style="cursor:pointer">Type ⇅</th><th>Repo</th><th>Repos</th><th onclick="sortMainHives(\'acmmLevel\')" style="cursor:pointer">ACMM ⇅</th><th onclick="sortMainHives(\'agentCount\')" style="cursor:pointer">Agents ⇅</th><th onclick="sortMainHives(\'governorMode\')" style="cursor:pointer">Mode ⇅</th><th onclick="sortMainHives(\'actionableIssues\')" style="cursor:pointer">Issues ⇅</th><th onclick="sortMainHives(\'actionablePRs\')" style="cursor:pointer">PRs ⇅</th><th onclick="sortMainHives(\'activeContributors\')" style="cursor:pointer">Contributors ⇅</th><th>Preview</th>' +
-        '</tr></thead><tbody>' + rows + '</tbody></table>';
+        '</tr></thead><tbody>' + rows + '</tbody></table>');
     }
 
     function renderLeaderboard(entries) {
@@ -1917,9 +1935,20 @@
     }
 
     var _contribHiveId = '';
+    function setContribPageInert(inert) {
+      document.querySelectorAll('body > header, body > main, body > footer').forEach(function(el) {
+        el.inert = inert;
+      });
+    }
+    function contribFocusTarget(triggerId) {
+      return document.getElementById(triggerId) || document.getElementById('hive-search');
+    }
     function closeContribModal() {
       document.getElementById('contrib-modal').style.display = 'none';
       document.body.style.overflow = '';
+      setContribPageInert(false);
+      // The registry poll can replace the button or remove its hive while the dialog is open.
+      contribFocusTarget('contrib-trigger-' + encodeURIComponent(_contribHiveId)).focus();
     }
     var _hubLandingModalSeq = 0;
     function hubLandingRememberModalOpen(el) {
@@ -1935,9 +1964,21 @@
       closeContribModal();
       return true;
     }
+    function trapContribFocus(e) {
+      var modal = document.getElementById('contrib-modal');
+      if (!modal || modal.style.display !== 'flex' || e.ctrlKey || e.metaKey) return;
+      var controls = Array.from(modal.querySelectorAll('a[href], button:not([disabled])'));
+      var next = controls.indexOf(document.activeElement) + (e.shiftKey ? -1 : 1);
+      // Safari can skip links or buttons in its native Tab order.
+      if (next < 0) next = controls.length - 1;
+      if (next === controls.length) next = 0;
+      e.preventDefault();
+      controls[next].focus();
+    }
     document.addEventListener('keydown', function(e) {
-      if (e.key !== 'Escape') return;
       if (e.isComposing) return;
+      if (e.key === 'Tab') { trapContribFocus(e); return; }
+      if (e.key !== 'Escape') return;
       if (!hubLandingDismissTopModal()) return;
       e.preventDefault();
       e.stopPropagation();
@@ -1950,6 +1991,8 @@
       document.body.style.overflow = 'hidden';
       document.getElementById('contrib-hive-name').textContent = name;
       document.getElementById('contrib-hive-id').textContent = id;
+      setContribPageInert(true);
+      document.getElementById('contrib-close').focus();
       var area = document.getElementById('contrib-access-area');
 
       if (!_isLoggedIn) {
@@ -2064,13 +2107,13 @@
   </script>
 
   <div id="contrib-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center;overscroll-behavior:contain;overscroll-behavior-y:contain" onclick="if(event.target===this)closeContribModal()">
-    <div style="background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:var(--sp-9);max-width:540px;width:90%;max-height:80vh;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain">
-      <h2 style="font-size:1.3rem;margin-bottom:var(--sp-2);color:var(--amber)">Contribute to <span id="contrib-hive-name"></span></h2>
+    <div role="dialog" aria-modal="true" aria-labelledby="contrib-modal-title" style="background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);padding:var(--sp-9);max-width:540px;width:90%;max-height:80vh;overflow-y:auto;overscroll-behavior:contain;overscroll-behavior-y:contain">
+      <h2 id="contrib-modal-title" style="font-size:1.3rem;margin-bottom:var(--sp-2);color:var(--amber)">Contribute to <span id="contrib-hive-name"></span></h2>
       <p style="font-size:0.8rem;color:var(--muted);margin-bottom:var(--sp-6)">Hive ID: <code id="contrib-hive-id" style="font-size:var(--fs-sm);background:#080b0f85;border:1px solid var(--line);padding:var(--sp-1) var(--sp-3);border-radius:var(--r-sm)"></code></p>
       <p style="color:var(--muted);font-size:0.9rem;line-height:1.6;margin-bottom:var(--sp-7)">Help this project by contributing to open issues and PRs. Login with GitHub to request access &mdash; the hive owner will be notified and can approve your request.</p>
       <div id="contrib-access-area"></div>
       <div style="display:flex;justify-content:flex-end;margin-top:var(--sp-5)">
-        <button class="hv-btn btn-secondary" onclick="closeContribModal()">Close</button>
+        <button id="contrib-close" class="hv-btn btn-secondary" onclick="closeContribModal()">Close</button>
       </div>
     </div>
   </div>

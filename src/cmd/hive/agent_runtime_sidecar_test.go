@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/api/callback"
 	cruxconfig "github.com/hivecommons/hive/crux/config"
@@ -289,8 +290,8 @@ type sidecarMintIssuer struct {
 }
 
 func (f *sidecarMintIssuer) Enabled() bool { return f.enabled }
-func (f *sidecarMintIssuer) MintAgentToken(agent, tier string) (string, error) {
-	f.calls = append(f.calls, agent+"@"+tier)
+func (f *sidecarMintIssuer) MintAgentToken(agent string, tier agentmode.TokenTier) (string, error) {
+	f.calls = append(f.calls, agent+"@"+string(tier))
 	return "mint-" + agent, nil
 }
 

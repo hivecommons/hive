@@ -252,6 +252,19 @@ func TestSetupAgentXDGDirs_RetiresLegacyBridgeAndSharesOnlyNamedEntries(t *testi
 	if want := filepath.Join(shared, ".local", "share", "opencode"); target != want {
 		t.Errorf("opencode bridge -> %q, want %q", target, want)
 	}
+	// The bridge must not dangle: opencode creates .../opencode/log with a
+	// non-recursive mkdir at startup, so the shared target has to exist and be
+	// group-writable and setgid for every agent UID to write through it.
+	info, serr := os.Stat(link)
+	if serr != nil || !info.IsDir() {
+		t.Fatalf("opencode bridge dangles (shared target missing): info=%v err=%v", info, serr)
+	}
+	if err := os.Mkdir(filepath.Join(link, "log"), 0o755); err != nil {
+		t.Errorf("mkdir through opencode bridge failed: %v", err)
+	}
+	if perm := info.Mode(); perm&0o070 != 0o070 || perm&os.ModeSetgid == 0 {
+		t.Errorf("shared opencode dir mode = %v, want group-rwx + setgid", perm)
+	}
 
 	// Idempotent: a second provisioning keeps the real dir and the bridge.
 	m.setupInteractiveHome(ap, "claude")
