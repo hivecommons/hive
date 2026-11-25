@@ -107,6 +107,54 @@ test('Send shows the queue depth, the toast says queued or sent, and the queue l
   assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, 'presence and queue CSS must not add hex literals');
 });
 
+test('a successful send clears its draft only if it has not been edited', async () => {
+  const js = html.slice(html.indexOf('// ── Input bar ──'), html.indexOf('async function sessionsCancelQueued('));
+  const counter = { textContent: '', classList: { toggle() {} } };
+  const bar = { querySelector: () => counter };
+  const box = { value: 'first prompt', closest: () => bar };
+  const requests = [];
+  let finishSend;
+  const { sessionsSend, sessionsInputChanged } = new Function(
+    'sessionsSelectedSession', 'document', 'sessionsCheckInput', '_sessionsData', 'sessionsApi',
+    'sessionsByteLength', 'sessionsFormatBytes', 'showToast', 'sessionsQueuedToast',
+    js + '\nreturn { sessionsSend, sessionsInputChanged };')(
+    () => S('a', ''), { getElementById: () => box }, h.sessionsCheckInput,
+    { limits: { max_input_bytes: 100 }, sessions: [] },
+    (route, method, body) => {
+      requests.push({ route, method, ...body });
+      return new Promise(resolve => { finishSend = resolve; });
+    }, value => Buffer.byteLength(value), h.sessionsFormatBytes, () => {}, h.sessionsQueuedToast);
+  const edit = value => {
+    box.value = value;
+    sessionsInputChanged(box);
+  };
+
+  const first = sessionsSend(true);
+  edit('follow-up draft');
+  finishSend({ queued: { position: 1 } });
+  await first;
+  assert.strictEqual(box.value, 'follow-up draft');
+
+  const second = sessionsSend(false);
+  edit('temporary edit');
+  edit('follow-up draft');
+  finishSend({ queued: { position: 2 } });
+  await second;
+  assert.strictEqual(box.value, 'follow-up draft');
+  assert.strictEqual(counter.textContent, '15 bytes / 100 bytes');
+
+  const third = sessionsSend(false);
+  finishSend({ queued: { position: 3 } });
+  await third;
+  assert.strictEqual(box.value, '');
+  assert.strictEqual(counter.textContent, '0 bytes / 100 bytes');
+  assert.deepStrictEqual(requests, [
+    { route: '/a/input', method: 'POST', text: 'first prompt', submit: true },
+    { route: '/a/input', method: 'POST', text: 'follow-up draft', submit: false },
+    { route: '/a/input', method: 'POST', text: 'follow-up draft', submit: false },
+  ]);
+});
+
 test('a keyboard hand-over re-attaches the iframe with a fresh handoff', () => {
   const js = html.slice(html.indexOf('function sessionsSyncKeyboardFrame('), html.indexOf('async function sessionsHandoff('));
   assert.match(js, /_sessionsFrameKeyboard\[s\.id\] === mine\) return/);
