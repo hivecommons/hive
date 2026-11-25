@@ -583,6 +583,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).PostFleetReportCleared` | `status` |  |
 | `github.(*Client).PostFleetReportRecovery` | `status` |  |
 | `github.(*Client).PostFleetReportRollup` | `status` |  |
+| `github.(*Client).NoteDependencyBotRedIssue` | `status` | one note on a hive-filed dependency-bot red-CI issue when its PR goes green, merges or closes (`auto_merge.dependency_bot_red_issue`) |
 | `github.(*Client).PostNoteOrFold` | `status` | passthrough wrapper; attributed to its caller |
 | `github.(*Client).SweepLegacyFleetReportIssues` | `status` |  |
 | `github.(*Client).UpsertIssueMarkerComment` | `status` | passthrough wrapper; attributed to its caller |

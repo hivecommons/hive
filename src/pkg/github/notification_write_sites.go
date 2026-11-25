@@ -56,6 +56,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).PostFleetReportCleared":                 {Class: NotificationClassStatus},
 	"github.(*Client).PostFleetReportRecovery":                {Class: NotificationClassStatus},
 	"github.(*Client).PostFleetReportRollup":                  {Class: NotificationClassStatus},
+	"github.(*Client).NoteDependencyBotRedIssue":              {Class: NotificationClassStatus},
 	"github.(*Client).SweepLegacyFleetReportIssues":           {Class: NotificationClassStatus},
 	"github.(*Client).closeDecomposedParent":                  {Class: NotificationClassStatus},
 	"github.(*Client).closeIssueForMergedPRClaimWithIssue":    {Class: NotificationClassStatus},
