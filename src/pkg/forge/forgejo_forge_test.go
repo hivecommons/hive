@@ -38,6 +38,9 @@ func TestForgejoAdapterTalksToServer(t *testing.T) {
 			_, _ = w.Write([]byte(giteaRepoJSON))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/hivecommons/hive/issues":
 			_, _ = w.Write([]byte(giteaIssuesJSON))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/repos/hivecommons/hive/issues/7/labels":
+			// v6 resolves the label's id from the labels on the issue (#9180).
+			_, _ = w.Write([]byte(`[{"id": 99, "name": "hold"}]`))
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -75,8 +78,8 @@ func TestForgejoAdapterTalksToServer(t *testing.T) {
 	if err := f.RemoveLabel(ctx, "hive", 7, "hold"); err != nil {
 		t.Fatalf("RemoveLabel: %v", err)
 	}
-	if gotMethod != http.MethodDelete || !strings.HasSuffix(gotPath, "/repos/hivecommons/hive/issues/7/labels/hold") {
-		t.Errorf("RemoveLabel sent %s %s, want DELETE .../issues/7/labels/hold (label by name)", gotMethod, gotPath)
+	if gotMethod != http.MethodDelete || !strings.HasSuffix(gotPath, "/repos/hivecommons/hive/issues/7/labels/99") {
+		t.Errorf("RemoveLabel sent %s %s, want DELETE .../issues/7/labels/99 (label by id)", gotMethod, gotPath)
 	}
 
 	err = f.AddLabels(ctx, "hive", 7, []string{"x"})

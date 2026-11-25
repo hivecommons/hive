@@ -158,7 +158,9 @@ func TestNtfyFitsMessageLimitAndKeepsLink(t *testing.T) {
 }
 
 func TestNtfyTitleIsRFC2047Encoded(t *testing.T) {
-	const title = "Governor budget exhausted — agent paused"
+	// Non-ASCII on purpose (é); an em-dash would be rewritten by the outbound
+	// dash filter before it reaches the header.
+	const title = "Governor budget exhausted: café agent paused"
 	var raw string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw = r.Header.Get("Title")

@@ -26,6 +26,7 @@ import (
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/chat"
 	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 const (
@@ -369,6 +370,8 @@ func (b *matrixBackend) doJSON(ctx context.Context, method, path string, payload
 func (b *matrixBackend) doJSONOnce(ctx context.Context, method, path string, body []byte, out any) error {
 	var reader io.Reader
 	if body != nil {
+		// No em-dashes in text hive sends (hivecommons/hive#19103).
+		body, _ = prosefilter.SanitizeJSON(body, matrixProseKeys)
 		reader = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, b.homeserverURL+matrixAPIPath+path, reader)
@@ -624,4 +627,12 @@ func takeRunes(s string, n int) string {
 		idx += size
 	}
 	return s[:idx]
+}
+
+// matrixProseKeys are the Matrix event and state fields a person reads.
+var matrixProseKeys = prosefilter.Keys{
+	"body":           prosefilter.Prose,
+	"formatted_body": prosefilter.Prose,
+	"topic":          prosefilter.Title,
+	"name":           prosefilter.Title,
 }

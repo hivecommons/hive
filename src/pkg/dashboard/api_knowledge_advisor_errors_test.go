@@ -24,7 +24,7 @@ func TestAdvisorSummaryErrorReasons(t *testing.T) {
 	rec("k4", "over-budget", "over-budget", "error-agent-hour", "", "")
 	rec("k5", "delivered", "pick", "", "", "")
 
-	s := advisorTestServer(t)
+	s := knowledgeAdvisorTestServer(t)
 	t.Setenv("ADVISOR_SUMMARY_TEST_KEY", "")
 	s.deps.Config.Knowledge = config.KnowledgeConfig{Advisor: true, AdvisorLLM: config.AdvisorLLMConfig{Mode: "rank", Endpoint: "https://llm.example.invalid", APIKeyEnv: "ADVISOR_SUMMARY_TEST_KEY"}}
 	s.SetKnowledgeAdvisorSummary(store, nil)
@@ -77,7 +77,7 @@ func TestAdvisorSummaryErrorReasons(t *testing.T) {
 }
 
 func TestAdvisorSummaryEmptyErrorsBlock(t *testing.T) {
-	s := advisorTestServer(t)
+	s := knowledgeAdvisorTestServer(t)
 	s.SetKnowledgeAdvisorSummary(retro.NewAdvisorDecisionStore(""), nil)
 	httpRec, _ := getAdvisorSummary(t, s, "/api/knowledge/advisor/summary", config.RoleRead)
 	body := httpRec.Body.String()

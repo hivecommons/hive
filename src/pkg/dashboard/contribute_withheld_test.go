@@ -121,10 +121,17 @@ func withheldCases() []withheldCase {
 			},
 		},
 		{
-			name:   "umbrella sub-issues",
-			reason: withheldReasonUmbrella,
+			// A parent with open sub-issues is the tracker rule's case
+			// (contributeTrackerHoldFor), not an umbrella.
+			name:   "parent with open sub-issues",
+			reason: withheldReasonTracker,
 			decorate: func(issue map[string]any) {
 				issue["children"] = map[string]any{"total": float64(3), "completed": float64(1)}
+			},
+			evidence: func(t *testing.T, item AdmissionWithheldItem) {
+				if !strings.Contains(item.Detail, "has 2 open sub-issues") {
+					t.Errorf("detail = %q, want the open sub-issue count", item.Detail)
+				}
 			},
 		},
 		{

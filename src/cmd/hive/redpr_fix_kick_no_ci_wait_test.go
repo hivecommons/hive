@@ -66,7 +66,9 @@ func TestRedPRFixKickDemandsResignOnlyWhenDCOGates(t *testing.T) {
 // the squash" check. The no-dco advice signs off only the agent's own
 // commits and tells it to leave everyone else's alone.
 func TestRedPRFixKickSignsOffOnlyOwnCommits(t *testing.T) {
-	got := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 19102, Labels: []string{"no-dco"}}, false)
+	// v6 gates the re-sign on a failing DCO check (#12544), so the fixture
+	// carries one.
+	got := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 19102, Labels: []string{"no-dco"}, FailingChecks: []string{"DCO"}}, false)
 	if strings.Contains(got, "git rebase --signoff <base>") {
 		t.Errorf("no-dco kick still tells the agent to rebase --signoff every commit:\n%s", got)
 	}

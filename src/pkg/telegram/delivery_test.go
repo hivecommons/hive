@@ -71,7 +71,8 @@ func TestSendFallsBackToPlainTextWhenEntitiesAreRejected(t *testing.T) {
 	if _, ok := plain["parse_mode"]; ok {
 		t.Fatalf("fallback still sets parse_mode: %+v", plain)
 	}
-	want := "done — see x < y & docs (https://example.com)"
+	// The outbound dash filter (hivecommons/hive#19103) rewrites the em-dash.
+	want := "done - see x < y & docs (https://example.com)"
 	if plain["text"] != want {
 		t.Fatalf("fallback text = %q, want %q", plain["text"], want)
 	}

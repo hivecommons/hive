@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 const defaultHTTPTimeout = 10 * time.Second
@@ -47,6 +49,7 @@ func (s *NtfySink) Deliver(ctx context.Context, ev Event) error {
 	// delivered to directly, so the guarantee must not depend on which door
 	// the event came through.
 	ev = scrubEvent(ev)
+	ev = filterEventProse(ev)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.URL, strings.NewReader(ntfyMessage(ev.Body, ev.Link)))
 	if err != nil {
 		return redactURLError(err)
@@ -88,6 +91,7 @@ type PushoverSink struct {
 func (s *PushoverSink) Name() string { return "pushover" }
 func (s *PushoverSink) Deliver(ctx context.Context, ev Event) error {
 	ev = scrubEvent(ev)
+	ev = filterEventProse(ev)
 	endpoint := s.URL
 	if endpoint == "" {
 		endpoint = "https://api.pushover.net/1/messages.json"
@@ -125,6 +129,7 @@ type PagerDutySink struct {
 func (s *PagerDutySink) Name() string { return "pagerduty" }
 func (s *PagerDutySink) Deliver(ctx context.Context, ev Event) error {
 	ev = scrubEvent(ev)
+	ev = filterEventProse(ev)
 	endpoint := s.URL
 	if endpoint == "" {
 		endpoint = "https://events.pagerduty.com/v2/enqueue"
@@ -251,4 +256,12 @@ func truncateBytes(s string, max int) string {
 		cut--
 	}
 	return s[:cut] + ellipsis
+}
+
+// filterEventProse applies the outbound dash rule (hivecommons/hive#19103) to
+// the text a person reads in a push alert.
+func filterEventProse(ev Event) Event {
+	ev.Title = prosefilter.SanitizeTitle(ev.Title)
+	ev.Body = prosefilter.Sanitize(ev.Body)
+	return ev
 }

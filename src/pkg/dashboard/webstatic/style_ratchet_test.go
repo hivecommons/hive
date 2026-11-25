@@ -26,9 +26,10 @@ type styleRatchetCounts struct {
 // removes raw styling — but they must not go UP.
 var styleRatchetBaselines = map[string]styleRatchetCounts{
 	// v6 carries surfaces v5 does not have (runs section, standby, wavefront
-	// fan-out UI); these baselines are v6's own counts, not v5's.
+	// fan-out UI); these baselines are v6's own counts, not v5's. The
+	// 2026-11-24 v5 top-up adds v5's new inline styles on top (1411 -> 1419).
 	"operator static/index.html": {
-		inlineStyles:   1411,
+		inlineStyles:   1419,
 		rawColors:      133,
 		rawFontSizes:   588,
 		rawPadding:     206,

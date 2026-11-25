@@ -57,7 +57,7 @@ import (
 //     fresh assignment, so a relay the hub will not hand work to is never
 //     reported as working the lane;
 //   - it has not been answered no_matching_work (or repo_unmintable, its
-//     re-scan form) continuously for coverageNoWorkWindow while holding no
+//     re-scan form, or queue_empty, its empty-queue form) continuously for coverageNoWorkWindow while holding no
 //     task. Such a relay is connected and idle: the queue has nothing it may
 //     take. Observed on 2026-11-08: a relay covered the scanner lane while
 //     every ready it sent was answered no_matching_work. One empty answer
@@ -164,8 +164,12 @@ const coverageNoWorkWindow = 2 * time.Minute
 // for this relay" into one run: the re-scan wrapper in selectTask renames
 // no_matching_work to repo_unmintable when it dropped an unmintable repo on the
 // way, so the two can alternate on consecutive readies with nothing changing.
+// queue_empty (#19093) is no_matching_work split out for a queue with no
+// actionable item at all; it is the same "no work for you" answer, so it
+// continues the run too.
 func idleRunKey(reason string) string {
-	if reason == taskUnavailableRepoUnmintable {
+	switch reason {
+	case taskUnavailableRepoUnmintable, taskUnavailableQueueEmpty:
 		return taskUnavailableNoMatchingWork
 	}
 	return reason

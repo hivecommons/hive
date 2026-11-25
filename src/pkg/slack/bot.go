@@ -21,6 +21,7 @@ import (
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/chat"
 	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 const (
@@ -495,6 +496,15 @@ func (b *slackBackend) postJSON(path string, payload any) error {
 
 func (b *slackBackend) callSlack(ctx context.Context, path string, body io.Reader, token string) (apiResponse, error) {
 	method := http.MethodPost
+	if body != nil {
+		// No em-dashes in text hive sends (hivecommons/hive#19103).
+		raw, err := io.ReadAll(body)
+		if err != nil {
+			return apiResponse{}, err
+		}
+		raw, _ = prosefilter.SanitizeJSON(raw, slackProseKeys)
+		body = bytes.NewReader(raw)
+	}
 	req, err := http.NewRequestWithContext(ctx, method, b.apiBase+path, body)
 	if err != nil {
 		return apiResponse{}, err
@@ -705,4 +715,10 @@ func takeRunes(s string, n int) string {
 		idx += size
 	}
 	return s[:idx]
+}
+
+// slackProseKeys are the Slack message and block fields a person reads.
+var slackProseKeys = prosefilter.Keys{
+	"text":  prosefilter.Prose,
+	"title": prosefilter.Title,
 }

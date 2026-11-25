@@ -479,12 +479,14 @@ var scannerAlice = map[string]governor.ContributorCoverage{"scanner": {Contribut
 // momentarily dry. It must not drop the relay's cover.
 func TestRoleCoverage_OneNoMatchingWorkAnswerStillCovers(t *testing.T) {
 	hub, _, relay, sess, read := noWorkRelay(t)
-	if f := sendReady(t, sess, read); f["type"] != "task_unavailable" || f["reason"] != taskUnavailableNoMatchingWork {
-		t.Fatalf("setup: expected task_unavailable/%s, got %v", taskUnavailableNoMatchingWork, f)
+	// The fixture's queue is empty, so the answer is queue_empty, the
+	// empty-queue form of no_matching_work (#19093); both start the same run.
+	if f := sendReady(t, sess, read); f["type"] != "task_unavailable" || f["reason"] != taskUnavailableQueueEmpty {
+		t.Fatalf("setup: expected task_unavailable/%s, got %v", taskUnavailableQueueEmpty, f)
 	}
 	since := idleSince(relay)
 	if since.IsZero() {
-		t.Fatal("the no_matching_work answer must start an idle run on the connection")
+		t.Fatal("the queue_empty answer must start an idle run on the connection")
 	}
 	// The next ready, ~30 s on, is still inside the window.
 	if got := coverageAt(hub, relay, since.Add(30*time.Second)); !reflect.DeepEqual(got, scannerAlice) {
@@ -502,8 +504,8 @@ func TestRoleCoverage_NoMatchingWorkForWindowDoesNotCover(t *testing.T) {
 	sendReady(t, sess, read)
 	since := idleSince(relay)
 	for i := 0; i < 3; i++ {
-		if f := sendReady(t, sess, read); f["reason"] != taskUnavailableNoMatchingWork {
-			t.Fatalf("setup: ready %d answered %v, want %s", i+2, f, taskUnavailableNoMatchingWork)
+		if f := sendReady(t, sess, read); f["reason"] != taskUnavailableQueueEmpty {
+			t.Fatalf("setup: ready %d answered %v, want %s", i+2, f, taskUnavailableQueueEmpty)
 		}
 	}
 	if got := idleSince(relay); !got.Equal(since) {
@@ -542,7 +544,7 @@ func TestRoleCoverage_NoMatchingWorkForWindowDoesNotCover(t *testing.T) {
 // two continue one run.
 func TestRoleCoverage_RepoUnmintableBehavesLikeNoMatchingWork(t *testing.T) {
 	hub, s, relay, sess, read := noWorkRelay(t)
-	sendReady(t, sess, read) // no_matching_work: the queue is empty
+	sendReady(t, sess, read) // queue_empty: the queue is empty
 	since := idleSince(relay)
 
 	oneActionableIssue(s)
@@ -553,7 +555,7 @@ func TestRoleCoverage_RepoUnmintableBehavesLikeNoMatchingWork(t *testing.T) {
 		}
 	}
 	if got := idleSince(relay); !got.Equal(since) {
-		t.Fatalf("repo_unmintable after no_matching_work must continue the run: since moved %v -> %v", since, got)
+		t.Fatalf("repo_unmintable after queue_empty must continue the run: since moved %v -> %v", since, got)
 	}
 	if got := coverageAt(hub, relay, since.Add(30*time.Second)); !reflect.DeepEqual(got, scannerAlice) {
 		t.Fatalf("inside the window: RoleCoverage = %+v, want %+v", got, scannerAlice)

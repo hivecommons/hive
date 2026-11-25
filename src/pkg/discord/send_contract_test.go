@@ -52,7 +52,9 @@ func TestReplyLongerThanDiscordLimitIsSplitAndDelivered(t *testing.T) {
 
 	var lines []string
 	for i := 0; i < 30; i++ {
-		lines = append(lines, "• run-"+strings.Repeat("x", 60)+" — waiting on checkpoint")
+		// A plain hyphen: the outbound dash filter (#19103) would rewrite an
+		// em-dash, and the chunks would no longer reassemble the fixture.
+		lines = append(lines, "• run-"+strings.Repeat("x", 60)+" - waiting on checkpoint")
 	}
 	reply := strings.Join(lines, "\n")
 	if n := utf8.RuneCountInString(reply); n <= discordCreateMessageLimit {

@@ -660,7 +660,6 @@ func (s *Server) handleKnowledgeFact(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
 	layer := knowledge.LayerType(r.PathValue("layer"))
 	var fact *knowledge.Fact
-	var err error
 	if layer == "all" {
 		fact, err = s.deps.Knowledge.ReadFact(s.deps.Ctx, slug)
 	} else {

@@ -28,6 +28,13 @@ import (
 // rule that matched. The legacy enumerator flag `is_tracker` still excludes
 // (reason withheldReasonTracker) so turning the classification off restores
 // exactly the pre-#19078 behaviour.
+//
+// A parent with sub-issues is the tracker rule's case, not an umbrella:
+// contributeTrackerHoldFor holds it while a child is open (reason
+// withheldReasonTracker, with the open count) and offers it again once every
+// child is closed. So the sub-issue rule here counts only open children and
+// reports withheldReasonTracker, which the offer ladders hand to the tracker
+// rule and the counts still tally as umbrella work.
 func (h *ContributeWSHub) contributorExclusion(repoFull string, issue map[string]any) (reason, why string) {
 	var pol gfi.UmbrellaPolicy
 	if h != nil && h.server != nil && h.server.deps != nil && h.server.deps.Config != nil {
@@ -36,8 +43,11 @@ func (h *ContributeWSHub) contributorExclusion(repoFull string, issue map[string
 	title, _ := issue["title"].(string)
 	body, _ := issue["body"].(string)
 	labels := stringSliceFromAny(issue["labels"])
-	if w, ok := pol.UmbrellaReason(title, labels, body, issueChildrenTotal(issue)); ok {
+	if w, ok := pol.UmbrellaReason(title, labels, body, 0); ok {
 		return withheldReasonUmbrella, w
+	}
+	if !pol.Disabled && childrenFromIssueMap(issue).Open() > 0 {
+		return withheldReasonTracker, umbrellaWhySubIssues
 	}
 	if isTracker, _ := issue["is_tracker"].(bool); isTracker {
 		return withheldReasonTracker, "tracker-detector"
@@ -50,6 +60,10 @@ func (h *ContributeWSHub) contributorExclusion(repoFull string, issue map[string
 	}
 	return "", ""
 }
+
+// umbrellaWhySubIssues is the rule name for a parent held for its open
+// sub-issues, the same name gfi.UmbrellaPolicy.UmbrellaReason gives it.
+const umbrellaWhySubIssues = "sub-issues"
 
 // humanOnlyWhySecurityFollowUp is the owner-only rule name for a governor
 // follow-up that quotes a security review's hand-off to a person.
@@ -91,22 +105,6 @@ func issueHumanOnlyAsk(cfg *config.Config, repo string, labels []string, body st
 		return delegatedecision.HumanOnlySecurityReview
 	}
 	return ""
-}
-
-// issueChildrenTotal reads a decomposed parent's sub-issue count from the
-// decoded issue map (`children: {total, completed}`); 0 when absent.
-func issueChildrenTotal(issue map[string]any) int {
-	c, _ := issue["children"].(map[string]any)
-	if c == nil {
-		return 0
-	}
-	switch n := c["total"].(type) {
-	case float64:
-		return int(n)
-	case int:
-		return n
-	}
-	return 0
 }
 
 // excludedCounts counts the umbrella and owner-only issues among one repo's
@@ -154,9 +152,11 @@ func stageTrackerOwnerFlags(cfg *config.Config, repo string, issue github.Issue)
 	if cfg != nil {
 		pol = cfg.Hub.UmbrellaPolicyFor(repo)
 	}
+	// Open children only, matching the contributor path: a parent whose
+	// sub-issues are all closed is ordinary work again.
 	children := 0
 	if issue.Children != nil {
-		children = issue.Children.Total
+		children = issue.Children.Open()
 	}
 	if why, ok := pol.UmbrellaReason(issue.Title, issue.Labels, issue.Body, children); ok {
 		umbrella = why

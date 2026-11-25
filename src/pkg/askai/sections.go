@@ -48,6 +48,8 @@ var sectionLabels = map[string]string{
 	"agent-activity-section":     "Activity",
 	"activity-monitor-section":   "Hive activity monitor",
 	"faq-section":                "FAQ",
+	"search-section":             "Search",
+	"runs-section":               "Runs",
 	"settings":                   "Settings",
 	"settings-features":          "Settings, Features",
 }

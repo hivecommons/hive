@@ -140,6 +140,8 @@ var withheldReasonTags = map[string]string{
 	withheldReasonDisabledRepo:                  "Repo switched off",
 	withheldReasonRepoUnmintable:                "Repo access failed",
 	withheldReasonTracker:                       "Epic or tracker",
+	withheldReasonUmbrella:                      "Umbrella issue",
+	withheldReasonHumanOnly:                     "Owner only",
 	withheldReasonCooldown:                      "Worked recently",
 	withheldReasonNoWorkNeeded:                  "Nothing to do",
 	completionVerdictNeedsDecision:              "Needs a decision",

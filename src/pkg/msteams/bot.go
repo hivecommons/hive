@@ -38,6 +38,7 @@ import (
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/chat"
 	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 const (
@@ -282,6 +283,8 @@ func (b *Backend) postWebhook(ctx context.Context, payload any) error {
 	if err != nil {
 		return err
 	}
+	// No em-dashes in text hive sends (hivecommons/hive#19103).
+	data, _ = prosefilter.SanitizeJSON(data, teamsProseKeys)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.webhookURL, bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("msteams webhook request: %w", b.sanitizeWebhookError(err))
@@ -510,6 +513,15 @@ func (b *Backend) doGraphWithPrefer(ctx context.Context, method, path string, bo
 	reqURL := path
 	if !strings.HasPrefix(reqURL, "http://") && !strings.HasPrefix(reqURL, "https://") {
 		reqURL = strings.TrimRight(b.graphBase, "/") + path
+	}
+	if jsonBody && body != nil {
+		// No em-dashes in text hive sends (hivecommons/hive#19103).
+		raw, err := io.ReadAll(body)
+		if err != nil {
+			return nil, err
+		}
+		raw, _ = prosefilter.SanitizeJSON(raw, teamsProseKeys)
+		body = bytes.NewReader(raw)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
 	if err != nil {
@@ -945,4 +957,12 @@ func takeRunes(s string, n int) string {
 		idx += size
 	}
 	return s[:idx]
+}
+
+// teamsProseKeys are the Teams card and chat message fields a person reads.
+var teamsProseKeys = prosefilter.Keys{
+	"text":    prosefilter.Prose,
+	"content": prosefilter.Prose,
+	"subject": prosefilter.Title,
+	"title":   prosefilter.Title,
 }

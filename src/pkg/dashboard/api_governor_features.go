@@ -72,6 +72,11 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if !requireOwnerRole(w, r) {
 		return
 	}
+	// The apply copies the whole config (cfgBefore) and writes fields
+	// unconditionally, so two saves at once race on the struct. One save
+	// at a time keeps concurrent write-back card edits (#19640) apart.
+	s.governorFeaturesMu.Lock()
+	defer s.governorFeaturesMu.Unlock()
 	var body struct {
 		IoscanEnabled *bool `json:"ioscanEnabled"`
 

@@ -93,11 +93,27 @@ func (s *Server) noteModelIDNormalization(agent, warning string) {
 // moving from claude to copilot keeps the dashed claude id
 // (claude-sonnet-5-5), which the Copilot CLI rejects. Returns the operator
 // warning, or "" when nothing needed fixing.
-func (s *Server) healCarriedModel(name, backend string) string {
-	_, model := s.agentEffectiveBackendAndModel(name)
-	to, warning := canonicalizeModelForBackend(name, backend, model)
+//
+// carried is the model the agent launched with BEFORE the switch, read by
+// the caller ahead of SetBackendOverride and claimAgentFieldOwnership: both
+// already re-spell the model for the new backend (crux.ModelForBackend), so
+// reading it afterwards would find nothing to report and the operator would
+// never learn the model was changed. When that re-spell already happened
+// this only reports it; when it did not, the canonical id is applied here.
+// A model the re-spell cleared (no equivalent on the new backend) is left
+// cleared.
+func (s *Server) healCarriedModel(name, backend, carried string) string {
+	to, warning := canonicalizeModelForBackend(name, backend, carried)
 	if warning == "" {
 		return ""
+	}
+	_, current := s.agentEffectiveBackendAndModel(name)
+	switch current {
+	case "":
+		return ""
+	case carried:
+	default:
+		return modelIDConventionWarning(name, backend, carried, current)
 	}
 	if proc := s.runningAgentProcess(name); proc != nil {
 		if err := s.deps.AgentMgr.SetModelOverride(name, to); err != nil {

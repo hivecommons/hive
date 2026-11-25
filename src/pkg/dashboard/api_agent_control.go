@@ -476,8 +476,9 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 				backend, strings.Join(config.SupportedBackends(), ", ")), http.StatusBadRequest)
 			return
 		}
+		_, carriedModel := s.agentEffectiveBackendAndModel(name)
 		s.claimAgentFieldOwnership(name, "", backend)
-		modelWarning := s.healCarriedModel(name, backend)
+		modelWarning := s.healCarriedModel(name, backend, carriedModel)
 		s.noteModelIDNormalization(name, modelWarning)
 		s.deps.Logger.Info("audit: backend saved for agent not running", "agent", name, "backend", backend, "trigger", "dashboard-api")
 		s.auditFromRequest(r, "switch_backend", auditDetail("backend", backend), name)
@@ -486,6 +487,9 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read before SetBackendOverride, which re-spells the model override for
+	// the new backend: healCarriedModel reports the rewrite from this value.
+	_, carriedModel := s.agentEffectiveBackendAndModel(name)
 	if err := s.deps.AgentMgr.SetBackendOverride(name, backend); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -497,7 +501,7 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	// The switch changes only the backend: an agent moving between copilot
 	// and claude carries the other CLI's spelling of its Claude model, which
 	// the new CLI rejects. Rewrite it before the restart below.
-	modelWarning := s.healCarriedModel(name, backend)
+	modelWarning := s.healCarriedModel(name, backend, carriedModel)
 	s.noteModelIDNormalization(name, modelWarning)
 
 	s.deps.Logger.Info("audit: backend switched", "agent", name, "backend", backend, "trigger", "dashboard-api")

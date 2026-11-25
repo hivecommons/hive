@@ -186,8 +186,13 @@ const check = (selected, iSlices, pSlices) => {
   const kpi = cards(renderOverviewKPIs(selected, iSlices, pSlices, state));
   assert.equal(sum(issueChart), kpi['Total open issues'], 'issue donut total');
   assert.equal(sum(prChart), kpi['Total open PRs'], 'PR donut total');
+  // v6 splits the cards into six terms (your turn and waiting on someone
+  // else replaced v5's single Blocked / needs-human card).
+  assert.notEqual(kpi['Actionable now'], undefined, 'actionable card');
+  assert.notEqual(kpi.Outside, undefined, 'outside card');
+  const term = label => kpi[label] ?? 0;
   assert.equal(kpi['Total open issues'] + kpi['Total open PRs'],
-    kpi['Actionable now'] + kpi.Held + kpi['Blocked / needs-human'] + kpi.Outside, 'card arithmetic');
+    term('Actionable now') + term('Your turn') + term('Waiting on someone else') + term('Held') + term('Blocked') + term('Outside'), 'card arithmetic');
   // The band slices are untouched: the Outside slice only adds the gap.
   assert.deepEqual(issueChart.slice(0, iSlices.length), iSlices);
   assert.deepEqual(prChart.slice(0, pSlices.length), pSlices);
@@ -235,14 +240,16 @@ assert.match(overviewAnimationSignature(all.issueChart, all.prChart, []), /\["ou
 func TestOverviewBandChartsDrawOutsideSliceStatic(t *testing.T) {
 	html := indexHTML(t)
 	for _, want := range []string{
-		"const issueChartSlices = overviewChartSlices('issue', issueSlices, selectedRepos);",
-		"const prChartSlices = overviewChartSlices('pr', prSlices, selectedRepos);",
+		// v6: the Overview card mode draws its own groups; the band charts
+		// add the Outside slice.
+		"const issueChartSlices = overviewCardMode() ? issueSlices : overviewChartSlices('issue', issueSlices, selectedRepos);",
+		"const prChartSlices = overviewCardMode() ? prSlices : overviewChartSlices('pr', prSlices, selectedRepos);",
 		"overviewSampleHistory('issue', issueChartSlices, state)",
 		"overviewAnimationSignature(issueChartSlices, prChartSlices, selectedNames)",
 		// The KPI cards keep the band slices: their arithmetic reads band keys.
 		"renderOverviewKPIs(selectedRepos, issueSlices, prSlices, state)",
 		".overview-issue-outside, .overview-pr-outside { --slice-c: var(--muted); }",
-		"if (band === 'outside') return overviewApplyKPIProjectFilter('outside');",
+		"if (slice === 'outside') return overviewApplyKPIProjectFilter('outside');",
 		"kind && !s.outside ?",
 	} {
 		if !strings.Contains(html, want) {

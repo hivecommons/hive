@@ -36,11 +36,13 @@ func decisionGateOn() func(string) DecisionGatePolicy {
 
 func decisionApprovedReview(login, head string) map[string]any {
 	return map[string]any{
-		"id":           1,
-		"user":         map[string]any{"login": login, "type": "User"},
-		"state":        "APPROVED",
-		"commit_id":    head,
-		"submitted_at": "2026-11-24T16:00:00Z",
+		"id":    1,
+		"user":  map[string]any{"login": login, "type": "User"},
+		"state": "APPROVED",
+		// No submitted_at: v6 binds a dated review to head by walking the
+		// commits (automerge_review_head_binding.go), which this fixture
+		// does not serve. A dateless review binds by commit_id alone.
+		"commit_id": head,
 	}
 }
 

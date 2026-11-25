@@ -20,6 +20,7 @@ import (
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/chat"
 	"github.com/hivecommons/hive/pkg/ioscan"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 const (
@@ -311,6 +312,8 @@ func (b *telegramBackend) callTelegram(ctx context.Context, method string, paylo
 // callTelegramOnce issues one request. retryAfter is >= 0 only for a 429, and
 // is the server-requested wait before the request may be re-issued.
 func (b *telegramBackend) callTelegramOnce(ctx context.Context, method string, data []byte, result any) (retryAfter time.Duration, err error) {
+	// No em-dashes in text hive sends (hivecommons/hive#19103).
+	data, _ = prosefilter.SanitizeJSON(data, telegramProseKeys)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.apiBase+"/bot"+b.botToken+"/"+method, bytes.NewReader(data))
 	if err != nil {
 		return -1, b.redactError(fmt.Errorf("telegram %s: %w", method, err))
@@ -645,4 +648,10 @@ func takeRunes(s string, n int) string {
 		idx += size
 	}
 	return s[:idx]
+}
+
+// telegramProseKeys are the Telegram message fields a person reads.
+var telegramProseKeys = prosefilter.Keys{
+	"text":    prosefilter.Prose,
+	"caption": prosefilter.Prose,
 }

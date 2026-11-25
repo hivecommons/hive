@@ -245,16 +245,18 @@ type Server struct {
 	// startup-grace window before the first heartbeat has to have succeeded.
 	startedAt time.Time
 
-	agentPipelines    map[string]map[string]bool
-	agentHooks        map[string]map[string][]any
-	pipelineMu        sync.RWMutex
-	hooksMu           sync.RWMutex
-	knowledgeMu       sync.Mutex
-	levelMu           sync.Mutex
-	restartMu         sync.Mutex // serializes concurrent agent restart operations
-	advisorWriteMu    sync.Mutex // serializes advisor edits so a rollback cannot undo a concurrent edit
-	gatewayHealthOnce sync.Once
-	gatewayHealth     *serverGatewayHealthStore
+	agentPipelines map[string]map[string]bool
+	agentHooks     map[string]map[string][]any
+	pipelineMu     sync.RWMutex
+	hooksMu        sync.RWMutex
+	knowledgeMu    sync.Mutex
+	levelMu        sync.Mutex
+	restartMu      sync.Mutex // serializes concurrent agent restart operations
+	advisorWriteMu sync.Mutex // serializes advisor edits so a rollback cannot undo a concurrent edit
+	// governorFeaturesMu serializes PUT /api/config/governor/features.
+	governorFeaturesMu sync.Mutex
+	gatewayHealthOnce  sync.Once
+	gatewayHealth      *serverGatewayHealthStore
 
 	acmmEvalMu       sync.RWMutex
 	acmmEvalCache    *ACMMEvaluation
