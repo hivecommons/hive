@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.366.2)
+
+### Fixed
+
+- An agent switched off an inference gateway backend while stopped or paused no longer keeps sending its requests to the inference translator, which failed every one with "inference no route"; its next start rebuilds the tmux session for the new backend.
+
 ## 2026-11-25 (v5.366.1)
 
 ### Fixed
