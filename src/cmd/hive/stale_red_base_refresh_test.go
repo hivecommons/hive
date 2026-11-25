@@ -152,6 +152,179 @@ func TestRefreshStaleRedBehindPRs_SkipsForkGuardOnlyHead(t *testing.T) {
 	}
 }
 
+// staleRedAdvisory is a non-required check that judges the PR's own diff.
+const staleRedAdvisory = "Mutation check on changed lines (advisory)"
+
+// requiredRun is a completed check run on the head with conclusion.
+func requiredRun(name, conclusion string) github.PRActivityCheck {
+	return github.PRActivityCheck{Name: name, State: "completed", Conclusion: conclusion}
+}
+
+// withRequiredChecks gives pr the facts of a base whose required set is
+// known and reported on the head: the protection facts (the required checks
+// concluded failure red) and the head's CI activity carrying required.
+func withRequiredChecks(pr github.PullRequest, required ...github.PRActivityCheck) github.PullRequest {
+	f := &github.ProtectionFacts{RequiredChecksKnown: true, RequiredChecksAllReported: true}
+	a := &github.PRCIActivity{Head: pr.HeadSHA, RequiredKnown: true}
+	for _, c := range required {
+		a.Required = append(a.Required, c.Name)
+		a.Checks = append(a.Checks, c)
+		if c.Conclusion == "failure" {
+			f.FailingRequiredChecks = append(f.FailingRequiredChecks, c.Name)
+		}
+	}
+	pr.Protection, pr.CIActivity = f, a
+	return pr
+}
+
+// greenOnBase is a base tip with every named check completed green.
+func greenOnBase(sha string, names ...string) map[string]github.StaleRedBaseState {
+	done := map[string]bool{}
+	for _, n := range names {
+		done[n] = true
+	}
+	return map[string]github.StaleRedBaseState{"acme/widgets@main": {
+		SHA: sha, Completed: done, Red: map[string]bool{}, Reported: done,
+	}}
+}
+
+// Danathar/tududi#658: every required check passed, only a non-required
+// advisory check red, and that check green on the base tip. A base merge
+// cannot clear a check that judges the PR's own diff, and the red does not
+// block the merge, so the PR is not touched and the base is not even read.
+func TestRefreshStaleRedBehindPRs_SkipsNonRequiredOnlyRed(t *testing.T) {
+	resetStaleRedRefresh(t)
+	cfg := escalationTestConfig()
+	pr := withRequiredChecks(staleRedPR(658, "h1"), requiredRun("pytest", "success"), requiredRun("lint", "skipped"))
+	pr.FailingChecks = []string{staleRedAdvisory}
+	if got := staleRedRefreshSkip(pr); got != "only-non-required-checks-red" {
+		t.Fatalf("staleRedRefreshSkip = %q, want only-non-required-checks-red", got)
+	}
+	f := &fakeStaleRedRefresher{bases: greenOnBase("base1", "pytest", "lint", staleRedAdvisory), out: github.StaleRedRefreshOutcome{Updated: true, Settled: true, BehindBy: 1}}
+	got := refreshStaleRedBehindPRs(context.Background(), cfg, f, actionableWith(pr), nil, discardLogger(), time.Now())
+	if len(f.calls) != 0 || len(got) != 0 || len(f.baseReads) != 0 {
+		t.Fatalf("refresh calls %d (keys %v, base reads %v), want none for a head red only on a non-required check", len(f.calls), got, f.baseReads)
+	}
+}
+
+// A required check red on the head and green on the base tip is refreshed
+// as before, also with a non-required check red beside it that the base
+// tip clears too.
+func TestRefreshStaleRedBehindPRs_RequiredRedStillRefreshed(t *testing.T) {
+	resetStaleRedRefresh(t)
+	cfg := escalationTestConfig()
+	requiredOnly := withRequiredChecks(staleRedPR(1, "h1"), requiredRun("pytest", "failure"))
+	withAdvisory := withRequiredChecks(staleRedPR(2, "h2"), requiredRun("pytest", "failure"))
+	withAdvisory.FailingChecks = []string{"pytest", staleRedAdvisory}
+	f := &fakeStaleRedRefresher{bases: greenOnBase("base1", "pytest", staleRedAdvisory), out: github.StaleRedRefreshOutcome{Updated: true, Settled: true, BehindBy: 1}}
+	got := refreshStaleRedBehindPRs(context.Background(), cfg, f, actionableWith(requiredOnly, withAdvisory), nil, discardLogger(), time.Now())
+	if len(f.calls) != 2 || !got["acme/widgets#1"] || !got["acme/widgets#2"] {
+		t.Fatalf("refresh calls %d (keys %v), want both PRs with a red required check refreshed", len(f.calls), got)
+	}
+}
+
+// A required check that did not pass is not "only non-required checks
+// red", even though the CI rollup lists only failure and action_required as
+// failing: a timed-out, cancelled or not-started required run, a required
+// commit status still pending, or a run the activity cannot attribute. Such
+// a head beside a base-fixable advisory red is refreshed as today (which
+// also re-runs the required check).
+func TestRefreshStaleRedBehindPRs_RequiredNotPassedRefreshedAsToday(t *testing.T) {
+	cases := []struct {
+		name     string
+		required github.PRActivityCheck
+	}{
+		{"timed out", requiredRun("pytest", "timed_out")},
+		{"cancelled", requiredRun("pytest", "cancelled")},
+		{"startup failure", requiredRun("pytest", "startup_failure")},
+		{"stale", requiredRun("pytest", "stale")},
+		{"pending commit status", github.PRActivityCheck{Name: "pytest", State: "pending", Kind: "commit_status"}},
+		{"producer not attributable", github.PRActivityCheck{Name: "pytest", State: "unknown"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetStaleRedRefresh(t)
+			cfg := escalationTestConfig()
+			pr := withRequiredChecks(staleRedPR(658, "h1"), tc.required)
+			pr.FailingChecks = []string{staleRedAdvisory}
+			if got := staleRedRefreshSkip(pr); got != "" {
+				t.Fatalf("staleRedRefreshSkip = %q, want a candidate as today", got)
+			}
+			f := &fakeStaleRedRefresher{bases: greenOnBase("base1", "pytest", staleRedAdvisory), out: github.StaleRedRefreshOutcome{Updated: true, Settled: true, BehindBy: 1}}
+			got := refreshStaleRedBehindPRs(context.Background(), cfg, f, actionableWith(pr), nil, discardLogger(), time.Now())
+			if len(f.calls) != 1 || !got["acme/widgets#658"] {
+				t.Fatalf("refresh calls %d (keys %v), want today's refresh", len(f.calls), got)
+			}
+		})
+	}
+}
+
+// A required check run still in progress beside an advisory red is skipped
+// as ci-running, exactly as today.
+func TestStaleRedRefreshSkip_PendingRequiredRunUnchanged(t *testing.T) {
+	pr := withRequiredChecks(staleRedPR(658, "h1"), github.PRActivityCheck{Name: "pytest", State: "in_progress"})
+	pr.FailingChecks = []string{staleRedAdvisory}
+	pr.CIChecksRunning = true
+	if got := staleRedRefreshSkip(pr); got != "ci-running" {
+		t.Fatalf("staleRedRefreshSkip = %q, want ci-running as today", got)
+	}
+}
+
+// The base-tip proof still covers every failing check, required or not: a
+// required check green on the base tip beside a non-required check the base
+// never runs is not refreshed, as before. The new skip never makes the
+// refresh fire where it did not.
+func TestRefreshStaleRedBehindPRs_NonRequiredCheckStillJudgedOnBase(t *testing.T) {
+	resetStaleRedRefresh(t)
+	cfg := escalationTestConfig()
+	pr := withRequiredChecks(staleRedPR(1, "h1"), requiredRun("pytest", "failure"))
+	pr.FailingChecks = []string{"pytest", staleRedAdvisory}
+	f := &fakeStaleRedRefresher{bases: greenOnBase("base1", "pytest"), out: github.StaleRedRefreshOutcome{Updated: true, Settled: true, BehindBy: 1}}
+	got := refreshStaleRedBehindPRs(context.Background(), cfg, f, actionableWith(pr), nil, discardLogger(), time.Now())
+	if len(f.calls) != 0 || len(got) != 0 {
+		t.Fatalf("refresh calls %d (keys %v), want none while a failing check has no run on the base tip", len(f.calls), got)
+	}
+}
+
+// When the required set is unknown, empty or not fully reported on the
+// head, or the head's CI activity is missing or for another head, any
+// failing check counts as before: a head red only on the advisory check,
+// green on the base tip, is refreshed.
+func TestRefreshStaleRedBehindPRs_UnknownRequiredSetUnchanged(t *testing.T) {
+	passed := withRequiredChecks(staleRedPR(658, "h1"), requiredRun("pytest", "success"))
+	otherHead := *passed.CIActivity
+	otherHead.Head = "h0"
+	cases := []struct {
+		name       string
+		protection *github.ProtectionFacts
+		activity   *github.PRCIActivity
+	}{
+		{"no protection facts", nil, passed.CIActivity},
+		{"required set unknown", &github.ProtectionFacts{}, passed.CIActivity},
+		{"required set not fully reported", &github.ProtectionFacts{RequiredChecksKnown: true}, passed.CIActivity},
+		{"no CI activity", passed.Protection, nil},
+		{"CI activity for another head", passed.Protection, &otherHead},
+		{"CI activity with no required set", passed.Protection, &github.PRCIActivity{Head: "h1"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetStaleRedRefresh(t)
+			cfg := escalationTestConfig()
+			pr := staleRedPR(658, "h1")
+			pr.FailingChecks = []string{staleRedAdvisory}
+			pr.Protection, pr.CIActivity = tc.protection, tc.activity
+			if got := staleRedRefreshSkip(pr); got != "" {
+				t.Fatalf("staleRedRefreshSkip = %q, want a candidate", got)
+			}
+			f := &fakeStaleRedRefresher{bases: greenOnBase("base1", staleRedAdvisory), out: github.StaleRedRefreshOutcome{Updated: true, Settled: true, BehindBy: 1}}
+			got := refreshStaleRedBehindPRs(context.Background(), cfg, f, actionableWith(pr), nil, discardLogger(), time.Now())
+			if len(f.calls) != 1 || !got["acme/widgets#658"] {
+				t.Fatalf("refresh calls %d (keys %v), want today's refresh", len(f.calls), got)
+			}
+		})
+	}
+}
+
 // Updates are capped per repository per pass; the rest wait for a later pass.
 func TestRefreshStaleRedBehindPRs_PerRepoCap(t *testing.T) {
 	resetStaleRedRefresh(t)
@@ -199,6 +372,20 @@ func TestStaleRedRefreshSkip(t *testing.T) {
 		{"CI still running", func(p *github.PullRequest) { p.CIChecksRunning = true }, "ci-running"},
 		{"open shared-CI incident", func(p *github.PullRequest) { p.SharedCIIncident = 12 }, "shared-ci-incident-open"},
 		{"red on the base too", func(p *github.PullRequest) { p.BaseRedChecks = []string{"pytest"} }, "base-red"},
+		// Danathar/tududi#658: every required check passed, only an
+		// advisory check red.
+		{"red only on non-required checks", func(p *github.PullRequest) {
+			*p = withRequiredChecks(*p, requiredRun("build", "success"))
+		}, "only-non-required-checks-red"},
+		{"a required check red", func(p *github.PullRequest) { *p = withRequiredChecks(*p, requiredRun("pytest", "failure")) }, ""},
+		{"a required check timed out", func(p *github.PullRequest) { *p = withRequiredChecks(*p, requiredRun("build", "timed_out")) }, ""},
+		{"required set unknown", func(p *github.PullRequest) { p.Protection = &github.ProtectionFacts{} }, ""},
+		// A dependency bot's branch keeps today's route to its rebase
+		// request (stale_red_bot_rebase.go).
+		{"dependency bot red only on non-required checks", func(p *github.PullRequest) {
+			*p = withRequiredChecks(*p, requiredRun("build", "success"))
+			p.HeadRef, p.Author = "renovate/actions", "app/mergeraptor"
+		}, "dependency-bot-branch"},
 		// projectbluefin/utah-packages#1258: Canary refuses fork PRs, and
 		// it is green on the base only because the base is not a fork.
 		{"red only on a fork guard", func(p *github.PullRequest) {
