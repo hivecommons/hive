@@ -683,8 +683,24 @@ nothing to fix, so the PR parks at `085` under `hive-signoff-attribution`
 for a maintainer, with one `<!-- hive:maintainer-signoff-attribution
 head=… -->` note per head naming what clears it (approve the head, merge
 with a merge commit, or lift `auto_merge.squash_only`) and no contributor
-nudge (projectbluefin/testsuite#991). When the lane never merges the head
-unattended, approved or not — tests removed, a human-merge path, or a
+nudge (projectbluefin/testsuite#991). In a repository listed in
+`auto_merge.squash_only` a merge commit is not a route. The note for the
+squash-only refusal itself (every commit self-signed, so only the policy
+stood in the way) offers lifting squash-only or re-authoring the hive's
+commits. Every other refusal (unsigned commits, a hive-only head, role, a
+manual-merge rule, suppressed labels), in the 085 note and the
+adoption-stalled note alike, keeps its own question but names the routes
+that repo has: accept the squash and squash by hand with a message that keeps
+each commit's `Signed-off-by` line (edited in the web UI, or passed with
+`gh pr merge N --squash --body-file`; GitHub's default squash message and a
+merge queue's squash can drop them), once the `Sign-off survives the squash`
+check passes or an admin bypasses it where that check runs; re-author the
+hive's commits under a maintainer's own sign-off and push a new head; or lift
+squash-only, which also needs merge commits allowed on GitHub (repo settings
+and branch ruleset). A hive-only head leads with re-authoring, since its
+squash carries no sign-off from the PR author and fails DCO
+(projectbluefin/bluefin-bling#200). Outside squash-only repos, when the lane
+never merges the head unattended, approved or not — tests removed, a human-merge path, or a
 `workflow-path` fence the owner's approval cannot release (toggle off, or
 the App lacks `workflows: write`) — the note, and the adoption-stalled note
 that carries the same ask, offer only the by-hand merge with a merge commit

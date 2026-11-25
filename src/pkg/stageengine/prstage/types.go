@@ -89,6 +89,12 @@ type Detail struct {
 	// head (projectbluefin/testsuite#1037).
 	ManualMergeRule string
 	SentinelAlert   bool
+	// SquashOnly says the repo forbids merge commits
+	// (auto_merge.squash_only, the policy mergeCommitElection reads), filled
+	// at the same point, so every case of that ask names the routes a
+	// squash-only repo has instead of a merge commit
+	// (projectbluefin/bluefin-bling#200).
+	SquashOnly bool
 	// DCOGate / DCOGateHead record whether the CI gate saw a DCO context
 	// on the head (required-check set or reported status/check run): the
 	// detected "this repo enforces DCO" signal the 072 override needs when
