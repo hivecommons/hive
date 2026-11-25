@@ -34,6 +34,16 @@ const BUILD_CHECKS = {
 };
 const SHA = /^[a-f0-9]{40}$/;
 const BLOCKED_LABEL = /^(hold|needs-human|release-in-progress|do-not-merge(?:\/.*)?)$/i;
+// The deliberate "do not land yet" labels. On a PR event a head held ONLY by
+// these is reported as held, not failed: the check still validates every
+// policy provider, and a held PR is never admitted, because every merge-group
+// evaluation re-reads holds with the strict assertEligible below. Before this,
+// a forgotten hold on an all-green PR read as a red CI check for hours and the
+// hive could not tell it from a real failure.
+const HOLD_LABEL = /^(hold|do-not-merge\/hold)$/i;
+// Leads the success message of a held PR so the workflow can surface it as a
+// notice and the job summary instead of a plain pass.
+const HELD_VERDICT_PREFIX = 'HELD:';
 const MAX_QUEUE_PAGES = 10;
 const POLICY_CHECK_NAME = 'native-queue-policy';
 const POLICY_CHECK_SOURCE = ['native-queue-policy.yml', PR_EVENTS];
@@ -139,18 +149,38 @@ function membersForGroup(entries, group) {
 // author or an operator must change, never a shared CI incident. An opaque
 // "moved, draft, closed, or held" verdict across several held or draft PRs
 // reads like a broken workflow and gets filed as one (#18128).
-function ineligibleReason(pr, head, base) {
+//
+// allowHold (PR events only) lets labels matching HOLD_LABEL through; every
+// other blocking label, and every merge-group read, stays fail closed.
+function ineligibleReason(pr, head, base, { allowHold = false } = {}) {
   if (pr.state !== 'open') return `is ${pr.state}, not open`;
   if (pr.draft) return 'is a draft';
   if (pr.head?.sha !== head) return `head moved to ${pr.head?.sha} (event head ${head})`;
   if (pr.base?.ref !== base) return `base moved to ${pr.base?.ref} (event base ${base})`;
-  const held = (pr.labels ?? []).filter(l => BLOCKED_LABEL.test(l.name)).map(l => l.name);
+  const held = (pr.labels ?? []).filter(l => BLOCKED_LABEL.test(l.name) && !(allowHold && HOLD_LABEL.test(l.name)))
+    .map(l => l.name);
   if (held.length) return `is held by label ${held.join(', ')}`;
   return null;
 }
 
-function assertEligible(pr, head, base) {
-  const reason = ineligibleReason(pr, head, base);
+// The HOLD_LABEL names on a PR, in label order.
+function holdLabels(pr) {
+  return (pr?.labels ?? []).map(l => l.name).filter(name => typeof name === 'string' && HOLD_LABEL.test(name));
+}
+
+// The success message for a PR whose evidence is green but which is held.
+// Not a failure and not an admission: the merge group re-checks holds.
+function heldVerdict(pr, labels, detail) {
+  return `${HELD_VERDICT_PREFIX} PR #${pr.number} is held by label ${labels.join(', ')}; ${detail}. ` +
+    'Not admitted while held: release the hold to land it (every merge-group run re-checks holds).';
+}
+
+function isHeldVerdict(message) {
+  return typeof message === 'string' && message.startsWith(HELD_VERDICT_PREFIX);
+}
+
+function assertEligible(pr, head, base, options) {
+  const reason = ineligibleReason(pr, head, base, options);
   if (reason) {
     throw new Error(`#${pr.number} ${reason}; not eligible for admission ` +
       '(PR state, not a CI failure: re-evaluated on the next synchronize, ready_for_review or hold-label change)');
@@ -440,7 +470,7 @@ async function replayLastVerdict({ github, context, currentCheckRunId }) {
   const event = context.payload.pull_request;
   const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: event.number });
   if (pr.state === 'closed') return closedNoop(pr);
-  assertEligible(pr, event.head.sha, event.base.ref);
+  assertEligible(pr, event.head.sha, event.base.ref, { allowHold: true });
   const runs = await github.paginate(github.rest.checks.listForRef, {
     ...repo, ref: pr.head.sha, check_name: POLICY_CHECK_NAME, per_page: 100, filter: 'all',
   });
@@ -467,7 +497,9 @@ async function replayLastVerdict({ github, context, currentCheckRunId }) {
     if (error instanceof PendingEvidence || error instanceof ProviderUnavailable) return null;
     throw error;
   }
-  return `PR #${pr.number}: replayed ${POLICY_CHECK_NAME} run ${prior.id} (success) on ${pr.head.sha}; ${path}`;
+  const replayed = `replayed ${POLICY_CHECK_NAME} run ${prior.id} (success) on ${pr.head.sha}; ${path}`;
+  const holds = holdLabels(pr);
+  return holds.length ? heldVerdict(pr, holds, replayed) : `PR #${pr.number}: ${replayed}`;
 }
 
 async function evaluateOnce({ github, context }) {
@@ -477,12 +509,17 @@ async function evaluateOnce({ github, context }) {
     const { data: pr } = await github.rest.pulls.get({ ...repo, pull_number: event.number });
     // Post-merge label/comment edits re-fire this event; a closed PR has nothing to gate.
     if (pr.state === 'closed') return closedNoop(pr);
-    assertEligible(pr, event.head.sha, event.base.ref);
+    // A hold is PR state, not CI: the evidence is still validated in full so
+    // a held PR's check is green only when its providers are, and any other
+    // blocking label still fails.
+    assertEligible(pr, event.head.sha, event.base.ref, { allowHold: true });
     const path = await assertEvidence(github, repo, pr.number, pr.head.sha, POLICY_CHECKS, pr);
     const { data: current } = await github.rest.pulls.get({ ...repo, pull_number: event.number });
     if (current.state === 'closed') return closedNoop(current);
-    assertEligible(current, event.head.sha, event.base.ref);
-    return `PR #${pr.number}: five existing policy providers succeeded on ${pr.head.sha}; ${path}`;
+    assertEligible(current, event.head.sha, event.base.ref, { allowHold: true });
+    const evidence = `five existing policy providers succeeded on ${pr.head.sha}; ${path}`;
+    const holds = holdLabels(current);
+    return holds.length ? heldVerdict(current, holds, evidence) : `PR #${pr.number}: ${evidence}`;
   }
   if (context.eventName !== 'merge_group' || context.payload.action !== 'checks_requested') {
     throw new Error('Unsupported policy event');
@@ -532,6 +569,7 @@ module.exports = {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict, BLOCKED_LABEL,
+  HOLD_LABEL, HELD_VERDICT_PREFIX, holdLabels, isHeldVerdict,
   PR_EVENTS, LEGACY_VERIFIER_EVENTS, HIVE_STATUS_CHECKS, HIVE_CREATOR_ENV, POLICY_CHECK_SOURCE,
   hiveCreatorLogin, assertHiveStatus, assertEvidence,
   ProviderUnavailable, ProviderVerdict, PROVIDER_VERDICT_NOTE, FORWARD_MERGE, FORWARD_MERGE_HEAD, PROW,

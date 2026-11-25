@@ -8738,6 +8738,23 @@ type EscalationConfig struct {
 	// Threshold is the distinct-red-attempt count that triggers escalation.
 	// Zero means DefaultEscalationThreshold.
 	Threshold int `yaml:"threshold,omitempty" json:"threshold,omitempty"`
+	// StaleHoldAfter is how long an open PR may sit behind a hold label
+	// (StaleHoldLabels) with every check green before the hive raises it to
+	// a person, once per head: a notification plus a blocked lifecycle
+	// event. A Go duration ("2h", "90m"); empty means DefaultStaleHoldAfter;
+	// "off" or "0" disables it. The HIVE_STALE_HOLD_AFTER environment
+	// variable overrides it.
+	StaleHoldAfter string `yaml:"stale_hold_after,omitempty" json:"stale_hold_after,omitempty"`
+	// StaleHoldLabels are the hold labels the stale-hold signal and the
+	// release-when-green label act on, matched exactly and
+	// case-insensitively. Empty means DefaultStaleHoldLabels.
+	StaleHoldLabels []string `yaml:"stale_hold_labels,omitempty" json:"stale_hold_labels,omitempty"`
+	// ReleaseWhenGreenLabel is the opt-in label that asks the hive to remove
+	// a PR's StaleHoldLabels, and then this label, once every check on the
+	// head is green. A hold without it is never removed by the hive, and
+	// nothing else (no lgtm, no approval) is added. Empty means
+	// DefaultReleaseWhenGreenLabel; "off" disables releases.
+	ReleaseWhenGreenLabel string `yaml:"release_when_green_label,omitempty" json:"release_when_green_label,omitempty"`
 }
 
 // ReviewConfig gates the optional structured review-swarm merge gate. The zero
@@ -10314,6 +10331,76 @@ func (e EscalationConfig) EffectiveThreshold() int {
 		return e.Threshold
 	}
 	return DefaultEscalationThreshold
+}
+
+// DefaultStaleHoldAfter is how long a held PR may stay all green before the
+// hive raises it, when escalation.stale_hold_after is unset.
+const DefaultStaleHoldAfter = 2 * time.Hour
+
+// StaleHoldAfterEnv overrides escalation.stale_hold_after.
+const StaleHoldAfterEnv = "HIVE_STALE_HOLD_AFTER"
+
+// staleHoldOff is the spelling that disables the stale-hold signal or the
+// release-when-green label.
+const staleHoldOff = "off"
+
+// DefaultStaleHoldLabels are the hold labels the stale-hold signal watches
+// when escalation.stale_hold_labels is unset.
+var DefaultStaleHoldLabels = []string{"hold", "do-not-merge/hold"}
+
+// DefaultReleaseWhenGreenLabel is the opt-in release label when
+// escalation.release_when_green_label is unset.
+const DefaultReleaseWhenGreenLabel = "hold/until-green"
+
+// EffectiveStaleHoldAfter resolves the stale-hold threshold: the
+// HIVE_STALE_HOLD_AFTER value read through getenv (nil means os.Getenv)
+// wins over the config value, which wins over DefaultStaleHoldAfter. Zero
+// means disabled. An unparsable or negative value falls back to the next
+// source rather than disabling the signal by accident.
+func (e EscalationConfig) EffectiveStaleHoldAfter(getenv func(string) string) time.Duration {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	for _, raw := range []string{getenv(StaleHoldAfterEnv), e.StaleHoldAfter} {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		if strings.EqualFold(v, staleHoldOff) || v == "0" {
+			return 0
+		}
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return DefaultStaleHoldAfter
+}
+
+// EffectiveStaleHoldLabels resolves the watched hold labels.
+func (e EscalationConfig) EffectiveStaleHoldLabels() []string {
+	var out []string
+	for _, l := range e.StaleHoldLabels {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	if len(out) == 0 {
+		return append([]string(nil), DefaultStaleHoldLabels...)
+	}
+	return out
+}
+
+// EffectiveReleaseWhenGreenLabel resolves the opt-in release label; "" means
+// releases are disabled.
+func (e EscalationConfig) EffectiveReleaseWhenGreenLabel() string {
+	v := strings.TrimSpace(e.ReleaseWhenGreenLabel)
+	switch {
+	case v == "":
+		return DefaultReleaseWhenGreenLabel
+	case strings.EqualFold(v, staleHoldOff):
+		return ""
+	}
+	return v
 }
 
 // RecommendationsConfig controls the hive's "what should I merge next?" issue.

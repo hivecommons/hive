@@ -1,1 +1,0 @@
-- Open and act on the selected Knowledge fact when multiple layers contain the same slug.

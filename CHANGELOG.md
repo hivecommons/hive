@@ -11,6 +11,27 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.366.6)
+
+### Fixed
+
+- Open and act on the selected Knowledge fact when multiple layers contain the same slug.
+
+### Security
+
+- No automerge lane merges a PR that touches credential, keystore, auth or secret code, or that wears the sentinel alert label, until a person decides on that exact head ([#19741](https://github.com/hivecommons/hive/issues/19741)). This applies to App self-merge, trusted bots, trusted authors and contributors. The trusted-author lane had merged an owner's credential change on green CI alone. Three things let it through: the sentinel finding was notice-only, the swarm's changes_requested was a COMMENTED review, and the review gate was in shadow. The new `auto_merge.decision_gate` is on by default with a shipped set of credential paths. A trusted merger's APPROVED review on the head, the dashboard's Approve, or `/hive decision approve` releases it, and the tracker parks a held PR at 085. Set `paths` to replace the set, `sentinel: false` to leave sentinel-labelled trusted PRs to the label rules, or `enabled: false` to turn the gate off.
+
+## 2026-11-25 (v5.366.5)
+
+### Changed
+
+- Scoped-token tier names now have a named Go type (`agentmode.TokenTier`) instead of a bare string; no behavior change ([#19566](https://github.com/hivecommons/hive/pull/19566)).
+
+### Fixed
+
+- The post-merge DCO monitor no longer fails a contributor's private-email squash because the pull request also held GitHub "Update branch" merges made by the hive App. The merged-PR evidence rule from #19660 required every PR commit to belong to the PR author, so the squash of #19766 (69794fd) was reported as `pr-commit-not-by-pr-author`; it now ignores only verified web-flow merge commits authored by the hive App (`hivecommons-hive[bot]`, login and id), which carry base-branch content and none of the change. Merges by humans or any other GitHub App, unverified or single-parent bot commits, and PRs with no commit of the author's own still fail. (#19775)
+- Clear Inbox selections when items are hidden or removed, and list the affected items in the delete confirmation.
+
 ## 2026-11-25 (v5.366.4)
 
 ### Fixed

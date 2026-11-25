@@ -862,6 +862,7 @@ type Issue struct {
 	Body              string `json:"body,omitempty"`
 	Author            string `json:"author"`
 	AuthorIsHuman     bool   `json:"author_is_human,omitempty"`
+	AuthorAssociation string `json:"author_association,omitempty"` // reporter's author_association, for the contribute queue's cached reporter-trust check (#9665); "" from an older enumerator
 	HumanAcknowledged bool   `json:"human_acknowledged,omitempty"`
 	// AckSource names where a hive-filed issue's acknowledgement came from
 	// when it was not given on the issue itself: "parent #N" for a child the
@@ -2105,6 +2106,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			Body:              issue.GetBody(),
 			Author:            safeGetLogin(issue.GetUser()),
 			AuthorIsHuman:     authorIsHuman,
+			AuthorAssociation: strings.TrimSpace(issue.GetAuthorAssociation()),
 			HumanAcknowledged: acknowledged,
 			AckSource:         ackSource,
 			Labels:            labels,

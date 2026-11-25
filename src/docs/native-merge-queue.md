@@ -282,6 +282,17 @@ metadata, not a fabricated last-member PR event.
   the full wait so a stale verdict is never pinned onto later cosmetic flips.
   `hold`, `needs-human`, `release-in-progress` and `do-not-merge*` flips
   always get the full wait.
+- On a PR event, a head held **only** by `hold` or `do-not-merge/hold` is
+  reported as held, not failed: the evidence is validated in full exactly as
+  for an unheld PR, and when it is green the check passes with a `HELD:`
+  notice and job summary saying the PR is not admitted while held. A red,
+  missing or UNKNOWN provider still fails it. Any other blocking label
+  (`needs-human`, `release-in-progress`, other `do-not-merge*`), a draft, or a
+  moved head/base still fails closed. Before this, a forgotten hold on an
+  all-green PR read as a red CI check for hours. The hold still blocks
+  landing: every merge-group run re-reads each member's labels with the
+  strict rule below, a Tide deployment's label query excludes held PRs, and the hive's
+  merge sweep never takes a held PR.
 - On a group it executes the event's trusted `base_sha` validator. It reads
   the live queue prefix ending at the event's exact synthetic head,
   verifies contiguous membership and the base/head commit chain, and checks
@@ -320,7 +331,8 @@ metadata, not a fabricated last-member PR event.
   are remediated by their own authors (see
   [v5-sync-policy.md](v5-sync-policy.md#dco-on-top-up-prs)).
 - Draft/held PRs, changes requested, dismissed approvals and approvals on an
-  old head fail closed. A `pull_request_target` run on an already closed or
+  old head fail closed on every merge group (a PR-event run reports a plain
+  hold as held, above). A `pull_request_target` run on an already closed or
   merged PR (re-fired by a post-merge label or comment edit) passes as a
   no-op before any eligibility or evidence check; on `merge_group` a closed
   PR still fails closed. Membership and mutable PR/review state are re-read
