@@ -1,0 +1,1 @@
+- The supersession sweep no longer fails or warns on every tick when a PR claims an issue that does not exist; the claim is skipped quietly.
