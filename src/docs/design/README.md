@@ -43,6 +43,17 @@ that status is the thing to check before treating a page as current behaviour:
   revocation with a clearing reply, the privacy and audit rules, and four
   phases, hub consent page and record first.
 
+- [Customers: signal audit and using customer data to shape managed repos](customers-signal-audit.md) -
+  **design only.** Issue
+  [#19866](https://github.com/hivecommons/hive/issues/19866): a cited table of
+  every signal Customers collects on the hub and on a spoke and whether it
+  works (dead `reviewed`, `merged` and chat edges; country broken for lack of a
+  source), why no flag shows on the project hive, and proposals for using the
+  data in ranking, triage and advisory reports. Records the trust rule (the hub
+  and the project hive are one domain; other spokes use local data only), the
+  prerequisites, and the privacy constraints: scorers see tiers, never
+  identities, and public output carries counts only.
+
 - [Dashboard Ask AI help: an optional, isolated "Ask" panel](dashboard-ask-ai-help.md) -
   **design only / proposed.** Issue
   [#19177](https://github.com/hivecommons/hive/issues/19177): compares a
