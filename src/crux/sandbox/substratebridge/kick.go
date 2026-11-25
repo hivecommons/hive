@@ -143,6 +143,13 @@ func (k *KickServer) wait() time.Duration {
 	return DefaultKickWait
 }
 
+func (k *KickServer) workspaceDir() string {
+	if k.Workspace != "" {
+		return k.Workspace
+	}
+	return DefaultWorkspace
+}
+
 func (k *KickServer) stderr() io.Writer {
 	if k.Stderr != nil {
 		return k.Stderr
@@ -179,10 +186,7 @@ func (k *KickServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "job bridge: the workspace was already pushed", http.StatusConflict)
 			return
 		}
-		dir := k.Workspace
-		if dir == "" {
-			dir = DefaultWorkspace
-		}
+		dir := k.workspaceDir()
 		if err := clearDir(dir); err != nil {
 			http.Error(w, fmt.Sprintf("job bridge: clearing %s: %v", dir, err), http.StatusInternalServerError)
 			return
@@ -199,10 +203,7 @@ func (k *KickServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "job bridge: the kick is still running", http.StatusConflict)
 			return
 		}
-		dir := k.Workspace
-		if dir == "" {
-			dir = DefaultWorkspace
-		}
+		dir := k.workspaceDir()
 		var buf bytes.Buffer
 		if err := Pack(dir, &buf); err != nil {
 			http.Error(w, fmt.Sprintf("job bridge: packing workspace: %v", err), http.StatusInternalServerError)

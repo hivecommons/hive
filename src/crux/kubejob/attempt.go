@@ -109,8 +109,8 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 		policyBody = l.copyPlan.ingressOnlyPolicy(ns, name)
 	}
 	cleanup := func(c context.Context) {
-		l.deletePolicy(c, policyPath)
-		l.deletePolicy(c, secretPath)
+		l.deleteQuiet(c, policyPath)
+		l.deleteQuiet(c, secretPath)
 	}
 	if l.copyPlan != nil {
 		secret, err := json.Marshal(l.copyPlan.tokenSecret(ns, name))

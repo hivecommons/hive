@@ -19,14 +19,11 @@ import (
 // any of those are resolved.
 const JobBridgeCommand = "job-bridge"
 
-// JobBridgeTokenEnv is the default variable the bearer token is read from.
-const JobBridgeTokenEnv = "HIVE_JOB_BRIDGE_TOKEN" // #nosec G101 -- env var name, not a credential
-
 func (e *Env) cmdJobBridge(ctx context.Context, args []string) int {
 	fs := e.subFlags(JobBridgeCommand)
 	listen := fs.String("listen", ":"+strconv.Itoa(substratebridge.DefaultPort), "address to serve the bridge on")
 	workspace := fs.String("workspace", substratebridge.DefaultWorkspace, "directory the workspace is copied into and out of")
-	tokenEnv := fs.String("token-env", JobBridgeTokenEnv, "environment variable holding the bearer token hive must send; removed from CMD's environment")
+	tokenEnv := fs.String("token-env", substratebridge.JobTokenEnv, "environment variable holding the bearer token hive must send; removed from CMD's environment")
 	wait := fs.Duration("wait", substratebridge.DefaultKickWait, "how long to wait for hive to push the workspace, and to collect it after CMD exits")
 	if code, ok := parseSub(fs, args); !ok {
 		return code

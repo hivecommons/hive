@@ -39,7 +39,7 @@ import (
 //
 // Every request but /healthz carries a per-run bearer token, held in a
 // per-Job Secret and read by the pod through secretKeyRef (never a literal
-// in the Job spec); the bridge removes it from the kick command's. A NetworkPolicy
+// in the Job spec); the bridge removes it from the kick command's environment. A NetworkPolicy
 // admits ingress to the bridge port from hive's own pod labels only: on
 // network: none it is the deny-all policy plus that rule, on other networks
 // an ingress-only policy. No GitHub credential enters
@@ -51,8 +51,6 @@ import (
 const (
 	// DefaultBridgeMount is where the crux binary is mounted in the Job.
 	DefaultBridgeMount = "/opt/hive-bridge"
-	// BridgeTokenEnv carries the bridge's bearer token in the Job pod.
-	BridgeTokenEnv = "HIVE_JOB_BRIDGE_TOKEN" // #nosec G101 -- env var name, not a credential
 
 	bridgeVolumeName        = "hive-bridge"
 	bridgeInitContainerName = "hive-bridge"
@@ -164,14 +162,13 @@ func (p *copyPlan) apply(manifest map[string]any, secretName string) error {
 	for _, e := range env {
 		envAny = append(envAny, e)
 	}
-	env2 := envAny
-	c["env"] = append(env2, map[string]any{"name": BridgeTokenEnv, "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": secretName, "key": bridgeTokenKey}}})
+	c["env"] = append(envAny, map[string]any{"name": substratebridge.JobTokenEnv, "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": secretName, "key": bridgeTokenKey}}})
 	c["ports"] = []map[string]any{{"name": bridgePortName, "containerPort": substratebridge.DefaultPort, "protocol": "TCP"}}
 	bridge := []string{
 		path.Join(DefaultBridgeMount, path.Base(bridgeBinary)), "job-bridge",
 		"-listen", ":" + strconv.Itoa(substratebridge.DefaultPort),
 		"-workspace", workspace,
-		"-token-env", BridgeTokenEnv,
+		"-token-env", substratebridge.JobTokenEnv,
 		"--",
 	}
 	c["command"] = append(bridge, command...)

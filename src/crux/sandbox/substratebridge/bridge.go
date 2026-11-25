@@ -32,6 +32,9 @@ const (
 	// DefaultPort is the port the bridge serves on inside the actor and the
 	// port hive's CONNECT tunnel targets.
 	DefaultPort = 8477
+	// JobTokenEnv is the variable the Job manifest puts the bearer token in
+	// and the job-bridge command reads it from.
+	JobTokenEnv = "HIVE_JOB_BRIDGE_TOKEN" // #nosec G101 -- env var name, not a credential
 	// DefaultWorkspace is where the bridge unpacks the kick workspace.
 	DefaultWorkspace = "/workspace"
 

@@ -106,7 +106,7 @@ func TestCopyTransportPushesRunsAndPullsTheWorkspace(t *testing.T) {
 		t.Errorf("container command = %s, want the kick behind crux job-bridge", cmd)
 	}
 	env := asJSON(c["env"])
-	if strings.Contains(env, token) || !strings.Contains(env, `"name":"`+BridgeTokenEnv+`","valueFrom":{"secretKeyRef":`) {
+	if strings.Contains(env, token) || !strings.Contains(env, `"name":"`+substratebridge.JobTokenEnv+`","valueFrom":{"secretKeyRef":`) {
 		t.Errorf("container env = %s, want the bridge token by secretKeyRef, never a literal", env)
 	}
 	if !strings.Contains(asJSON(api.secret), `"token":"`+token+`"`) || !api.secretDeleted {

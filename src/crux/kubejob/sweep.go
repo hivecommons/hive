@@ -140,10 +140,10 @@ func (l *Launcher) SweepOrphans(ctx context.Context, opts SweepOptions) ([]Swept
 		}
 		// A network-none Job had a per-Job NetworkPolicy of the same name;
 		// best effort, as a Job on the default network has none.
-		l.deletePolicy(ctx, fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies/%s", ns, md.Name))
+		l.deleteQuiet(ctx, fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies/%s", ns, md.Name))
 		// A workspace_transport: copy Job had a bridge token Secret of the
 		// same name (no ownerReference); best effort, as other Jobs have none.
-		l.deletePolicy(ctx, fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s", ns, md.Name))
+		l.deleteQuiet(ctx, fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s", ns, md.Name))
 		swept = append(swept, SweptJob{Name: md.Name, Agent: agent, Age: age, Reason: reason})
 	}
 	return swept, firstErr

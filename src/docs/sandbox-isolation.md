@@ -126,7 +126,7 @@ Hive logs an `agent sandbox posture` warning at boot and on every config reload 
 
 **The per-agent toggle writes a complete block, or refuses (#18525).** The dashboard General tab's **Run in sandbox** toggle (`PUT /api/config/agent/{name}/general` with `sandboxEnabled`) used to write `sandbox.enabled: true` and nothing else, so an agent turned on while `agent_sandbox` had no image fell back to Podman with no image and failed every kick with "sandbox image is not configured". Turning the toggle on now resolves the agent's effective block — its own `sandbox` fields first, then the `agent_sandbox` defaults — and:
 
-- when that block is complete (an image, a runtime hive has, and `job.workspace_claim` for the Job runtime), writes it with the image and runtime pinned and `enabled: true`;
+- when that block is complete (an image, a runtime hive has, and `job.workspace_claim` for the Job runtime, unless `workspace_transport: copy`), writes it with the image and runtime pinned and `enabled: true`;
 - when the request names another agent with `copy_from` (the dashboard sends `sandboxCopyFrom`), copies that agent's complete block instead, **minus its `publish` block**: `publish.verify` commands are written for one repository's work, so the receiving agent keeps its own;
 - otherwise refuses with HTTP 400 naming what is missing and the agents a block could be copied from.
 
@@ -447,7 +447,7 @@ The rules match the read relay: when `enabled` is true, `listen_addr` is require
 
 **RBAC.** The spoke's ServiceAccount needs a Role for `batch/jobs` (create, get, list, delete), `pods` plus `pods/log` (get, list) and, optionally, `serviceaccounts` (get) so the Job service account's pull secrets are merged; the terminal viewer needs nothing beyond that same `pods/log` grant. The standalone kustomize base ships it as `sandbox-job-rbac.yaml`, and the hub provisioner grants it to every hosted spoke as `hive-sandbox-jobs`.
 
-Hive warns at boot and on reload (`config.AgentSandboxGateWarnings`) when a job-runtime agent resolves no `workspace_claim` or names a runtime hive does not have, and refuses the kick with the same message rather than failing it after the agent is marked running.
+Hive warns at boot and on reload (`config.AgentSandboxGateWarnings`) when a job-runtime agent resolves no `workspace_claim` (unless `workspace_transport: copy`) or names a runtime hive does not have, and refuses the kick with the same message rather than failing it after the agent is marked running.
 
 ### Posting reviews from a sandbox
 
@@ -649,7 +649,7 @@ On-demand agents, paused agents and `pause`/`continuous` cadences are never over
 ## Remaining gaps
 
 - The default target is the hive primary repo and default base ref; richer per-kick repo/ref selection is still future work.
-- The Job runtime is a first slice: one Job per kick, workspace shared through a PVC, no per-kick Secret minting. Clusters without ReadWriteMany storage can use `workspace_transport: copy` (#19621), which has no relays yet.
+- The Job runtime is a first slice: one Job per kick, workspace shared through a PVC, no per-kick Secret minting on the claim transport. Clusters without ReadWriteMany storage can use `workspace_transport: copy` (#19621), which has no relays yet.
 - Live Podman execution is covered by skip-when-absent tests; CI still needs a rootless-Podman runner lane for always-on integration coverage.
 - Sandboxed inference depends on an operator-provided restricted network/proxy policy. `none` is stronger but not yet usable for all model backends.
 - Stronger runtimes than plain containers ship opt-in: [ADR-0026](adr/0026-sandbox-runtime-selection.md) (Accepted) covers NVIDIA OpenShell (phase 1) and Agent Substrate (phase 2); both still need their prototype measurements and cluster preflights.
