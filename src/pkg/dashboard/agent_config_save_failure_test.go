@@ -108,13 +108,15 @@ func TestAgentConfigCadences_UnknownModeRefused(t *testing.T) {
 	assertAgentConfigUnchanged(t, deps, "scanner", before)
 }
 
-// A bad entry anywhere in the body must not leave the valid modes applied.
+// A bad entry anywhere in the body must not leave the valid modes applied. The
+// bad entry is a schedule object missing its timezone, which cadence validation
+// rejects (a bare unparseable string is accepted as an interval).
 func TestAgentConfigCadences_InvalidModeLeavesOthersUnchanged(t *testing.T) {
 	s, deps := apiServer(t)
 	writableConfig(t, deps.Config)
 	before := snapshotAgentConfig(deps, "scanner")
 
-	rec := doPut(s, "/api/config/agent/scanner/cadences", map[string]any{"idle": 600, "quiet": 300, "busy": "not a cadence"})
+	rec := doPut(s, "/api/config/agent/scanner/cadences", map[string]any{"idle": 600, "quiet": 300, "busy": map[string]any{"times": []string{"09:00"}}})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400: %s", rec.Code, rec.Body.String())
 	}
