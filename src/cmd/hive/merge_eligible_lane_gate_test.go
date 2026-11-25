@@ -269,6 +269,8 @@ func TestRelayRefusalVerdict(t *testing.T) {
 	soak := refusal(prstage.ContributorLaneReasonSoaking, "10m remaining")
 	noVerdict := refusal(prstage.ContributorLaneReasonNoVerdict, "details")
 	headAge := refusal("pending: head pushed 1m ago", "auto_merge.min_head_age")
+	workflowPath := refusal(prstage.ContributorLaneReasonWorkflowPath, "author tier \"trusted\", require_tiers merger, trusted")
+	testsRemoved := refusal(prstage.ContributorLaneReasonTestsRemoved, "details")
 	outstanding := func(reason string) github.MergeVerdict {
 		return github.MergeVerdict{State: github.MergeVerdictOutstanding, Reason: reason}
 	}
@@ -285,6 +287,8 @@ func TestRelayRefusalVerdict(t *testing.T) {
 		{"trust refusal, auto-merge on", trust, false, hand(trust + "; " + relayRefusalHandMergeReason), hand(trust + "; " + relayRefusalHandMergeReason)},
 		{"lane disabled, auto-merge on", disabled, false, hand(disabled + "; " + relayRefusalHandMergeReason), hand(disabled + "; " + relayRefusalHandMergeReason)},
 		{"repo not allowed, auto-merge on", repoNotAllowed, false, hand(repoNotAllowed + "; " + relayRefusalHandMergeReason), hand(repoNotAllowed + "; " + relayRefusalHandMergeReason)},
+		{"workflow-path fence, auto-merge on", workflowPath, false, hand(workflowPath + "; " + relayRefusalHandMergeReason), hand(workflowPath + "; " + relayRefusalHandMergeReason)},
+		{"tests-removed fence, auto-merge on", testsRemoved, false, hand(testsRemoved + "; " + relayRefusalHandMergeReason), hand(testsRemoved + "; " + relayRefusalHandMergeReason)},
 		{"soak refusal, auto-merge on", soak, false, outstanding(soak), outstanding(soak)},
 		{"no reviewer verdict, auto-merge on", noVerdict, false, outstanding(noVerdict), outstanding(noVerdict)},
 		{"head too new, auto-merge on", headAge, false, outstanding(headAge), outstanding(headAge)},
@@ -293,6 +297,7 @@ func TestRelayRefusalVerdict(t *testing.T) {
 		{"trust refusal, auto-merge off", trust, true, outstanding(trust), hand(trust + "; " + repoAutoMergeOffReason)},
 		{"lane disabled, auto-merge off", disabled, true, outstanding(disabled), hand(disabled + "; " + repoAutoMergeOffReason)},
 		{"repo not allowed, auto-merge off", repoNotAllowed, true, outstanding(repoNotAllowed), hand(repoNotAllowed + "; " + repoAutoMergeOffReason)},
+		{"workflow-path fence, auto-merge off", workflowPath, true, outstanding(workflowPath), hand(workflowPath + "; " + repoAutoMergeOffReason)},
 		{"soak refusal, auto-merge off", soak, true, outstanding(soak), hand(soak + "; " + repoAutoMergeOffReason)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -315,8 +320,8 @@ func TestRelayRefusalVerdict(t *testing.T) {
 }
 
 // needs_maintainer_merge stays trust-only: the lane switched off or scoped
-// to other repos is a hand merge on the dashboard, but not a maintainer-merge
-// row for the scheduler.
+// to other repos, or a workflow-file or tests-removed fence, is a hand merge
+// on the dashboard, but not a maintainer-merge row for the scheduler.
 func TestRelayRefusalNoLaneMerges(t *testing.T) {
 	for _, tc := range []struct {
 		reason         string
@@ -327,6 +332,8 @@ func TestRelayRefusalNoLaneMerges(t *testing.T) {
 		{prstage.ContributorLaneReasonAuthorAssociation, true, true},
 		{automerge.RelayLaneReasonDisabled, true, false},
 		{automerge.RelayLaneReasonRepoNotAllowed, true, false},
+		{prstage.ContributorLaneReasonWorkflowPath, true, false},
+		{prstage.ContributorLaneReasonTestsRemoved, true, false},
 		{prstage.ContributorLaneReasonSoaking, false, false},
 		{prstage.ContributorLaneReasonNoVerdict, false, false},
 		{"pending: head pushed 1m ago", false, false},
