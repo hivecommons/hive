@@ -955,6 +955,238 @@ auto_merge:
     enabled: true   # default false
 ```
 
+### Repository issues for red dependency-bot PRs
+
+When neither the stale-red bot rebase nor adoption applies, a red bump usually
+needs a companion change in the repository itself (an upstream Makefile or
+config changed), and a person has to diagnose that and file an issue for it.
+`auto_merge.dependency_bot_red_issue.enabled` (default **off**) lets the
+dependency-bot sweep file that issue. It works for any dependency-bot PR
+(Renovate, Dependabot, mergeraptor) in a repository on GitHub; the bot does not
+need to be a trusted bot author.
+
+At the moment the red-CI hand-off is posted (red on the same head past the 4
+hours, after the hive's one transient re-run if one is owed, and the adoption
+request above did not take the head), the sweep files one issue in the PR's
+repository only when all of this holds. A PR still carrying the `needs-human`
+of its own red-CI hand-off for an earlier head gets no second hand-off, so the
+sweep also runs the same check once for its newer red head, after the same 4
+hours on that head (see "Reproduced across heads" below). The cheap conditions
+come first, so a refused or impossible case costs no API call:
+
+- the hive can name its own accounts, so it can tell an issue it wrote from a
+  copy later (with PAT auth and no resolvable login, nothing is filed), and
+  the write-back gate would admit `issue_file` in the repository;
+- the failure was not triaged as transient or external, is not deferred to a
+  `[shared-ci]` incident, no failing check is also red on the base, and the
+  hive's transient re-run is not still owed and did not re-run nothing;
+- the failing required check set (the branch-protection list when it is
+  known, otherwise every failing check) has at most 5 checks;
+- no other open PR in the same snapshot, by a bot or a person, fails any of
+  those checks. One check red on several PRs is a shared cause (a secret the
+  bot's PRs cannot read, a runner problem), not one bump's;
+- no bot rebase request is pending for the head;
+- the PR's failure excerpt has a line beyond the bare "Process completed with
+  exit code N".
+
+Then, for at most 3 PRs per pass (the evaluation budget), it reads GitHub:
+
+- for a parked head only (below), first the PR's `needs-human` label
+  events: the newest must be the App's own `labeled`, as the stale-red pass
+  checks. One a person took off and put back files nothing for that head.
+  This read is never made for a refused case above, and it counts toward
+  the budget;
+- the base tip and its check runs, once per repository and base branch per
+  pass. The newest run of every failing check there must have concluded
+  `success`. A check that is red there, has not run there, or was skipped or
+  neutral, files nothing;
+- whether the head contains that base tip (one compare). The in-suite path
+  below needs it, so a rebase alone would not change the result. This holds
+  for a head the bot regenerated after the stale-red pass asked it to rebase
+  too; the text then says the hive will not ask again. A head that is behind
+  a passing base gets no in-suite issue: a rebase is the answer there. For
+  Renovate the stale-red pass may ask it; for Dependabot, which takes no
+  command from the hive, a person asks it to rebase. The cross-head path does
+  not need it;
+- every run of each failing check on the head (two calls per check: the runs,
+  with every attempt, and the newest failing run's annotations). Any run of
+  the check that passed on the head (fail, pass, fail) is a flaky check:
+  nothing is filed. Otherwise the failure must have reproduced, one of two
+  ways:
+  - **in-suite** (the head contains the base tip): for every failing check,
+    within one check suite, a failing run started after an earlier failing
+    run of it had finished (re-run attempts of one workflow run share a suite
+    and run one after another; failures in different suites, or overlapping
+    same-named runs such as a matrix, do not count), or the hive's transient
+    re-run of the head ran and failed again. A person re-running the failed
+    check before the hand-off is enough to qualify;
+  - **across heads** (the head may be behind the base tip): every failing
+    check also failed on the PR's previous head, whoever pushed the newer head
+    (the bot regenerating it, or a hive base refresh); the newer head contains
+    a base commit the previous head lacks; and every failing check passed on
+    that base commit itself, not only on the tip (see "Reproduced across
+    heads" below). This is the usual case where the hive cannot re-run a job
+    (its App has no Actions write) and a busy repository's bot PRs are nearly
+    always behind after 4 hours;
+
+  A single failed attempt on a single head files nothing;
+- each base tip's successful run must have finished after the head's newest
+  failing run started. An older base proof, or a missing time on either side,
+  is unknown: nothing is filed. This holds on both paths; on the cross-head
+  path it is not enough by itself when the head is behind the tip (below);
+- the newest failing runs must carry at least one failure-level annotation
+  beyond the bare exit code; warnings do not count;
+- one open-issue listing: no open `[shared-ci] <check> failing across <repo>`
+  incident for any of the checks, and an open issue whose body opens with the
+  same marker is linked only if the hive wrote it. One the hive did not write
+  (a copy, or a forged marker) is neither linked nor filed beside. The same
+  holds when the issue create reuses an open issue with the same title: it
+  is read and linked only if the hive wrote it. No issue
+  with the marker closed in the last 24 hours (7 days when closed as not
+  planned).
+
+Any PR past the evaluation budget, and any PR that fails a condition, is
+handed off at once exactly as with the switch off. No hand-off waits for the
+filer. A parked head past the budget is judged on a later pass; any other
+case is judged once.
+
+A temporary refusal (the budget, own accounts not yet known, or a GitHub
+call that failed with a 5xx, a 429, a rate-limited 403 or a network error)
+leaves the head pending: the parked path tries it again on a later pass,
+the hand-off's own head included, with no new grace. Each head gets at most
+3 such attempts (the hand-off's and the parked path's together; a spent
+budget is no attempt), then it is judged and logged once, so a lasting
+error cannot take an evaluation slot every pass and keep other PRs waiting.
+Any other 4xx (for example 410 when issues are disabled, or 422) is final
+for the head at once.
+
+#### Reproduced across heads
+
+The previous head comes from a red-head history the sweep keeps itself, in
+the same sidecar file as the filed issues, only while the switch is on. On
+every pass, before any hand-off, each dependency-bot PR in the snapshot is
+noted: a settled red head (a failing required check, CI no longer running)
+with its failing checks, a head still in CI as the next head, and a green
+head clears the history. A red head that was triaged transient, deferred to
+external CI or to a `[shared-ci]` incident, or had a check red on the base
+too, on any sighting, is kept in the chain but is never a previous head. A
+newer
+red head keeps the red head before it as its previous head only when it
+directly followed it: no third head was seen between them, and it was first
+seen red within 24 hours of the earlier head's last red sighting. The rule
+then needs, for the current head:
+
+- the previous head is a different SHA, and every check failing now failed
+  on it (a different check, or one more check, files nothing);
+- "brought up to date with the base": the merge base of the current head
+  with the base tip (from the compare already made; the newest base commit
+  the head contains, the one a hive base refresh merged or a bot rebased
+  onto) is a commit the previous head lacks (one compare of that commit with
+  the previous head). A new commit stacked on the previous head, with no
+  base update, is not evidence, and neither is a regeneration onto the same
+  base commit;
+- every failing check's newest run on that merge base itself concluded
+  `success`. When the head is up to date, the merge base is the tip and its
+  run had to finish after the head's failure started (above). When the head
+  is behind the tip, that commit's own check runs are read (one listing): a
+  success there at any time counts, since it is the very commit the head
+  contains, and a pass on the tip alone counts for nothing, because the fix
+  may have reached the base after the head was made;
+- no run of these checks passed on the previous head (one listing per
+  check), so its failure was not a flake;
+- all the other conditions above, including the tip's run that passed after
+  the newer head's failure started and no passing run on the newer head.
+
+These reads stay inside the PR's evaluation budget.
+
+Fail closed: a PR missing from one snapshot loses its history, a restart
+keeps it (persisted), and anything unknown is no evidence. The issue's
+"Reproduced:" line reads "the same checks failed on the previous head
+`<sha>` and again on this head after it was brought up to date with the base,
+and no run of these checks passed on this head.", and the hand-off line, when
+there is one, says the same. A parked newer head gets the issue only; nothing
+new is posted on the PR, and GitHub shows the issue's mention of the PR in
+the PR's timeline.
+
+The issue links the PR and each failing check's run (only links on the
+forge's own host, read from the PR's URL; otherwise the PR's checks page),
+names the failing checks, the base tip and how the failure reproduced, and
+quotes up to 10 failure-level error lines. Its next step reads "Fix the
+repository so this bump passes; do not edit the bot's branch." followed by
+what then has to happen on the PR, said the same way in the hand-off:
+
+- Renovate: Renovate has to rebase the PR so its checks run again; the hive
+  may tick its rebase/retry box once (stale-red bot rebase, when
+  `bot_rebase_request` is allowed), otherwise a person ticks it. After a
+  regenerated head the hive does not ask again, so a person ticks it;
+- Dependabot: a person with push access asks Dependabot to rebase; the hive
+  cannot ask Dependabot;
+- any other bot: a person has the bot rebase or regenerate the PR.
+
+It does not try to read old and new versions; the PR title is quoted instead.
+The PR title, check names, base branch name and links are neutralized first
+(one line, no backticks or angle brackets, only plain http(s) links on the
+forge's host), so they can neither forge the marker nor trip the issue
+template guard. The issue is filed through the write-back gate as `issue_file`
+and the usual issue create with governor origin, so it carries the
+`origin/governor` label like every hive-filed issue and no other label; the
+repository's own intake triages it.
+
+One issue is filed per PR and failing check set. The body's first line is a
+marker (`<!-- hive-dependency-bot-red pr=<n> checks=<key> -->`), and only that
+line counts when the issue is looked up again after a restart; the filed
+number is also kept beside the hand-off ledger
+(`dependency-bot-conflicts-red-issue.json`). A later bot head is checked again
+from the start, and the marker lookup finds the open issue, so its hand-off
+names the same issue.
+
+The hand-off comment and its `needs-human` label are posted as before; the
+comment gains one line naming the issue and saying why the fix belongs in the
+repository rather than on the bot's branch (a commit there stops the bot
+updating the branch, or is dropped when the bot regenerates it). Nothing else
+is added to the PR, so the stale-red pass can still ask the bot to rebase once
+a fix lands on the base. When the PR later merges, closes or goes green, the
+sweep posts one note on the issue, only while it is open and was written by
+the hive, and stops tracking it. A record whose PR, repository or issue
+GitHub reports gone (404 or 410) is dropped. It reuses the state the hand-off undo pass
+already read for a closed PR and makes at most 5 other state reads and 5
+notes per pass. It never closes the issue. With the switch off, the sweep
+behaves exactly as before.
+
+Limitations:
+
+- The open-issue listing reads at most 300 open issues (3 pages, newest
+  first). In a repository with more open issues, an older open issue with the
+  marker, or an older open `[shared-ci]` incident, is not seen.
+- The key is the exact failing check set. If the set changes between heads
+  (a check starts or stops failing), that is a new set and may get its own
+  issue; the ledger then tracks only the newest one per PR.
+- The marker names the PR number. When Dependabot closes a PR and opens a new
+  one for the same dependency (a newer version supersedes it), the new PR is a
+  new number, so one breakage can end up with two open issues, one per PR.
+  The first issue gets its "closed without merging" note.
+- Once the hand-off adds `needs-human`, a case refused for good at hand-off
+  time (for example a failure seen only once) is not filed later for that
+  head. Only a temporary refusal is retried for the same head (at most 3
+  attempts), and a newer red head is judged again (across heads, or
+  in-suite).
+- Turning the switch off and on again within 24 hours keeps the red-head
+  history from before; heads that came and went while it was off are not
+  seen, so a head red before the toggle may count as the previous head of
+  the next red head. Off for longer, the chain breaks.
+- After 3 temporary refusals a head is given up even if the cause was
+  short-lived; its next head is judged afresh.
+- The parked-head path reads the PR's needs-human label events on every
+  attempt and keeps only a "not own" answer (as the stale-red pass does),
+  so a label a person put back between attempts is seen. That memo is in
+  memory; after a restart a judged head is not read again anyway.
+
+```yaml
+auto_merge:
+  dependency_bot_red_issue:
+    enabled: true   # default false
+```
+
 ### Breaking-titled or `needs-owner-merge` PRs wait for a human
 
 A PR whose trimmed title starts with `⚠️` (U+26A0, with or without the VS16

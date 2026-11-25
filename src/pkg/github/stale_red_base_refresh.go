@@ -43,6 +43,12 @@ type StaleRedBaseState struct {
 	// running or completed). The stale-red verdict does not read it; the
 	// missing-check refresh takes it as evidence that a check exists today.
 	Reported map[string]bool
+	// SucceededAt is when each latest run that concluded "success" finished
+	// (absent for any other conclusion, skipped and neutral included, or
+	// when GitHub gave no time). Only the dependency-bot red-CI issue reads
+	// it, to require a real pass on the base no older than the PR's failure;
+	// the stale-red and missing-check paths read Completed and Red as before.
+	SucceededAt map[string]time.Time
 }
 
 // StaleRedBaseVerdict is what the base tip says about a PR's failing checks.
@@ -94,13 +100,23 @@ func (c *Client) StaleRedBaseStateFor(ctx context.Context, repo, baseRef string)
 	if err != nil || !exists {
 		return StaleRedBaseState{}, exists, err
 	}
+	st, err := c.staleRedBaseStateAt(ctx, repo, sha)
+	if err != nil {
+		return StaleRedBaseState{}, true, err
+	}
+	return st, true, nil
+}
+
+// staleRedBaseStateAt reads the latest completed check run per name on the
+// commit sha (meta checks excluded).
+func (c *Client) staleRedBaseStateAt(ctx context.Context, repo, sha string) (StaleRedBaseState, error) {
 	owner, name := c.splitRepo(repo)
 	var all []*gh.CheckRun
 	opts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
 	for {
 		runs, resp, err := c.client.Checks.ListCheckRunsForRef(ctx, owner, name, sha, opts)
 		if err != nil {
-			return StaleRedBaseState{}, true, fmt.Errorf("listing check runs on %s/%s@%s: %w", owner, name, shortSHA(sha), err)
+			return StaleRedBaseState{}, fmt.Errorf("listing check runs on %s/%s@%s: %w", owner, name, shortSHA(sha), err)
 		}
 		if runs != nil {
 			all = append(all, runs.CheckRuns...)
@@ -110,7 +126,7 @@ func (c *Client) StaleRedBaseStateFor(ctx context.Context, repo, baseRef string)
 		}
 		opts.Page = resp.NextPage
 	}
-	st := StaleRedBaseState{SHA: sha, Completed: map[string]bool{}, Red: map[string]bool{}, Reported: map[string]bool{}}
+	st := StaleRedBaseState{SHA: sha, Completed: map[string]bool{}, Red: map[string]bool{}, Reported: map[string]bool{}, SucceededAt: map[string]time.Time{}}
 	for _, cr := range latestCheckRunsByNameAndApp(all) {
 		n := cr.GetName()
 		if n == "" || isMetaCheck(n) {
@@ -121,11 +137,14 @@ func (c *Client) StaleRedBaseStateFor(ctx context.Context, repo, baseRef string)
 			continue
 		}
 		st.Completed[n] = true
+		if at := cr.GetCompletedAt().Time; cr.GetConclusion() == "success" && !at.IsZero() {
+			st.SucceededAt[n] = at
+		}
 		if checkConclusionIsRed(cr.GetConclusion()) {
 			st.Red[n] = true
 		}
 	}
-	return st, true, nil
+	return st, nil
 }
 
 // StaleRedBehindBy returns how many commits of baseSHA the head headSHA
