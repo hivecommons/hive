@@ -94,15 +94,44 @@ func TestColonyAffiliationConfigOverridesAndBounds(t *testing.T) {
 	}
 }
 
-func TestColonyLoginOnlyPublicGitHub(t *testing.T) {
-	if got := colonyLogin(topRepoProfile{Login: "octo-dev", APIBase: githubActivityDefaultAPIURL}); got != "octo-dev" {
+func TestColonyLoginOnlyProvenPublicGitHub(t *testing.T) {
+	gh := &SaaSUser{GitHubUsername: "octo-dev"}
+	public := topRepoProfile{Login: "octo-dev", APIBase: githubActivityDefaultAPIURL}
+	if got := colonyLogin(gh, public); got != "octo-dev" {
 		t.Fatalf("public github login = %q", got)
 	}
-	if got := colonyLogin(topRepoProfile{Login: "octo-dev", APIBase: "https://ghe.example.com/api/v3"}); got != "" {
+	if got := colonyLogin(gh, topRepoProfile{Login: "octo-dev", APIBase: "https://ghe.example.com/api/v3"}); got != "" {
 		t.Fatalf("a GHE login must never be sent to colony, got %q", got)
 	}
-	if got := colonyLogin(topRepoProfile{IDPFallback: "Example Corp"}); got != "" {
+	if got := colonyLogin(gh, topRepoProfile{IDPFallback: "Example Corp"}); got != "" {
 		t.Fatalf("no login, got %q", got)
+	}
+	linked := &SaaSUser{GitHubUsername: "octo-dev", LinkedGitHubLogin: "someone-else"}
+	if got := colonyLogin(linked, topRepoProfile{Login: "someone-else", APIBase: githubActivityDefaultAPIURL}); got != "octo-dev" {
+		t.Fatalf("an unproven LinkedGitHubLogin must not be sent, got %q", got)
+	}
+	oidc := &SaaSUser{GitHubUsername: "google:1234", CanonicalID: "google:1234", LinkedGitHubLogin: "octo-dev"}
+	if got := colonyLogin(oidc, public); got != "" {
+		t.Fatalf("a non-GitHub primary has no proven login, got %q", got)
+	}
+}
+
+func TestColonyGitdmFailureBacksOff(t *testing.T) {
+	g := &fakeColonyProvider{err: errors.New("unreachable")}
+	c := testColonyAffiliator(g, &fakeColonyProvider{})
+	cfg := colonyAffiliationConfig{Gitdm: true}
+	if _, err := c.lookup(context.Background(), "octo-dev", colonyTestNow, cfg); err == nil {
+		t.Fatal("want the gitdm error")
+	}
+	if _, err := c.lookup(context.Background(), "octo-dev", colonyTestNow.Add(time.Minute), cfg); err != nil {
+		t.Fatalf("inside the backoff gitdm must be skipped, got %v", err)
+	}
+	if n := len(g.calls()); n != 1 {
+		t.Fatalf("gitdm calls = %d, want 1 during the backoff", n)
+	}
+	_, _ = c.lookup(context.Background(), "octo-dev", colonyTestNow.Add(colonyGitdmFailureBackoff+time.Minute), cfg)
+	if n := len(g.calls()); n != 2 {
+		t.Fatalf("gitdm calls = %d, want a retry after the backoff", n)
 	}
 }
 
@@ -153,6 +182,9 @@ func TestColonyLookupDevstatsBudgetAndContributions(t *testing.T) {
 	if n := len(d.calls()); n != 1 {
 		t.Fatalf("devstats calls = %d, want the hourly budget of 1 to hold", n)
 	}
+	if over, _ := c.lookup(context.Background(), "third-dev", colonyTestNow.Add(2*time.Minute), cfg); !over.KeepCNCF || over.CNCFContributions != 0 {
+		t.Fatalf("over budget = %+v, want KeepCNCF so the stored count survives", over)
+	}
 	if _, err := c.lookup(context.Background(), "other-dev", colonyTestNow.Add(colonyDevstatsWindow+time.Minute), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +224,7 @@ func TestColonyLookupProviderErrorIsReported(t *testing.T) {
 func TestMergeColonyAffiliationPrecedence(t *testing.T) {
 	col := colonyAffiliation{Org: "Example Org", Source: affiliationSourceColonyGitdm, Confidence: "high", CNCFContributions: 3}
 
-	kept, err := mergeColonyAffiliation(topRepoAssociation{Affiliation: "Profile Co", AffiliationSource: affiliationSourceCompany}, nil, col)
+	kept, err := mergeColonyAffiliation(topRepoAssociation{Affiliation: "Profile Co", AffiliationSource: affiliationSourceCompany}, nil, col, 0)
 	if err != nil || kept.Affiliation != "Profile Co" || kept.AffiliationSource != affiliationSourceCompany || kept.AffiliationConfidence != "" {
 		t.Fatalf("profile company must outrank colony: %+v, %v", kept, err)
 	}
@@ -201,7 +233,7 @@ func TestMergeColonyAffiliationPrecedence(t *testing.T) {
 	}
 
 	for _, source := range []string{affiliationSourceContributions, affiliationSourceOrgMembership, affiliationSourceGHE, affiliationSourceIDP} {
-		got, err := mergeColonyAffiliation(topRepoAssociation{Affiliation: "heuristic", AffiliationSource: source, TopRepo: "example/repo"}, nil, col)
+		got, err := mergeColonyAffiliation(topRepoAssociation{Affiliation: "heuristic", AffiliationSource: source, TopRepo: "example/repo"}, nil, col, 0)
 		if err != nil || got.Affiliation != "Example Org" || got.AffiliationSource != affiliationSourceColonyGitdm || got.AffiliationConfidence != "high" {
 			t.Fatalf("colony must outrank %s: %+v, %v", source, got, err)
 		}
@@ -210,18 +242,27 @@ func TestMergeColonyAffiliationPrecedence(t *testing.T) {
 		}
 	}
 
-	got, err := mergeColonyAffiliation(topRepoAssociation{}, errTopRepoNoData, col)
+	got, err := mergeColonyAffiliation(topRepoAssociation{}, errTopRepoNoData, col, 0)
 	if err != nil || got.Affiliation != "Example Org" {
 		t.Fatalf("a colony match must make a no-data footprint saveable: %+v, %v", got, err)
 	}
 
 	transient := topRepoHTTPError{status: http.StatusTooManyRequests}
-	if _, err := mergeColonyAffiliation(topRepoAssociation{}, transient, col); err == nil {
+	if _, err := mergeColonyAffiliation(topRepoAssociation{}, transient, col, 0); err == nil {
 		t.Fatal("a transient footprint error must still be reported so the old cache is kept")
 	}
 
-	if _, err := mergeColonyAffiliation(topRepoAssociation{}, errTopRepoNoData, colonyAffiliation{}); !errors.Is(err, errTopRepoNoData) {
+	if _, err := mergeColonyAffiliation(topRepoAssociation{}, errTopRepoNoData, colonyAffiliation{}, 0); !errors.Is(err, errTopRepoNoData) {
 		t.Fatalf("no data and no colony match must stay no data, got %v", err)
+	}
+
+	kept, err = mergeColonyAffiliation(topRepoAssociation{Affiliation: "x", AffiliationSource: affiliationSourceCompany}, nil, colonyAffiliation{KeepCNCF: true}, 9)
+	if err != nil || kept.CNCFContributions != 9 {
+		t.Fatalf("a skipped devstats lookup must keep the stored count: %+v, %v", kept, err)
+	}
+	cleared, _ := mergeColonyAffiliation(topRepoAssociation{Affiliation: "x", AffiliationSource: affiliationSourceCompany}, nil, colonyAffiliation{}, 9)
+	if cleared.CNCFContributions != 0 {
+		t.Fatalf("with devstats off the count must clear: %+v", cleared)
 	}
 }
 
@@ -244,6 +285,17 @@ func TestHubSetCompanyOutranksColonyAffiliation(t *testing.T) {
 	u.Company = "Legacy Co" // no recorded source
 	if got := userTopRepoAssociation(&u, nil); got.Affiliation != "Example Org" || got.AffiliationSource != affiliationSourceColonyGitdm || got.AffiliationConfidence != "high" {
 		t.Fatalf("an unrecorded company is not a set value: %+v", got)
+	}
+}
+
+func TestSaveUserTopRepoCacheDoesNotResurrectDeletedUser(t *testing.T) {
+	useTempUserDir(t)
+	gone := &SaaSUser{GitHubUsername: "gone-dev", Hives: map[string]string{"own": "viewer"}}
+	if err := saveUserTopRepoCache(gone, topRepoAssociation{Affiliation: "Example Org"}, colonyTestNow); err != nil {
+		t.Fatal(err)
+	}
+	if loadSaaSUser("gone-dev") != nil {
+		t.Fatal("a refresh wrote a deleted user back")
 	}
 }
 

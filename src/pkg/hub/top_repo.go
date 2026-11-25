@@ -142,7 +142,12 @@ func (s *HubServer) refreshUserTopRepo(ctx context.Context, u *SaaSUser, now tim
 	resolver := topRepoResolver{client: hubGitHubHTTPClient()}
 	profile := s.topRepoProfile(u)
 	assoc, err := resolver.resolve(ctx, profile)
-	assoc, err = mergeColonyAffiliation(assoc, err, s.colonyAffiliationLookup(profile, now))
+	// colony is asked only when the footprint answered or found nothing: on a
+	// transient GitHub error the old cache is kept, so a lookup (and, for
+	// devstats, a login sent and budget spent) would be thrown away.
+	if err == nil || isTopRepoNoData(err) {
+		assoc, err = mergeColonyAffiliation(assoc, err, s.colonyAffiliationLookup(u, profile, now), u.CNCFContributions)
+	}
 	if err != nil {
 		if errors.Is(err, errTopRepoNoData) {
 			_ = saveUserTopRepoCache(u, topRepoAssociation{}, now)
@@ -156,12 +161,16 @@ func saveUserTopRepoCache(u *SaaSUser, assoc topRepoAssociation, now time.Time) 
 	if u == nil {
 		return fmt.Errorf("nil user")
 	}
+	// Serialized with profile edits and user deletion, so a refresh neither
+	// loses a concurrent edit nor writes a deleted user back.
+	customerProfileMu.Lock()
+	defer customerProfileMu.Unlock()
 	latest := loadSaaSUser(userCanonicalID(u))
 	if latest == nil && userCanonicalID(u) != u.GitHubUsername {
 		latest = loadSaaSUser(u.GitHubUsername)
 	}
 	if latest == nil {
-		latest = u
+		return nil // deleted while the refresh ran
 	}
 	latest.TopRepo = assoc.TopRepo
 	latest.TopRepoURL = assoc.TopRepoURL

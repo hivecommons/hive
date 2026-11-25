@@ -1,7 +1,7 @@
 package hub
 
 // Hub Affiliation enrichment from hivecommons/colony: phase 1 of
-// src/docs/design/colony-customer-data-backend.md.
+// hivecommons/hive#19851 (design: src/docs/design/colony-customer-data-backend.md).
 //
 // The daily top-repo refresh (top_repo.go) derives a user's Affiliation from
 // their public GitHub footprint. This file adds two colony providers to that
@@ -71,6 +71,10 @@ const (
 	colonyDevstatsWindow             = time.Hour
 	colonyTimeoutDefault             = 2 * time.Minute
 	colonyTimeoutMax                 = 10 * time.Minute
+	// colonyGitdmFailureBackoff is how long gitdm is skipped after a failed
+	// load, so an unreachable host does not make every refresh queue behind
+	// a full download attempt.
+	colonyGitdmFailureBackoff = 15 * time.Minute
 
 	// colonyCacheDirName holds colony's ETag cache of the gitdm files, beside
 	// the users directory on the hub PVC.
@@ -162,6 +166,8 @@ type colonyAffiliator struct {
 	// devstatsSpent holds the start times of devstats lookups inside the
 	// last colonyDevstatsWindow.
 	devstatsSpent []time.Time
+	// gitdmRetryAt is when gitdm may be asked again after a failure.
+	gitdmRetryAt time.Time
 }
 
 func newColonyAffiliator() *colonyAffiliator {
@@ -196,6 +202,19 @@ func (c *colonyAffiliator) devstatsProvider() colonyLookup {
 	return c.devstats
 }
 
+// gitdmAvailable reports whether gitdm is outside its failure backoff.
+func (c *colonyAffiliator) gitdmAvailable(now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return !now.Before(c.gitdmRetryAt)
+}
+
+func (c *colonyAffiliator) gitdmFailed(now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.gitdmRetryAt = now.Add(colonyGitdmFailureBackoff)
+}
+
 // reserveDevstats spends one lookup from the hourly budget, or reports that
 // it is used up.
 func (c *colonyAffiliator) reserveDevstats(now time.Time, limit int) bool {
@@ -221,18 +240,23 @@ type colonyAffiliation struct {
 	Source     string
 	Confidence string
 	// CNCFContributions is the devstats all-time CNCF contribution count;
-	// zero when devstats is off, found nothing, or was not asked.
+	// zero when devstats is off or found nothing.
 	CNCFContributions int
+	// KeepCNCF is set when devstats is on but was not asked this time (hourly
+	// budget spent) or failed: the previous count is kept rather than wiped.
+	KeepCNCF bool
 }
 
-// colonyLogin is the login colony may be asked about: a public github.com
-// login only. A GHE login names a different account namespace, and gitdm and
-// devstats only know github.com.
-func colonyLogin(p topRepoProfile) string {
+// colonyLogin is the login colony may be asked about: the github.com login
+// that GitHub sign-in proved (the github: canonical identity, as the customer
+// match uses), and only when the refresh profile is public github.com. A GHE
+// login names a different account namespace, and an unproven
+// LinkedGitHubLogin is never used.
+func colonyLogin(u *SaaSUser, p topRepoProfile) string {
 	if strings.TrimRight(strings.TrimSpace(p.APIBase), "/") != githubActivityDefaultAPIURL {
 		return ""
 	}
-	return strings.TrimPrefix(strings.TrimSpace(p.Login), "@")
+	return strings.TrimSpace(customerMatchLogin(u))
 }
 
 // lookup asks the enabled colony providers about login. Only the login is
@@ -246,17 +270,21 @@ func (c *colonyAffiliator) lookup(ctx context.Context, login string, now time.Ti
 	}
 	q := resolver.Query{GitHubLogin: login}
 	var firstErr error
-	if cfg.Gitdm {
+	if cfg.Gitdm && c.gitdmAvailable(now) {
 		res, err := c.gitdmProvider(cfg.GitdmRefresh).Lookup(ctx, q)
 		if err != nil {
 			firstErr = err
+			c.gitdmFailed(now)
 		} else if a, ok := currentColonyAffiliation(res, now); ok {
 			out.Org, out.Source, out.Confidence = a.Org, affiliationSourceColonyGitdm, string(a.Confidence)
 		}
 	}
-	if cfg.Devstats && c.reserveDevstats(now, cfg.DevstatsHourlyLimit) {
+	if cfg.Devstats && !c.reserveDevstats(now, cfg.DevstatsHourlyLimit) {
+		out.KeepCNCF = true
+	} else if cfg.Devstats {
 		res, err := c.devstatsProvider().Lookup(ctx, q)
 		if err != nil {
+			out.KeepCNCF = true
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -298,12 +326,16 @@ func colonyOutranksAffiliationSource(source string) bool {
 // returns the association to save and whether there is anything to save: a
 // colony match turns a "no data" footprint into a saveable one, while a
 // transient footprint error is still reported so the old cache is kept.
-func mergeColonyAffiliation(assoc topRepoAssociation, footprintErr error, col colonyAffiliation) (topRepoAssociation, error) {
+// previousCNCF is the count already stored, kept when col.KeepCNCF.
+func mergeColonyAffiliation(assoc topRepoAssociation, footprintErr error, col colonyAffiliation, previousCNCF int) (topRepoAssociation, error) {
 	if footprintErr != nil && !isTopRepoNoData(footprintErr) {
 		return assoc, footprintErr
 	}
-	if col.CNCFContributions > 0 {
+	switch {
+	case col.CNCFContributions > 0:
 		assoc.CNCFContributions = col.CNCFContributions
+	case col.KeepCNCF:
+		assoc.CNCFContributions = previousCNCF
 	}
 	if col.Org != "" && (assoc.Affiliation == "" || colonyOutranksAffiliationSource(assoc.AffiliationSource)) {
 		assoc.Affiliation = col.Org
@@ -344,11 +376,11 @@ func hubSetAffiliation(u *SaaSUser) (string, string, bool) {
 
 // colonyAffiliationLookup runs the colony step of a refresh for u's profile
 // under its own timeout. Errors are logged and swallowed.
-func (s *HubServer) colonyAffiliationLookup(p topRepoProfile, now time.Time) colonyAffiliation {
+func (s *HubServer) colonyAffiliationLookup(u *SaaSUser, p topRepoProfile, now time.Time) colonyAffiliation {
 	if s == nil || s.colonyAffiliation == nil {
 		return colonyAffiliation{}
 	}
-	login := colonyLogin(p)
+	login := colonyLogin(u, p)
 	if login == "" {
 		return colonyAffiliation{}
 	}
