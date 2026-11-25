@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/hubbackup"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/unicode/norm"
 )
 
 // Restoring a spoke archive back into a data directory (#6529).
@@ -77,8 +79,8 @@ type RestoreOptions struct {
 	Force bool
 
 	// DryRun reports what WOULD be written without writing anything. The
-	// archive is still decrypted and verified, and the identity check still
-	// runs, so a dry run is a real answer about a real archive.
+	// archive is still decrypted and verified, and the identity and
+	// destination checks still run.
 	DryRun bool
 }
 
@@ -159,9 +161,9 @@ func Restore(key, sealed []byte, opts RestoreOptions, logger *slog.Logger) (*Res
 		}
 	}()
 
-	// Verify + decrypt + untar. Extract enforces the traversal and size guards;
-	// this function never parses the archive itself.
-	man, err := hubbackup.Extract(key, sealed, staging)
+	// Exclusive creation catches aliased archive paths before the plan walks
+	// staging, where an overwritten member would no longer be visible.
+	man, err := hubbackup.ExtractNewFiles(key, sealed, staging)
 	if err != nil {
 		return nil, fmt.Errorf("open archive: %w", err)
 	}
@@ -199,6 +201,10 @@ func Restore(key, sealed []byte, opts RestoreOptions, logger *slog.Logger) (*Res
 		res.Forced = true
 		logger.Warn("spoke restore: identity check overridden by -force",
 			"reason", mismatch, "archive_hive_id", plan.archiveHiveID, "existing_hive_id", existing)
+	}
+
+	if err := plan.checkDestinations(dataDir, staging); err != nil {
+		return nil, err
 	}
 
 	if opts.DryRun {
@@ -250,6 +256,242 @@ type restorePlan struct {
 	ignored       []string
 	archiveHiveID string
 	beads         map[string]struct{}
+}
+
+type restorePath struct {
+	path string
+	rel  string // Empty for a directory needed by a planned file.
+	info os.FileInfo
+
+	parent     string
+	parentInfo os.FileInfo
+	suffix     string
+}
+
+// checkDestinations detects conflicts across the whole plan before any file is moved.
+func (p *restorePlan) checkDestinations(dataDir, staging string) error {
+	root, err := filepath.Abs(dataDir)
+	if err != nil {
+		return fmt.Errorf("resolve destination %s: %w", dataDir, err)
+	}
+	// A restored file must also preserve the links used to reach dataDir.
+	directories := make(map[string]os.FileInfo)
+	root, err = checkRestoreDirectory("", root, directories)
+	if err != nil {
+		return fmt.Errorf("resolve destination %s: %w", dataDir, err)
+	}
+
+	destinations := make([]string, 0, len(p.moves))
+	for _, mv := range p.moves {
+		parent, err := checkRestoreDirectory(root, filepath.Dir(mv.rel), directories)
+		if err != nil {
+			return err
+		}
+		destinations = append(destinations, filepath.Join(parent, filepath.Base(mv.rel)))
+	}
+	aliases := make(map[string][]restorePath)
+	for dir, entry := range directories {
+		if entry == nil || entry.Mode()&os.ModeSymlink != 0 {
+			key := restoreNameKey(dir)
+			aliases[key] = append(aliases[key], restorePath{path: dir, info: entry})
+		}
+	}
+	probeRoot := filepath.Join(root, filepath.Base(staging))
+	for i, dst := range destinations {
+		rel := p.moves[i].rel
+		if _, usedAsDirectory := directories[dst]; usedAsDirectory {
+			return fmt.Errorf("cannot create directory %s: archive also restores a file there", rel)
+		}
+		// Rename replaces a destination symlink itself.
+		info, err := os.Lstat(dst)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("check restore destination %s: %w", rel, err)
+		}
+		if info != nil && info.IsDir() {
+			return fmt.Errorf("cannot restore %s: destination is a directory", rel)
+		}
+		path := restorePath{path: dst, rel: rel, info: info}
+		key := restoreNameKey(dst)
+		alias, err := findRestorePathAlias(&path, aliases[key], root, probeRoot)
+		if err != nil {
+			return err
+		}
+		if alias != nil {
+			if alias.rel == "" {
+				return fmt.Errorf("cannot create directory %s: archive also restores a file there", rel)
+			}
+			return fmt.Errorf("cannot restore %s and %s: both resolve to the same destination file", alias.rel, rel)
+		}
+		aliases[key] = append(aliases[key], path)
+	}
+	return nil
+}
+
+// checkRestoreDirectory records each entry a planned parent needs as a directory,
+// including intermediate symlinks that would disappear from an EvalSymlinks result.
+func checkRestoreDirectory(parent, path string, directories map[string]os.FileInfo) (string, error) {
+	volume := filepath.VolumeName(path)
+	if path == volume && filepath.IsAbs(path) {
+		return path, nil
+	}
+	path = path[len(volume):]
+	if len(path) > 0 && os.IsPathSeparator(path[0]) {
+		if volume == "" {
+			volume = filepath.VolumeName(parent)
+		}
+		parent = volume + string(filepath.Separator)
+	}
+	parts := strings.FieldsFunc(path, func(r rune) bool {
+		return r == '/' || r == filepath.Separator
+	})
+	for _, part := range parts {
+		switch part {
+		case ".":
+			continue
+		case "..":
+			parent = filepath.Dir(parent)
+			continue
+		}
+
+		parent = filepath.Join(parent, part)
+		directories[parent] = nil
+		info, err := os.Lstat(parent)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("check parent directory %s: %w", parent, err)
+		}
+		directories[parent] = info
+		if info.IsDir() {
+			continue
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return "", fmt.Errorf("cannot create directory %s: path is not a directory", parent)
+		}
+		// Stat rejects dangling links and cycles before we follow the link.
+		if _, err := os.Stat(parent); err != nil {
+			return "", fmt.Errorf("check parent directory %s: %w", parent, err)
+		}
+		target, err := os.Readlink(parent)
+		if err != nil {
+			return "", fmt.Errorf("read parent directory link %s: %w", parent, err)
+		}
+		parent, err = checkRestoreDirectory(filepath.Dir(parent), target, directories)
+		if err != nil {
+			return "", err
+		}
+	}
+	return parent, nil
+}
+
+// Use the basename for candidates because the existing parent itself may use
+// another spelling. The actual filesystem decides whether the candidate aliases.
+func restoreNameKey(path string) string {
+	return normalizeRestorePath(filepath.Base(path))
+}
+
+var restorePathFolder = cases.Fold()
+
+func normalizeRestorePath(path string) string {
+	return norm.NFC.String(restorePathFolder.String(norm.NFC.String(path)))
+}
+
+func findRestorePathAlias(dst *restorePath, candidates []restorePath, root, staging string) (*restorePath, error) {
+	for i := range candidates {
+		candidate := &candidates[i]
+		if dst.path == candidate.path {
+			return candidate, nil
+		}
+		if (dst.info == nil) != (candidate.info == nil) {
+			continue
+		}
+		// Hard links share an inode but can still be distinct directory entries.
+		if dst.info != nil && !os.SameFile(dst.info, candidate.info) {
+			continue
+		}
+		if err := dst.resolveParent(); err != nil {
+			return nil, err
+		}
+		if err := candidate.resolveParent(); err != nil {
+			return nil, err
+		}
+		if !os.SameFile(dst.parentInfo, candidate.parentInfo) {
+			continue
+		}
+		if dst.suffix == candidate.suffix {
+			return candidate, nil
+		}
+		if normalizeRestorePath(dst.suffix) != normalizeRestorePath(candidate.suffix) {
+			continue
+		}
+		probeParent := dst.parent
+		if probeParent == root {
+			probeParent = staging
+		}
+		alias, err := probeRestorePathAlias(probeParent, dst.suffix, candidate.suffix)
+		if err != nil {
+			return nil, err
+		}
+		if alias {
+			return candidate, nil
+		}
+	}
+	return nil, nil
+}
+
+func (p *restorePath) resolveParent() error {
+	if p.parentInfo != nil {
+		return nil
+	}
+	var err error
+	p.parent, p.parentInfo, p.suffix, err = existingRestoreParent(p.path)
+	return err
+}
+
+// existingRestoreParent finds the directory whose lookup rules govern the
+// absent part of a destination path.
+func existingRestoreParent(path string) (string, os.FileInfo, string, error) {
+	for parent := filepath.Dir(path); ; parent = filepath.Dir(parent) {
+		info, err := os.Stat(parent)
+		if err == nil {
+			suffix, err := filepath.Rel(parent, path)
+			return parent, info, suffix, err
+		}
+		if !os.IsNotExist(err) || parent == filepath.Dir(parent) {
+			return "", nil, "", fmt.Errorf("check parent directory %s: %w", parent, err)
+		}
+	}
+}
+
+// Probe the actual spellings in an isolated directory under the target parent.
+func probeRestorePathAlias(parent, path, alias string) (same bool, err error) {
+	probe, err := os.MkdirTemp(parent, restoreStagingPrefix)
+	if err != nil {
+		return false, fmt.Errorf("create path probe in %s: %w", parent, err)
+	}
+	defer func() {
+		if rmErr := os.RemoveAll(probe); rmErr != nil && err == nil {
+			err = fmt.Errorf("remove path probe %s: %w", probe, rmErr)
+		}
+	}()
+	path = filepath.Join(probe, path)
+	if err := os.MkdirAll(path, restoreDirMode); err != nil {
+		return false, fmt.Errorf("create path probe %s: %w", path, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false, fmt.Errorf("check path probe %s: %w", path, err)
+	}
+	alias = filepath.Join(probe, alias)
+	aliasInfo, err := os.Stat(alias)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check path probe alias %s: %w", alias, err)
+	}
+	return os.SameFile(info, aliasInfo), nil
 }
 
 func (p *restorePlan) relPaths() []string {
