@@ -892,7 +892,7 @@ func TestNetworkNoneRefusesToRunWithoutItsPolicy(t *testing.T) {
 	defer srv.Close()
 	l := newLauncher(srv, Options{Network: NetworkNone})
 	_, err := l.Run(context.Background(), specFor("/data/agents/sandbox/deps-123"))
-	if err == nil || !strings.Contains(err.Error(), "deny-all NetworkPolicy") || !strings.Contains(err.Error(), "forbidden") {
+	if err == nil || !strings.Contains(err.Error(), "creating the NetworkPolicy") || !strings.Contains(err.Error(), "forbidden") {
 		t.Fatalf("Run = %v, want the policy refusal", err)
 	}
 	if api.created != nil {
