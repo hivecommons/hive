@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.369.3)
+
+### Fixed
+
+- The queued automerge sweep now skips repositories whose GitHub issue listing returns 404, logging the affected repository instead of preventing other repositories from being swept ([#19908](https://github.com/hivecommons/hive/issues/19908)). A 404 can also indicate missing access; operators should check the repository configuration and GitHub App permissions.
+
 ## 2026-11-25 (v5.369.2)
 
 ### Fixed
