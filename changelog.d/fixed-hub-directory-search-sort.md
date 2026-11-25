@@ -1,1 +1,0 @@
-- Sorting and refreshing the Hive Hub directory keep the active search filter and sort order.

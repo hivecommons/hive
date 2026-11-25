@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.365.6)
+
+### Fixed
+
+- Sorting and refreshing the Hive Hub directory keep the active search filter and sort order.
+
 ## 2026-11-25 (v5.365.5)
 
 ### Fixed
