@@ -9,6 +9,10 @@ type ACMMCriterion struct {
 	Category string
 	Name     string
 	Patterns []string // paths or file-basename globs (pass if ANY exists)
+	// AnyDepth also matches the literal patterns below the repo root (for
+	// example kustomization/tests/ for "tests/"), for capabilities that
+	// monorepos keep in a subdirectory. Workflow-style globs stay root-only.
+	AnyDepth bool
 }
 
 // acmmLevelNames maps numeric ACMM levels to human-readable names. Levels
@@ -25,14 +29,14 @@ var acmmLevelNames = map[int]string{
 	6: "Autonomous",
 }
 
-// universalCriteria contains the 43 repo-universal ACMM criteria ported
+// universalCriteria contains the 40 repo-universal ACMM criteria ported
 // from the console scan API (acmm:* and aef:* sources). CNCF-specific
 // criteria (fullsend:*, claude-reflect:*) are intentionally excluded so
 // that hive spokes running against private/internal repos get meaningful
 // evaluations.
 var universalCriteria = []ACMMCriterion{
 	// ── L0 Prerequisites (8) ──
-	{ID: "acmm:prereq-test-suite", Source: "acmm", Level: 0, Category: "prerequisite", Name: "Test suite",
+	{ID: "acmm:prereq-test-suite", Source: "acmm", Level: 0, Category: "prerequisite", Name: "Test suite", AnyDepth: true,
 		Patterns: []string{"vitest.config.ts", "vitest.config.js", "jest.config.js", "jest.config.ts", "go.mod", "pytest.ini", "pyproject.toml", "test/", "tests/", "__tests__/", "spec/"}},
 	{ID: "acmm:prereq-e2e", Source: "acmm", Level: 0, Category: "prerequisite", Name: "E2E tests",
 		Patterns: []string{"playwright.config.ts", "playwright.config.js", "cypress.config.ts", "e2e/", "web/e2e/", "web/playwright.config.ts", "web/playwright.config.js", "test/e2e/", "tests/e2e/", ".github/workflows/test*-install*.yml", ".github/workflows/test*-install*.yaml", ".github/workflows/test*-boot*.yml", ".github/workflows/test*-boot*.yaml", ".github/workflows/*e2e*.yml", ".github/workflows/*e2e*.yaml"}},
@@ -51,19 +55,17 @@ var universalCriteria = []ACMMCriterion{
 	// broad project manifests would make the criterion match repos with no
 	// code-style configuration at all.
 	{ID: "acmm:prereq-code-style", Source: "acmm", Level: 0, Category: "prerequisite", Name: "Code style config",
-		Patterns: []string{".eslintrc", ".eslintrc.json", ".eslintrc.js", "eslint.config.js", "eslint.config.mjs", ".prettierrc", ".prettierrc.json", "prettier.config.js", "ruff.toml", ".golangci.yml", ".golangci.yaml", ".golangci.toml", ".golangci.json", "biome.json", ".shellcheckrc", ".editorconfig", ".clang-format", "checkstyle.xml", "config/checkstyle/checkstyle.xml", ".rubocop.yml", ".rubocop.yaml", "rustfmt.toml", ".rustfmt.toml", "clippy.toml", ".clippy.toml", ".swiftlint.yml", ".stylelintrc", ".stylelintrc.json", ".stylelintrc.yaml", ".stylelintrc.yml"}},
-	{ID: "acmm:prereq-coverage-gate", Source: "acmm", Level: 0, Category: "prerequisite", Name: "Coverage gate",
+		Patterns: []string{".eslintrc", ".eslintrc.json", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.yaml", ".eslintrc.yml", "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts", "eslint.config.mts", "eslint.config.cts", ".prettierrc", ".prettierrc.json", ".prettierrc.yml", ".prettierrc.yaml", ".prettierrc.json5", ".prettierrc.js", ".prettierrc.cjs", ".prettierrc.mjs", ".prettierrc.ts", ".prettierrc.toml", "prettier.config.js", "prettier.config.cjs", "prettier.config.mjs", "prettier.config.ts", "ruff.toml", ".ruff.toml", ".golangci.yml", ".golangci.yaml", ".golangci.toml", ".golangci.json", "biome.json", "biome.jsonc", ".shellcheckrc", ".editorconfig", ".clang-format", "checkstyle.xml", "config/checkstyle/checkstyle.xml", ".rubocop.yml", ".rubocop.yaml", "rustfmt.toml", ".rustfmt.toml", "clippy.toml", ".clippy.toml", ".swiftlint.yml", ".stylelintrc", ".stylelintrc.json", ".stylelintrc.yaml", ".stylelintrc.yml", ".stylelintrc.js", ".stylelintrc.cjs", ".stylelintrc.mjs", "stylelint.config.js", "stylelint.config.cjs", "stylelint.config.mjs"}},
+	{ID: "acmm:prereq-coverage-gate", Source: "acmm", Level: 0, Category: "prerequisite", Name: "Coverage gate", AnyDepth: true,
 		Patterns: []string{"codecov.yml", ".codecov.yml", ".github/workflows/coverage-gate.yml", "coverage.yml", ".coverage-thresholds.json"}},
 
 	// ── L2 Advisory (8) ──
-	{ID: "acmm:claude-md", Source: "acmm", Level: 2, Category: "feedback-loop", Name: "CLAUDE.md instruction file",
-		Patterns: []string{"CLAUDE.md", ".claude/CLAUDE.md"}},
-	{ID: "acmm:copilot-instructions", Source: "acmm", Level: 2, Category: "feedback-loop", Name: "Copilot instructions",
-		Patterns: []string{".github/copilot-instructions.md"}},
-	{ID: "acmm:agents-md", Source: "acmm", Level: 2, Category: "feedback-loop", Name: "AGENTS.md",
-		Patterns: []string{"AGENTS.md"}},
-	{ID: "acmm:cursor-rules", Source: "acmm", Level: 2, Category: "feedback-loop", Name: "Cursor rules",
-		Patterns: []string{".cursorrules", ".cursor/rules"}},
+	// Any one agent instruction file satisfies the Instructed gate, so a repo
+	// that keeps its instructions in a single tool-agnostic AGENTS.md is not
+	// forced to add vendor-specific copies (matches the console scanner's
+	// acmm:agent-instructions OR-group).
+	{ID: "acmm:agent-instructions", Source: "acmm", Level: 2, Category: "feedback-loop", Name: "Agent instruction file",
+		Patterns: []string{"AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md", ".github/copilot-instructions.md", ".cursorrules", ".cursor/rules"}},
 	{ID: "acmm:prompts-catalog", Source: "acmm", Level: 2, Category: "feedback-loop", Name: "Prompts catalog",
 		Patterns: []string{"prompts/", ".prompts/", "docs/prompts/", ".github/prompts/", ".github/agents/"}},
 	{ID: "acmm:editor-config", Source: "acmm", Level: 2, Category: "feedback-loop", Name: "EditorConfig",

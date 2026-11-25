@@ -694,6 +694,55 @@ func (s *Server) checkCriterion(ctx context.Context, owner, repo string, c ACMMC
 			return true
 		}
 	}
+	if c.AnyDepth {
+		return s.nestedPatternExists(ctx, owner, repo, c.Patterns, dirCache)
+	}
+	return false
+}
+
+// acmmTreeCacheKey is the dirCache slot holding the recursive repo tree. It
+// cannot collide with a directory path because it contains a NUL byte.
+const acmmTreeCacheKey = "\x00tree"
+
+// nestedPatternExists reports whether any literal pattern exists below the
+// repo root, using one recursive tree listing shared across criteria. Globs
+// are skipped: they only ever match workflow files, which GitHub reads from
+// the root .github/workflows directory.
+func (s *Server) nestedPatternExists(ctx context.Context, owner, repo string, patterns []string, dirCache map[string]map[string]bool) bool {
+	paths, ok := dirCache[acmmTreeCacheKey]
+	if !ok {
+		paths = map[string]bool{}
+		if ghClient := s.deps.GHClient.GoGitHub(); ghClient != nil {
+			tree, _, err := ghClient.Git.GetTree(github.WithRESTCaller(ctx, "hive:acmm_tree"), owner, repo, "HEAD", true)
+			if err == nil {
+				for _, e := range tree.Entries {
+					paths[e.GetPath()] = true
+				}
+			}
+		}
+		if dirCache != nil {
+			dirCache[acmmTreeCacheKey] = paths
+		}
+	}
+	for _, pattern := range patterns {
+		if strings.ContainsAny(pattern, "*?[") {
+			continue
+		}
+		clean := strings.TrimSuffix(pattern, "/")
+		if strings.HasSuffix(pattern, "/") {
+			for p := range paths {
+				if p == clean || strings.HasPrefix(p, clean+"/") || strings.HasSuffix(p, "/"+clean) || strings.Contains(p, "/"+clean+"/") {
+					return true
+				}
+			}
+			continue
+		}
+		for p := range paths {
+			if p == clean || strings.HasSuffix(p, "/"+clean) {
+				return true
+			}
+		}
+	}
 	return false
 }
 

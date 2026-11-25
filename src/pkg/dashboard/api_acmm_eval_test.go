@@ -983,7 +983,7 @@ func TestHandleACMMCreateIssue_LabelCreateFailsButNotAlreadyExists_NoLabelsAssig
 	s.RegisterAPI(deps)
 
 	rec := doPost(s, "/api/acmm/issue", map[string]interface{}{
-		"repo": "repo1", "criterion_id": "acmm:claude-md",
+		"repo": "repo1", "criterion_id": "acmm:agent-instructions",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -1020,7 +1020,7 @@ func TestHandleACMMCreateIssue_LabelAlreadyExists_LabelsStillAssigned(t *testing
 	s.RegisterAPI(deps)
 
 	rec := doPost(s, "/api/acmm/issue", map[string]interface{}{
-		"repo": "repo1", "criterion_id": "acmm:claude-md",
+		"repo": "repo1", "criterion_id": "acmm:agent-instructions",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
@@ -1035,13 +1035,13 @@ func TestHandleACMMCreateIssue_LabelAlreadyExists_LabelsStillAssigned(t *testing
 func TestHandleACMMCreateIssue_ReusesOpenIssue(t *testing.T) {
 	var criterion *ACMMCriterion
 	for i := range universalCriteria {
-		if universalCriteria[i].ID == "acmm:claude-md" {
+		if universalCriteria[i].ID == "acmm:agent-instructions" {
 			criterion = &universalCriteria[i]
 			break
 		}
 	}
 	if criterion == nil {
-		t.Fatal("fixture criterion acmm:claude-md not found in universalCriteria")
+		t.Fatal("fixture criterion acmm:agent-instructions not found in universalCriteria")
 	}
 	title, _ := acmmIssueContent(criterion)
 
@@ -1108,7 +1108,7 @@ func TestHandleACMMCreateIssue_ReusesOpenIssue(t *testing.T) {
 }
 
 func TestHandleACMMCreateIssue_UnknownLevelNameFallback(t *testing.T) {
-	// acmm:claude-md is a known criterion; if its level had no name entry
+	// acmm:agent-instructions is a known criterion; if its level had no name entry
 	// the handler must fall back to "Unknown" in the issue body. We can't
 	// mutate universalCriteria safely across parallel tests, so instead
 	// verify the fallback function directly covers the same code path used
@@ -1136,7 +1136,7 @@ func TestHandleACMMCreateIssue_GHIssueCreateError(t *testing.T) {
 	s.RegisterAPI(deps)
 
 	rec := doPost(s, "/api/acmm/issue", map[string]interface{}{
-		"repo": "repo1", "criterion_id": "acmm:claude-md",
+		"repo": "repo1", "criterion_id": "acmm:agent-instructions",
 	})
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500; body=%s", rec.Code, rec.Body.String())
@@ -1183,7 +1183,7 @@ func TestHandleACMMCreateIssue_NilConfig(t *testing.T) {
 	s.RegisterAPI(deps)
 
 	rec := doPost(s, "/api/acmm/issue", map[string]interface{}{
-		"repo": "repo1", "criterion_id": "acmm:claude-md",
+		"repo": "repo1", "criterion_id": "acmm:agent-instructions",
 	})
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 for nil config", rec.Code)
@@ -1279,4 +1279,76 @@ func acmmEvalContainsStr(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestCheckCriterion_AnyDepthFindsNestedTests(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/myorg/repo1/git/trees/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"sha": "abc", "truncated": false,
+			"tree": []map[string]interface{}{
+				{"path": "kustomization", "type": "tree"},
+				{"path": "kustomization/tests", "type": "tree"},
+				{"path": "kustomization/tests/app/test.yml", "type": "blob"},
+			},
+		})
+	})
+	ts := httptest.NewServer(mux)
+	t.Cleanup(ts.Close)
+
+	s := NewServer(0, acmmEvalTestLogger())
+	deps := testDeps(t)
+	deps.GHClient = ghpkg.NewClientForTest(ts.URL, "myorg", []string{"repo1"}, acmmEvalTestLogger())
+	s.RegisterAPI(deps)
+
+	var testSuite, e2e ACMMCriterion
+	for _, c := range universalCriteria {
+		switch c.ID {
+		case "acmm:prereq-test-suite":
+			testSuite = c
+		case "acmm:prereq-e2e":
+			e2e = c
+		}
+	}
+	cache := map[string]map[string]bool{"": {"kustomization": true, "kustomization/": true}}
+	if !s.checkCriterion(t.Context(), "myorg", "repo1", testSuite, cache) {
+		t.Fatal("expected nested kustomization/tests/ to satisfy the test suite criterion")
+	}
+	if s.checkCriterion(t.Context(), "myorg", "repo1", e2e, cache) {
+		t.Fatal("E2E criterion must stay root-only")
+	}
+}
+
+func TestUniversalCriteria_AgentInstructionsAnySingleFile(t *testing.T) {
+	s := NewServer(0, acmmEvalTestLogger())
+	var c ACMMCriterion
+	for _, u := range universalCriteria {
+		if u.ID == "acmm:agent-instructions" {
+			c = u
+		}
+	}
+	if c.ID == "" {
+		t.Fatal("acmm:agent-instructions criterion missing")
+	}
+	cache := map[string]map[string]bool{"": {"AGENTS.md": true}}
+	if !s.checkCriterion(context.TODO(), "o", "r", c, cache) {
+		t.Fatal("AGENTS.md alone must satisfy the instruction criterion")
+	}
+}
+
+func TestUniversalCriteria_CodeStyleConfigNames(t *testing.T) {
+	s := NewServer(0, acmmEvalTestLogger())
+	var c ACMMCriterion
+	for _, u := range universalCriteria {
+		if u.ID == "acmm:prereq-code-style" {
+			c = u
+		}
+	}
+	for _, name := range []string{".prettierrc.yml", "eslint.config.ts", "biome.jsonc", ".ruff.toml", "stylelint.config.js"} {
+		cache := map[string]map[string]bool{"": {name: true}}
+		if !s.checkCriterion(context.TODO(), "o", "r", c, cache) {
+			t.Errorf("%s should satisfy the code style criterion", name)
+		}
+	}
 }

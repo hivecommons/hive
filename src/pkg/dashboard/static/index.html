@@ -62527,7 +62527,7 @@ function burnAreaChart() {
     const ACMM_LEVEL_NAMES = {0:'Prerequisites not met',1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Autonomous'};
     const ACMM_LEVEL_DESCRIPTIONS = {
       0: 'Foundational tooling: test suites, CI/CD, templates, and code style enforcement.',
-      2: 'AI agents receive explicit instructions via CLAUDE.md, copilot-instructions, cursor rules, and prompt catalogs.',
+      2: 'AI agents receive explicit instructions via an agent instruction file (AGENTS.md, CLAUDE.md, copilot-instructions, or cursor rules) and prompt catalogs.',
       3: 'PR acceptance metrics, review rubrics, quality dashboards, and safety model enforcement are in place.',
       4: 'Self-tuning QA, nightly compliance, automated review application, AI-fix workflows, and session continuity.',
       5: 'GitHub Actions AI integration, auto-QA self-tuning, public metrics, policy-as-code, and reflection logs.',
@@ -62542,10 +62542,7 @@ function burnAreaChart() {
       'acmm:prereq-contrib-guide': 'A contributing guide that tells agents (and humans) the project\'s conventions, branching model, and review process.',
       'acmm:prereq-code-style': 'A linter/formatter config (ESLint, Prettier, golangci-lint, Ruff) so agents produce code matching project style.',
       'acmm:prereq-coverage-gate': 'A coverage threshold that prevents agents from merging changes that reduce test coverage.',
-      'acmm:claude-md': 'CLAUDE.md gives Claude Code project-specific instructions — conventions, forbidden patterns, preferred libraries.',
-      'acmm:copilot-instructions': 'Copilot instructions file that customizes GitHub Copilot\'s suggestions for this repo.',
-      'acmm:agents-md': 'AGENTS.md documents which AI agents work on the repo, their roles, and coordination rules.',
-      'acmm:cursor-rules': 'Cursor rules file that configures Cursor IDE\'s AI behavior for this project.',
+      'acmm:agent-instructions': 'Any one agent instruction file (AGENTS.md, CLAUDE.md, Copilot instructions, or Cursor rules) gives coding agents project-specific conventions and constraints.',
       'acmm:prompts-catalog': 'A catalog of reusable prompts/commands that agents can invoke for common tasks.',
       'acmm:editor-config': 'EditorConfig ensures consistent formatting (indentation, line endings) across all editors and agents.',
       'acmm:simple-skills': 'Custom skills/commands that extend agent capabilities with project-specific automation.',
