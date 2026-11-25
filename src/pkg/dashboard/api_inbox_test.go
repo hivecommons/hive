@@ -7,13 +7,16 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/inbox"
+	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
 
@@ -77,6 +80,39 @@ func decodeInboxList(t *testing.T, body []byte) InboxListResponse {
 		t.Fatalf("decode: %v (%s)", err, body)
 	}
 	return resp
+}
+
+func TestInboxFactLinkUsesConnectedVault(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Inbox = newInboxTestService(t, config.InboxConfig{})
+	items, err := deps.Inbox.Items(deps.Ctx)
+	if err != nil || len(items) != 1 || items[0].FactPath == "" {
+		t.Fatalf("inbox items = %+v, err = %v", items, err)
+	}
+
+	api := knowledge.NewKnowledgeAPI(nil, knowledge.KnowledgeConfig{Enabled: true}, s.logger)
+	deps.Knowledge = api
+	decoy := t.TempDir()
+	writeVaultFact(t, decoy, items[0].FactSlug, "Unrelated copy")
+	if err := api.ConnectVault(decoy, "connectors-personal"); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Dir(items[0].FactPath) + string(filepath.Separator)
+	if err := api.ConnectVault(root, "My recordings"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := doGet(s, "/api/inbox")
+	resp := decodeInboxList(t, rec.Body.Bytes())
+	if rec.Code != http.StatusOK || len(resp.Items) != 1 || resp.Items[0].FactSourceLayer == "" {
+		t.Fatalf("inbox response = %d: %+v", rec.Code, resp)
+	}
+	item := resp.Items[0]
+	detail := decodeJSON(t, doGet(s, "/api/knowledge/"+url.PathEscape(item.FactSourceLayer)+"/"+url.PathEscape(item.FactSlug)))
+	body, _ := detail["body"].(string)
+	if !strings.Contains(body, "ship the inbox") || detail["source_layer"] != item.FactSourceLayer {
+		t.Fatalf("inbox fact link opened %+v, want the recording in My recordings", detail)
+	}
 }
 
 func TestInboxEndpoints(t *testing.T) {

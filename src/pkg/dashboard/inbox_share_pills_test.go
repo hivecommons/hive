@@ -19,6 +19,7 @@ func TestInboxSharePills(t *testing.T) {
 		jsFunc(t, html, "inboxViewerCanPlay"),
 		jsFunc(t, html, "inboxSharePillText"),
 		jsFunc(t, html, "inboxShareTargetHref"),
+		jsFunc(t, html, "inboxFactLayer"),
 		jsFunc(t, html, "inboxSharePillHtml"),
 		jsFunc(t, html, "inboxSharePillsHtml"),
 		jsFunc(t, html, "inboxToggleHistory"),
@@ -36,6 +37,13 @@ h = inboxSharePillsHtml(item([rec({ destination: 'dibs', ref: { url: 'https://di
 assert(h.includes('→ DIBS · ') && h.includes('href="https://dibs.example/i/7"'));
 h = inboxSharePillsHtml(item([rec({ destination: 'knowledge', actor: 'inbox-auto', ref: { id: 'plaud-r1' } })]), 'plaud/r1');
 assert(h.includes('→ Knowledge · inbox-auto') && h.includes('data-action="inboxOpenFact"'));
+const linked = Object.assign(item([rec({ destination: 'knowledge', ref: { id: 'plaud-r1' } })]), {
+  fact_path: '/data/knowledge/connectors/personal/plaud-r1.md',
+  fact_source_layer: 'vault:sha256:recordings',
+});
+assert(inboxSharePillsHtml(linked, 'plaud/r1').includes('data-arg1="vault:sha256:recordings"'));
+delete linked.fact_source_layer;
+assert(!inboxSharePillsHtml(linked, 'plaud/r1').includes('data-action="inboxOpenFact"'));
 h = inboxSharePillsHtml(item([rec({ status: 'transcribing' })]), 'plaud/r1');
 assert(h.includes('→ RFC (transcribing) · ') && h.includes('inbox-tx-spinner'));
 // Failed: danger status, reason in the title, no link.
