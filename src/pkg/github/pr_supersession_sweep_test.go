@@ -1,9 +1,11 @@
 package github
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -981,5 +983,31 @@ func TestSweepSupersededOpenPRs_ReleasesOwnParkWhenCauseIsGone(t *testing.T) {
 				t.Fatalf("sweep wrote too much: closed=%v comments=%v edits=%v", obs.closed, obs.comments[12], obs.edits)
 			}
 		})
+	}
+}
+
+// hivecommons/hive#19808: a PR claiming an issue that 404s (a typo or a
+// cross-repo reference) is a normal skip: it must not abort the sweep or log
+// at WARN on every tick.
+func TestSweepSupersededOpenPRs_MissingClaimedIssueIsQuietSkip(t *testing.T) {
+	org, repo := "hivecommons", "hive"
+	server, _ := supersessionSweepServer(t, org, repo,
+		[]supersessionPRFixture{{Number: 20, Title: "fix", Body: "Fixes #9999", Author: "hive-app[bot]", Files: []string{"pkg/a.go"}}},
+		nil,
+	)
+	defer server.Close()
+
+	c, _ := newSupersessionTestClient(t, server, org, repo)
+	var buf bytes.Buffer
+	c.logger = slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	res, err := c.SweepSupersededOpenPRs(context.Background(), SupersessionSweepOptions{})
+	if err != nil {
+		t.Fatalf("a missing claimed issue must not fail the sweep: %v", err)
+	}
+	if res.Skipped != 1 || len(res.Closed) != 0 || len(res.Commented) != 0 {
+		t.Fatalf("result=%+v, want one quiet skip", res)
+	}
+	if strings.Contains(buf.String(), "level=WARN") || strings.Contains(buf.String(), "level=ERROR") {
+		t.Fatalf("missing claimed issue logged above debug: %s", buf.String())
 	}
 }
