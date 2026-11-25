@@ -1175,6 +1175,9 @@ type HubServer struct {
 	// SaaSUser records; this map is only a per-process rate-limit guard.
 	topRepoRefreshInFlight sync.Map // canonical user id → struct{}
 	topRepoRefreshEnabled  bool
+	// colonyAffiliation holds the hivecommons/colony providers the refresh
+	// asks for Affiliation (affiliation_colony.go). Nil skips colony.
+	colonyAffiliation *colonyAffiliator
 
 	// usageHistory is the sampled fleet-total token trend, appended on
 	// heartbeat at usageSnapshotInterval and bounded to
@@ -1623,6 +1626,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		hubBanners:                   make(map[string]*HubBannerEntry),
 		spokeProxyAuthCache:          make(map[string]spokeProxyAuthEntry),
 		topRepoRefreshEnabled:        true,
+		colonyAffiliation:            newColonyAffiliator(),
 		authRolloutSeen:              make(map[string]authRolloutEntry),
 		timeline:                     newTimelineStore(),
 		upgradeHistory:               newUpgradeHistoryStore(),
