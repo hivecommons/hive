@@ -209,11 +209,20 @@ func (c *Client) ReadNativeQueueObservation(ctx context.Context, repo, base stri
 // classic protection is GitHub's answer for a branch protected only by
 // rulesets ("Branch not protected"): it means no classic requirements, not an
 // unreadable policy, so the rules read below is the whole policy. Any other
-// error (403 most of all) keeps the policy unknown.
+// error (403 most of all) keeps the policy unknown. A "Branch not protected"
+// answer is remembered for the TTL (rememberClassicNotProtected) and replayed
+// as that same known, empty classic set without a call.
 func (c *Client) nativeObservationRequired(ctx context.Context, owner, repo, base string) (map[string]int64, bool) {
 	required := map[string]int64{}
-	classic, classicResponse, err := c.client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, base)
-	known := err == nil || classicResponse != nil && classicResponse.StatusCode == http.StatusNotFound
+	var classic *gh.RequiredStatusChecks
+	known := true
+	if notProtectedKey := requiredChecksForbiddenCacheKey(c.client, owner, repo, base); !classicNotProtectedRemembered(notProtectedKey) {
+		var classicResponse *gh.Response
+		var err error
+		classic, classicResponse, err = c.client.Repositories.GetRequiredStatusChecks(ctx, owner, repo, base)
+		rememberClassicNotProtected(notProtectedKey, err)
+		known = err == nil || classicResponse != nil && classicResponse.StatusCode == http.StatusNotFound
+	}
 	if classic != nil {
 		if classic.Contexts != nil {
 			for _, name := range *classic.Contexts {
