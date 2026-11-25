@@ -79,6 +79,8 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerNextPassLeftMs"),
 		jsFunc(t, html, "stageTrackerNextPassWord"),
 		jsFunc(t, html, "stageTrackerTriageHint"),
+		jsFunc(t, html, "stageTrackerTriagePRNumber"),
+		jsFunc(t, html, "stageTrackerTriagePRAction"),
 		jsFunc(t, html, "stageTrackerTriageAccepted"),
 		jsFunc(t, html, "stageTrackerDecisionOf"),
 		jsFunc(t, html, "stageTrackerActionAllowed"),

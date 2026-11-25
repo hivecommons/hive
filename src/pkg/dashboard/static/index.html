@@ -18251,7 +18251,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
       if (n === 0 && mods.indexOf('draft') >= 0) return 'Open · draft';
       // Guarded: test harnesses lift this function by name without the 000-new helpers.
-      if (n === 0 && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item)) return 'Triage needed';
+      // An open contributor PR rides the triage word (hivecommons/hive#19843).
+      const triagePR = typeof stageTrackerTriagePRSuffix === 'function' ? stageTrackerTriagePRSuffix(item) : '';
+      if (n === 0 && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item)) return 'Triage needed' + triagePR;
       if (n === 0 && typeof stageTrackerNewState === 'function' && stageTrackerNewState(item)) return 'New';
       // An issue parked on a person (045, or a pre-045 085 with no covering
       // PR) is parked itself, so no "(its PR)" suffix.
@@ -18259,7 +18261,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       switch (n) {
         case 0: return 'Open';
         case 10: return 'Waiting for a worker';
-        case 15: return 'Triage needed';
+        case 15: return 'Triage needed' + triagePR;
         case 17: return 'Possibly exists · needs author';
         case 18: return 'Open for discussion';
         case 20: return 'Claimed';
@@ -19541,6 +19543,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
         if (state === 'active' && n === 50) word = 'CI + Review';
         if (state === 'active' && n === 10 && cur === 10 && typeof stageTrackerTrackingWord === 'function') { const tw = stageTrackerTrackingWord(item); if (tw) word = tw; }
+        // 015 with an open contributor PR names it (hivecommons/hive#19843).
+        if (state === 'active' && cur === 15 && typeof stageTrackerTriagePRSuffix === 'function') word += stageTrackerTriagePRSuffix(item);
         if (state === 'active' && n === 30 && cur === 70 && !codeWorking) word = 'PR in progress';
         // A merge-train member's word is its place in the train (#15117).
         if (state === 'active' && !detour && n > 0 && typeof stageTrackerTrainWord === 'function') { const tw = stageTrackerTrainWord(item, trains); if (tw) word = tw; }
@@ -19572,7 +19576,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         else if (openBlocked) word = 'Open · blocked';
         else if (advisory) word = advisory.chip || 'Advisory · read & close';
         else if (openDraft) word = 'Draft';
-        else if (openTriage) word = 'Triage needed';
+        else if (openTriage) word = 'Triage needed' + (typeof stageTrackerTriagePRSuffix === 'function' ? stageTrackerTriagePRSuffix(item) : '');
         else if (openNew) word = 'New';
         // A plain, blocked or draft Open step (no stage label, not held)
         // says how long it has sat there, from the same instant the since
@@ -19855,6 +19859,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!fresh || fresh.next_mover !== 'maintainer') return false;
       const gates = Array.isArray(fresh.gates) ? fresh.gates : [];
       return gates.some(g => g && g.name === 'triage' && g.state === 'next');
+    }
+    // Pure: the open contributor PR on an issue waiting on triage — the
+    // payload's triage_pr block — or null (hivecommons/hive#19843). An
+    // untriaged issue whose reporter already opened a PR asks the
+    // maintainer "accept the issue and review PR #N", not a bare triage.
+    function stageTrackerTriagePROf(item) {
+      if (!item || item.kind === 'pr' || !item.triage_pr || typeof item.triage_pr !== 'object') return null;
+      return Number(item.triage_pr.number) > 0 ? item.triage_pr : null;
+    }
+    // Pure: " · contributor PR #N open" for the "Triage needed" chevron
+    // word, or '' when the issue has no open contributor PR.
+    function stageTrackerTriagePRSuffix(item) {
+      const pr = stageTrackerTriagePROf(item);
+      return pr ? ' · contributor PR #' + Number(pr.number) + ' open' : '';
     }
     // "Next: …" and "Gates ahead: triage ✓ → actionable → claimed" for the
     // row tooltip and the lit chevron. nowMs refreshes the next-pass countdown.
@@ -25863,13 +25881,36 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       ctx = ctx || {};
       const who = ctx.login ? '@' + ctx.login : 'you';
       const when = stageTrackerNextPassWord(stageTrackerNextPassLeftMs(item, nowMs || Date.now(), governor));
-      return 'adds `' + stageTrackerTriageLabel(item) + '` as ' + who + '; the hive takes it on its next pass' + (when ? ' (' + when + ')' : '');
+      // Guarded: fixtures lift this function by name without the helper.
+      const pr = typeof stageTrackerTriagePRNumber === 'function' ? stageTrackerTriagePRNumber(item) : 0;
+      // Accepting the issue is also what lifts the open PR's merge-side
+      // reporter-trust hold (hivecommons/hive#19843).
+      const lifts = pr ? '; PR #' + pr + ' can then be reviewed and merged' : '';
+      return 'adds `' + stageTrackerTriageLabel(item) + '` as ' + who + '; the hive takes it on its next pass' + (when ? ' (' + when + ')' : '') + lifts;
+    }
+    // Pure: the open contributor PR number on an issue waiting on triage
+    // (the payload's triage_pr), or 0.
+    function stageTrackerTriagePRNumber(item) {
+      if (!item || item.kind === 'pr' || !item.triage_pr || typeof item.triage_pr !== 'object') return 0;
+      return Number(item.triage_pr.number) || 0;
+    }
+    // Pure: the "Open contributor PR #N" menu entry under Accept triage, or
+    // null when the issue has no open contributor PR. It opens the PR on
+    // GitHub; the review itself happens there.
+    function stageTrackerTriagePRAction(item) {
+      const n = stageTrackerTriagePRNumber(item);
+      if (!n) return null;
+      const url = String(item.triage_pr.url || '');
+      const by = item.triage_pr.author ? ' by @' + item.triage_pr.author : '';
+      return { id: 'open:triage-pr', label: 'Open contributor PR #' + n, hint: 'review the PR' + by + ' on GitHub', enabled: !!url, why: url ? '' : 'No GitHub link', url, lead: true };
     }
     // Pure: the item as it reads once triage is accepted — 010 Actionable,
     // the needs-triage pill and the 👤 next-move gone — for the optimistic
     // re-render before the tracker's next payload confirms it.
     function stageTrackerTriageAccepted(item) {
       const next = Object.assign({}, item);
+      // Accepted: the contributor PR is ordinary covering work now.
+      delete next.triage_pr;
       next.modifiers = (Array.isArray(item.modifiers) ? item.modifiers : []).filter(m => m !== 'needs-triage');
       if ((Number(item.stage) || 0) === STAGE_TRACKER_TRIAGE_STAGE) {
         next.stage = STAGE_TRACKER_ACTIONABLE_STAGE;
@@ -25984,6 +26025,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // hold): the ask the row makes has its answer first.
       const triage = stageTrackerTriageNeeded(item);
       if (triage) out.push({ id: 'accept-triage', label: 'Accept triage', hint: stageTrackerTriageHint(item, ctx, ctx.nowMs, ctx.governor), enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, lead: true });
+      // An untriaged issue with an open contributor PR (hivecommons/hive#19843):
+      // the PR to review sits right under Accept triage.
+      const triagePR = triage && typeof stageTrackerTriagePRAction === 'function' ? stageTrackerTriagePRAction(item) : null;
+      if (triagePR) out.push(triagePR);
       // An advisory issue (hivecommons/hive#15381) asks for one thing:
       // read it, then close it. "Close now" leads; it is the existing
       // decision close path with the verdict `close-read`. A checklist the
@@ -28206,6 +28251,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (id === 'open') {
         for (const it of items) if (it.url) window.open(it.url, '_blank', 'noopener');
+        return { toasts: [], pending: [] };
+      }
+      if (id === 'open:triage-pr') {
+        // The contributor PR on an untriaged issue (hivecommons/hive#19843).
+        for (const it of items) { const a = stageTrackerTriagePRAction(it); if (a && a.url) window.open(a.url, '_blank', 'noopener'); }
         return { toasts: [], pending: [] };
       }
       if (id === 'open:app-settings') {
