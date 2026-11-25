@@ -365,7 +365,7 @@ func PackSkipped(dir string, w io.Writer) ([]string, error) {
 		if mode.IsRegular() {
 			// Open before the header so a file that vanished after the walk
 			// is left out whole, not half written.
-			if f, err = os.Open(path); err != nil {
+			if f, err = os.Open(path); err != nil { // #nosec G122 -- the packed tree is the agent's own workspace; only regular files reach here and symlinks are archived as links, never followed.
 				if errors.Is(err, fs.ErrNotExist) {
 					skipped = append(skipped, filepath.ToSlash(rel)+" (vanished)")
 					return nil
