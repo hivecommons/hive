@@ -15,9 +15,11 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync } from "node:fs";
+import { copyFileSync, mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import { resolveCopilotCliEntry } from "../../bin/copilot-models.mjs";
 
@@ -30,6 +32,45 @@ function makeTempRoot(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   return root;
 }
+
+test("watchdog reports the stalled discovery phase without emitting a partial catalog", (t) => {
+  const root = makeTempRoot(t);
+  const helper = path.join(root, "copilot-models.mjs");
+  copyFileSync(fileURLToPath(new URL("../../bin/copilot-models.mjs", import.meta.url)), helper);
+  const sdk = path.join(root, "node_modules", "@github", "copilot-sdk");
+  mkdirSync(sdk, { recursive: true });
+  writeFileSync(path.join(sdk, "index.js"), `
+    const hang = () => new Promise(() => {});
+    exports.RuntimeConnection = { forStdio: () => ({}) };
+    exports.CopilotClient = class {
+      start() { return process.env.HANG_PHASE === "start" ? hang() : Promise.resolve(); }
+      listModels() { return process.env.HANG_PHASE === "list" ? hang() : Promise.resolve([{ id: "example" }]); }
+      stop() { return process.env.HANG_PHASE === "stop" ? hang() : Promise.resolve(); }
+    };
+  `);
+  const preload = path.join(root, "watchdog.cjs");
+  writeFileSync(preload, `
+    const original = global.setTimeout;
+    global.setTimeout = (fn, ms, ...args) => original(fn, ms === 15000 ? 100 : ms, ...args);
+  `);
+  for (const [hang, phase] of [["start", "starting Copilot CLI"], ["list", "listing models"], ["stop", "stopping Copilot CLI"]]) {
+    const result = spawnSync(process.execPath, ["--require", preload, helper], {
+      env: { ...process.env, NODE_OPTIONS: "", COPILOT_CLI_PATH: "/fake/copilot.js", HANG_PHASE: hang },
+      encoding: "utf8",
+      timeout: 3000,
+    });
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, new RegExp(`timed out after 15000ms while ${phase}`));
+  }
+  const success = spawnSync(process.execPath, [helper], {
+    env: { ...process.env, NODE_OPTIONS: "", COPILOT_CLI_PATH: "/fake/copilot.js", HANG_PHASE: "" },
+    encoding: "utf8",
+    timeout: 3000,
+  });
+  assert.equal(success.status, 0, success.stderr);
+  assert.deepEqual(JSON.parse(success.stdout), { models: [{ id: "example" }] });
+});
 
 // Builds a package dir that mirrors a real install. `bin` mirrors the real
 // manifest's { "copilot": "npm-loader.js" }.

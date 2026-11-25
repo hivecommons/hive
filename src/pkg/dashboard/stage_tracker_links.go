@@ -440,6 +440,9 @@ func stageTrackerLinkedPRProgress(it *StageTrackerItem) {
 		it.Hold != nil || len(it.BlockedOn) > 0 || it.BlockedOnPR != nil {
 		return
 	}
+	if stageTrackerWaitsOnTriage(it) {
+		it.triageWaiting = true
+	}
 	it.New = nil
 	if it.StageSlug == StageTrackerNewSlug {
 		it.StageSlug = ""

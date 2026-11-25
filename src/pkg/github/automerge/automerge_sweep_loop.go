@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -47,6 +48,10 @@ func (c *Engine) SweepQueuedAutoMerges(ctx context.Context, opts AutoMergeSweepO
 		owner, repoName := c.transport.SplitRepo(repo)
 		issues, err := c.listQueuedPullRequestIssues(ctx, owner, repoName, label)
 		if err != nil {
+			if isGitHubStatus(err, http.StatusNotFound) {
+				c.warn("automerge sweep skipped inaccessible repo", "repo", repo, "error", err)
+				continue
+			}
 			return result, err
 		}
 		for _, issue := range issues {

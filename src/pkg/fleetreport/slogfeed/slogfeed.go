@@ -115,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || unresolvedConversationsSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) || unauthorizedLoginRejected(r) || appTokenRefreshTimeoutFallback(r) {
+	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || unresolvedConversationsSkip(r) || reviewRetryServerError(r) || stageLabelServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) || unauthorizedLoginRejected(r) || appTokenRefreshTimeoutFallback(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -451,6 +451,33 @@ func reviewRetryServerError(r slog.Record) bool {
 		if a.Key == "error" {
 			e := a.Value.String() + " "
 			match = (strings.Contains(e, "/reviews") || strings.Contains(e, "/pulls/")) &&
+				(strings.Contains(e, ": 500 ") || fleetreport.IsGitHubUpstreamUnavailable(e))
+			return false
+		}
+		return true
+	})
+	return match
+}
+
+// stageLabelServerError reports whether r is a stage-label sweep's "write
+// failed" warning (the PR sweep's "stage labels: write failed" or the issue
+// sweep's "issue stage labels: write failed") caused by a GitHub 5xx on a
+// label write (POST/PUT/DELETE .../issues/<n>/labels). The stage engine marks
+// the effect uncertain and the next sweep re-reads the item and reconciles its
+// stage labels, so a transient upstream 5xx is not a hive defect
+// (hivecommons/hive#19889, hivecommons/hive#19887). 4xx, non-label and
+// non-HTTP errors stay reportable.
+func stageLabelServerError(r slog.Record) bool {
+	switch strings.TrimSpace(r.Message) {
+	case "stage labels: write failed", "issue stage labels: write failed":
+	default:
+		return false
+	}
+	match := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error" {
+			e := a.Value.String() + " "
+			match = strings.Contains(e, "/labels") &&
 				(strings.Contains(e, ": 500 ") || fleetreport.IsGitHubUpstreamUnavailable(e))
 			return false
 		}

@@ -287,6 +287,8 @@ func TestStageTrackerNewRowRendering(t *testing.T) {
 		jsFunc(t, html, "stageTrackerShortAgo"),
 		jsFunc(t, html, "stageTrackerNewState"),
 		jsFunc(t, html, "stageTrackerOpenTriageNeeded"),
+		jsFunc(t, html, "stageTrackerTriagePROf"),
+		jsFunc(t, html, "stageTrackerTriagePRSuffix"),
 		jsFunc(t, html, "stageTrackerNewLines"),
 		jsConstLine(t, html, "STAGE_TRACKER_ACTOR_NONE"),
 		jsFunc(t, html, "stageTrackerStageActor"),
@@ -347,6 +349,17 @@ assert.ok(lines.some(l => l.startsWith('Next: a maintainer') && l.endsWith('next
 assert.ok(lines.includes('Gates ahead: triage (next) → actionable → claimed'), tip);
 assert.ok(lines.includes('  claimed: the scanner claims it (020)'), tip);
 assert.ok(lines.some(l => l.startsWith('Since T')), tip);
+
+// hivecommons/hive#19843: an untriaged issue whose reporter already opened a
+// PR names it — the maintainer's decision is "accept and review PR #N".
+const triagePR = { number: 19850, url: 'https://github.com/hivecommons/hive/pull/19850', author: 'kanrenibm' };
+const withPR = Object.assign({}, fresh, { triage_pr: triagePR });
+assert.strictEqual(stageTrackerHeadline(withPR), 'Triage needed · contributor PR #19850 open');
+assert.strictEqual(stageTrackerSegments(withPR, stages, now)[0].short, 'Triage needed · contributor PR #19850 open · since 8m');
+assert.strictEqual(stageTrackerHeadline({ kind: 'issue', stage: 15, modifiers: [], triage_pr: triagePR }), 'Triage needed · contributor PR #19850 open', '015 names the PR too');
+assert.strictEqual(stageTrackerHeadline({ kind: 'issue', stage: 15, modifiers: [] }), 'Triage needed', 'no PR, no suffix');
+assert.strictEqual(stageTrackerTriagePRSuffix({ kind: 'pr', triage_pr: triagePR }), '', 'never on a PR row');
+assert.strictEqual(stageTrackerTriagePRSuffix({ kind: 'issue', triage_pr: { number: 0 } }), '');
 
 // A hive-moved new PR: the hive is the next mover, the triage gate already done reads with a tick.
 const pr = { repo: 'hivecommons/hive', number: 15096, kind: 'pr', title: 'Fresh PR', stage: 0, stage_slug: '000-new', created_at: '2026-10-20T11:58:30Z',

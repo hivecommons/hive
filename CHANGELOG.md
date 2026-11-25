@@ -11,6 +11,38 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.369.3)
+
+### Fixed
+
+- The queued automerge sweep now skips repositories whose GitHub issue listing returns 404, logging the affected repository instead of preventing other repositories from being swept ([#19908](https://github.com/hivecommons/hive/issues/19908)). A 404 can also indicate missing access; operators should check the repository configuration and GitHub App permissions.
+
+## 2026-11-25 (v5.369.2)
+
+### Fixed
+
+- A GitHub 5xx on a PR or issue stage-label write (`stage labels: write failed`, `issue stage labels: write failed`) no longer files an `unclassified_error_repeated` fleet self-report ([#19889](https://github.com/hivecommons/hive/issues/19889), [#19887](https://github.com/hivecommons/hive/issues/19887)). The stage engine marks the write uncertain and the next sweep re-reads the item and reconciles its labels, so a transient upstream error is not a hive defect; the warning stays in local logs, and 4xx or non-label failures remain reportable.
+
+## 2026-11-25 (v5.369.1)
+
+### Changed
+
+- Activity monitor rows now show the maintainer's real decision. An untriaged issue whose reporter already opened a PR reads **Triage needed · contributor PR #N open**, with the PR named in the caption and an **Open contributor PR #N** entry under **Accept triage** (the tracker payload's new `triage_pr`). The row only displays this; the reporter-trust and triage gates are unchanged. A reviewer's `requires_human` / needs-decision verdict on a PR a person pushed themselves now parks at `stage/085-needs-decision` with the reviewer's question, so the row no longer says it is waiting on the author to push. Only `changes_requested`, a conflict, red checks or a missing DCO send the PR back to its author (`stage/071-needs-author`). **Behavior change:** since #15202 that verdict had routed a person's PR to 071. (#19843)
+
+### Fixed
+
+- The inference translator no longer leaves the Claude CLI on a silent stream while a model waits in a gateway queue or reasons, which made the CLI abort and resend the request after 300 seconds and threw away five minutes of generation each time ([#19793](https://github.com/hivecommons/hive/issues/19793)). For a streaming request it now sends the 200 and `message_start` before it calls the gateway, writes an Anthropic `ping` event after every 10 seconds of silence (`HIVE_INFERENCE_STREAM_PING_INTERVAL` changes the interval), forwards `delta.reasoning_content` as a `thinking` block, and flushes every event. Because the 200 is already out, a gateway failure on a streamed request (unreachable, a non-2xx status, or a stream that breaks) now reaches the CLI as an SSE `error` event with the same `inference backend ...` message and an Anthropic error type that follows the status. Non-streaming requests and `governor.inference_resilience` are unchanged. The operator docs also note the CLI's own `CLAUDE_STREAM_IDLE_TIMEOUT_MS` and `API_FORCE_IDLE_TIMEOUT` limits.
+
+## 2026-11-25 (v5.369.0)
+
+### Added
+
+- **GitHub now shows who made a dashboard label change** ([#19852](https://github.com/hivecommons/hive/issues/19852)): the dashboard writes labels with the Hive App's token, so GitHub showed the App as the one who released or added a hold, which read as automation overriding a person's hold. Adding or releasing a hold, accepting triage, and an approval that lifts `needs-human` or the sentinel label now leave one comment on the issue or PR naming the signed-in dashboard user and the labels changed. Each item and kind keeps one comment under a hidden `<!-- hive:dashboard-actor kind=… -->` marker, edited in place on the next action instead of posted again. The setting is `dashboard.attribute_label_actions` (on by default), and the audit-log entry is written as before.
+
+### Fixed
+
+- Keep the same agent selected and visible in the TUI when the fleet list refreshes and the agent is still present.
+
 ## 2026-11-25 (v5.368.0)
 
 ### Added

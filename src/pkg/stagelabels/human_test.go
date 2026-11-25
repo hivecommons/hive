@@ -652,12 +652,14 @@ func TestRouteHumanForkGuard(t *testing.T) {
 	}
 }
 
-// hivecommons/hive#15202: a requires_human verdict on a PR a person pushed
-// themselves routes to 071 Needs author with the reviewer's question (the
-// human the reviewer wants IS the author), never to 085 and never to
-// adoption. A conflicting head names the rebase. A hive or clanker PR, a
-// trusted approval, a hold, a sentinel or a lane rule keep the 085 route.
-func TestRouteHumanAuthorOwesAnswer(t *testing.T) {
+// hivecommons/hive#19843: the stage follows the reviewer's verdict whoever
+// pushed the PR. A requires_human / needs-decision verdict on a person's own
+// PR is a maintainer's decision (085) with the reviewer's question — it used
+// to route to 071 Needs author (hivecommons/hive#15202), so the row said
+// "waiting on the author to push" while the maintainer was the one owed the
+// answer. Only changes_requested (or a conflict, red check, missing DCO)
+// sends it back to the author. A hold or sentinel rides 085 as a gate.
+func TestRouteHumanRequiresHumanOnPersonPRIsDecision(t *testing.T) {
 	human := func(e *Evidence) {
 		e.AuthorKind = authorkind.Human
 		e.Verdict = VerdictRequiresHuman
@@ -671,19 +673,20 @@ func TestRouteHumanAuthorOwesAnswer(t *testing.T) {
 		wantLane   string
 		wantReason string
 	}{
-		{"human author question → 071", func(e *Evidence) {}, NeedsAuthor, LaneReasonReviewerQuestion, "reviewer question: @clubanderson should this land before the freeze?"},
-		{"human author summary → 071", func(e *Evidence) {
+		{"human author question → 085", func(e *Evidence) {}, NeedsDecision, "", "reviewer question: @clubanderson should this land before the freeze?"},
+		{"human author summary → 085", func(e *Evidence) {
 			e.DecisionQuestion = ""
 			e.HumanSummaries = []string{"security requires human: confirm the token scope"}
-		}, NeedsAuthor, LaneReasonReviewerQuestion, "reviewer summary: security requires human: confirm the token scope"},
+		}, NeedsDecision, "", "reviewer summary: security requires human: confirm the token scope"},
+		{"human author no cause reason → 085", func(e *Evidence) { e.Cause, e.CauseReason = CauseTrust, "" }, NeedsDecision, "", "the reviewer swarm returned `requires_human` @abc1234"},
+		{"human author changes_requested → 071", func(e *Evidence) { e.Verdict = VerdictChangesRequested }, NeedsAuthor, LaneReasonChangesRequested, "verdict changes_requested @abc1234"},
 		{"human author conflicting → 071 needs rebase", func(e *Evidence) { e.Conflict = true }, NeedsAuthor, LaneReasonConflicting, "merge conflict with the base branch"},
-		{"human author no cause reason → 071", func(e *Evidence) { e.Cause, e.CauseReason = CauseTrust, "" }, NeedsAuthor, LaneReasonReviewerQuestion, "the reviewer asked the author a question @abc1234"},
-		{"clanker author keeps 085", func(e *Evidence) { e.AuthorKind = authorkind.Clanker }, NeedsDecision, "", "the reviewer swarm returned `requires_human` @abc1234"},
-		{"hive author keeps 085", func(e *Evidence) { e.AuthorKind = authorkind.Hive }, NeedsDecision, "", "the reviewer swarm returned `requires_human` @abc1234"},
-		{"self-authored keeps 085", func(e *Evidence) { e.SelfAuthored = true }, NeedsDecision, "", "the reviewer swarm returned `requires_human` @abc1234"},
-		{"hold rides the author route as a gate", func(e *Evidence) { e.Holds = Holds([]string{"hold"}) }, NeedsAuthor, LaneReasonReviewerQuestion, "reviewer question: @clubanderson should this land before the freeze?"},
-		{"sentinel rides the author route as a gate", func(e *Evidence) { e.Sentinel = true }, NeedsAuthor, LaneReasonReviewerQuestion, "reviewer question: @clubanderson should this land before the freeze?"},
-		{"lane rule keeps 085", func(e *Evidence) { e.CauseReason = "the lane excludes `workflow-paths` edits" }, NeedsDecision, "", "the lane excludes `workflow-paths` edits"},
+		{"clanker author 085", func(e *Evidence) { e.AuthorKind = authorkind.Clanker }, NeedsDecision, "", "the reviewer swarm returned `requires_human` @abc1234"},
+		{"hive author 085", func(e *Evidence) { e.AuthorKind = authorkind.Hive }, NeedsDecision, "", "the reviewer swarm returned `requires_human` @abc1234"},
+		{"self-authored 085", func(e *Evidence) { e.SelfAuthored = true }, NeedsDecision, "", "the reviewer swarm returned `requires_human` @abc1234"},
+		{"hold rides the decision as a gate", func(e *Evidence) { e.Holds = Holds([]string{"hold"}) }, NeedsDecision, "", "the `hold` label is set"},
+		{"sentinel rides the decision as a gate", func(e *Evidence) { e.Sentinel = true }, NeedsDecision, "", "a sentinel alert is open on this PR"},
+		{"lane rule 085", func(e *Evidence) { e.CauseReason = "the lane excludes `workflow-paths` edits" }, NeedsDecision, "", "the lane excludes `workflow-paths` edits"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -694,13 +697,12 @@ func TestRouteHumanAuthorOwesAnswer(t *testing.T) {
 			if r.Stage != tc.wantStage || !containsString(r.Reasons, tc.wantReason) {
 				t.Fatalf("route = %+v", r)
 			}
-			if tc.wantLane != "" && r.LaneReason != tc.wantLane {
+			if r.LaneReason != tc.wantLane {
 				t.Fatalf("lane reason = %q want %q (%+v)", r.LaneReason, tc.wantLane, r)
 			}
 		})
 	}
-	// A trusted merger's approval on the head still settles the verdict
-	// ahead of the author route.
+	// A trusted merger's approval on the head still settles the verdict.
 	e := readyEvidence()
 	human(&e)
 	e.HumanApprover = "clubanderson"
