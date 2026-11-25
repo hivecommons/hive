@@ -952,6 +952,146 @@ auto_merge:
     enabled: true   # default false
 ```
 
+### Repository issues for red dependency-bot PRs
+
+When neither the stale-red bot rebase nor adoption applies, a red bump usually
+needs a companion change in the repository itself (an upstream Makefile or
+config changed), and a person has to diagnose that and file an issue for it.
+`auto_merge.dependency_bot_red_issue.enabled` (default **off**) lets the
+dependency-bot sweep file that issue. It works for any dependency-bot PR
+(Renovate, Dependabot, mergeraptor) in a repository on GitHub; the bot does not
+need to be a trusted bot author.
+
+At the moment the red-CI hand-off is posted (red on the same head past the 4
+hours, after the hive's one transient re-run if one is owed, and the adoption
+request above did not take the head), the sweep files one issue in the PR's
+repository only when all of this holds. The cheap conditions come first, so a
+refused or impossible case costs no API call:
+
+- the hive can name its own accounts, so it can tell an issue it wrote from a
+  copy later (with PAT auth and no resolvable login, nothing is filed), and
+  the write-back gate would admit `issue_file` in the repository;
+- the failure was not triaged as transient or external, is not deferred to a
+  `[shared-ci]` incident, no failing check is also red on the base, and the
+  hive's transient re-run is not still owed and did not re-run nothing;
+- the failing required check set (the branch-protection list when it is
+  known, otherwise every failing check) has at most 5 checks;
+- no other open PR in the same snapshot, by a bot or a person, fails any of
+  those checks. One check red on several PRs is a shared cause (a secret the
+  bot's PRs cannot read, a runner problem), not one bump's;
+- no bot rebase request is pending for the head;
+- the PR's failure excerpt has a line beyond the bare "Process completed with
+  exit code N".
+
+Then, for at most 3 PRs per pass (the evaluation budget), it reads GitHub:
+
+- the base tip and its check runs, once per repository and base branch per
+  pass. The newest run of every failing check there must have concluded
+  `success`. A check that is red there, has not run there, or was skipped or
+  neutral, files nothing;
+- the head must already contain that base tip, so a rebase alone would not
+  change the result (one compare). This holds for a head the bot
+  regenerated after the stale-red pass asked it to rebase too; the text then
+  says the hive will not ask again. A head that is behind a passing base gets
+  no issue: a rebase is the answer there. For Renovate the stale-red pass may
+  ask it; for Dependabot, which takes no command from the hive, a person asks
+  it to rebase;
+- every run of each failing check on the head (two calls per check: the runs,
+  with every attempt, and the newest failing run's annotations). The failure
+  must have reproduced: for every failing check, within one check suite, a
+  failing run started after an earlier failing run of it had finished
+  (re-run attempts of one workflow run share a suite and run one after
+  another; failures in different suites, or overlapping same-named runs such
+  as a matrix, do not count), or the hive's transient re-run of the head ran
+  and failed again. Any run of the check that passed on the head (fail,
+  pass, fail) is a flaky check: nothing is filed. A single failed attempt files
+  nothing either; a person re-running the failed check before the hand-off is
+  enough to qualify;
+- each base tip's successful run must have finished after the head's newest
+  failing run started. An older base proof, or a missing time on either side,
+  is unknown: nothing is filed;
+- the newest failing runs must carry at least one failure-level annotation
+  beyond the bare exit code; warnings do not count;
+- one open-issue listing: no open `[shared-ci] <check> failing across <repo>`
+  incident for any of the checks, and an open issue whose body opens with the
+  same marker is linked only if the hive wrote it. One the hive did not write
+  (a copy, or a forged marker) is neither linked nor filed beside. The same
+  holds when the issue create reuses an open issue with the same title: it
+  is read and linked only if the hive wrote it. No issue
+  with the marker closed in the last 24 hours (7 days when closed as not
+  planned).
+
+Any PR past the evaluation budget, and any PR that fails a condition, is
+handed off at once exactly as with the switch off. No hand-off waits for the
+filer.
+
+The issue links the PR and each failing check's run (only links on the
+forge's own host, read from the PR's URL; otherwise the PR's checks page),
+names the failing checks, the base tip and how the failure reproduced, and
+quotes up to 10 failure-level error lines. Its next step reads "Fix the
+repository so this bump passes; do not edit the bot's branch." followed by
+what then has to happen on the PR, said the same way in the hand-off:
+
+- Renovate: Renovate has to rebase the PR so its checks run again; the hive
+  may tick its rebase/retry box once (stale-red bot rebase, when
+  `bot_rebase_request` is allowed), otherwise a person ticks it. After a
+  regenerated head the hive does not ask again, so a person ticks it;
+- Dependabot: a person with push access asks Dependabot to rebase; the hive
+  cannot ask Dependabot;
+- any other bot: a person has the bot rebase or regenerate the PR.
+
+It does not try to read old and new versions; the PR title is quoted instead.
+The PR title, check names, base branch name and links are neutralized first
+(one line, no backticks or angle brackets, only plain http(s) links on the
+forge's host), so they can neither forge the marker nor trip the issue
+template guard. The issue is filed through the write-back gate as `issue_file`
+and the usual issue create with governor origin, so it carries the
+`origin/governor` label like every hive-filed issue and no other label; the
+repository's own intake triages it.
+
+One issue is filed per PR and failing check set. The body's first line is a
+marker (`<!-- hive-dependency-bot-red pr=<n> checks=<key> -->`), and only that
+line counts when the issue is looked up again after a restart; the filed
+number is also kept beside the hand-off ledger
+(`dependency-bot-conflicts-red-issue.json`). A later bot head is checked again
+from the start, and the marker lookup finds the open issue, so its hand-off
+names the same issue.
+
+The hand-off comment and its `needs-human` label are posted as before; the
+comment gains one line naming the issue and saying why the fix belongs in the
+repository rather than on the bot's branch (a commit there stops the bot
+updating the branch, or is dropped when the bot regenerates it). Nothing else
+is added to the PR, so the stale-red pass can still ask the bot to rebase once
+a fix lands on the base. When the PR later merges, closes or goes green, the
+sweep posts one note on the issue, only while it is open and was written by
+the hive, and stops tracking it. A record whose PR, repository or issue
+GitHub reports gone (404 or 410) is dropped. It reuses the state the hand-off undo pass
+already read for a closed PR and makes at most 5 other state reads and 5
+notes per pass. It never closes the issue. With the switch off, the sweep
+behaves exactly as before.
+
+Limitations:
+
+- The open-issue listing reads at most 300 open issues (3 pages, newest
+  first). In a repository with more open issues, an older open issue with the
+  marker, or an older open `[shared-ci]` incident, is not seen.
+- The key is the exact failing check set. If the set changes between heads
+  (a check starts or stops failing), that is a new set and may get its own
+  issue; the ledger then tracks only the newest one per PR.
+- The marker names the PR number. When Dependabot closes a PR and opens a new
+  one for the same dependency (a newer version supersedes it), the new PR is a
+  new number, so one breakage can end up with two open issues, one per PR.
+  The first issue gets its "closed without merging" note.
+- Once the hand-off adds `needs-human`, the PR is not looked at again, so a
+  case skipped at hand-off time (for example a failure seen only once, or a PR
+  past the per-pass budget) is not filed later.
+
+```yaml
+auto_merge:
+  dependency_bot_red_issue:
+    enabled: true   # default false
+```
+
 ### Breaking-titled or `needs-owner-merge` PRs wait for a human
 
 A PR whose trimmed title starts with `⚠️` (U+26A0, with or without the VS16

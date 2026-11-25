@@ -232,6 +232,55 @@ func TestParityBatch6FeaturesRoundTrip(t *testing.T) {
 	}
 }
 
+// auto_merge.dependency_bot_red_issue.enabled defaults off, round-trips
+// through the auto-merge PUT as its flat field, and leaves the adoption
+// switch alone.
+func TestDependencyBotRedIssueSettingRoundTrip(t *testing.T) {
+	s := covApiServer(t)
+	if s.deps.Config.AutoMerge.DependencyBotRedIssue.IsEnabled() {
+		t.Fatal("dependency-bot red-CI issues should default off")
+	}
+	rec := doPut(s, "/api/config/auto-merge", map[string]any{"dependency_bot_adopt_enabled": false})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("auto-merge PUT: %d, %s", rec.Code, rec.Body.String())
+	}
+	var am map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &am); err != nil {
+		t.Fatal(err)
+	}
+	if am["dependency_bot_red_issue_enabled"] != false {
+		t.Fatalf("auto-merge response dependency_bot_red_issue_enabled = %v, want false by default", am["dependency_bot_red_issue_enabled"])
+	}
+
+	rec = doPut(s, "/api/config/auto-merge", map[string]any{"dependency_bot_red_issue_enabled": true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("auto-merge PUT: %d, %s", rec.Code, rec.Body.String())
+	}
+	if !s.deps.Config.AutoMerge.DependencyBotRedIssue.IsEnabled() {
+		t.Fatal("dependency_bot_red_issue_enabled=true not applied")
+	}
+	if s.deps.Config.AutoMerge.DependencyBotAdopt.IsEnabled() {
+		t.Fatal("dependency_bot_red_issue_enabled PUT changed dependency_bot_adopt")
+	}
+	am = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &am); err != nil {
+		t.Fatal(err)
+	}
+	if am["dependency_bot_red_issue_enabled"] != true {
+		t.Fatalf("auto-merge response dependency_bot_red_issue_enabled = %v", am["dependency_bot_red_issue_enabled"])
+	}
+
+	// A PUT that does not carry the field leaves it as it is.
+	rec = doPut(s, "/api/config/auto-merge", map[string]any{"bot_takeover_enabled": true})
+	if rec.Code != http.StatusOK || !s.deps.Config.AutoMerge.DependencyBotRedIssue.IsEnabled() {
+		t.Fatalf("an unrelated PUT changed dependency_bot_red_issue: %d, %s", rec.Code, rec.Body.String())
+	}
+	rec = doPut(s, "/api/config/auto-merge", map[string]any{"dependency_bot_red_issue_enabled": false})
+	if rec.Code != http.StatusOK || s.deps.Config.AutoMerge.DependencyBotRedIssue.IsEnabled() {
+		t.Fatalf("dependency_bot_red_issue_enabled=false not applied: %d, %s", rec.Code, rec.Body.String())
+	}
+}
+
 // Every key this batch exposes renders with its YAML-key hint next to a
 // control bound to the right save path.
 func TestParityBatch6SettingsRenderEveryKey(t *testing.T) {
@@ -247,6 +296,7 @@ func TestParityBatch6SettingsRenderEveryKey(t *testing.T) {
 		{"good_first_issue.comment_template", `data-arg1="goodFirstIssueCommentTemplate" data-arg-types="s,s,v"`},
 		{"auto_merge.bot_takeover.enabled", `data-section="auto-merge" data-key="bot_takeover_enabled"`},
 		{"auto_merge.dependency_bot_adopt.enabled", `data-section="auto-merge" data-key="dependency_bot_adopt_enabled"`},
+		{"auto_merge.dependency_bot_red_issue.enabled", `data-section="auto-merge" data-key="dependency_bot_red_issue_enabled"`},
 	} {
 		if !strings.Contains(features, "yamlHint('"+c.yaml+"')") {
 			t.Errorf("%s has no YAML-key hint", c.yaml)

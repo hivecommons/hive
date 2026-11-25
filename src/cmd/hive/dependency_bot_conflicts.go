@@ -79,6 +79,10 @@ type depBotConflictStore struct {
 	// (dependency_bot_adopt.go).
 	adopt map[string]*depBotAdoptRecord
 
+	// redIssues holds, persisted, the repository issue filed per PR for a
+	// red bump (dependency_bot_red_issue.go).
+	redIssues map[string]*depBotRedIssueRecord
+
 	// staleRedLast holds, persisted, the last stale-red rebase request per
 	// PR, kept across the bot's new heads (stale_red_bot_rebase.go).
 	staleRedLast map[string]*depBotStaleRedAsk
@@ -101,6 +105,8 @@ func loadDepBotConflictStore(path string) *depBotConflictStore {
 		branchFacts: map[string]depBotBranchFacts{},
 
 		adopt: loadDepBotAdoptRecords(depBotAdoptPath(path)),
+
+		redIssues: loadDepBotRedIssues(depBotRedIssuePath(path)),
 
 		staleRedLast: loadDepBotStaleRedAsks(depBotStaleRedPath(path)),
 	}
@@ -265,7 +271,10 @@ func dependencyBotConflictComment(base string) string {
 //     failed again or re-ran nothing (dependency_bot_transient_rerun.go);
 //     with auto_merge.dependency_bot_adopt on, a trusted-bot head the review
 //     swarm asked to change is instead given to the hive's adoption path,
-//     once per head (dependency_bot_adopt.go);
+//     once per head (dependency_bot_adopt.go); with
+//     auto_merge.dependency_bot_red_issue on, a hand-off whose failing checks
+//     all pass on the base tip also files one repository issue and names it
+//     (dependency_bot_red_issue.go);
 //   - a terminal required-check hold the automerge sweep reported (held for
 //     approval, never started, never ran);
 //   - a red branch the stale-red pass asked the bot to rebase
@@ -290,7 +299,8 @@ func runDependencyBotConflictSweep(ctx context.Context, cfg *config.Config, writ
 		org = cfg.Project.Org
 	}
 	adopt := depBotAdoptPolicyFromConfig(cfg, reader, logger)
-	sweepDependencyBotConflictsWith(ctx, getDepBotConflictStore(), org, cfg.DependencyBotRebaseAfter(), adopt, writer, reader, actionable, time.Now, logger)
+	redIssue := depBotRedIssuePolicyFromConfig(cfg, reader, logger)
+	sweepDependencyBotHandoffs(ctx, getDepBotConflictStore(), org, cfg.DependencyBotRebaseAfter(), adopt, redIssue, writer, reader, actionable, time.Now, logger)
 }
 
 // sweepDependencyBotConflicts is the sweep with auto_merge.dependency_bot_adopt
@@ -321,6 +331,24 @@ func sweepDependencyBotConflictsWith(
 	now func() time.Time,
 	logger *slog.Logger,
 ) {
+	sweepDependencyBotHandoffs(ctx, store, org, rebaseAfter, adopt, depBotRedIssuePolicy{}, writer, reader, actionable, now, logger)
+}
+
+// sweepDependencyBotHandoffs is the sweep with both opt-in policies; the
+// zero depBotRedIssuePolicy is auto_merge.dependency_bot_red_issue off.
+func sweepDependencyBotHandoffs(
+	ctx context.Context,
+	store *depBotConflictStore,
+	org string,
+	rebaseAfter time.Duration,
+	adopt depBotAdoptPolicy,
+	redIssue depBotRedIssuePolicy,
+	writer forge.IssueWriter,
+	reader depBotPRReader,
+	actionable *github.ActionableResult,
+	now func() time.Time,
+	logger *slog.Logger,
+) {
 	if store == nil || writer == nil || reader == nil || actionable == nil {
 		return
 	}
@@ -342,7 +370,9 @@ func sweepDependencyBotConflictsWith(
 		}
 	}
 
-	undoDependencyBotConflicts(ctx, store, writer, reader, seen, logger)
+	issues := newDepBotRedIssuePass(redIssue, seen)
+	undoDependencyBotConflicts(ctx, store, writer, reader, seen, issues.states, logger)
+	issues.noteDependencyBotRedIssues(ctx, store, reader, seen, logger)
 
 	if rebaseAfter <= 0 {
 		rebaseAfter = config.DefaultDependencyBotRebaseAfterS * time.Second
@@ -404,6 +434,11 @@ func sweepDependencyBotConflictsWith(
 			continue
 		}
 		var comment string
+		// redIssueDue: the red-CI hand-off is about to be posted with no
+		// adoption, so auto_merge.dependency_bot_red_issue may file the
+		// repository issue and name it in the comment.
+		redIssueDue := false
+		var redIssueRerun depBotTransientRerun
 		switch reason {
 		case depBotHandoffHeld:
 			comment = dependencyBotHeldCheckComment(pr.Author, heldReason)
@@ -457,6 +492,7 @@ func sweepDependencyBotConflictsWith(
 				continue
 			}
 			comment = dependencyBotRedCIComment(pr, rerun)
+			redIssueDue, redIssueRerun = true, rerun
 		case depBotHandoffStranded:
 			st, _ := store.rebaseState(key)
 			facts, known := store.branchFactsFor(key, pr.HeadSHA)
@@ -467,6 +503,14 @@ func sweepDependencyBotConflictsWith(
 		}
 		if !depBotWritebackAllowed(ctx, reader, repo, pr.Number, writeback.KindNeedsDecisionComment, comment, logger) {
 			continue
+		}
+		if redIssueDue {
+			// Never holds the hand-off: anything the filer cannot prove,
+			// or a spent per-pass budget, posts it without the issue.
+			out := issues.issueFor(ctx, store, repo, key, pr, redIssueRerun, now(), logger)
+			if out.Number > 0 && out.Line != "" {
+				comment += "\n\n" + out.Line
+			}
 		}
 		if err := writer.CreateIssueComment(ctx, repo, pr.Number, comment); err != nil { // writeback:gated
 			logger.Warn("dependency-bot hand-off comment failed; will retry next pass",
@@ -504,7 +548,10 @@ func applyDepBotConflictLabel(ctx context.Context, store *depBotConflictStore, w
 // labeled once their hand-off reason is over or they close, following unparkEscalatedPR:
 // a failed removal is retried next pass, and a label this sweep did not add
 // is never touched.
-func undoDependencyBotConflicts(ctx context.Context, store *depBotConflictStore, writer forge.IssueWriter, reader depBotPRReader, seen map[string]github.PullRequest, logger *slog.Logger) {
+//
+// states, when not nil, receives every PR state it read this pass, so the
+// red-issue lifecycle (dependency_bot_red_issue.go) need not read it again.
+func undoDependencyBotConflicts(ctx context.Context, store *depBotConflictStore, writer forge.IssueWriter, reader depBotPRReader, seen map[string]github.PullRequest, states map[string]github.PRState, logger *slog.Logger) {
 	for _, key := range store.keys() {
 		rec, ok := store.get(key)
 		if !ok {
@@ -530,6 +577,9 @@ func undoDependencyBotConflicts(ctx context.Context, store *depBotConflictStore,
 			}
 		} else {
 			st, err := reader.GetPRState(ctx, repo, number)
+			if err == nil && states != nil {
+				states[key] = st
+			}
 			if err != nil || !strings.EqualFold(st.State, "closed") {
 				// Still open (draft, exempt, or a partial enumeration) or
 				// unknown: keep the record and look again next pass.

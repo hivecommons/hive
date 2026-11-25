@@ -602,6 +602,15 @@ type AutoMergeConfig struct {
 	// the dashboard's Adopt decision adds), and the existing adoption path
 	// copies the PR to `hive/adopt-<n>` for the fix loop. Default off.
 	DependencyBotAdopt DependencyBotAdoptAutoMergeConfig `yaml:"dependency_bot_adopt,omitempty" json:"dependency_bot_adopt,omitempty"`
+	// DependencyBotRedIssue lets the dependency-bot hand-off sweep file one
+	// issue in the repository when a dependency-bot PR's red-CI hand-off
+	// fires, the adoption request did not apply, no bot rebase is due or
+	// pending, and every failing required check on the PR head passes on the
+	// base tip: the bump then most likely needs a companion change in the
+	// repository. One issue per PR and set of failing checks, found again
+	// by a marker in its body. The hand-off itself is unchanged and names
+	// the issue. Default off.
+	DependencyBotRedIssue DependencyBotRedIssueAutoMergeConfig `yaml:"dependency_bot_red_issue,omitempty" json:"dependency_bot_red_issue,omitempty"`
 	// TrustedAuthors enables a separate, default-off sweep for human-authored
 	// PRs whose AUTHOR already holds merge authority. Unlike the App
 	// self-authored lane, this never bypasses to create new authority: the
@@ -998,6 +1007,18 @@ type DependencyBotAdoptAutoMergeConfig struct {
 
 // IsEnabled reports auto_merge.dependency_bot_adopt.enabled (default false).
 func (d DependencyBotAdoptAutoMergeConfig) IsEnabled() bool {
+	return d.Enabled
+}
+
+// DependencyBotRedIssueAutoMergeConfig is auto_merge.dependency_bot_red_issue.*.
+type DependencyBotRedIssueAutoMergeConfig struct {
+	// Enabled turns the issue filing on. Unset means OFF: the sweep only
+	// hands a red dependency-bot PR to a person, as before.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// IsEnabled reports auto_merge.dependency_bot_red_issue.enabled (default false).
+func (d DependencyBotRedIssueAutoMergeConfig) IsEnabled() bool {
 	return d.Enabled
 }
 

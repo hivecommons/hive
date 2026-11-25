@@ -811,6 +811,7 @@
   "auto_merge": {
     "bot_takeover": {},
     "dependency_bot_adopt": {},
+    "dependency_bot_red_issue": {},
     "trusted_authors": {},
     "contributor_lane": {},
     "contributor_tier": {},
