@@ -47,6 +47,7 @@ func TestAgentConfigGet_ExposesOnDemand(t *testing.T) {
 
 func TestAgentConfigGeneral_ClearsAndSetsOnDemand(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 
 	cfg := deps.Config.Agents["scanner"]
 	cfg.OnDemand = true
@@ -76,6 +77,7 @@ func TestAgentConfigGeneral_ClearsAndSetsOnDemand(t *testing.T) {
 // on-demand agent must not silently un-demand it.
 func TestAgentConfigGeneral_OmittedOnDemandIsPreserved(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 
 	cfg := deps.Config.Agents["scanner"]
 	cfg.OnDemand = true
