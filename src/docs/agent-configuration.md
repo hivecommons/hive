@@ -871,6 +871,14 @@ Two consequences worth knowing:
 - **Model validation does not save you here.** `POST /api/model/...` checks the model against the agent's *current effective* backend, and deliberately fails **open** when that backend's model list cannot be enumerated (see `validateModelForAgent`). Codex is exactly such a backend, so `switch` to codex followed by `model` set to a Claude id is accepted. Reverse the order and the model is validated against the backend you are about to leave. Neither order gives you a checked pair.
 - **The atomic route does not restart the agent.** It persists the pair and syncs it into the live process config, so the running CLI keeps its current method until the agent next restarts. That is usually what you want for a scripted change — the two-call path pays for two restarts — but if you need the change to take effect now, restart the agent afterwards.
 
+### When an agent config save fails
+
+`PUT /api/config/agent/{name}/general`, `.../cadences` and `.../models` answer `200` only once the change is written to the config file ([#19847](https://github.com/hivecommons/hive/issues/19847)). They validate the whole request first and change nothing in memory when the request is refused:
+
+- **`400`** for an invalid value, including a cadence for a governor mode the hive does not define.
+- **`409`** when the hive has no writable config source, so the change would be lost on the next restart.
+- **`500`** when the write fails. The message names the error, and the in-memory config is put back as it was.
+
 ### Switching the method or model of an agent that is not running
 
 `POST /api/switch/{agent}/{backend}` and `POST /api/model/{agent}/{model}` accept a change for any **configured** agent, not only a live one ([#18905](https://github.com/hivecommons/hive/issues/18905)). An agent can be configured but absent from the runtime (stopped, held back by the ACMM level gate) or present but paused:

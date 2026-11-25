@@ -335,6 +335,28 @@ func TestKickKeyRequiresFocusedSelectedAgent(t *testing.T) {
 	}
 }
 
+func TestKickTargetsVisibleSelectionAfterRosterRefresh(t *testing.T) {
+	target := client.Agent{Name: "scanner", Enabled: true}
+	others := make([]client.Agent, 15)
+	for i := range others {
+		others[i] = client.Agent{Name: fmt.Sprintf("agent-%02d", i+1), Enabled: true}
+	}
+
+	// At this size the focused Agents pane fits 15 agent rows.
+	m, _ := newModel().Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m, _ = m.Update(panes.AgentsMsg{Agents: append([]client.Agent{target}, others...)})
+	m, _ = m.Update(panes.AgentsMsg{Agents: append(others, target)})
+	if view := m.View(); !strings.Contains(view, "▸ ● scanner") {
+		t.Fatalf("selected agent %q was hidden after roster refresh:\n%s", target.Name, view)
+	}
+
+	next, cmd := m.Update(kickKey)
+	if cmd == nil || next.(model).kickPending != target.Name {
+		t.Fatalf("K after roster refresh: command queued=%t, target=%q, want %q",
+			cmd != nil, next.(model).kickPending, target.Name)
+	}
+}
+
 func TestLowercaseKRemainsAgentNavigation(t *testing.T) {
 	m := newModel()
 	next, _ := m.Update(panes.AgentsMsg{Agents: []client.Agent{

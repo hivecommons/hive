@@ -685,6 +685,8 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.auditFromRequest(r, "repo_item_hold_add", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "label", canonical), "")
+		s.noteDashboardActor(ctx, repoFull, number, dashboardActorKindHold,
+			dashboardActorEntry("Hold added", r.Header.Get("X-Hive-User"), dashboardActorLabelChange([]string{canonical}, nil), time.Now()))
 	} else {
 		labels, err := s.currentItemLabels(ctx, owner, repoName, number)
 		if err != nil {
@@ -699,6 +701,10 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		s.auditFromRequest(r, "repo_item_hold_remove", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "labels", strings.Join(removed, ",")), "")
+		if len(removed) > 0 {
+			s.noteDashboardActor(ctx, repoFull, number, dashboardActorKindHold,
+				dashboardActorEntry("Hold released", r.Header.Get("X-Hive-User"), dashboardActorLabelChange(nil, removed), time.Now()))
+		}
 	}
 	itemType := strings.ToLower(strings.TrimSpace(body.Type))
 	if itemType != "pr" {
