@@ -333,6 +333,48 @@ func TestRestoreHardensSecretModes(t *testing.T) {
 	}
 }
 
+func TestRestoreRejectsUnreadableHiveID(t *testing.T) {
+	t.Run("destination", func(t *testing.T) {
+		sealed, _ := sealedBackupOf(t, "hive-abc123")
+		dest := t.TempDir()
+		if err := os.Mkdir(filepath.Join(dest, hiveIDFile), restoreDirMode); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := Restore(testKey(), sealed, RestoreOptions{DataDir: dest}, testLogger())
+		if err == nil || !strings.Contains(err.Error(), "read destination "+hiveIDFile) {
+			t.Fatalf("expected an error reading the destination identity, got %v", err)
+		}
+	})
+
+	t.Run("archive", func(t *testing.T) {
+		dest := t.TempDir()
+		probe := filepath.Join(dest, "unreadable")
+		if err := os.WriteFile(probe, nil, 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.ReadFile(probe); err == nil {
+			t.Skip("filesystem allows reading a file without read permissions")
+		} else if !errors.Is(err, os.ErrPermission) {
+			t.Fatal(err)
+		}
+
+		builder := hubbackup.NewBuilder()
+		if err := builder.AddBytes(filepath.Join(spokePrefix, hiveIDFile), 0, []byte("hive-abc123")); err != nil {
+			t.Fatal(err)
+		}
+		sealed, err := builder.Finish(testKey(), &hubbackup.Manifest{FormatVersion: hubbackup.FormatVersion()}, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = Restore(testKey(), sealed, RestoreOptions{DataDir: dest}, testLogger())
+		if !errors.Is(err, os.ErrPermission) || !strings.Contains(err.Error(), "read archive "+hiveIDFile) {
+			t.Fatalf("expected an error reading the staged identity, got %v", err)
+		}
+	})
+}
+
 // TestRestoreRejectsHubArchive proves a hub disaster-recovery archive pointed at
 // this command fails loudly instead of "succeeding" with nothing restored.
 func TestRestoreRejectsHubArchive(t *testing.T) {
@@ -517,6 +559,40 @@ func TestRestoreFailsWhenBeadParentIsAFile(t *testing.T) {
 		if got := mustRead(t, earlier); got != "existing bead ledger" {
 			t.Fatalf("dry run=%t: restore modified an earlier bead file: %q", dryRun, got)
 		}
+	}
+}
+
+func TestRestoreRejectsUnusableBeadParentSymlinks(t *testing.T) {
+	sealed, _ := sealedBackupOf(t, "hive-abc123")
+	for _, tc := range []struct {
+		target, want string
+		file         bool
+	}{
+		{target: "missing", want: "check parent directory"},
+		{target: "regular-file", want: "path is not a directory", file: true},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			dest := t.TempDir()
+			earlier := filepath.Join(dest, beadsSubdir, "quality", "beads.json")
+			mustWrite(t, earlier, "existing ledger")
+			if tc.file {
+				mustWrite(t, filepath.Join(dest, beadsSubdir, tc.target), "existing file")
+			}
+			link := filepath.Join(dest, beadsSubdir, "scanner")
+			if err := os.Symlink(tc.target, link); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, dryRun := range []bool{true, false} {
+				_, err := Restore(testKey(), sealed, RestoreOptions{DataDir: dest, DryRun: dryRun}, testLogger())
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("dry run=%t: expected a parent symlink error, got %v", dryRun, err)
+				}
+				if got := mustRead(t, earlier); got != "existing ledger" {
+					t.Fatalf("dry run=%t: restore replaced an earlier bead file: %q", dryRun, got)
+				}
+			}
+		})
 	}
 }
 
@@ -871,6 +947,68 @@ func TestRestoreChecksCollidingFileDestinations(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRestoreReportsUnwritablePathProbe(t *testing.T) {
+	earlierRel := filepath.Join(beadsSubdir, "ci-maintainer", "beads.json")
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, earlierRel), "archived ledger")
+	mustWrite(t, filepath.Join(src, beadsSubdir, "quality", "Notes.md"), "archived note")
+	mustWrite(t, filepath.Join(src, beadsSubdir, "scanner", "notes.md"), "other archived note")
+	t.Setenv(EnvDataDir, src)
+	archive, err := Build(testKey(), "hive-abc123", testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dest := t.TempDir()
+	earlier := filepath.Join(dest, earlierRel)
+	mustWrite(t, earlier, "existing ledger")
+	beads := filepath.Join(dest, beadsSubdir)
+	shared := filepath.Join(beads, "quality")
+	if err := os.Mkdir(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("quality", filepath.Join(beads, "scanner")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o500); err != nil {
+		t.Skipf("cannot make probe parent unwritable: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(shared, 0o700) })
+	probe, err := os.MkdirTemp(shared, "write-check-")
+	if err == nil {
+		if err := os.Remove(probe); err != nil {
+			t.Fatal(err)
+		}
+		t.Skip("probe parent remained writable despite chmod")
+	}
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatal(err)
+	}
+
+	for _, dryRun := range []bool{true, false} {
+		_, err := Restore(testKey(), archive.Sealed, RestoreOptions{DataDir: dest, DryRun: dryRun}, testLogger())
+		if !errors.Is(err, os.ErrPermission) || !strings.Contains(err.Error(), "create path probe") {
+			t.Fatalf("dry run=%t: expected a probe creation error, got %v", dryRun, err)
+		}
+		if got := mustRead(t, earlier); got != "existing ledger" {
+			t.Fatalf("dry run=%t: restore replaced an earlier bead file: %q", dryRun, got)
+		}
+	}
+}
+
+func TestRestorePathAliasProbeCleansUp(t *testing.T) {
+	parent := t.TempDir()
+	path := filepath.Join("nested", "Notes.md")
+	match, err := probeRestorePathAlias(parent, path, path)
+	if err != nil || !match {
+		t.Fatalf("expected a path to alias itself, got %t, %v", match, err)
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("probe left entries behind: %v, %v", entries, err)
 	}
 }
 
