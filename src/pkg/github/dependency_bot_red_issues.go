@@ -150,7 +150,12 @@ func dependencyBotRedIssueHasMarker(body, marker string) bool {
 // so the dedupe canonicalisation (issue_dedupe.go), which cuts a title at
 // ": " or " - ", never makes two PRs' issues look alike.
 func DependencyBotRedIssueTitle(prNumber int, checks []string) string {
-	return fmt.Sprintf("Dependency-bot PR #%d needs a repository change to pass %s", prNumber, dependencyBotRedQuoted(checks, dependencyBotRedIssueMaxTitleChecks))
+	// The checks key sits right after the PR number: the title lists only the
+	// first checks, so two failing sets of one PR could otherwise share a
+	// title (and CreateIssue's same-title reuse), and the dedupe stem keeps
+	// it because it comes before any check name (a name with ": " cuts the
+	// stem there).
+	return fmt.Sprintf("Dependency-bot PR #%d [%s] needs a repository change to pass %s", prNumber, DependencyBotRedChecksKey(checks), dependencyBotRedQuoted(checks, dependencyBotRedIssueMaxTitleChecks))
 }
 
 func dependencyBotRedQuoted(checks []string, limit int) string {

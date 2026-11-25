@@ -35,8 +35,14 @@ func TestDependencyBotRedChecksKeyIsStable(t *testing.T) {
 // PRs' issues never collides.
 func TestDependencyBotRedIssueTitle(t *testing.T) {
 	got := DependencyBotRedIssueTitle(42, []string{"lint: go", "build", "test", "e2e"})
-	if !strings.HasPrefix(got, "Dependency-bot PR #42 needs a repository change to pass ") || !strings.HasSuffix(got, " and 1 more") {
+	if !strings.HasPrefix(got, "Dependency-bot PR #42 ["+DependencyBotRedChecksKey([]string{"lint: go", "build", "test", "e2e"})+"] needs a repository change to pass ") || !strings.HasSuffix(got, " and 1 more") {
 		t.Fatalf("title = %q", got)
+	}
+	// Two failing sets of one PR that share the listed checks and the count
+	// still get different titles and dedupe stems.
+	other := DependencyBotRedIssueTitle(42, []string{"lint: go", "build", "test", "unit"})
+	if got == other || canonicalIssueSubject(got) == canonicalIssueSubject(other) {
+		t.Fatalf("two check sets share a title or dedupe stem: %q", got)
 	}
 	if canonicalIssueSubject(got) == canonicalIssueSubject(DependencyBotRedIssueTitle(43, []string{"lint: go", "build", "test", "e2e"})) {
 		t.Fatal("two PRs' titles share a dedupe stem")
