@@ -30,7 +30,8 @@ const fetch = async () => ({json: async () => ({hives: _allMainHives.concat(
   {name: 'Project C', agentCount: 3}
 )})});
 const names = () => Array.from(table.innerHTML.matchAll(/<span class="hive-name">([^<]+)/g), match => match[1]);
-`+extractHubJSFunction(t, string(html), "renderHives")+
+`+extractHubJSFunction(t, string(html), "replaceHiveTable")+
+		extractHubJSFunction(t, string(html), "renderHives")+
 		extractHubJSFunction(t, string(html), "sortMainHives")+
 		"async "+extractHubJSFunction(t, string(html), "loadRegistry")+`
 (async () => {
