@@ -56,8 +56,10 @@ var staleRedRefresh = &staleRedRefreshState{}
 // auto-merge off.
 //
 // It leaves alone a PR that is a draft, held or exempt, still running CI,
-// deferred to an open shared-CI incident, red on the base as well, red only
-// on fork guards (a maintainer's run proves the exact head), a fork
+// one whose every required check passed and only non-required checks are
+// red (not a dependency bot's), deferred to an open shared-CI incident, red
+// on the base as well, red only on fork guards (a maintainer's run proves
+// the exact head), a fork
 // with "allow edits by maintainers" off, or adopted by the hive (074, whose
 // recovery owns it). A dependency bot's branch is never updated: where the
 // pass would update it, it asks the bot to rebase instead, and also once per
@@ -230,6 +232,19 @@ func refreshStaleRedBehindPRs(
 // checks that are not red on the base, with nothing that owns its branch
 // sync elsewhere.
 //
+// A head is skipped as only-non-required-checks-red when every required
+// check passed and only non-required checks are red
+// (staleRedOnlyNonRequiredRed): GitHub reports it unstable, not blocked,
+// and a base merge cannot clear a check that judges the PR's own diff, so an
+// update only restarts CI and review. Danathar/tududi#658 had main merged in
+// twice while every required check was green and only `Mutation check on
+// changed lines (advisory)` was red. A required check that timed out, was
+// cancelled or is still pending is not a pass, and a head whose required set
+// is unknown, empty or not fully reported keeps today's handling, as does a
+// dependency bot's branch (stale_red_bot_rebase.go). The base-tip proof
+// (github.StaleRedBaseVerdictFor) still covers every failing check, required
+// or not, so this only ever removes candidates.
+//
 // Unlike the missing-check refresh it does not skip a PR at 072. The pass
 // only updates a PR whose every failing check is green on the base tip, so
 // the red it clears is the base's: the 072 nudge asked the contributor to
@@ -249,6 +264,8 @@ func staleRedRefreshSkip(pr github.PullRequest) string {
 		return "not-red"
 	case pr.CIChecksRunning:
 		return "ci-running"
+	case staleRedOnlyNonRequiredRed(pr):
+		return "only-non-required-checks-red"
 	case pr.SharedCIIncident > 0:
 		return "shared-ci-incident-open"
 	case len(pr.BaseRedChecks) > 0:
@@ -266,6 +283,45 @@ func staleRedRefreshSkip(pr github.PullRequest) string {
 		return skip
 	}
 	return ""
+}
+
+// staleRedOnlyNonRequiredRed reports that every required check on pr's head
+// passed and only non-required checks are red, from facts the enumeration
+// already read (no API call). The protection facts must show the base's
+// required set known, every required check reported on the head and none
+// of them red (PullRequest.OnlyNonRequiredChecksFailing), and the head's CI
+// activity must show each required check with at least one observation,
+// every one completed with conclusion success, neutral or skipped. A run
+// that timed out, was cancelled, failed to start or is still pending, a
+// pending commit status, or a producer the activity cannot attribute is not
+// a pass: such a head keeps today's handling, which re-runs the required
+// check with the refresh. A dependency bot's branch is never skipped here:
+// its rebase request keeps today's handling (stale_red_bot_rebase.go).
+func staleRedOnlyNonRequiredRed(pr github.PullRequest) bool {
+	if github.DependencyBotBranch(pr.HeadRef, pr.Author) || !pr.OnlyNonRequiredChecksFailing() {
+		return false
+	}
+	a := pr.CIActivity
+	if a == nil || len(a.Required) == 0 || !strings.EqualFold(a.Head, pr.HeadSHA) {
+		return false
+	}
+	for _, name := range a.Required {
+		checks := a.ChecksForRequired(name)
+		if len(checks) == 0 {
+			return false
+		}
+		for _, c := range checks {
+			if c.State != "completed" {
+				return false
+			}
+			switch c.Conclusion {
+			case "success", "neutral", "skipped":
+			default:
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // baseRefreshBranchOwnerSkip names why the hive must not update pr's branch
