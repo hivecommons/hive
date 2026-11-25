@@ -2460,15 +2460,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		_ = deps.startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
 			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger))
 	}
-	// Forgejo repos (#19671): the GitHub sweeps above skip them
-	// (RepoOnGitHub), so they get their own automerge and close-on-merge
-	// sweeps. These need no GitHub client, so a Forgejo-only hive runs them.
+	// Forgejo repos (#19671): the GitHub sweeps above skip them (RepoOnGitHub),
+	// so they get their own sweeps, which need no GitHub client. A gitea config
+	// pointed at a Forgejo instance gets a one-time hint to switch (#19832).
 	if b.ctx != nil {
 		startForgejoSweeps(b.ctx, func() *config.Config { return b.cfg }, forgejoSweepDeps{
 			Mutation: b.mutationBoundary,
 			Gate:     b.writebackGate(),
 			Logger:   b.logger,
 		}, forgejoSweepInterval)
+		startGiteaForgejoHint(b.ctx, func() *config.Config { return b.cfg }, b.logger, giteaForgejoHintInterval)
 	}
 	b.integrationEligibility = func(ctx context.Context, repo, base string, number int, head string) (*gh.PullRequest, string, error) {
 		client := b.currentGitHubClient()

@@ -5650,6 +5650,14 @@ type DashboardConfig struct {
 	StageTracker DashboardStageTrackerConfig `yaml:"stage_tracker,omitempty" json:"stage_tracker,omitempty"`
 	// Sessions configures the interactive Sessions terminals (default off).
 	Sessions DashboardSessionsConfig `yaml:"sessions,omitempty" json:"sessions,omitempty"`
+	// AttributeLabelActions posts one comment, kept up to date under a
+	// hidden marker, on an issue or PR whose labels the dashboard changed
+	// for a person (hold added/released, triage accepted, needs-human or
+	// sentinel label lifted by an approval), naming the signed-in user.
+	// GitHub records the Hive App as the actor of those label writes, so
+	// without it the history reads as automation overriding a person
+	// (hivecommons/hive#19852). Default true.
+	AttributeLabelActions *bool `yaml:"attribute_label_actions,omitempty" json:"attribute_label_actions,omitempty"`
 }
 
 // DashboardStageTrackerConfig is dashboard.stage_tracker.
@@ -6210,6 +6218,13 @@ func (d DashboardConfig) IsDirectRouteAuthzEnabled() bool {
 // offered and served. An unset dashboard.github_sign_in means yes.
 func (d DashboardConfig) GitHubSignInEnabled() bool {
 	return d.GitHubSignIn == nil || *d.GitHubSignIn
+}
+
+// LabelActionAttributionEnabled reports whether a dashboard label action
+// leaves its attribution comment. An unset
+// dashboard.attribute_label_actions means yes.
+func (d DashboardConfig) LabelActionAttributionEnabled() bool {
+	return d.AttributeLabelActions == nil || *d.AttributeLabelActions
 }
 
 // HubURLEnvVar overrides hub.url at runtime. Hosted spokes are provisioned
