@@ -270,6 +270,8 @@ func classifyProviderError(pane string) (providerErrorMatch, bool) {
 		}
 		lower := strings.ToLower(trimmed)
 		switch {
+		case lineShowsCodexModelAccessDenied(trimmed):
+			return providerErrorMatch{Class: "model_access", Line: summarizeCodexModelAccessDenied(trimmed)}, true
 		case strings.Contains(lower, "insufficient_quota"):
 			return providerErrorMatch{Class: "quota", Line: trimmed}, true
 		case strings.Contains(lower, "not licensed to use copilot"):
@@ -298,6 +300,37 @@ func classifyProviderError(pane string) (providerErrorMatch, bool) {
 		}
 	}
 	return providerErrorMatch{}, false
+}
+
+// codexErrorGlyph starts every error line codex prints in its pane. The match
+// is anchored to it because codex echoes the kick body verbatim, and kick text
+// that merely mentions the phrase must not read as an entitlement failure.
+const codexErrorGlyph = "■"
+
+const codexModelAccessPhrase = "does not have access to model"
+
+func lineShowsCodexModelAccessDenied(line string) bool {
+	return strings.HasPrefix(line, codexErrorGlyph) &&
+		strings.Contains(strings.ToLower(line), codexModelAccessPhrase)
+}
+
+// summarizeCodexModelAccessDenied builds the stored text from the model name
+// alone. The raw line carries an OpenAI project id that RedactPaneTokens does
+// not mask, and LastError reaches the status API, dashboard and hub heartbeat.
+func summarizeCodexModelAccessDenied(line string) string {
+	prefix := "Codex project does not have access to model"
+	idx := strings.Index(strings.ToLower(line), codexModelAccessPhrase)
+	rest := line[idx+len(codexModelAccessPhrase):]
+	if open := strings.Index(rest, "`"); open >= 0 {
+		if end := strings.Index(rest[open+1:], "`"); end > 0 {
+			model := rest[open+1 : open+1+end]
+			if len(model) > 80 {
+				model = model[:80]
+			}
+			return prefix + " `" + model + "`"
+		}
+	}
+	return prefix
 }
 
 func lineShowsInferenceBackend401(lower string) bool {
@@ -387,12 +420,21 @@ type AuthPaneState struct {
 	LoginURL            string
 	BackendAuthError    bool
 	BackendAuthErrorMsg string
+	// ModelAccessDenied is set when codex reports the project lacks access to
+	// its configured model. ModelAccessDeniedMsg is a hive-built summary.
+	ModelAccessDenied    bool
+	ModelAccessDeniedMsg string
 }
 
 func ClassifyAuthPane(lines []string) AuthPaneState {
 	joined := strings.Join(lines, "\n")
-	if match, ok := classifyProviderError(joined); ok && match.Class == "backend_auth_error" {
-		return AuthPaneState{BackendAuthError: true, BackendAuthErrorMsg: match.Line}
+	if match, ok := classifyProviderError(joined); ok {
+		switch match.Class {
+		case "backend_auth_error":
+			return AuthPaneState{BackendAuthError: true, BackendAuthErrorMsg: match.Line}
+		case "model_access":
+			return AuthPaneState{ModelAccessDenied: true, ModelAccessDeniedMsg: match.Line}
+		}
 	}
 	needsLogin := paneShowsLoginPrompt(lines)
 	return AuthPaneState{NeedsLogin: needsLogin, LoginURL: extractLoginURL(joined)}
