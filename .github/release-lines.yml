@@ -176,6 +176,9 @@ pinned:
   # The Forgejo e2e (#19683) follows the smoke lane: the forge path it drives
   # is v5 code, and v4 is feature-frozen.
   forgejo-e2e.yml: [-v4, -v6]
+  # The Forgejo JWT live check follows the e2e lane: the JWT path it drives is
+  # v5 code, and v4 is feature-frozen.
+  forgejo-jwt.yml: [-v4, -v6]
   # Publishes the headless Twitch streamer image (#15594) from v5 only: the
   # image is operator tooling, not a hive release channel, so it follows the
   # default branch rather than every release line; v4 is feature-frozen.
