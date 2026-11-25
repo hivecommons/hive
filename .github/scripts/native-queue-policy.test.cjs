@@ -5,6 +5,7 @@ const {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict,
+  HOLD_LABEL, HELD_VERDICT_PREFIX, holdLabels, isHeldVerdict,
   ProviderUnavailable, ProviderVerdict, PROVIDER_VERDICT_NOTE, FORWARD_MERGE, FORWARD_MERGE_HEAD, PROW,
   DCO_ENUMERATION_SUMMARY_PREFIX,
   DCO_ENUMERATION_SUMMARY_FALLBACK,
@@ -546,9 +547,65 @@ for (const prEvent of PR_EVENTS) test('late hold or approval withdrawal is caugh
     Object.assign(f.state, change);
     await assert.rejects(evaluate(f), /held|approval/);
   }
+  // On a PR event a late hold is reported as held, not failed: the merge
+  // group above is where a hold keeps the PR out.
   const pr = fixture(prEvent);
   pr.state.holdOnPRRead = 2;
-  await assert.rejects(evaluate(pr), /held/);
+  const verdict = await evaluate(pr);
+  assert.ok(isHeldVerdict(verdict), verdict);
+  assert.match(verdict, /#1 is held by label hold; five existing policy providers succeeded/);
+});
+
+for (const prEvent of PR_EVENTS) test('a held PR with green evidence is held, not a CI failure' + ` [${prEvent}]`, async () => {
+  for (const name of ['hold', 'do-not-merge/hold', 'DO-NOT-MERGE/HOLD']) {
+    const f = fixture(prEvent);
+    f.state.prs[0].labels = [{ name: 'size/L' }, { name }];
+    const verdict = await evaluate(f);
+    assert.ok(verdict.startsWith(`${HELD_VERDICT_PREFIX} PR #1 is held by label ${name}; `), verdict);
+    assert.match(verdict, /Not admitted while held/);
+  }
+});
+
+for (const prEvent of PR_EVENTS) test('a held PR still fails on a red provider' + ` [${prEvent}]`, async () => {
+  const f = fixture(prEvent);
+  f.state.prs[0].labels = [{ name: 'do-not-merge/hold' }];
+  f.state.runs.get(sha(11)).find(r => r.name === 'DCO').conclusion = 'failure';
+  await assert.rejects(evaluate(f), error => error instanceof ProviderVerdict && error.provider === 'DCO');
+});
+
+for (const prEvent of PR_EVENTS) test('only hold labels are reported as held; other blockers still fail' + ` [${prEvent}]`, async () => {
+  for (const name of ['needs-human', 'release-in-progress', 'do-not-merge', 'do-not-merge/work-in-progress']) {
+    const f = fixture(prEvent);
+    f.state.prs[0].labels = [{ name: 'do-not-merge/hold' }, { name }];
+    await assert.rejects(evaluate(f), new RegExp(`held by label ${name.replace('/', '\\/')}`));
+  }
+  const draft = fixture(prEvent);
+  draft.state.prs[0].labels = [{ name: 'hold' }];
+  draft.state.prs[0].draft = true;
+  await assert.rejects(evaluate(draft), /is a draft/);
+});
+
+test('a hold still keeps a PR out of every merge group', async () => {
+  for (const name of ['hold', 'do-not-merge/hold']) {
+    const f = fixture();
+    f.state.prs[0].labels = [{ name }];
+    await assert.rejects(evaluate(f), new RegExp(`#1 is held by label ${name.replace('/', '\\/')}`));
+  }
+  // The strict read is the default: no caller opts in by accident.
+  assert.throws(() => assertEligible({ ...eligible(1), labels: [{ name: 'do-not-merge/hold' }] }, sha(11), 'v5'), /held/);
+  assert.doesNotThrow(() => assertEligible({ ...eligible(1), labels: [{ name: 'do-not-merge/hold' }] }, sha(11), 'v5', { allowHold: true }));
+});
+
+test('holdLabels and isHeldVerdict', () => {
+  assert.deepEqual(holdLabels({ labels: [{ name: 'size/L' }, { name: 'hold' }, { name: 'do-not-merge/hold' }, { name: 'on-hold' }] }),
+    ['hold', 'do-not-merge/hold']);
+  assert.deepEqual(holdLabels({}), []);
+  assert.deepEqual(holdLabels(null), []);
+  assert.ok(HOLD_LABEL.test('Hold'));
+  assert.ok(!HOLD_LABEL.test('do-not-merge/holder'));
+  assert.equal(isHeldVerdict(`${HELD_VERDICT_PREFIX} x`), true);
+  assert.equal(isHeldVerdict('PR #1: five existing policy providers succeeded'), false);
+  assert.equal(isHeldVerdict(null), false);
 });
 
 test('API failure is never interpreted as an empty successful member list', async () => {
@@ -673,8 +730,14 @@ test('cosmetic flip has nothing to replay without a prior success and falls thro
 });
 
 test('cosmetic flip still honours a live hold even after a prior success', async () => {
+  // Held, not failed: the replayed verdict says so instead of passing plainly.
   const f = replayFixture([{ id: 7, status: 'completed', conclusion: 'success' }], [{ name: 'hold' }]);
-  await assert.rejects(replayLastVerdict(f), /held/);
+  const verdict = await replayLastVerdict(f);
+  assert.ok(isHeldVerdict(verdict), verdict);
+  assert.match(verdict, /held by label hold; replayed native-queue-policy run 7/);
+  // Any other blocking label still fails the replay.
+  const blocked = replayFixture([{ id: 7, status: 'completed', conclusion: 'success' }], [{ name: 'hold' }, { name: 'needs-human' }]);
+  await assert.rejects(replayLastVerdict(blocked), /held by label needs-human/);
 });
 
 test('replay ignores runs with a different name, head_sha or app id', async () => {
