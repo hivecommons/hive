@@ -87,7 +87,7 @@ func TestACMMIssue_WorkSourceLinear_CreatesLinearIssue(t *testing.T) {
 	s, created, lastInput := linearHive(t, config.ACMMIssueTrackerWorkSource)
 
 	rec := doPost(s, "/api/acmm/issue", map[string]interface{}{
-		"repo": "repo1", "criterion_id": "acmm:claude-md",
+		"repo": "repo1", "criterion_id": "acmm:agent-instructions",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
@@ -115,7 +115,7 @@ func TestACMMIssue_RequestOverridesConfig(t *testing.T) {
 	// Config says GitHub; the click says work_source → Linear.
 	s, created, _ := linearHive(t, "")
 	rec := doPost(s, "/api/acmm/issue", map[string]interface{}{
-		"repo": "repo1", "criterion_id": "acmm:claude-md", "tracker": "work_source",
+		"repo": "repo1", "criterion_id": "acmm:agent-instructions", "tracker": "work_source",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
@@ -130,7 +130,7 @@ func TestACMMIssue_RequestOverridesConfig(t *testing.T) {
 	// Config says work_source; the click says github → GitHub, Linear untouched.
 	s2, created2, _ := linearHive(t, config.ACMMIssueTrackerWorkSource)
 	rec = doPost(s2, "/api/acmm/issue", map[string]interface{}{
-		"repo": "repo1", "criterion_id": "acmm:claude-md", "tracker": "github",
+		"repo": "repo1", "criterion_id": "acmm:agent-instructions", "tracker": "github",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
@@ -147,7 +147,7 @@ func TestACMMIssue_RequestOverridesConfig(t *testing.T) {
 func TestACMMIssue_UnknownTrackerIs400(t *testing.T) {
 	s, created, _ := linearHive(t, config.ACMMIssueTrackerWorkSource)
 	rec := doPost(s, "/api/acmm/issue", map[string]interface{}{
-		"repo": "repo1", "criterion_id": "acmm:claude-md", "tracker": "linear",
+		"repo": "repo1", "criterion_id": "acmm:agent-instructions", "tracker": "linear",
 	})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rec.Code, rec.Body.String())
@@ -171,7 +171,7 @@ func TestACMMIssue_WorkSourceGitHubStaysGitHub(t *testing.T) {
 	s.RegisterAPI(deps)
 
 	rec := doPost(s, "/api/acmm/issue", map[string]interface{}{
-		"repo": "repo1", "criterion_id": "acmm:claude-md",
+		"repo": "repo1", "criterion_id": "acmm:agent-instructions",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
@@ -185,7 +185,7 @@ func TestACMMIssue_LinearMisconfiguredIs500(t *testing.T) {
 	s, _, _ := linearHive(t, config.ACMMIssueTrackerWorkSource)
 	s.deps.Config.Governor.WorkSource.Linear.APIKey = ""
 	rec := doPost(s, "/api/acmm/issue", map[string]interface{}{
-		"repo": "repo1", "criterion_id": "acmm:claude-md",
+		"repo": "repo1", "criterion_id": "acmm:agent-instructions",
 	})
 	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "api_key") {
 		t.Fatalf("status = %d body=%s, want 500 naming api_key", rec.Code, rec.Body.String())

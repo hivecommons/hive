@@ -13,6 +13,7 @@ func acfgServer(t *testing.T) *Server {
 	t.Helper()
 	s := covApiServer(t)
 	s.deps.Config.Data.AgentsDir = t.TempDir()
+	writableConfig(t, s.deps.Config)
 	return s
 }
 

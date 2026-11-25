@@ -30,8 +30,8 @@ const (
 	// against GitLab. The value matches pkg/forge.KindGitLab so a future wiring
 	// need not translate, but pkg/forge is not reached from here.
 	ForgeGitLab ForgeKind = "gitlab"
-	// ForgeGitea is a Gitea/Forgejo instance (self-managed or Codeberg). Same
-	// story as GitLab: display-only, matching pkg/forge.KindGitea by value only.
+	// ForgeGitea and ForgeForgejo are Gitea and Forgejo instances. Same story
+	// as GitLab: display-only, matching pkg/forge.KindGitea/KindForgejo by value.
 	ForgeGitea   ForgeKind = "gitea"
 	ForgeForgejo ForgeKind = "forgejo"
 )

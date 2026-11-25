@@ -332,6 +332,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/repos/pause", s.handleRepoPause)
 	s.mux.HandleFunc("POST /api/repos/resume", s.handleRepoResume)
 	s.mux.HandleFunc("POST /api/repos/auto-merge", s.handleRepoAutoMerge)
+	s.mux.HandleFunc("POST /api/repos/open-prs", s.handleRepoOpenPRs)
 	s.mux.HandleFunc("GET /api/repos/pauses", s.handleRepoPauses)
 	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/hold-permission", s.handleRepoHoldPermission)
 	// Owner row actions are wrapped so the ledger behind the activity
@@ -796,6 +797,26 @@ func (s *Server) saveConfig() error {
 		return nil
 	}
 	return s.saveConfigWith(s.deps.Config.Save)
+}
+
+// errNoConfigSource is what saveConfigStrict reports for a hive whose config
+// has no source path: saveConfig would silently skip the write and the change
+// would live only in memory until the next restart or reload (#19847).
+var errNoConfigSource = errors.New("this hive has no writable config source, so the change would be lost on restart")
+
+// saveConfigStrict is saveConfig for handlers that report the save to the
+// caller. Unlike saveConfig it refuses a config with no source path instead
+// of reporting success, and it returns the HTTP status for the failure: 409
+// when there is nothing writable to save to, 500 when the write failed. The
+// caller rolls back its in-memory change on any error.
+func (s *Server) saveConfigStrict() (int, error) {
+	if s.deps == nil || s.deps.Config == nil || s.deps.Config.SourcePath == "" {
+		return http.StatusConflict, errNoConfigSource
+	}
+	if err := s.saveConfigWith(s.deps.Config.Save); err != nil {
+		return http.StatusInternalServerError, err
+	}
+	return http.StatusOK, nil
 }
 
 func (s *Server) saveConfigWith(save func() error) error {

@@ -791,6 +791,216 @@ func TestHivesReissueWithHTTPHub(t *testing.T) {
 	}
 }
 
+func TestHivesReissueUpdatesSiblingSessions(t *testing.T) {
+	const hub = "wss://acme.example/alpha/contribute"
+	const replacement = "wss://replacement.example/contribute"
+	type credential struct {
+		token string
+		id    string
+	}
+	legacyDestination := map[string]credential{
+		"replacement":             {token: "replacement"},
+		"replacement-other":       {token: "other-replacement"},
+		"replacement-empty-token": {},
+	}
+	for _, tc := range []struct {
+		name, profileName, responseID, hubOverride string
+		initialCredentials, wantChanges            map[string]credential
+		wantWarning, targetDisabled                bool
+	}{
+		{
+			name: "same contributor", profileName: "acme", responseID: "c1",
+			wantChanges: map[string]credential{
+				"acme-review": {"new", "c1"}, "acme": {"new", "c1"},
+				"same-id": {"new", "c1"}, "legacy": {"new", "c1"},
+			},
+		},
+		{
+			name: "legacy response", profileName: "acme",
+			wantChanges: map[string]credential{"acme": {"new", "c1"}},
+			wantWarning: true,
+		},
+		{
+			name: "different contributor", profileName: "acme", responseID: "c2",
+			wantChanges: map[string]credential{
+				"acme": {"new", "c2"}, "other-user": {"new", "c2"},
+			},
+		},
+		{
+			name: "different contributor with legacy target", profileName: "acme", responseID: "c2",
+			initialCredentials: map[string]credential{"acme": {token: "old"}, "same-id": {"old", "c1"}},
+			wantChanges:        map[string]credential{"acme": {"new", "c2"}, "other-user": {"new", "c2"}},
+			wantWarning:        true,
+		},
+		{
+			name: "changed hub", profileName: "acme", responseID: "c1", hubOverride: replacement,
+			wantChanges: map[string]credential{
+				"acme": {"new", "c1"}, "replacement": {"new", "c1"},
+				"replacement-review": {"new", "c1"}, "replacement-empty-token": {"new", "c1"},
+			},
+		},
+		{
+			name: "new profile", profileName: "fresh", responseID: "c1", hubOverride: replacement,
+			wantChanges: map[string]credential{
+				"fresh": {"new", "c1"}, "replacement": {"new", "c1"},
+				"replacement-review": {"new", "c1"}, "replacement-empty-token": {"new", "c1"},
+			},
+		},
+		{
+			name: "new profile on legacy destination", profileName: "fresh", responseID: "c1", hubOverride: replacement,
+			initialCredentials: legacyDestination,
+			wantChanges:        map[string]credential{"fresh": {"new", "c1"}},
+			wantWarning:        true,
+		},
+		{
+			name: "changed hub to legacy destination with disabled target", profileName: "acme", responseID: "c1", hubOverride: replacement,
+			initialCredentials: legacyDestination,
+			wantChanges:        map[string]credential{"acme": {"new", "c1"}},
+			wantWarning:        true,
+			targetDisabled:     true,
+		},
+		{
+			name: "conflicting token owners", profileName: "fresh", responseID: "c1", hubOverride: replacement,
+			initialCredentials: map[string]credential{"replacement-other": {"replacement", "c2"}},
+			wantChanges: map[string]credential{
+				"fresh": {"new", "c1"}, "replacement": {"new", "c1"}, "replacement-empty-token": {"new", "c1"},
+			},
+			wantWarning: true,
+		},
+		{
+			name: "changed hub with legacy response", profileName: "acme", hubOverride: replacement,
+			wantChanges: map[string]credential{"acme": {"new", ""}},
+			wantWarning: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHivesHarness(t)
+			h.reissuer.result = hubRegistration{RegistrationToken: "new", ContributorID: tc.responseID}
+			profiles := []hivectl.Profile{
+				{Name: "acme", Hub: hub, ContributorID: "c1", RegistrationToken: "old", Backend: "claude", Model: "custom", Disabled: tc.targetDisabled},
+				{Name: "same-id", Hub: "https://ACME.example:443/alpha", ContributorID: "c1", RegistrationToken: "stale"},
+				{Name: "legacy", Hub: hub, RegistrationToken: "old"},
+				{Name: "other-user", Hub: hub, ContributorID: "c2", RegistrationToken: "other-token"},
+				{Name: "other-endpoint", Hub: "wss://acme.example/beta/contribute", ContributorID: "c1", RegistrationToken: "old"},
+				{Name: "replacement", Hub: replacement, ContributorID: "c1", RegistrationToken: "replacement"},
+				{Name: "replacement-review", Hub: replacement, RegistrationToken: "replacement", Session: "review"},
+				{Name: "replacement-other", Hub: replacement, ContributorID: "c2", RegistrationToken: "other-replacement"},
+				{Name: "replacement-empty-token", Hub: replacement, ContributorID: "c1"},
+				{Name: "replacement-empty-legacy", Hub: replacement},
+			}
+			for i := range profiles {
+				if initial, ok := tc.initialCredentials[profiles[i].Name]; ok {
+					profiles[i].RegistrationToken = initial.token
+					profiles[i].ContributorID = initial.id
+				}
+			}
+			h.seed(t, &hivectl.ProfileSet{Active: "acme", Profiles: profiles})
+
+			activeName, activeHub := "acme-review", hub
+			if tc.hubOverride != "" {
+				activeName, activeHub = "replacement-review", replacement
+				if err := h.run(t, "", "hives", "use", activeName); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := h.run(t, "", "hives", "session", "acme", "--label", "review", "--activate"); err != nil {
+				t.Fatal(err)
+			}
+			before := h.profiles(t).Ordered()
+			args := []string{"hives", "reissue", tc.profileName}
+			if tc.hubOverride != "" {
+				args = append(args, "--hub", tc.hubOverride)
+			}
+			if err := h.run(t, "", args...); err != nil {
+				t.Fatal(err)
+			}
+
+			set := h.profiles(t)
+			active, _ := set.Find(activeName)
+			if set.Active != activeName || active == nil || active.Session != "review" || active.Hub != activeHub {
+				t.Fatalf("active session metadata changed: %+v", active)
+			}
+			if activeName == "acme-review" && (active.Backend != "claude" || active.Model != "custom") {
+				t.Fatalf("copied session settings changed: %+v", active)
+			}
+			stderr := h.errs.String()
+			if strings.Contains(stderr, "warning:") != tc.wantWarning {
+				t.Errorf("warning expected = %t, stderr = %q", tc.wantWarning, stderr)
+			}
+			if tc.wantWarning && !strings.Contains(stderr, "hivectl hives use -- "+tc.profileName) {
+				t.Errorf("warning lacks command to switch to the refreshed profile: %q", stderr)
+			}
+			if !strings.Contains(h.out.String(), "restart the relay") {
+				t.Errorf("output lacks relay restart guidance: %q", h.out.String())
+			}
+			if tc.targetDisabled {
+				target, _ := set.Find(tc.profileName)
+				if target == nil || !target.Disabled {
+					t.Errorf("reissue enabled the disabled profile %q", tc.profileName)
+				}
+				if !strings.Contains(stderr, "hivectl hives enable -- "+tc.profileName) {
+					t.Errorf("warning lacks command to enable the refreshed profile: %q", stderr)
+				}
+			}
+
+			if tc.profileName == "fresh" {
+				before = append(before, hivectl.Profile{Name: "fresh"})
+			}
+			if len(set.Profiles) != len(before) {
+				t.Fatalf("got %d profiles, want %d", len(set.Profiles), len(before))
+			}
+			var wantTokens, wantIDs []string
+			for _, old := range before {
+				want := credential{old.RegistrationToken, old.ContributorID}
+				if changed, ok := tc.wantChanges[old.Name]; ok {
+					want = changed
+				}
+				profile, _ := set.Find(old.Name)
+				if profile == nil || profile.RegistrationToken != want.token || profile.ContributorID != want.id {
+					t.Errorf("profile %q = %+v, want token %q and ID %q", old.Name, profile, want.token, want.id)
+				}
+				wantTokens = append(wantTokens, want.token)
+				wantIDs = append(wantIDs, want.id)
+			}
+			env := h.env(t)
+			for _, line := range []string{
+				"HIVE_REGISTRATION_TOKEN=" + strings.Join(wantTokens, ","),
+				"CONTRIBUTOR_ID=" + strings.Join(wantIDs, ","),
+				"HIVE_SESSION=review",
+			} {
+				if !strings.Contains(env, line+"\n") {
+					t.Errorf("contributor.env is missing %q:\n%s", line, env)
+				}
+			}
+		})
+	}
+}
+
+func TestHivesReissueMatchesDefaultPortForInternalHost(t *testing.T) {
+	h := newHivesHarness(t)
+	const hub = "ws://hive_internal/contribute"
+	h.reissuer.result = hubRegistration{RegistrationToken: "new", ContributorID: "c1"}
+	h.seed(t, &hivectl.ProfileSet{
+		Active: "acme",
+		Profiles: []hivectl.Profile{
+			{Name: "acme", Hub: hub, ContributorID: "c1", RegistrationToken: "old"},
+			{Name: "acme-review", Hub: "http://hive_internal:80", ContributorID: "c1", RegistrationToken: "old", Session: "review"},
+			{Name: "other", Hub: "ws://other_internal/contribute", ContributorID: "c1", RegistrationToken: "old"},
+			{Name: "other-port", Hub: "ws://hive_internal:8080/contribute", ContributorID: "c1", RegistrationToken: "old"},
+		},
+	})
+	if err := h.run(t, "", "hives", "reissue", "acme"); err != nil {
+		t.Fatal(err)
+	}
+
+	set := h.profiles(t)
+	for name, want := range map[string]string{"acme-review": "new", "other": "old", "other-port": "old"} {
+		profile, _ := set.Find(name)
+		if profile == nil || profile.RegistrationToken != want {
+			t.Errorf("profile %q = %+v, want token %q", name, profile, want)
+		}
+	}
+}
+
 func TestHivesReissueValidationAndFailures(t *testing.T) {
 	tests := []struct {
 		name    string

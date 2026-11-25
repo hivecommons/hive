@@ -771,7 +771,7 @@ Positional lists have no names, and one hand-edit that drops a field transposes 
 ```bash
 hivectl hives list                                        # which hives, and which one is active
 hivectl hives add hive-b --hub wss://hive-b.example.com/contribute
-hivectl hives reissue hive-b                              # rotate only hive-b's saved token
+hivectl hives reissue hive-b                              # rotate hive-b's contributor token
 hivectl hives use hive-b                                  # make it the hub the relay starts on
 hivectl hives rename hive-b staging
 hivectl hives remove staging                              # asks you to type the name
@@ -791,7 +791,7 @@ The same list is available in the terminal UI: `just contribute-tui` (or `hivect
 
 From a fresh checkout, `just contribute-tui` and `just contribute-hives` share `bin/hivectl-bootstrap.sh`: they first honor `HIVECTL`, then `./bin/hivectl`, user/system installs, and `PATH`; when none is present, they extract `hivectl` from the Hive image into `./bin/hivectl`. The checkout records the image digest beside the binary and refreshes when the digest changes, refusing to run an unverifiable stale copy if Podman cannot inspect or pull the image.
 
-See [hivectl.md](hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) for the full command reference, including adding a hive whose token you already hold (`--token-stdin`) and reissuing one saved hive token through the profile store (`hivectl hives reissue <name> --hub <url>`).
+See [hivectl.md](hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) for the full command reference, including adding a hive whose token you already hold (`--token-stdin`) and reissuing a contributor token through the profile store (`hivectl hives reissue <name> --hub <url>`).
 
 ### Onboarding a whole hub's Hives (`hivectl hives hub`)
 
@@ -841,10 +841,9 @@ hivectl hives reissue acme
 ```
 
 `hivectl hives reissue` calls `POST /api/contribute/reissue-token` with your
-GitHub token from `gh auth token`, replaces only that named profile's
-registration token in `profiles.yml`, and then regenerates `contributor.env`
-with the existing projection code. Other profile tokens are left untouched. If
-the hub says the GitHub account is not registered, run
+GitHub token from `gh auth token`, updates the registration token for the
+contributor's local profiles on that hive in `profiles.yml`, and regenerates
+`contributor.env`. If the hub says the GitHub account is not registered, run
 `hivectl hives add <name> --hub <url>` instead.
 
 The legacy `just contribute-move` path is for positional `contributor.env`
