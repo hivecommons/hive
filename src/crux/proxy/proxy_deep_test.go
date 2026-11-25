@@ -897,7 +897,7 @@ func TestRepoFilterAllowedDELETE(t *testing.T) {
 
 func TestTranslateAnthropicToOpenAINoSystem(t *testing.T) {
 	body := `{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
-	result, err := translateAnthropicToOpenAI([]byte(body), "target-model", 0, "")
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "target-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -914,7 +914,7 @@ func TestTranslateAnthropicToOpenAINoSystem(t *testing.T) {
 }
 
 func TestTranslateAnthropicToOpenAIInvalidJSON(t *testing.T) {
-	_, err := translateAnthropicToOpenAI([]byte("not json"), "model", 0, "")
+	_, _, err := translateAnthropicToOpenAI([]byte("not json"), "model", 0, "")
 	if err == nil {
 		t.Error("expected error for invalid JSON")
 	}
@@ -922,7 +922,7 @@ func TestTranslateAnthropicToOpenAIInvalidJSON(t *testing.T) {
 
 func TestTranslateAnthropicToOpenAIEmptySystem(t *testing.T) {
 	body := `{"model":"claude","max_tokens":100,"system":"","messages":[{"role":"user","content":"hi"}]}`
-	result, err := translateAnthropicToOpenAI([]byte(body), "model", 0, "")
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
