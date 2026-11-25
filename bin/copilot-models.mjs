@@ -101,11 +101,14 @@ function isDirectRun() {
   }
 }
 
+// Only fixed phase names are reported; never include credentials or model data.
+let phase = "loading SDK";
+
 // Watchdog: force-exit on deadline no matter what the SDK is doing. Not
 // unref()ed on purpose — a successful run exits explicitly before it fires.
 if (isDirectRun()) {
   setTimeout(() => {
-    fail(`timed out after ${INTERNAL_TIMEOUT_MS}ms`);
+    fail(`timed out after ${INTERNAL_TIMEOUT_MS}ms while ${phase}`);
   }, INTERNAL_TIMEOUT_MS);
 }
 
@@ -228,10 +231,13 @@ async function main() {
   }
 
   const client = new CopilotClient(options);
+  let out;
   try {
+    phase = "starting Copilot CLI";
     await client.start();
+    phase = "listing models";
     const models = await client.listModels();
-    const out = {
+    out = {
       models: (models || []).map((m) => ({
         id: m.id,
         name: m.name,
@@ -240,8 +246,8 @@ async function main() {
         defaultEffort: m.defaultReasoningEffort,
       })),
     };
-    process.stdout.write(JSON.stringify(out) + "\n");
   } finally {
+    phase = "stopping Copilot CLI";
     // Best-effort server shutdown; the explicit process.exit below reaps
     // anything a failed stop leaves behind so no copilot server lingers.
     try {
@@ -250,6 +256,7 @@ async function main() {
       // ignored — see comment above
     }
   }
+  process.stdout.write(JSON.stringify(out) + "\n");
 }
 
 if (isDirectRun()) {
