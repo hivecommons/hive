@@ -4,7 +4,7 @@ Status: proposal. Open for maintainer discussion, not accepted.
 Target: Hive v5
 Scope: dashboard Hive Chat panel, the `chat:` config block, agent config write endpoints, audit log
 Out of scope: a write-capable MCP server, writes from Slack/Discord/email chat surfaces, secrets, governance and write-surface settings, hub-level settings
-Refs: [#19788](https://github.com/hivecommons/hive/issues/19788), [#19177](https://github.com/hivecommons/hive/issues/19177) (Ask AI help, [design record](../src/docs/design/dashboard-ask-ai-help.md))
+Refs: [#19788](https://github.com/hivecommons/hive/issues/19788), [#19177](https://github.com/hivecommons/hive/issues/19177) (Ask AI help, [design record](../src/docs/design/dashboard-ask-ai-help.md)), [#19740](https://github.com/hivecommons/hive/issues/19740) (overlay reload drops hand-edited blocks)
 
 > **This page is the design under discussion, not an adopted one.** The issue
 > was put on `hold` by a maintainer pending "an RFC that covers which settings
@@ -15,30 +15,27 @@ Refs: [#19788](https://github.com/hivecommons/hive/issues/19788), [#19177](https
 > implementation tasks. The hold stays in place until a maintainer records a
 > decision on the issue ([RFC process](../src/docs/rfc-process.md#what-accepted-means)).
 
-Code references are to `v5` at `20d18ac50` and name a file plus the function or
+Code references are to `v5` at `302fcc6e0` and name a file plus the function or
 type. Treat them as pointers, not line-exact citations.
 
 ## Summary
 
 - **The model never writes.** It can only produce a *proposal*: one agent, one
-  config section, and the new field values. The dashboard renders the proposal
-  as a diff card. When the owner clicks **Apply**, the browser calls the
-  **existing** section endpoint (`PUT /api/config/agent/{name}/{section}`) with
-  the owner's own session. That endpoint's role check, validation, persistence
-  and audit line all stay as they are. There is no new write path to the
-  config.
-- **Who confirms:** an owner, one change at a time. Every agent config PUT
-  handler already calls `requireOwnerRole`, so a non-owner can see a proposal
-  but cannot apply it. Chat cannot batch changes or apply anything
-  automatically.
-- **Which settings:** an allowlist that starts small: agent `general`
-  (`enabled`, `onDemand`), `cadences`, and `models` (`backend`, `model`,
-  `reasoning_effort`). Everything else is out of scope until it gets its own
-  decision.
-- **Audit:** one `chat_config_proposed` line per proposal and one
-  `chat_config_declined` line when the owner dismisses it. The existing
-  `config_agent_*` line covers the apply, with `via=chat` and the proposal id
-  added to its detail.
+  config section, one field change. The server renders the proposal as a diff
+  card from its own stored copy, never from model text. Only an owner's
+  **click on the card** moves it forward. Typing "yes" in chat does nothing.
+- **Phase 3a needs no new write path.** The card's button opens the existing
+  agent config dialog with the proposed value filled in, and the owner clicks
+  the dialog's own **Save**. Direct **Apply** from the card (phase 3b) comes
+  only after the endpoint fixes in phase 2.
+- **Who confirms:** an owner, one change at a time. Requesting a proposal and
+  applying it are both owner-only.
+- **Which settings:** a small allowlist: `models.model`, `models.reasoning_effort`,
+  this agent's cadence in one existing governor mode, and `general.enabled`
+  set to `false` only (disable). Everything else is excluded by name.
+- **Audit:** `chat_config_proposed` (with before and after values),
+  `chat_config_rejected`, `chat_config_declined`, and `via=chat proposal=<id>`
+  plus before/after on the existing `config_agent_<section>` line.
 - **Off by default:** a new `chat.config_assist.enabled` (`*bool`,
   nil = **false**, the opposite of `grounded_answers`). Even with the flag on,
   the feature stays inert until a model backend is wired.
@@ -47,26 +44,30 @@ type. Treat them as pointers, not line-exact citations.
 
 - `chat.grounded_answers` (`src/pkg/config/chat.go`, `ChatGroundedAnswersConfig`)
   is on by default. It answers free-text chat questions with one model turn
-  over a capped snapshot of hive state.
-- `src/pkg/dashboard/api_chat_grounded.go` (`chatGroundedAnswer`) runs that
-  turn through `deps.ChatGrounder.RunDeciderTurn`. It has a 25s timeout and
-  an in-flight cap of 2, writes an audit line per answer
-  (`chat_grounded_answer`), and is documented as "read-only and never
-  triggers an action".
-- The agent config dialog already writes through owner-only section endpoints
-  in `src/pkg/dashboard/api_agent_config.go`: `handleAgentConfigGeneral`,
-  `handleAgentConfigCadences`, `handleAgentConfigModels` and the rest. Each
-  one validates before it mutates (for example `validateAgentGeneralInput`
-  and the backend/model/effort checks in `handleAgentConfigModels`), persists
-  through `Server.saveConfig` and writes a `config_agent_<section>` audit line
-  through `auditFromRequest`.
-- `requireOwnerRole` (`src/pkg/dashboard/api_agent_control.go`) requires a
-  verified owner role, and hub-proxied identities fail closed without the
-  server-side verification marker.
+  over a capped snapshot of hive state built by `chatBuildSnapshot`
+  (`src/pkg/dashboard/api_chat_grounded.go`).
+- `chatGroundedAnswer` runs that turn through `deps.ChatGrounder.RunDeciderTurn`
+  with `chatGroundedTimeout` and `chatGroundedMaxInflight = 2`. That cap
+  limits concurrent turns, not how often they run.
+- The agent config dialog writes through owner-only section endpoints in
+  `src/pkg/dashboard/api_agent_config.go`: `handleAgentConfigGeneral`,
+  `handleAgentConfigCadences`, `handleAgentConfigModels` and the rest. All of
+  them call `requireOwnerRole` (`src/pkg/dashboard/api_agent_control.go`),
+  which needs a verified owner role. Hub-proxied identities fail closed
+  without the server-side verification marker.
 
-What is missing is a bridge from "the operator describes what they want" to
-"the dialog's existing endpoint, filled in". This RFC proposes that bridge and
-nothing more.
+What those endpoints do **not** guarantee today matters for this design. Each
+gap is addressed below:
+
+| Gap at `302fcc6e0` | Where | Addressed in |
+|---|---|---|
+| `models.model` is only sanitized. Nothing checks it against the list the dialog offers. | `handleAgentConfigModels` | [§3](#3-the-proposal-turn) (new check), phase 3a |
+| The models check runs against *effective* backend and model, computed after `reconcileLaunchCmdForBackend` / `canonicalizeModelForBackend` and from live `ModelOverride` / `BackendOverride`. | `handleAgentConfigModels` | [§3](#3-the-proposal-turn), phase 2 |
+| Cadences skip unknown modes (`continue`), and each mode is written into memory before later modes are validated, so a 400 can leave earlier modes changed but not saved. | `handleAgentConfigCadences` | phase 2 |
+| A `saveConfig` error is logged, and the handler still returns 200 (models also raises a system alert). | general, cadences, models handlers | phase 2 |
+| The handlers change `s.deps.Config.Agents` / `Governor.Modes` with no dashboard-level lock. Only `Config.Save` takes `saveMu` (`src/pkg/config/config.go`). | all section handlers | phase 2 |
+| `config_agent_general` / `config_agent_cadences` record only `section=...`, with no before or after values. | same handlers | [§5](#5-audit-trail) |
+| No dashboard handler writes `chat.*`, and `loadWithDashboardOverlay` does not adopt a `chat` block from the overlay. | `src/pkg/config/config.go` | phase 1 |
 
 ## Proposal
 
@@ -80,7 +81,7 @@ chat:
   config_assist:
     enabled: false         # nil = false; must be set explicitly
     model: ""              # "" = use chat.grounded_answers.model, then the reviewer default
-    proposal_ttl: 10m      # how long a proposal card stays applicable
+    proposal_ttl: 10m      # how long a proposal card stays usable
 ```
 
 - `ChatConfig.ConfigAssistEnabled()` returns true only when
@@ -93,6 +94,16 @@ chat:
   `grounded_answers.model`, then the reviewer default. It reuses the same
   runner, so no new credential or endpoint is introduced. See
   [D2](#decisions-for-maintainers).
+- **The Settings toggle is a new write path.** No handler writes `chat.*`
+  today, and an overlay `chat` block is dropped on reload, the same failure
+  as `ask` in [#19740](https://github.com/hivecommons/hive/issues/19740). So
+  phase 1 either waits for the generic #19740 fix or adds `chat` to the blocks
+  `loadWithDashboardOverlay` adopts. Either way it ships a regression test
+  that toggles the flag, reloads, persists, and reads it back. The toggle
+  handler calls `requireOwnerRole` and writes a `config_chat_assist` audit line
+  (with before and after values), which is listed in `auditSensitiveActions`.
+- **The `chat:` block itself is excluded from proposals.** Chat cannot turn
+  config assist on or off, or change its own model.
 - **NUX** (the "encourage it being configured" part of the issue): when the
   flag is off and an **owner** asks chat something config-shaped, chat answers
   as it does today and adds one dismissible hint pointing to
@@ -102,25 +113,45 @@ chat:
 
 ### 2. Which settings chat may change
 
-The allowlist lives in code as a table. Each row names a section endpoint and
-the fields of that endpoint's body that a proposal may set:
+The allowlist lives in code as a table. Each row names a section endpoint, the
+fields of that endpoint's body that a proposal may set, the values allowed,
+and the side effects that the card must show:
 
-| Section | Endpoint | Fields a proposal may set |
-|---|---|---|
-| `general` | `PUT /api/config/agent/{name}/general` | `enabled`, `onDemand` |
-| `cadences` | `PUT /api/config/agent/{name}/cadences` | this agent's cadence in an existing governor mode (`governor.modes.<mode>.cadences.<agent>`); unknown modes are refused, not skipped |
-| `models` | `PUT /api/config/agent/{name}/models` | `backend`, `model`, `reasoning_effort` |
+| Section | Endpoint | Field and allowed values | Side effect shown on the card |
+|---|---|---|---|
+| `models` | `PUT /api/config/agent/{name}/models` | `model`: exactly one of the models offered for the agent's **effective** backend, as listed in the proposal snapshot | the agent restarts |
+| `models` | same | `reasoning_effort`: one of the efforts valid for the effective backend/model | the agent restarts |
+| `cadences` | `PUT /api/config/agent/{name}/cadences` | this agent's cadence in **one** existing governor mode. Body: `{"<mode>": <seconds\|interval\|schedule>}` with exactly one key. Unknown modes are refused by the proposal check. | which mode changes, and whether it is the active mode |
+| `general` | `PUT /api/config/agent/{name}/general` | `enabled: false` only (disable) | the agent stops |
 
-These sections are **explicitly excluded** and would each need their own
-decision: `hooks`, `restrictions`, `tools`, `connections` (they carry
-credentials), `channels`, `prompt`, `pipeline`, the write-surface allowlist,
-governor and merge-train settings, auth/OIDC/keys, hub settings, reference
-repos, variables, and anything that adds or removes repos or agents.
+Phase 1 leaves out `backend` (it rewrites `launchCmd` through
+`reconcileLaunchCmdForBackend` and restarts the agent), `enabled: true`
+(starting an agent starts spend) and `onDemand` (`onDemandTransition` starts
+or stops the agent). Each can come back by decision under
+[D1](#decisions-for-maintainers).
 
-The excluded sections are the ones that widen what an agent may do, or that
-hold secrets. The allowed ones change *which* agent runs, *when*, and on
-*which model*. A wrong value is visible in the diff card, easy to revert, and
-already validated by the endpoint.
+The **model list check is new**. The endpoint does not do it today. The
+proposal check restricts `model` to the exact list the snapshot showed the
+model. It does not rely on the endpoint to catch a bad value.
+
+**Explicitly excluded**, each needing its own decision:
+
+- agent sections `hooks`, `restrictions`, `tools`, `connections` (they carry
+  credentials), `channels`, `prompt`, `pipeline`, `stats`;
+- auto-merge (`config_auto_merge`), review and approval gates (`review`),
+  the release sentinel (`src/pkg/config/release_sentinel.go`), and governor
+  modes themselves (creating, deleting or switching modes, or their
+  thresholds), plus merge-train settings;
+- roles and RBAC, auth/OIDC/keys;
+- the write-surface allowlist, hub settings, reference repos and variables;
+- the whole `chat:` block;
+- anything that adds or removes repos or agents.
+
+The excluded settings are the ones that widen what an agent may do, remove a
+gate, hold secrets, or change chat's own behaviour. The allowed ones change
+*when* an agent runs, *on which model*, or stop it. Every allowed change can
+be reversed with an equally small change, which [§5](#5-audit-trail) makes
+concrete.
 
 The issue's motivating example is setting up a new spoke, which touches repos,
 connections and hub registration. That is deliberately *not* phase 1 (see
@@ -133,57 +164,124 @@ through the existing read-only grounded path.
    is routed to a new `chatRouteConfig` kind when it reads as a config change
    ("switch reviewer to opus", "run the triage agent every 30 minutes").
    Messages from non-owners stay on the read-only grounded path, unchanged.
-2. The server builds a snapshot that holds only allowlisted values: for each
-   agent, its current `general`/`cadences`/`models` fields, the backends and
-   models that are valid for it (the same lists the dialog offers), and the
-   allowlist table itself. No connection auth, tokens, prompts or hooks are
-   included.
+2. **Prompt-injection boundary.** The grounded snapshot carries untrusted
+   issue and PR titles and agent "doing" lines. The config turn is built
+   separately:
+   - it does **not** call or reuse `chatBuildSnapshot`;
+   - it gets **no** earlier chat history and no grounded answers;
+   - its input is only the allowlist table, the current allowlisted values
+     for each agent (including live `ModelOverride` / `BackendOverride`), the
+     model and effort lists valid for each agent's effective backend, and the
+     owner's current message;
+   - no connection auth, tokens, prompts, hooks, issue or PR text is included.
 3. One turn runs with the same timeout and in-flight cap as grounded answers.
    The model must reply with a JSON object
    `{"agent": ..., "section": ..., "set": {field: value}, "why": ...}` or with
    `{"none": "<reason>"}`. Free text is not acted on.
-4. The server checks the reply and drops it if any check fails:
+4. The server checks the reply and drops it, with a `chat_config_rejected`
+   line, if any check fails:
    - the agent exists;
-   - the section is in the allowlist;
-   - every key in `set` is an allowlisted field of that section;
-   - the merged body passes the **same validation function** the endpoint
-     uses. To make that possible, the endpoints' validation is extracted into
-     pure `validate<Section>Body(cfg, name, body)` helpers, and both the
-     endpoint and the proposal check call them. No second rulebook is written.
-5. A valid proposal is stored server-side with a random id, the requesting
-   user, a hash of the agent's current section values and an expiry
-   (`proposal_ttl`). The chat reply is a card that shows the before/after diff,
-   the model's one-line `why`, and **Apply** / **Dismiss** buttons.
+   - the section and every key in `set` are in the allowlist, and `set` has
+     exactly one field (one mode for `cadences`);
+   - the value is in the allowed set for that row (for `model` and
+     `reasoning_effort`, the exact lists shown in the snapshot; for `enabled`,
+     only `false`);
+   - the merged body passes the endpoint's validation helper (phase 2). That
+     helper returns the **normalised body plus the effective backend and
+     model**, so the endpoint and the proposal check validate the same values.
+     The allowlist and value-list checks are **stricter than the endpoint** and
+     are new; they are not presented as reused.
+5. A valid proposal is stored with a random id, the requesting user (the
+   identity `auditFromRequest` records), the **before and after values**, a
+   hash of the agent's current section values **including live overrides**,
+   and an expiry (`proposal_ttl`).
+6. The reply is a card rendered **from the stored proposal**: agent, field,
+   before → after, the side-effect line from the allowlist table, and the
+   model's `why`. `why` is shown as plain text, truncated, with no markdown,
+   links or buttons. No part of the card's structure, values or buttons comes
+   from model text.
 
-Each proposal changes one section of one agent. When the request needs more
-than that, the model names the first change and says what is left. The owner
-then asks again.
+Each proposal changes one field of one agent. When the request needs more,
+the model names the first change and says what is left. The owner then asks
+again.
+
+**Rate limits and storage.** Proposals live in a bounded in-memory store:
+
+- a per-user proposal rate (proposed: 6 per minute);
+- at most 3 outstanding proposals per user and 20 in total. A new proposal
+  past the cap is refused with a message, not evicting someone else's;
+- expired proposals are swept;
+- a restart drops every pending proposal. Pending cards then show "proposal
+  expired (server restarted); ask again". A hub-proxied request that lands on
+  a different instance gets the same message.
+
+Pending proposals are visible only to the owner who requested them.
 
 ### 4. How a change is confirmed, and by whom
 
-- **Apply** sends the exact body shown in the card to the existing section
-  endpoint, with the owner's session and an `X-Hive-Chat-Proposal: <id>`
-  header.
-- The endpoint behaves as it does today: `requireOwnerRole`, validate, mutate,
-  `saveConfig`, audit. One check is added. When the header is present, the
-  proposal must exist, be unexpired, belong to the same user, have a body
-  equal to the stored one, and match the section hash it was built from.
-  Otherwise the request gets `409` and the card asks the owner to request a
-  fresh proposal. This stops a proposal built on stale config from overwriting
-  an edit made in between.
-- A proposal is single-use. After Apply, Dismiss or expiry it is gone.
+Confirmation is **a click on the card only**. Typing "yes", "apply" or
+anything else in chat never applies or advances a proposal. Nothing in the
+model's reply can submit, pre-click or auto-focus a button. Both requesting
+and confirming are owner-only ([D3](#decisions-for-maintainers)).
+
+**Phase 3a: "Open in agent config" (no new write path).** The card's only
+action button opens the existing agent config dialog for that agent and
+section, with the proposed value filled in and the changed field highlighted.
+The owner reviews it in a UI the model cannot touch and clicks the dialog's
+own **Save**, which calls the endpoint exactly as a hand edit does. The card
+also offers **Dismiss**. Phase 3a needs no proposal header, no binding check
+and no endpoint change. Its audit is the `chat_config_proposed` /
+`chat_config_declined` lines plus the existing dialog save, and the dialog
+passes `via=chat proposal=<id>` as a query parameter that only adds detail to
+the audit line.
+
+**Phase 3b: direct Apply (after phase 2).** The card gets an **Apply** button
+that sends the stored body to the existing section endpoint with the owner's
+session and an `X-Hive-Chat-Proposal: <id>` header.
+
+- **Lock.** Phase 2 adds a dashboard-level `agentConfigMu` that every agent
+  config section handler holds from its first read of current values through
+  mutation and `saveConfig`, dialog saves included. The lock order is
+  `agentConfigMu` then `saveMu`. With the header present, the binding check
+  runs under the same lock, so two Applies, or an Apply racing a dialog save,
+  cannot both pass the hash compare.
+- **Binding check.** Under the lock the proposal must exist, be unexpired,
+  belong to the same user, have a body equal to the stored one, and match the
+  current section hash, live overrides included. Otherwise the endpoint
+  returns `409` and the card asks for a fresh proposal.
+- **Atomic, single-use consumption.** The proposal is marked *in flight* under
+  the lock, so a double click or a second tab gets `409`. It is consumed only
+  after `saveConfig` succeeds. A `400` or a persist failure returns it to
+  pending until expiry, and the card shows the error.
+- **"Applied" means saved.** The card shows "applied" only on a 2xx response
+  from the phase-2 endpoint, which returns non-2xx when `saveConfig` fails. A
+  failed apply writes `chat_config_apply_failed`. A failed restart after a
+  successful save (the models handler's `restart_error`) is shown as "saved;
+  restart failed".
 - The header is **only** a binding check. A request without it is a normal
-  dialog save and is unaffected. Chat has no server-side code path that calls
-  the endpoint itself.
+  dialog save. Chat has no server-side code path that calls the endpoint
+  itself.
+
+**Undo.** An applied card offers **Undo**. Undo builds a reverse proposal from
+the stored *before* value (or from the before value in the audit line, after
+a restart). That reverse proposal goes through the same checks, the same owner
+click and the same endpoint. It fails with `409` if the section changed since.
 
 ### 5. Audit trail
 
 | Action | When | Detail |
 |---|---|---|
-| `chat_config_proposed` | valid proposal shown | proposal id, agent, section, field names (values for `models`/`general`; cadence values), question truncated to `chatGroundedMaxQuestion` |
-| `chat_config_rejected` | model reply failed validation | agent/section if parseable, reason (not the raw reply) |
-| `config_agent_<section>` (existing) | owner clicked Apply | existing detail plus `via=chat`, `proposal=<id>` |
+| `chat_config_proposed` | valid proposal stored | proposal id, agent, section, field, **before and after values**, question truncated to `chatGroundedMaxQuestion` |
+| `chat_config_rejected` | model reply failed a check, or rate/cap refused | agent/section if parseable, reason (not the raw reply) |
 | `chat_config_declined` | owner dismissed the card | proposal id |
+| `config_agent_<section>` (existing) | the dialog save (3a) or Apply (3b) | existing detail plus `via=chat`, `proposal=<id>`, and before/after values for the changed field |
+| `chat_config_apply_failed` | Apply got non-2xx (3b) | proposal id, status, reason |
+| `chat_config_undo` | owner applied an Undo | proposal id of the undo, id of the proposal it reverses |
+| `config_chat_assist` | Settings toggle saved | before and after `enabled` |
+
+Phase 2 also adds before/after values to the plain `config_agent_general` and
+`config_agent_cadences` lines, which today record only `section=...`, so a
+change made outside chat can be undone from the log too.
 
 Every new action name goes into `auditSensitiveActions`
 (`src/pkg/dashboard/audit.go`), so the Audit Log risk chip counts them. All of
@@ -195,10 +293,11 @@ never to `system`.
 The issue floats "a write-allowed MCP server that is exposed to this". This
 RFC recommends against it for this feature:
 
-- Chat snapshots contain untrusted text: issue titles, PR titles, agent
+- Chat context carries untrusted text: issue titles, PR titles, agent
   "doing" lines. Prompt injection in that text could make a model with a
   write tool change config without an owner in the loop. A proposal-only
-  model has nothing to call.
+  model with an isolated input ([§3](#3-the-proposal-turn) step 2) has
+  nothing to call and does not see that text.
 - An MCP surface would need its own role checks, validation and audit, which
   duplicates the owner-only endpoints that already exist and lets the two
   drift apart.
@@ -209,44 +308,63 @@ that is a separate RFC.
 
 ## Phases
 
-Each phase is its own issue, behind `chat.config_assist.enabled` (default off).
+Each phase is its own issue, behind `chat.config_assist.enabled` (default off)
+where it adds chat behaviour. Phase 2 changes existing endpoint behaviour, and
+each change there ships with its own test.
 
-1. **Config and NUX:** the `chat.config_assist` block, accessor, Settings
-   entry and owner-only hint. No proposals yet.
-2. **Validation extraction:** pull `validate<Section>Body` out of the
-   `general`/`cadences`/`models` handlers with no behaviour change, covered by
-   the handlers' existing tests.
-3. **Proposals:** routing, the allowlisted snapshot, the turn, server-side
-   proposal check and storage, the diff card, the `X-Hive-Chat-Proposal`
-   binding check, and the audit actions.
-4. **Further sections / spoke setup:** only after a separate decision per
-   section, starting with whatever a maintainer picks under D4.
+1. **Config, Settings toggle and NUX.** The `chat.config_assist` block,
+   accessor, owner-only and audited Settings toggle, `chat` overlay adoption
+   (or the #19740 fix) with reload and persist regression tests, and the
+   owner-only hint. No proposals yet.
+2. **Endpoint hardening (behaviour changes, each tested).**
+   - Extract `validate<Section>Body` helpers that validate **all** input
+     before any mutation and return the normalised body plus the effective
+     backend/model, live overrides included.
+   - Cadences: validate all modes, then mutate, so a 400 leaves memory
+     unchanged. Unknown modes stay skipped for dialog compatibility, and the
+     proposal check refuses them.
+   - Return non-2xx when `saveConfig` fails in the general, cadences and
+     models handlers.
+   - Add `agentConfigMu` across read, mutate and save.
+   - Add before/after values to the `config_agent_general` and
+     `config_agent_cadences` audit lines.
+3. **3a. Proposals with "Open in agent config".** Routing, the isolated
+   snapshot, the turn, the proposal checks, the bounded store and rate limits,
+   the card, the pre-filled dialog, and the audit actions. Depends on phase 1
+   only.
+   **3b. Direct Apply and Undo.** The `X-Hive-Chat-Proposal` binding check
+   under `agentConfigMu`, atomic consumption, `chat_config_apply_failed`, and
+   Undo. Depends on phase 2.
+4. **Further fields, sections or spoke setup:** only after a separate decision
+   per item, starting with whatever a maintainer picks under D1 or D4.
 
 ## Decisions for maintainers
 
-- **D1. Allowlist for phase 1.** Is `general` (`enabled`, `onDemand`) +
-  `cadences` + `models` right? Should `enabled` be excluded, since turning an
-  agent on starts spend?
+- **D1. Allowlist for phase 1.** Proposed, following review: `model`,
+  `reasoning_effort`, one-mode cadences, and disable-only `enabled`. Should
+  `backend`, `enabled: true` or `onDemand` be added later, and in which phase?
 - **D2. Model knob.** Should there be a separate `chat.config_assist.model`
   that falls back to `grounded_answers.model`, as proposed, or should it reuse
   `grounded_answers.model` with no new knob?
-- **D3. Who may apply.** Owner only, as proposed (matching the endpoints
-  today). Or should a merger also be able to *request* proposals while only an
-  owner applies them?
+- **D3. Who may request and apply.** Proposed: owner-only for both in all
+  phases. Letting a merger request proposals would add a cross-user hand-off
+  that the binding check does not cover.
 - **D4. Spoke setup.** The issue's motivating case. Should a later phase add
   a guided, multi-step "new spoke" flow where every step is still a separate
   owner-confirmed write? Or should spoke setup stay in the existing wizard
   with chat only explaining it?
-- **D5. Other chat surfaces.** Proposed: dashboard only. Slack/Discord/email
-  chat stay read-only because they have no owner-verified session to confirm
-  with.
+- **D5. Other chat surfaces.** Proposed and agreed in review: dashboard only.
+  Slack/Discord/email chat stay read-only because they have no owner-verified
+  session to confirm with.
+- **D6. 3b at all?** Is phase 3a ("Open in agent config") enough on its own,
+  so that 3b is dropped or deferred indefinitely?
 
 ## Not in scope
 
 - Automatic or batched config changes, and any change without a per-change
-  owner click.
+  owner click on a server-rendered card.
 - Secrets, credentials, connection auth, prompt templates, hooks, tool and
-  write-surface permissions.
+  write-surface permissions, gates and roles.
 - Changes to the grounded-answers path or its default.
 - The Ask AI help panel (#19177), which answers "where is X in the dashboard"
   and takes no action.
