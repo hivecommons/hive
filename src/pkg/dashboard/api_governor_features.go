@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -68,6 +69,9 @@ const (
 // flip OTelInsecure to strip TLS off it. Eleven of the twelve governor-config
 // writers already called requireOwnerRole; this one was the lone outlier,
 // exactly the asymmetry that established F16.
+// governorFeaturesMu serializes PUT /api/config/governor/features.
+var governorFeaturesMu sync.Mutex
+
 func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -75,8 +79,8 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	// The apply copies the whole config (cfgBefore) and writes fields
 	// unconditionally, so two saves at once race on the struct. One save
 	// at a time keeps concurrent write-back card edits (#19640) apart.
-	s.governorFeaturesMu.Lock()
-	defer s.governorFeaturesMu.Unlock()
+	governorFeaturesMu.Lock()
+	defer governorFeaturesMu.Unlock()
 	var body struct {
 		IoscanEnabled *bool `json:"ioscanEnabled"`
 

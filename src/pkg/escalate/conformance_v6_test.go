@@ -59,11 +59,12 @@ var conformanceSecrets = map[string]string{
 // leakyEvent spreads the secrets across every operator-visible field, so a
 // scrub that covers only the body (or only the title) still fails. The title
 // carries a non-ASCII rune so the ntfy Title header is sent RFC 2047-encoded,
-// the form a leaked secret would actually take on that wire.
+// the form a leaked secret would actually take on that wire. Not a dash: the
+// outbound dash filter (#19103) would turn it into ASCII first.
 func leakyEvent() Event {
 	return Event{
 		Severity: SeverityPage,
-		Title:    "requires_human — " + conformanceSecrets["github-token"],
+		Title:    "requires_human: café " + conformanceSecrets["github-token"],
 		Body:     "reason: token " + conformanceSecrets["jwt"] + "\nkey " + conformanceSecrets["aws-key"] + "\n" + conformanceSecrets["hive-canary"],
 		Link:     "https://github.com/hivecommons/hive/pull/1?t=" + conformanceSecrets["github-token"],
 	}

@@ -532,7 +532,8 @@ The sections:
   `fleet_report`, `work_source`, `project_observability`, `general_advanced`,
   `cadence_scope`, `threshold_scaling`, `backup`, `bob`, `inference_auth`,
   `gateways`, `backends`, `variables`, `write_surface`, `stat_sources`,
-  `reference_repos`, `prompt_sources`.
+  `reference_repos`, `prompt_sources`, `review_feedback_rules`,
+  `review_feedback_retry`, `parent_autoclose`.
 - **Knowledge:** `knowledge_pipeline`, `knowledge_connectors`,
   `knowledge_connectors_status`, `knowledge_agent_scopes`, `knowledge_public`.
 - **Panels the tabs load:** `upstream_watch`, `linear_agent`,

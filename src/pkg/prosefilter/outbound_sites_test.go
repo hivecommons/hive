@@ -86,6 +86,8 @@ const (
 var outboundSites = map[string]outboundSite{
 	// Filtered at the send boundary.
 	"discord.(*Bot).do":                            filtered(),
+	"discord.(*discordBackend).sendTo":             filtered(),
+	"discord.(*discordBackend).setChannelTopic":    filtered(),
 	"github.(*Client).createCommitOnBranch":        filtered(),
 	"hub.(*GitHubActivityFeed).postDiscord":        filtered(),
 	"hub.(*HubServer).pushAuthAuditAlert":          filtered(),
@@ -147,6 +149,10 @@ var outboundSites = map[string]outboundSite{
 	"forge.(*gitLabForge).doRebase":                      machine(reasonStateOnly),
 	"github.PollDeviceFlowWithScope":                     machine(reasonAuth),
 	"msteams.(*Backend).getToken":                        machine(reasonAuth),
+	"advisor.(*Evaluator).Review":                        machine(reasonModelPrompt),
+	"advisor.callAdvise":                                 machine(reasonInternalAPI),
+	"chat.(*Service).dashboardPostBody":                  machine(reasonInternalAPI),
+	"classify.(*jevDecider).call":                        machine(reasonModelPrompt),
 	"llmrouter.(*Router).try":                            machine(reasonModelPrompt),
 	"github.StartDeviceFlowWithScope":                    machine(reasonAuth),
 	"hivectl.(*Client).request":                          machine(reasonInternalAPI),

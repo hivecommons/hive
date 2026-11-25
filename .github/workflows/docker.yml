@@ -820,9 +820,9 @@ jobs:
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Mirror publish-image-tags.sh's positional args in the publish step
           # above — keep in lockstep with that call.
-          SIGN_LATEST_TAG: "true"
-          RELEASE_BRANCH: "v5"
-          CHANNELS: "candidate"
+          SIGN_LATEST_TAG: "false"
+          RELEASE_BRANCH: "v6"
+          CHANNELS: "edge"
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -1132,9 +1132,9 @@ jobs:
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Mirror publish-image-tags.sh's positional args in the publish step
           # above — keep in lockstep with that call.
-          SIGN_LATEST_TAG: "true"
-          RELEASE_BRANCH: "v5"
-          CHANNELS: "candidate"
+          SIGN_LATEST_TAG: "false"
+          RELEASE_BRANCH: "v6"
+          CHANNELS: "edge"
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -1458,9 +1458,9 @@ jobs:
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Mirror publish-image-tags.sh's positional args in the publish step
           # above — keep in lockstep with that call.
-          SIGN_LATEST_TAG: "true"
-          RELEASE_BRANCH: "v5"
-          CHANNELS: "candidate"
+          SIGN_LATEST_TAG: "false"
+          RELEASE_BRANCH: "v6"
+          CHANNELS: "edge"
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -1786,9 +1786,9 @@ jobs:
           GIT_SHA: ${{ needs.gate.outputs.sha }}
           # Mirror publish-image-tags.sh's positional args in the publish step
           # above — keep in lockstep with that call.
-          SIGN_LATEST_TAG: "true"
-          RELEASE_BRANCH: "v5"
-          CHANNELS: "candidate"
+          SIGN_LATEST_TAG: "false"
+          RELEASE_BRANCH: "v6"
+          CHANNELS: "edge"
         run: |
           set -euo pipefail
           shopt -s nullglob
