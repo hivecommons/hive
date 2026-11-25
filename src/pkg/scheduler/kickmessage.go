@@ -900,6 +900,10 @@ func (s *Scheduler) buildReposSectionFor(agentName string) string {
 			b.WriteString("ℹ️ " + instr + " (clone the primary to $HOME/workspace/" + full + " so the registered paths resolve.)\n")
 		}
 	}
+	// Per-repo open-PRs mode (repo_policies[].open_prs). The relays refuse
+	// what the mode forbids; saying so here saves the agent the work of a
+	// branch that can never become a PR.
+	b.WriteString(repoOpenPRsKickNotes(s.cfg, org, active))
 	// Multi-repo projects: the agent workdir is never a checkout of anything
 	// but the PRIMARY repo, and the shipped templates' examples say --repo
 	// "$HIVE_REPO" (primary). Without an explicit rotation instruction agents lock onto

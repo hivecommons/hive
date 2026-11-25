@@ -13,7 +13,12 @@ type RepoPolicy struct {
 	SelfAuthorizationHold *bool  `yaml:"self_authorization_hold,omitempty" json:"self_authorization_hold,omitempty"`
 	ReporterTrustHold     *bool  `yaml:"reporter_trust_hold,omitempty" json:"reporter_trust_hold,omitempty"`
 	AutoMerge             *bool  `yaml:"auto_merge,omitempty" json:"auto_merge,omitempty"`
-	LabelDriven           bool   `yaml:"label_driven,omitempty" json:"label_driven,omitempty"`
+	// OpenPRs is the per-repo "open PRs" mode: "on" (also the meaning of
+	// empty), "off" or "workflow_only". Read it through
+	// Config.RepoOpenPRsMode, which applies the hive-wide project.open_prs
+	// switch first.
+	OpenPRs     string `yaml:"open_prs,omitempty" json:"open_prs,omitempty"`
+	LabelDriven bool   `yaml:"label_driven,omitempty" json:"label_driven,omitempty"`
 	// LabelDrivenApprovalLabels overrides project.label_driven_approval_labels
 	// for this repo (hivecommons/hive#11313). Only read when LabelDriven is set.
 	LabelDrivenApprovalLabels []string `yaml:"label_driven_approval_labels,omitempty" json:"label_driven_approval_labels,omitempty"`
@@ -363,7 +368,8 @@ func (c *Config) SetSelfAuthorizationHoldForRepoAndSave(repo string, enabled *bo
 }
 
 func repoPolicyHasNoOverrides(rp RepoPolicy) bool {
-	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && len(rp.LabelDrivenApprovalLabels) == 0 && len(rp.LabelDrivenSupersedeParkActors) == 0 && len(rp.CompanionRepos) == 0
+	return rp.SelfAuthorizationHold == nil && rp.ReporterTrustHold == nil && rp.AutoMerge == nil && strings.TrimSpace(rp.OpenPRs) == "" && rp.ACMMLevel == nil && !rp.ACMMPinned && rp.ACMMLastAutomatic == nil && !rp.LabelDriven && len(rp.LabelDrivenApprovalLabels) == 0 && len(rp.LabelDrivenSupersedeParkActors) == 0 && len(rp.CompanionRepos) == 0 &&
+		strings.TrimSpace(rp.Forge) == "" && strings.TrimSpace(rp.ForgeURL) == ""
 }
 
 // CompanionReposFor returns the org-qualified companion repositories

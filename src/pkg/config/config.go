@@ -6460,6 +6460,11 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	if !reflect.DeepEqual(overlay.AgentSandbox, cruxconfig.AgentSandboxConfig{}) {
 		cfg.AgentSandbox = overlay.AgentSandbox
 	}
+	// Per-repo open-PRs modes: Settings → Repos saves them into the
+	// overlay, so a reload from the seed must carry them (same shape as
+	// #18804 and #19740). Only the open_prs field of each repo policy is
+	// adopted; BEFORE the fullness guard so a short overlay still wins.
+	adoptOverlayRepoOpenPRs(cfg, &overlay)
 	if len(overlay.RemovedAgents) > 0 {
 		cfg.RemovedAgents = overlay.RemovedAgents
 		cfg.PruneRemovedAgents()

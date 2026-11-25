@@ -97,6 +97,11 @@ func (c *Config) workflowDispatchLack(name string, need WorkflowDispatchNeed) st
 		if err := c.PRRepoPolicyRefusal(name, need.Repo); err != nil {
 			return fmt.Sprintf("may not open pull requests in %s (the repository's ACMM level does not allow it)", need.place())
 		}
+		// A workflow hand-off is what workflow_only admits, so only off
+		// (the repo's or the hive-wide project.open_prs) stops it.
+		if c.RepoOpenPRsMode(need.Repo) == RepoOpenPRsOff {
+			return fmt.Sprintf("may not open pull requests in %s (open PRs is off for the repository)", need.place())
+		}
 	}
 	return ""
 }

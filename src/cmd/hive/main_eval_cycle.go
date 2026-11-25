@@ -1099,6 +1099,9 @@ func runEvalCycle(
 		return workflowAgentTurnFrom(st)
 	}, logger) {
 		k.Message = sched.PrimeWorkflowDispatch(k.Message, k.Dispatch)
+		// Open-PRs provenance for workflow_only repos, with the exact text
+		// that will be sent (after priming) and before the send.
+		recordPlannedHandoffKick(workflowHandoffKicks, k, time.Now())
 		workflowMessages = append(workflowMessages, k.Message)
 		workflowKickByMessage[workflowDispatchKickKey(k.Message)] = k
 	}

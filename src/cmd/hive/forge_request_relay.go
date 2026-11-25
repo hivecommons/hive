@@ -33,6 +33,8 @@ import (
 //     write at the hive's ACMM level). A nil authorizer denies everything.
 //   - The repo must be one of project.repos, off GitHub, not paused, and in
 //     the agent's scope.
+//   - A pull request must be allowed by the repo's open-PRs mode
+//     (repo_policies[].open_prs, repo_open_prs.go), as on GitHub.
 //   - Every pull request opened here carries the ready-for-review gate label,
 //     so a human releases it. The GitHub relay's self-authorization,
 //     reporter-trust and duplicate-claim checks read GitHub data and are not
@@ -91,6 +93,9 @@ type forgeRequestRelay struct {
 	now        func() time.Time
 	logger     *slog.Logger
 	attempts   map[string]int
+	// openPRs is the per-repo open-PRs gate (repo_open_prs.go): the repo's
+	// mode and, when the PR may not open, why.
+	openPRs func(agent, repo string, issues []int, via string) (string, string)
 }
 
 func newForgeRequestRelay(cfg func() *config.Config, prAuthz github.PRRequestAuthorizer, issueAuthz github.IssueRequestAuthorizer, logger *slog.Logger) *forgeRequestRelay {
@@ -103,6 +108,7 @@ func newForgeRequestRelay(cfg func() *config.Config, prAuthz github.PRRequestAut
 		now:        time.Now,
 		logger:     logger,
 		attempts:   map[string]int{},
+		openPRs:    hiveOpenPRsGate(cfg, logger),
 	}
 }
 
@@ -263,6 +269,15 @@ func (r *forgeRequestRelay) handlePR(ctx context.Context, path string) {
 		fail("PR repo rejected: " + reason)
 		r.settle(path, ".rejected", false)
 		return
+	}
+	if r.openPRs != nil {
+		if mode, reason := r.openPRs(req.Agent, req.Repo, req.IssueN, "forge-relay"); reason != "" {
+			auditOpenPRsRefusal(req.Agent, req.Repo, mode, "forge-relay", reason)
+			fail("PR " + github.GateOpenPRs + " rejected: " + reason)
+			r.settle(path, ".rejected", false)
+			r.logger.Warn("forge request relay: PR REJECTED (open-prs)", "agent", req.Agent, "repo", req.Repo, "mode", mode, "reason", reason)
+			return
+		}
 	}
 	if reason := github.InvalidPRHeadReason(req.Head); reason != "" {
 		fail("PR head rejected: " + reason)

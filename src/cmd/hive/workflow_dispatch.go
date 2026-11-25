@@ -351,6 +351,9 @@ func buildWorkflowDispatchKicks(cfg *config.Config, rt *workflowDispatchRuntime,
 			refs = []string{c.Dispatch.Ref()}
 		}
 		rt.markPending(c.Key, now)
+		// The open-PRs provenance (repo_open_prs.go) is recorded by the
+		// caller once the text is final: the knowledge primer still
+		// prepends to it (recordPlannedHandoffKick).
 		out = append(out, workflowDispatchKick{
 			Dispatch: c.Dispatch,
 			Message:  scheduler.KickMessage{Agent: c.Agent, Message: msg, IssueRefs: refs},
@@ -460,9 +463,13 @@ func workflowDispatchPrepare(cfg *config.Config, client func() *github.Client, l
 			return dashboard.WorkflowDispatchPlan{}, dashboard.ErrWorkflowDispatchHeld
 		}
 		entry := scheduler.NextWorkflowDispatchEntry(scheduler.WorkflowDispatchEntry{Key: c.Key, Ref: d.Ref(), Profile: d.Target.Profile, State: d.State, Agent: agent, By: by}, prior)
+		message := scheduler.BuildWorkflowDispatchPrompt(c, cfg.Workflow.Dispatch.Profile(d.Target.Profile).PromptTemplate)
+		// Provenance for the per-repo open-PRs gate, before the handler
+		// sends the kick (repo_open_prs.go).
+		workflowHandoffKicks.record(agent, d.Ref(), message, time.Now())
 		return dashboard.WorkflowDispatchPlan{
 			Ref: d.Ref(), Model: d.Model, State: d.State, Profile: d.Target.Profile, Agent: agent,
-			Message: scheduler.BuildWorkflowDispatchPrompt(c, cfg.Workflow.Dispatch.Profile(d.Target.Profile).PromptTemplate),
+			Message: message,
 			Record: func(at time.Time) {
 				recordWorkflowDispatchDelivered(cfg, workflowDispatchKick{Entry: entry}, at, logger)
 			},
