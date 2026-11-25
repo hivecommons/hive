@@ -1,0 +1,1 @@
+- Concurrent workflow saves, confirmations, ingestion and Marketplace imports now preserve each draft by allocating versions without overwriting other saves.

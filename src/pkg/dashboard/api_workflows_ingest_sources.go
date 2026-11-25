@@ -349,17 +349,12 @@ func (s *Server) finishWorkflowIngest(w http.ResponseWriter, r *http.Request, sa
 	if st == nil {
 		return
 	}
-	version, err := nextWorkflowVersion(st, m.Metadata.Name)
+	e, err := st.SaveNextVersion(m, requestUser(r), time.Now().UTC())
 	if err != nil {
 		workflowStoreError(w, err)
 		return
 	}
-	m.Spec.Meta.Version = version
-	e, err := st.Save(m, requestUser(r), time.Now().UTC())
-	if err != nil {
-		workflowStoreError(w, err)
-		return
-	}
+	m.Spec.Meta.Version = e.Version
 	s.auditFromRequest(r, "workflow_ingest", fmt.Sprintf("%s %s compiled=%v", e.Key(), detail, e.Compiled), "")
 	resp["entry"] = e
 	jsonStatusResponse(w, http.StatusCreated, resp)

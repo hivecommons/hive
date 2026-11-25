@@ -281,6 +281,205 @@ func TestNextVersion(t *testing.T) {
 	}
 }
 
+func TestSaveNextVersionConcurrent(t *testing.T) {
+	root := t.TempDir()
+	s := Open(root)
+	type result struct {
+		entry Entry
+		err   error
+	}
+	results := make(chan result, 2)
+	start := make(chan struct{})
+	for _, draft := range []string{"first draft", "second draft"} {
+		m := techdocs(t)
+		m.Spec.Meta.Version = ""
+		m.Spec.Meta.Description = draft
+		go func() {
+			<-start
+			entry, err := s.SaveNextVersion(m, draft, t0)
+			results <- result{entry, err}
+		}()
+	}
+	close(start)
+
+	reopened := Open(root)
+	seen := map[string]bool{}
+	for range 2 {
+		saved := <-results
+		if saved.err != nil {
+			t.Fatal(saved.err)
+		}
+		e := saved.entry
+		if seen[e.Version] || (e.Version != "1" && e.Version != "2") {
+			t.Fatalf("expected distinct versions 1 and 2, got %s after %v", e.Version, seen)
+		}
+		seen[e.Version] = true
+	}
+	entries, err := reopened.Versions("cncf-techdocs")
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("reopened catalogue: %+v, %v", entries, err)
+	}
+	drafts := map[string]bool{}
+	for _, e := range entries {
+		m, _, err := reopened.Get(e.Name, e.Version)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.Spec.Meta.Version != e.Version || m.Spec.Meta.Description != e.SavedBy {
+			t.Fatalf("version %s has model version %s and draft %q, expected draft %q", e.Version, m.Spec.Meta.Version, m.Spec.Meta.Description, e.SavedBy)
+		}
+		drafts[e.SavedBy] = true
+	}
+	if !drafts["first draft"] || !drafts["second draft"] {
+		t.Fatalf("missing durable drafts: %v", drafts)
+	}
+}
+
+func TestSaveNextVersionCountsUnindexedFile(t *testing.T) {
+	s := Open(t.TempDir())
+	m := techdocs(t)
+	m.Spec.Meta.Version = "5"
+	if _, err := s.Save(m, "original", t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(s.dir(), IndexFile)); err != nil {
+		t.Fatal(err)
+	}
+	e, err := s.SaveNextVersion(m, "new", t0)
+	if err != nil || e.Version != "6" {
+		t.Fatalf("next save: %+v, %v", e, err)
+	}
+	original, _, err := s.Get(m.Metadata.Name, "5")
+	if err != nil || original.Hash() != m.Hash() {
+		t.Fatalf("original model changed: %+v, %v", original, err)
+	}
+}
+
+func TestNextVersionIgnoresNumericDirectoriesExceptAtCandidate(t *testing.T) {
+	s := Open(t.TempDir())
+	name := "draft"
+	for _, blocked := range []string{"1", "99999999999999999999999999999999"} {
+		if err := os.MkdirAll(s.modelPath(name, blocked), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if next, err := s.NextVersion(name); err != nil || next != "2" {
+		t.Fatalf("next version = %q, %v; want 2", next, err)
+	}
+}
+
+func TestSaveNextVersionWideDecimals(t *testing.T) {
+	for _, tc := range []struct {
+		initial string
+		want    string
+	}{
+		{initial: "9223372036854775807", want: "9223372036854775808"},
+		{initial: "99999999999999999999999999999998", want: "99999999999999999999999999999999"},
+		{initial: "99999999999999999999999999999999"},
+	} {
+		t.Run(tc.initial, func(t *testing.T) {
+			s := Open(t.TempDir())
+			m := techdocs(t)
+			m.Spec.Meta.Version = tc.initial
+			if _, err := s.Save(m, "original", t0); err != nil {
+				t.Fatal(err)
+			}
+			e, err := s.SaveNextVersion(m, "next", t0)
+			if tc.want == "" {
+				if !errors.Is(err, ErrVersionExhausted) {
+					t.Fatalf("expected exhaustion, got %+v, %v", e, err)
+				}
+				return
+			}
+			if err != nil || e.Version != tc.want {
+				t.Fatalf("next version = %q, %v; want %q", e.Version, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSaveIndexStageFailureKeepsPreviousState(t *testing.T) {
+	s := Open(t.TempDir())
+	m := techdocs(t)
+	original, err := s.Save(m, "original", t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(s.dir(), IndexFile+".tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m.Spec.Meta.Description = "updated draft"
+	if _, err := s.Save(m, "update", t0); err == nil {
+		t.Fatal("explicit update succeeded with blocked index write")
+	}
+	if _, err := s.SaveNextVersion(m, "new", t0); err == nil {
+		t.Fatal("automatic save succeeded with blocked index write")
+	}
+	got, entry, err := s.Get(m.Metadata.Name, original.Version)
+	if err != nil || got.Hash() != original.Hash || entry.Hash != original.Hash || entry.SavedBy != original.SavedBy {
+		t.Fatalf("original model or catalogue altered: %+v, %+v, %v", got, entry, err)
+	}
+	if _, _, err := s.Get(m.Metadata.Name, "2"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("failed automatic save became visible: %v", err)
+	}
+}
+
+func TestSaveIndexRenameFailureRestoresModel(t *testing.T) {
+	s := Open(t.TempDir())
+	p := s.modelPath("test", "1")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(s.dir(), IndexFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.saveModelAndIndex(p, []byte("updated"), nil); err == nil {
+		t.Fatal("overwrite succeeded with blocked index rename")
+	}
+	if got, err := os.ReadFile(p); err != nil || string(got) != "original" {
+		t.Fatalf("original file was not restored: %q, %v", got, err)
+	}
+	if info, err := os.Stat(p); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("original file mode was not restored: %v, %v", info, err)
+	}
+	newPath := s.modelPath("test", "2")
+	if err := s.saveModelAndIndex(newPath, []byte("new"), nil); err == nil {
+		t.Fatal("new save succeeded with blocked index rename")
+	}
+	if _, err := os.Stat(newPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("new file was left after rollback: %v", err)
+	}
+}
+
+func TestFailedModelStageWriteRemovesScratch(t *testing.T) {
+	modelPath := filepath.Join(t.TempDir(), "1.json")
+	tmp := modelPath + ".tmp"
+	if err := os.WriteFile(tmp, []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A read-only descriptor produces a deterministic write failure without
+	// filling the filesystem or changing process-wide resource limits.
+	file, err := os.Open(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStagedFile(file, []byte("model")); err == nil {
+		t.Fatal("expected model staging write to fail")
+	}
+	if _, err := os.Stat(tmp); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed model stage left scratch: %v", err)
+	}
+	if err := writeAtomic(modelPath, []byte("retry")); err != nil {
+		t.Fatalf("retry failed: %v", err)
+	}
+	if got, err := os.ReadFile(modelPath); err != nil || string(got) != "retry" {
+		t.Fatalf("retry model = %q, %v", got, err)
+	}
+}
+
 func TestProvisionedLabelsRoundTrip(t *testing.T) {
 	s := Open(t.TempDir())
 	if rec, err := s.LoadProvisioned("Acme/Widget"); err != nil || rec != nil {
