@@ -69,3 +69,50 @@ func TestPanelAccessibilityContract(t *testing.T) {
 		}
 	}
 }
+
+// TestPanelLayoutContract pins the layout fixes for the operator-reported
+// clipping (the panel sat under the fixed dashboard header with its title row
+// hidden): it starts below the header from the host's own height token,
+// layers under that header, keeps a pinned title row with a close control,
+// scrolls inside itself, and uses one type scale from the shared tokens.
+func TestPanelLayoutContract(t *testing.T) {
+	css := string(PanelCSS)
+	for _, want := range []string{
+		"var(--navbar-sticky-height, 0px)",
+		"top: var(--hive-ask-top);",
+		"var(--navbar-sticky-z,",
+		"z-index: var(--hive-ask-z);",
+		"position: sticky;",
+		"overflow-y: auto;",
+		"max-height: calc(100dvh - var(--hive-ask-top));",
+		"--hive-ask-fs: var(--fs-base",
+		"--hive-ask-fs-small: var(--fs-sm",
+		"font-size: var(--fs-touch",
+	} {
+		if !strings.Contains(css, want) {
+			t.Errorf("panel stylesheet lacks %q", want)
+		}
+	}
+	if strings.Contains(css, "z-index: 1000") || strings.Contains(css, "top: 0;\n  right: 0;") {
+		t.Error("the panel must not sit at the top of the viewport under the fixed header")
+	}
+	js := string(PanelJS)
+	for _, want := range []string{
+		"'Ask Hive'",
+		"className: 'hive-ask-close'",
+		"className: 'hive-ask-body'",
+		"className: 'hive-ask-actions'",
+		"className: 'hive-ask-form-row'",
+		"'Ask Hive a question'",
+		"'Enter to send, Shift+Enter for a new line'",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("panel script lacks %q", want)
+		}
+	}
+	for _, src := range []string{js, css} {
+		if strings.Contains(src, "Ask AI") || strings.Contains(src, "—") {
+			t.Error("panel copy must say Ask Hive, never Ask AI, and use no em-dashes")
+		}
+	}
+}

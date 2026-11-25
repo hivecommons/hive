@@ -1,14 +1,35 @@
-/* Ask AI help panel (#19177). Uses the host dashboard's tokens with plain
-   fallbacks, docks to the side instead of floating over data (#7160), and
-   uses no motion effects, so reduced motion needs no special case. */
+/* Ask Hive help panel (#19177). Uses the host dashboard's tokens (shared
+   tokens.css) with plain fallbacks, docks to the side instead of floating
+   over data (#7160), and uses no motion effects, so reduced motion needs no
+   special case.
+
+   Layout: the panel starts below the host's fixed header
+   (--navbar-sticky-height on the hive dashboard; the hub header is not
+   fixed, so it falls back to 0) and layers just under that header, so the
+   Help menu still opens over it. A pinned title row holds the name and the
+   close control; everything else scrolls inside the panel body.
+
+   Type scale: one body step (--fs-base) for every sentence and control, and
+   one small muted step (--fs-sm) for the AI label, hints and footer links. */
 :root {
   --hive-ask-width: 380px;
+  --hive-ask-top: calc(var(--navbar-sticky-height, 0px) + env(safe-area-inset-top, 0px));
+  --hive-ask-z: calc(var(--navbar-sticky-z, 1001) - 1);
+  --hive-ask-pad: var(--sp-6, 16px);
+  --hive-ask-gap: var(--sp-5, 12px);
+  --hive-ask-gap-tight: var(--sp-3, 6px);
+  --hive-ask-fs: var(--fs-base, 0.82rem);
+  --hive-ask-fs-small: var(--fs-sm, 0.75rem);
+  --hive-ask-lh: 1.5;
+  --hive-ask-lh-small: 1.4;
+  /* Phone bottom sheet height, as a share of the viewport. */
+  --hive-ask-sheet-height: 70dvh;
 }
 .hive-ask-opener {
   font: inherit;
-  font-size: 0.85rem;
-  padding: 4px 12px;
-  border-radius: 8px;
+  font-size: var(--hive-ask-fs-small);
+  padding: var(--sp-2, 4px) var(--sp-5, 12px);
+  border-radius: var(--r, 6px);
   border: 1px solid var(--border, #d0d7de);
   background: var(--surface, #ffffff);
   color: var(--text, #1f2328);
@@ -23,23 +44,33 @@
 }
 .hive-ask-panel {
   position: fixed;
-  top: 0;
+  top: var(--hive-ask-top);
   right: 0;
   bottom: 0;
   width: var(--hive-ask-width);
   max-width: 100vw;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
-  z-index: 1000;
-  padding: 16px;
+  overscroll-behavior: contain;
+  z-index: var(--hive-ask-z);
+  padding: 0;
   background: var(--surface, #ffffff);
   color: var(--text, #1f2328);
   border-left: 1px solid var(--border, #d0d7de);
-  font-size: 0.9rem;
-  line-height: 1.45;
+  box-shadow: var(--shadow-raised, none);
+  font-size: var(--hive-ask-fs);
+  line-height: var(--hive-ask-lh);
 }
 .hive-ask-panel[hidden] {
   display: none;
+}
+.hive-ask-panel p,
+.hive-ask-panel ol,
+.hive-ask-panel ul,
+.hive-ask-panel pre {
+  margin: 0;
 }
 @media (min-width: 900px) {
   html.hive-ask-open body {
@@ -51,102 +82,219 @@
     top: auto;
     left: 0;
     width: 100vw;
-    height: 70vh;
+    height: var(--hive-ask-sheet-height);
+    max-height: calc(100dvh - var(--hive-ask-top));
     border-left: 0;
     border-top: 1px solid var(--border, #d0d7de);
+    border-radius: var(--r-lg, 12px) var(--r-lg, 12px) 0 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  /* iOS Safari zooms the page when a focused control is under 16px. */
+  .hive-ask-form textarea {
+    font-size: var(--fs-touch, 16px);
   }
 }
 .hive-ask-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--hive-ask-gap);
+  padding: var(--hive-ask-gap-tight) var(--hive-ask-gap-tight) var(--hive-ask-gap-tight) var(--hive-ask-pad);
+  background: var(--surface, #ffffff);
+  border-bottom: 1px solid var(--border, #d0d7de);
 }
 .hive-ask-head h2 {
-  font-size: 1rem;
+  font-size: var(--fs-md, 0.92rem);
+  font-weight: 700;
+  line-height: var(--hive-ask-lh-small);
   margin: 0;
 }
 .hive-ask-close {
   font: inherit;
-  font-size: 1.2rem;
+  font-size: var(--fs-xl, 1.25rem);
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--tap-target, 40px);
+  height: var(--tap-target, 40px);
+  border-radius: var(--r, 6px);
   background: none;
   border: 0;
-  color: inherit;
+  color: var(--muted, #59636e);
   cursor: pointer;
-  padding: 4px 8px;
+  padding: 0;
+}
+.hive-ask-close:hover {
+  color: var(--text, #1f2328);
+  background: var(--bg-soft, transparent);
+}
+.hive-ask-body,
+.hive-ask-consent,
+.hive-ask-chat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hive-ask-gap);
+}
+.hive-ask-body {
+  padding: var(--hive-ask-pad);
+}
+.hive-ask-consent[hidden],
+.hive-ask-chat[hidden] {
+  display: none;
 }
 .hive-ask-label,
 .hive-ask-ai,
 .hive-ask-hint {
   color: var(--muted, #59636e);
-  font-size: 0.8rem;
+  font-size: var(--hive-ask-fs-small);
+  line-height: var(--hive-ask-lh-small);
+}
+.hive-ask-disclosure,
+.hive-ask-status {
+  font-size: var(--hive-ask-fs);
+}
+.hive-ask-status:empty {
+  display: none;
+}
+.hive-ask-actions,
+.hive-ask-form-row,
+.hive-ask-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--hive-ask-gap-tight) var(--hive-ask-gap);
+}
+.hive-ask-form-row {
+  justify-content: space-between;
+}
+.hive-ask-form-row .hive-ask-send {
+  margin-left: auto;
 }
 .hive-ask-log {
   list-style: none;
-  margin: 0;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hive-ask-gap);
+}
+.hive-ask-log:empty {
+  display: none;
 }
 .hive-ask-entry {
-  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hive-ask-gap-tight);
 }
 .hive-ask-q {
   font-weight: 600;
-  margin: 0 0 4px;
 }
 .hive-ask-text {
-  white-space: pre-wrap;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hive-ask-gap-tight);
   overflow-wrap: anywhere;
-  margin: 0 0 4px;
+}
+.hive-ask-text p {
+  white-space: pre-wrap;
+}
+.hive-ask-subhead {
+  font-weight: 600;
+}
+.hive-ask-list {
+  padding-left: var(--sp-7, 20px);
+}
+.hive-ask-code {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--hive-ask-fs-small);
+  line-height: var(--hive-ask-lh-small);
+  white-space: pre;
+  overflow-x: auto;
+  padding: var(--sp-4, 8px) var(--sp-5, 12px);
+  background: var(--bg, #f6f8fa);
+  border: 1px solid var(--border, #d0d7de);
+  border-radius: var(--r, 6px);
 }
 .hive-ask-a {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hive-ask-gap-tight);
   border-left: 3px solid var(--border, #d0d7de);
-  padding-left: 8px;
+  padding-left: var(--sp-5, 12px);
 }
 .hive-ask-notice {
-  border-left-color: var(--warn, #9a6700);
+  border-left-color: var(--warn, var(--yellow, #9a6700));
 }
 .hive-ask-sources {
-  margin: 0;
-  padding-left: 18px;
+  padding-left: var(--sp-7, 20px);
+  font-size: var(--hive-ask-fs-small);
 }
 .hive-ask-sources-title {
   font-weight: 600;
-  margin: 4px 0 0;
+  font-size: var(--hive-ask-fs-small);
+}
+.hive-ask-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hive-ask-gap-tight);
 }
 .hive-ask-form label {
   display: block;
+  font-size: var(--hive-ask-fs);
   font-weight: 600;
-  margin-top: 8px;
 }
 .hive-ask-form textarea {
   width: 100%;
   box-sizing: border-box;
   font: inherit;
-  margin-top: 4px;
+  font-size: var(--hive-ask-fs);
+  line-height: var(--hive-ask-lh);
+  resize: vertical;
   background: var(--bg, #ffffff);
   color: inherit;
   border: 1px solid var(--border, #d0d7de);
-  border-radius: 6px;
-  padding: 6px;
+  border-radius: var(--r, 6px);
+  padding: var(--sp-4, 8px);
 }
+/* Primary actions: Ask and the consent confirm. */
 .hive-ask-send,
-.hive-ask-confirm,
-.hive-ask-withdraw {
+.hive-ask-confirm {
   font: inherit;
-  padding: 4px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border, #d0d7de);
-  background: var(--surface, #ffffff);
-  color: inherit;
+  font-size: var(--hive-ask-fs);
+  font-weight: 600;
+  min-height: var(--tap-target, 40px);
+  padding: var(--sp-3, 6px) var(--sp-6, 16px);
+  border-radius: var(--r, 6px);
+  border: 1px solid var(--amber, #0969da);
+  background: var(--amber, #0969da);
+  color: var(--bg, #ffffff);
   cursor: pointer;
 }
+.hive-ask-send:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+/* Quiet footer: small secondary text links, never as loud as Ask. */
 .hive-ask-foot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-  margin-top: 12px;
+  padding-top: var(--hive-ask-gap);
+  border-top: 1px solid var(--border, #d0d7de);
+  font-size: var(--hive-ask-fs-small);
+}
+.hive-ask-withdraw {
+  font: inherit;
+  font-size: var(--hive-ask-fs-small);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted, #59636e);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.hive-ask-withdraw:hover {
+  color: var(--text, #1f2328);
 }
 .hive-ask-docs {
   color: var(--link, var(--amber, #0969da));

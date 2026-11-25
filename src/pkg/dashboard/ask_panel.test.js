@@ -39,3 +39,23 @@ test('every other outcome is a notice carrying the backend message', () => {
   assert.equal(askViewModel(null).kind, 'notice');
   assert.match(askViewModel(undefined).text, /unavailable/);
 });
+
+const { answerBlocks } = require(path.join(__dirname, '..', 'askai', 'web', 'ask-panel.js'));
+
+test('an answer splits into paragraphs, lists, headings and fenced code', () => {
+  const blocks = answerBlocks('## Setup\nOpen Settings.\nThen save.\n\n- one\n- two\n\n1. first\n\n```yaml\nkey: <b>v</b>\n\n  nested: 1\n```\nDone.');
+  assert.deepEqual(blocks, [
+    { type: 'h', text: 'Setup' },
+    { type: 'p', text: 'Open Settings.\nThen save.' },
+    { type: 'list', ordered: false, items: ['one', 'two'] },
+    { type: 'list', ordered: true, items: ['first'] },
+    { type: 'code', text: 'key: <b>v</b>\n\n  nested: 1' },
+    { type: 'p', text: 'Done.' },
+  ]);
+});
+
+test('an unclosed fence still keeps its code, and empty text has no blocks', () => {
+  assert.deepEqual(answerBlocks('```\nx = 1'), [{ type: 'code', text: 'x = 1' }]);
+  assert.deepEqual(answerBlocks(''), []);
+  assert.deepEqual(answerBlocks(null), []);
+});

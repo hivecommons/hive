@@ -1,5 +1,5 @@
 /*
- * Ask AI help panel (src/docs/design/dashboard-ask-ai-help.md, #19177).
+ * Ask Hive help panel (src/docs/design/dashboard-ask-ai-help.md, #19177).
  *
  * Our own markup and script, served from 'self'. It talks only to this
  * dashboard's own backend (GET <base>/status, PUT|DELETE <base>/consent,
@@ -65,6 +65,68 @@
     return node;
   }
 
+  // answerBlocks splits an answer's markdown into blocks the panel can show
+  // legibly: fenced code, bullet or numbered lists, headings and paragraphs.
+  // Pure, so it can be tested without a DOM. Inline markup stays as text;
+  // nothing here ever becomes HTML.
+  function answerBlocks(text) {
+    var lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+    var blocks = [];
+    var para = [];
+    var list = null;
+    var code = null;
+    function flushPara() {
+      if (para.length) blocks.push({ type: 'p', text: para.join('\n') });
+      para = [];
+    }
+    function flushList() {
+      if (list) blocks.push(list);
+      list = null;
+    }
+    lines.forEach(function (line) {
+      if (code) {
+        if (/^\s*```/.test(line)) { blocks.push(code); code = null; }
+        else code.text += (code.text ? '\n' : '') + line;
+        return;
+      }
+      if (/^\s*```/.test(line)) { flushPara(); flushList(); code = { type: 'code', text: '' }; return; }
+      var item = /^\s*(?:[-*+]|(\d+)[.)])\s+(.*)$/.exec(line);
+      if (item) {
+        flushPara();
+        var ordered = item[1] !== undefined;
+        if (!list || list.ordered !== ordered) { flushList(); list = { type: 'list', ordered: ordered, items: [] }; }
+        list.items.push(item[2]);
+        return;
+      }
+      var heading = /^\s*#{1,6}\s+(.*)$/.exec(line);
+      if (heading) { flushPara(); flushList(); blocks.push({ type: 'h', text: heading[1] }); return; }
+      if (!line.trim()) { flushPara(); flushList(); return; }
+      flushList();
+      para.push(line);
+    });
+    if (code) blocks.push(code);
+    flushPara();
+    flushList();
+    return blocks;
+  }
+
+  function renderAnswer(text) {
+    var box = el('div', { className: 'hive-ask-text' });
+    answerBlocks(text).forEach(function (b) {
+      if (b.type === 'code') {
+        box.appendChild(el('pre', { className: 'hive-ask-code' })).appendChild(el('code', {}, b.text));
+      } else if (b.type === 'list') {
+        var list = box.appendChild(el(b.ordered ? 'ol' : 'ul', { className: 'hive-ask-list' }));
+        b.items.forEach(function (t) { list.appendChild(el('li', {}, t)); });
+      } else if (b.type === 'h') {
+        box.appendChild(el('p', { className: 'hive-ask-subhead' }, b.text));
+      } else {
+        box.appendChild(el('p', {}, b.text));
+      }
+    });
+    return box;
+  }
+
   function docsLink(href, text) {
     return el('a', { href: href, target: '_blank', rel: 'noopener noreferrer', className: 'hive-ask-docs' }, text);
   }
@@ -115,35 +177,50 @@
       var close = el('button', { type: 'button', className: 'hive-ask-close', 'aria-label': 'Close Ask Hive' }, '×');
       head.appendChild(close);
       panel.appendChild(head);
-      panel.appendChild(el('p', { className: 'hive-ask-label' }, status.ai_label || 'AI generated, may be wrong.'));
+      // Everything under the title row sits in one padded body, so the title
+      // and close stay pinned while the body scrolls inside the panel.
+      var body = el('div', { className: 'hive-ask-body' });
+      panel.appendChild(body);
+      body.appendChild(el('p', { className: 'hive-ask-label' }, status.ai_label || 'AI generated, may be wrong.'));
 
       var consentBox = el('div', { className: 'hive-ask-consent' });
-      consentBox.appendChild(el('p', {}, status.disclosure || ''));
+      consentBox.appendChild(el('p', { className: 'hive-ask-disclosure' }, status.disclosure || ''));
+      // The primary action and the docs fallback share one row (wrapping on
+      // a narrow phone) instead of stacking with uneven spacing.
+      var actions = el('div', { className: 'hive-ask-actions' });
       var confirm = el('button', { type: 'button', className: 'hive-ask-confirm' }, 'I understand, continue');
-      consentBox.appendChild(confirm);
-      consentBox.appendChild(el('p', {})).appendChild(docsLink(docsOf() || status.docs_url, 'Read the docs instead'));
-      panel.appendChild(consentBox);
+      actions.appendChild(confirm);
+      actions.appendChild(docsLink(docsOf() || status.docs_url, 'Read the docs instead'));
+      consentBox.appendChild(actions);
+      body.appendChild(consentBox);
 
       var chat = el('div', { className: 'hive-ask-chat' });
+      // The secrets warning sits once, as a muted line by the AI label; the
+      // consent notice already carried it before consent.
+      chat.appendChild(el('p', { className: 'hive-ask-label' }, 'Do not include secrets or private details.'));
       var log = el('ol', { className: 'hive-ask-log', 'aria-label': 'Answers' });
       chat.appendChild(log);
       var live = el('p', { className: 'hive-ask-status', role: 'status', 'aria-live': 'polite' });
       chat.appendChild(live);
       var form = el('form', { className: 'hive-ask-form' });
-      form.appendChild(el('label', { for: 'hive-ask-input' }, 'Your question about the dashboard'));
+      form.appendChild(el('label', { for: 'hive-ask-input' }, 'Ask Hive a question'));
       var input = el('textarea', { id: 'hive-ask-input', rows: '3', maxlength: String(MAX_QUESTION_CHARS) });
       form.appendChild(input);
-      form.appendChild(el('p', { className: 'hive-ask-hint' }, 'Enter sends, Shift+Enter adds a line. Do not include secrets or private details.'));
+      // Hint and primary button share one row: hint left, Ask right-aligned.
+      var formRow = el('div', { className: 'hive-ask-form-row' });
+      formRow.appendChild(el('p', { className: 'hive-ask-hint' }, 'Enter to send, Shift+Enter for a new line'));
       var send = el('button', { type: 'submit', className: 'hive-ask-send' }, 'Ask');
-      form.appendChild(send);
+      formRow.appendChild(send);
+      form.appendChild(formRow);
       chat.appendChild(form);
-      var foot = el('p', { className: 'hive-ask-foot' });
+      // Quiet footer: secondary text links, never as prominent as Ask.
+      var foot = el('div', { className: 'hive-ask-foot' });
       var sectionDocs = docsLink(docsOf() || status.docs_url, 'Docs for this section');
       foot.appendChild(sectionDocs);
       var withdraw = el('button', { type: 'button', className: 'hive-ask-withdraw' }, 'Stop sending my questions');
       foot.appendChild(withdraw);
       chat.appendChild(foot);
-      panel.appendChild(chat);
+      body.appendChild(chat);
       document.body.appendChild(panel);
 
       function showConsent(consented) {
@@ -170,7 +247,8 @@
         var item = el('li', { className: 'hive-ask-entry' });
         if (question) item.appendChild(el('p', { className: 'hive-ask-q' }, question));
         var answer = el('div', { className: view.kind === 'answer' ? 'hive-ask-a' : 'hive-ask-a hive-ask-notice' });
-        answer.appendChild(el('p', { className: 'hive-ask-text' }, view.text));
+        if (view.kind === 'answer') answer.appendChild(renderAnswer(view.text));
+        else answer.appendChild(el('p', { className: 'hive-ask-text' }, view.text));
         if (view.kind === 'answer') {
           answer.appendChild(el('p', { className: 'hive-ask-ai' }, 'AI generated, may be wrong.'));
           if (view.uncertain) answer.appendChild(el('p', { className: 'hive-ask-ai' }, 'The service marked this answer as uncertain.'));
@@ -277,7 +355,7 @@
     return true;
   }
 
-  var api = { mount: mount, open: open, close: close, askViewModel: askViewModel };
+  var api = { mount: mount, open: open, close: close, askViewModel: askViewModel, answerBlocks: answerBlocks };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   if (typeof window === 'undefined') return;
   window.HiveAsk = api;
