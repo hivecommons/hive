@@ -368,6 +368,109 @@ func FixingStage(o stageObservation) stagelabels.Stage {
 	return stagelabels.FixingStageFor(o.Lane == stageLaneSelf, o.AuthorKind)
 }
 
+// forkWorkflowUpdateToAuthor reports whether the 085 park ClassifyStage
+// gives a fork-workflow-update head goes back to the PR's author instead.
+// GitHub refused the App's update-branch on a fork head because the base
+// changed .github/workflows/ files, and the App is not installed on the
+// fork; the author's own push to that branch is not refused. Only an agent
+// (clanker) author has a relay the contributor nudge can reach: on
+// projectbluefin/utah-packages#1294 the relay merged the base into its fork
+// branch and the PR recovered with no person, while #1296 and #1298 sat at
+// 085 with nothing sent to their authors.
+//
+// It is deliberately narrow: the one case where the branch update is all
+// that is owed. The head's verdict is known and approves it (or a trusted
+// person approved a requires_human on this head), nothing on the head is
+// red or guarded, the pass read the head's checks green (pass.HeadChecksGreen:
+// known, some reported, none red, pending or missing, DCO not failing), and
+// nothing else shows a person something: no sentinel alert, hold-class
+// label, needs-human, posted decision question or change request. A kind
+// known only from the contributor registry does not count, since a failed
+// read would flip the PR. A pass that lost the verdict keeps a 072 the same
+// head already has (forkWorkflowUpdateHeldAtAuthor). Every other head keeps
+// today's 085 hand-off, which the human route then places by the head's
+// evidence (an unknown verdict on a head not yet at 072, pending or
+// changes_requested, a red check, a fork guard).
+func forkWorkflowUpdateToAuthor(o stageObservation, pass *PRPassFacts) bool {
+	if o.Reason != autoMergeReasonForkWorkflowUpdate || o.AuthorKind != authorkind.Clanker || o.Lane == stageLaneSelf || o.Merged {
+		return false
+	}
+	if pass == nil || !pass.HeadChecksGreen || pass.SentinelAlert || pass.AuthorKindByRegistry {
+		return false
+	}
+	if len(o.ForkGuardChecks) > 0 || o.Detail.RedCheck(o.HeadSHA) != "" {
+		return false
+	}
+	if len(stagelabels.Holds(o.Labels)) > 0 || HasLabelFold(o.Labels, NeedsHumanLabel) {
+		return false
+	}
+	d := NormalizeStageDetail(o.Detail)
+	if TrustedHumanChangeRequested(d, o.HeadSHA) {
+		return false
+	}
+	if !d.VerdictKnown {
+		return forkWorkflowUpdateHeldAtAuthor(o, pass)
+	}
+	if d.Verdict.DecisionRequested {
+		return false
+	}
+	return (d.Verdict.Approved && !VerdictBlocks(d)) || TrustedHumanApprovedRequiresHuman(d, o.HeadSHA)
+}
+
+// forkWorkflowUpdateHeldAtAuthor reports whether a pass that lost the
+// head's verdict (a split drain: the lane noted it, another driver drained
+// the note) keeps the agent's 072. Only the verdict is missing, and the
+// record says this very head was already sent back for the update: the
+// stage the pass started from is 072 under fork-workflow-update, and the
+// owed clock is set for this head. Such a PR never reached 072 before the
+// agent route existed, so keeping 072 costs nothing, while the hand-off
+// would flip the label 072, 085, 072 on the next full pass. A new head,
+// or any other input that says no, takes the hand-off as before.
+func forkWorkflowUpdateHeldAtAuthor(o stageObservation, pass *PRPassFacts) bool {
+	if pass == nil || pass.Prior == nil {
+		return false
+	}
+	head := strings.TrimSpace(o.HeadSHA)
+	p := pass.Prior
+	return head != "" && p.Stage == stagelabels.ReturnedToContributor && p.Reason == autoMergeReasonForkWorkflowUpdate && p.AuthorUpdateOwedHead == head
+}
+
+// SplitByAuthorKind applies the author kind to an opinion ResolveStage
+// formed before it was known (the lanes record no kind; stageAuthorKind
+// runs after). An author-blocked 07x opinion takes the kind's repair stage
+// (070 / 071 / 072). A fork-workflow-update 085 park whose branch update is
+// all an agent author owes (forkWorkflowUpdateToAuthor) goes to its fixing
+// stage (072) under that reason; pass (nil reads as empty) carries what the
+// pass read beside the kind. Every other opinion is returned unchanged.
+func SplitByAuthorKind(verdict stageVerdict, obs stageObservation, pass *PRPassFacts) stageVerdict {
+	if verdict.Stage == stagelabels.NeedsAuthor || verdict.Stage == stagelabels.ReturnedToContributor {
+		verdict.Stage = FixingStage(obs)
+		return verdict
+	}
+	if verdict.Terminal || verdict.Stage != stagelabels.NeedsDecision || verdict.Reason != "" || !forkWorkflowUpdateToAuthor(obs, pass) {
+		return verdict
+	}
+	return stageVerdict{Stage: FixingStage(obs), Rank: stageRankOwned, Reason: autoMergeReasonForkWorkflowUpdate}
+}
+
+// AuthorUpdateOwed reports whether the resolved opinion is
+// SplitByAuthorKind's 072 for an agent's fork-workflow-update: the branch
+// update the App could not push is the author's to push. The 072 of any
+// other path (a needs-rebase label, a change request) carries another or no
+// reason and is not this.
+func AuthorUpdateOwed(verdict stageVerdict) bool {
+	return !verdict.Terminal && verdict.Stage == stagelabels.ReturnedToContributor && verdict.Reason == autoMergeReasonForkWorkflowUpdate
+}
+
+// AuthorUpdateLapsedStage is the opinion once the branch update an agent
+// author owed (AuthorUpdateOwed) went unpushed for the 072 dwell spent at
+// 072 on the same head: the 085 hand-off a fork-workflow-update has on any
+// other PR. The human route places it by the head's evidence, as it does
+// that hand-off (usually 085 with the entry comment naming the update).
+func AuthorUpdateLapsedStage() stageVerdict {
+	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
+}
+
 // ClassifyStage maps one lane observation to a stage opinion. Reason
 // strings are the lane constants; see the maps above for the groups.
 func ClassifyStage(o stageObservation) stageVerdict {
