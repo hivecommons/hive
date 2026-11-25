@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.366.0)
+
+### Added
+
+- Run `opencode` as a hub/spoke agent backend, not only a contributor one: both images now ship it (pinned, checksummed), the launcher starts the TUI unattended with the model passed through inline config, its pane is recognised as a live CLI, and the dashboard model picker lists its models. Also creates the shared opencode XDG bridge target that previously dangled and crashed opencode at startup.
+
 ## 2026-11-25 (v5.365.7)
 
 ### Fixed
