@@ -2,9 +2,11 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // A blocked verdict's `blocked` label is a gate only a human lifts unless the
@@ -38,6 +40,15 @@ func (h *ContributeWSHub) recordVerdictBlocker(task *WSTaskAssign, reason string
 	ctx, cancel := context.WithTimeout(context.Background(), verdictBlockerRecordTimeout)
 	defer cancel()
 	outcome, err := h.recordVerdictBlockerOnForge(ctx, task.Repo, task.Number, blocker)
+	if errors.Is(err, writeback.ErrSuppressed) {
+		// The writeback gate refused the write (label or level not met). That
+		// is an expected outcome, not a defect: keep the dedupe key so the
+		// same verdict is not retried, and do not log at warn (which would be
+		// self-reported as an unclassified error).
+		h.logger.Info("[contribute-ws] blocked verdict: blocker not recorded, writeback suppressed",
+			"repo", task.Repo, "number", task.Number, "blocker", blocker.String(), "reason", err.Error())
+		return
+	}
 	if err != nil {
 		// Forget the key so a later re-delivery may try again.
 		h.verdictBlockersRecorded.Delete(key)

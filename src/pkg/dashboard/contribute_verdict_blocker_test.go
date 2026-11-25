@@ -3,10 +3,14 @@ package dashboard
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // verdictBlockerFixture records what the hub asked the forge to record.
@@ -90,5 +94,27 @@ func TestRecordVerdictBlocker_NoClientIsLogged(t *testing.T) {
 	}
 	if _, err := hub.recordVerdictBlockerOnForge(context.Background(), "o/r", 5, ghpkg.VerdictBlocker{Repo: "o/r", Number: 6}); !errors.Is(err, ghpkg.ErrNoGitHubClient) {
 		t.Fatalf("no GitHub client must report ErrNoGitHubClient, got %v", err)
+	}
+}
+
+// hivecommons/hive#19867: a writeback gate suppression is an expected outcome,
+// not a defect: it must not log at warn (self-reported as an unclassified
+// error) and must not be retried for the same verdict.
+func TestRecordVerdictBlocker_GateSuppressionIsExpected(t *testing.T) {
+	hub, _ := covK2Hub(t)
+	buf := &lockedBuffer{}
+	hub.logger = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	fx := &verdictBlockerFixture{err: fmt.Errorf("%w: #534 carries none of hive-review; gate_comment needs the label at L5", writeback.ErrSuppressed)}
+	hub.verdictBlockerRecorder = fx.record
+	task := &WSTaskAssign{Kind: "issue", Repo: "o/r", Number: 534}
+
+	hub.recordVerdictBlocker(task, "blocked on o/x#9")
+	hub.recordVerdictBlocker(task, "blocked on o/x#9")
+	if n := fx.count(); n != 1 {
+		t.Fatalf("a gate-suppressed record must not be retried, got %v", fx.calls)
+	}
+	out := buf.String()
+	if strings.Contains(out, "level=WARN") || strings.Contains(out, "level=ERROR") {
+		t.Fatalf("gate suppression must not log at warn or error, got %q", out)
 	}
 }
