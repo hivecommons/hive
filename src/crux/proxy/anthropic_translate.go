@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -372,8 +373,50 @@ func translateOpenAISSEToAnthropicUsage(r io.Reader, w io.Writer, model string) 
 	textBlockStarted := false
 	toolCallState := make(map[int]*sseToolCallAccumulator)
 
-	for scanner.Scan() {
-		line := scanner.Text()
+	// Read upstream lines on a goroutine so the loop below can write an
+	// Anthropic ping while the upstream is silent (reasoning or queued).
+	lines := make(chan string)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		defer close(lines)
+		for scanner.Scan() {
+			select {
+			case lines <- scanner.Text():
+			case <-done:
+				return
+			}
+		}
+	}()
+	pingTicker := time.NewTicker(sseKeepAliveInterval)
+	defer pingTicker.Stop()
+
+	thinkingBlockStarted := false
+	closeThinking := func() {
+		if !thinkingBlockStarted {
+			return
+		}
+		writeSSE(w, "content_block_stop", map[string]interface{}{
+			"type":  "content_block_stop",
+			"index": contentBlockIndex,
+		})
+		contentBlockIndex++
+		thinkingBlockStarted = false
+	}
+
+loop:
+	for {
+		var line string
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				break loop
+			}
+			line = l
+		case <-pingTicker.C:
+			writeSSE(w, "ping", map[string]string{"type": "ping"})
+			continue
+		}
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -400,7 +443,31 @@ func translateOpenAISSEToAnthropicUsage(r io.Reader, w io.Writer, model string) 
 		if len(chunk.Choices) > 0 {
 			delta := chunk.Choices[0].Delta
 
+			r := delta.ReasoningContent
+			if r == "" {
+				r = delta.Reasoning
+			}
+			if r != "" {
+				if !thinkingBlockStarted {
+					writeSSE(w, "content_block_start", map[string]interface{}{
+						"type":          "content_block_start",
+						"index":         contentBlockIndex,
+						"content_block": map[string]string{"type": "thinking", "thinking": ""},
+					})
+					thinkingBlockStarted = true
+				}
+				writeSSE(w, "content_block_delta", map[string]interface{}{
+					"type":  "content_block_delta",
+					"index": contentBlockIndex,
+					"delta": map[string]string{
+						"type":     "thinking_delta",
+						"thinking": r,
+					},
+				})
+			}
+
 			if delta.Content != "" {
+				closeThinking()
 				if !textBlockStarted {
 					writeSSE(w, "content_block_start", map[string]interface{}{
 						"type":          "content_block_start",
@@ -422,6 +489,7 @@ func translateOpenAISSEToAnthropicUsage(r io.Reader, w io.Writer, model string) 
 			for _, tc := range delta.ToolCalls {
 				acc, exists := toolCallState[tc.Index]
 				if !exists {
+					closeThinking()
 					if textBlockStarted {
 						writeSSE(w, "content_block_stop", map[string]interface{}{
 							"type":  "content_block_stop",
@@ -465,6 +533,7 @@ func translateOpenAISSEToAnthropicUsage(r io.Reader, w io.Writer, model string) 
 			}
 
 			if chunk.Choices[0].FinishReason != "" {
+				closeThinking()
 				if textBlockStarted {
 					writeSSE(w, "content_block_stop", map[string]interface{}{
 						"type":  "content_block_stop",
@@ -495,6 +564,10 @@ func translateOpenAISSEToAnthropicUsage(r io.Reader, w io.Writer, model string) 
 	return gatewayUsage{Input: int64(totalInputTokens), Output: int64(totalOutputTokens), Cached: int64(totalCachedTokens)}, scanner.Err()
 }
 
+// sseKeepAliveInterval is how often an Anthropic ping event is written while
+// the upstream sends nothing, so the Claude CLI's idle watchdogs do not fire.
+var sseKeepAliveInterval = 10 * time.Second
+
 type sseToolCallAccumulator struct {
 	id         string
 	name       string
@@ -507,6 +580,9 @@ func writeSSE(w io.Writer, eventType string, data interface{}) {
 	// Best effort: the client may have disconnected mid-stream; the request
 	// was already authorized, so a broken pipe here is not a policy concern.
 	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, jsonData)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func extractSystemText(raw json.RawMessage) string {
@@ -742,8 +818,10 @@ type gatewayUsage struct {
 type openaiSSEChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content   string              `json:"content"`
-			ToolCalls []openaiSSEToolCall `json:"tool_calls,omitempty"`
+			Content          string              `json:"content"`
+			ReasoningContent string              `json:"reasoning_content,omitempty"`
+			Reasoning        string              `json:"reasoning,omitempty"`
+			ToolCalls        []openaiSSEToolCall `json:"tool_calls,omitempty"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`

@@ -1,0 +1,1 @@
+- The inference translator now forwards model reasoning as thinking blocks and sends periodic ping events while the upstream is silent, so the Claude CLI no longer aborts long reasoning turns at 300 seconds (#19793).
