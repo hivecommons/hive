@@ -32,7 +32,8 @@ func TestStageTrackerTriagePRNamesContributorPR(t *testing.T) {
 		{Repo: "o/r", Kind: "issue", Number: 2, New: triageNewHold(), Caption: stageTrackerTriageNeededCaption},
 		{Repo: "o/r", Kind: "pr", Number: 8, Author: "zoe", AuthorKind: authorKindHuman, URL: "https://github.com/o/r/pull/8",
 			LinkedIssues: []StageTrackerLinkedIssue{{Number: 2}}},
-		// Triage already accepted: 010 with a covering PR is ordinary work.
+		// Triage already accepted: 010 with a covering PR is ordinary work, so the
+		// row keeps the ordinary "Covered by PR" caption, not the triage one.
 		{Repo: "o/r", Kind: "issue", Number: 3, Stage: stagelabels.Actionable.Number(), Caption: "Triaged and eligible"},
 		{Repo: "o/r", Kind: "pr", Number: 9, Author: "zoe", AuthorKind: authorKindHuman, LinkedIssues: []StageTrackerLinkedIssue{{Number: 3}}},
 		// Triage needed, but the only PR is the hive's own: not a contributor PR.
@@ -63,7 +64,7 @@ func TestStageTrackerTriagePRNamesContributorPR(t *testing.T) {
 	if two := byNum[2]; two.TriagePR == nil || two.TriagePR.Number != 8 || !strings.Contains(two.Caption, "contributor PR #8 open") {
 		t.Fatalf("000-new hold = %+v / %q, want PR #8 named", two.TriagePR, two.Caption)
 	}
-	if three := byNum[3]; three.TriagePR != nil || three.Caption != "Triaged and eligible" {
+	if three := byNum[3]; three.TriagePR != nil || three.Caption != "Covered by PR #9" {
 		t.Fatalf("an accepted issue keeps its row: %+v / %q", three.TriagePR, three.Caption)
 	}
 	if four := byNum[4]; four.TriagePR != nil || four.Caption != stageTrackerTriageNeededCaption {
