@@ -1519,6 +1519,72 @@ func TestGetGitSourceStore_Found(t *testing.T) {
 	}
 }
 
+func TestReadFactInLayer_GitSource(t *testing.T) {
+	gs := makeReadyGitSource(t, LayerOrg)
+	api := &KnowledgeAPI{gitSources: []*GitSource{gs}, logger: coverageTestLogger()}
+
+	const source LayerType = "git_source:test-git"
+	facts := api.SearchAllWithVaults(context.Background(), "", "", 0)
+	if len(facts) != 1 || facts[0].Layer != LayerOrg || facts[0].SourceLayer != source {
+		t.Fatalf("wrong git source listing: %+v", facts)
+	}
+	fact, err := api.ReadFactInLayer(context.Background(), source, facts[0].Slug)
+	if err != nil || fact == nil || fact.SourceLayer != source || fact.Body == "" {
+		t.Fatalf("git source detail: %+v, %v", fact, err)
+	}
+	fact, err = api.ReadFactInLayer(context.Background(), LayerOrg, facts[0].Slug)
+	if err != nil || fact != nil {
+		t.Fatalf("unqualified org read returned git source: %+v, %v", fact, err)
+	}
+}
+
+func TestGitSourcesWithSameNameHaveExactRoutes(t *testing.T) {
+	ctx := context.Background()
+	first := makeReadyGitSource(t, LayerOrg)
+	second := makeReadyGitSource(t, LayerProject)
+	second.config.Subpath = "second"
+	if err := os.WriteFile(filepath.Join(second.Store().RootDir(), "guide.md"), []byte("# Second Guide\nSecond source content."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second.Store().Reindex()
+	api := &KnowledgeAPI{gitSources: []*GitSource{first, second}, logger: coverageTestLogger()}
+
+	facts := api.SearchAllWithVaults(ctx, "", "", 0)
+	if len(facts) != 2 || facts[0].Layer != LayerOrg || facts[1].Layer != LayerProject || facts[0].SourceLayer == facts[1].SourceLayer {
+		t.Fatalf("incorrect Git source listing: %+v", facts)
+	}
+	stats := api.Stats(ctx)["layers"].([]map[string]interface{})
+	if len(stats) != len(facts) {
+		t.Fatalf("incorrect Git source stats: %+v", stats)
+	}
+	for i, fact := range facts {
+		if !strings.HasPrefix(string(fact.SourceLayer), "git_source:sha256:") || stats[i]["source_layer"] != fact.SourceLayer {
+			t.Fatalf("inconsistent Git source identity for %s: %+v / %+v", fact.Title, fact, stats[i])
+		}
+		got, err := api.ReadFactInLayer(ctx, fact.SourceLayer, fact.Slug)
+		if err != nil || got == nil || got.Title != fact.Title || got.SourceLayer != fact.SourceLayer {
+			t.Fatalf("wrong detail for %s: %+v, %v", fact.Title, got, err)
+		}
+		pages := api.GitSourceFacts(strings.TrimPrefix(string(fact.SourceLayer), "git_source:"), "")
+		if len(pages) != 1 || pages[0].Title != fact.Title || pages[0].SourceLayer != fact.SourceLayer || pages[0].Layer != "git_source:test-git" {
+			t.Fatalf("wrong scoped pages for %s: %+v", fact.Title, pages)
+		}
+	}
+	for _, layer := range []LayerType{"test-git", "git_source:test-git"} {
+		legacy, err := api.ReadFactInLayer(ctx, layer, facts[0].Slug)
+		if err != nil || legacy == nil || legacy.Title != facts[0].Title {
+			t.Fatalf("legacy link %s: %+v, %v", layer, legacy, err)
+		}
+	}
+	if err := api.DisconnectGitSource(first.Config().URL, first.Config().Subpath); err != nil {
+		t.Fatal(err)
+	}
+	got, err := api.ReadFactInLayer(ctx, facts[1].SourceLayer, facts[1].Slug)
+	if err != nil || got == nil || got.Title != facts[1].Title {
+		t.Fatalf("previously issued selector: %+v, %v", got, err)
+	}
+}
+
 func TestGetGitSourceStore_NotFound(t *testing.T) {
 	logger := coverageTestLogger()
 	api := &KnowledgeAPI{

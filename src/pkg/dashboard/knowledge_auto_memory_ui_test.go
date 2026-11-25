@@ -32,7 +32,7 @@ func knowledgeAutoMemoryUIScript(t *testing.T) string {
 	return `
 const assert = require('node:assert/strict');
 let _kbFacts = [], _kbPageSize = 50, _kbPageOffset = 0, _kbServerPaged = false,
-    _kbHasMore = false, _kbRequest = 0, _kbSelectedFact = null,
+    _kbHasMore = false, _kbRequest = 0, _kbFactRequest = 0, _kbSelectedFact = null,
     _kbSearchQuery = '', _kbSelectedLayer = 'auto-memory', _kbSelectedType = '';
 const el = {innerHTML: ''};
 const document = {getElementById: () => el};
@@ -52,6 +52,7 @@ const fetchKnowledgeStats = () => { statsFetched++; };
 		section("    function renderKnowledgeFacts() {", "    function renderKnowledgeDetail()") + `
 (async () => {
  const drained = {slug: 'cli-memory-aaaa', title: 'Use go test -run', state: 'draft',
+   source_layer: 'vault:sha256:drained',
    tags: ['cli-memory', 'cli:claude', 'memhash:aaaa', 'agent:scanner', 'agent:developer']};
  const approved = {slug: 'cli-memory-bbbb', title: 'Approved memory', state: 'approved', tags: ['cli-memory', 'agent:scanner']};
  const calls = [];
@@ -64,23 +65,25 @@ const fetchKnowledgeStats = () => { statsFetched++; };
  assert.match(calls[0].url, /^\/api\/knowledge\/search\?tag=cli-memory&include_states=draft/);
  assert.deepEqual(_kbFacts.map(f => f.slug), ['cli-memory-aaaa'], 'only drafts are listed for review');
  assert.ok(el.innerHTML.includes('agent scanner') && el.innerHTML.includes('agent developer'), el.innerHTML);
- assert.match(el.innerHTML, /data-action="kbAutoMemoryReview" data-arg0="cli-memory-aaaa" data-arg1="approved"/);
- assert.match(el.innerHTML, /data-action="kbAutoMemoryReview" data-arg0="cli-memory-aaaa" data-arg1="deprecated"/);
+ assert.match(el.innerHTML, /data-action="kbAutoMemoryReview" data-arg0="cli-memory-aaaa" data-arg1="approved" data-arg2="vault:sha256:drained"/);
+ assert.match(el.innerHTML, /data-action="kbAutoMemoryReview" data-arg0="cli-memory-aaaa" data-arg1="deprecated" data-arg2="vault:sha256:drained"/);
 
- await kbAutoMemoryReview('cli-memory-aaaa', 'approved');
+ await kbAutoMemoryReview('cli-memory-aaaa', 'approved', drained.source_layer);
  const put = calls.find(c => c.opts && c.opts.method === 'PUT');
  assert.equal(put.url, '/api/knowledge/entry/cli-memory-aaaa/state');
  assert.equal(JSON.parse(put.opts.body).state, 'approved');
+ assert.equal(JSON.parse(put.opts.body).source_layer, drained.source_layer);
  assert.equal(statsFetched, 1);
  assert.deepEqual(alerts, []);
 
- await kbAutoMemoryReview('cli-memory-aaaa', 'deprecated');
+ await kbAutoMemoryReview('cli-memory-aaaa', 'deprecated', drained.source_layer);
  const discard = calls.filter(c => c.opts && c.opts.method === 'PUT')[1];
  assert.equal(JSON.parse(discard.opts.body).state, 'deprecated', 'discard deprecates so the drain never re-drafts it');
+ assert.equal(JSON.parse(discard.opts.body).source_layer, drained.source_layer);
 
  confirmed = false;
  const before = calls.length;
- await kbAutoMemoryReview('cli-memory-aaaa', 'approved');
+ await kbAutoMemoryReview('cli-memory-aaaa', 'approved', drained.source_layer);
  assert.equal(calls.length, before, 'a cancelled confirm sends nothing');
 
  owner = false;

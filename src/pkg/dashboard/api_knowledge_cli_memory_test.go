@@ -2,12 +2,15 @@ package dashboard
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 const drainedDraftEntry = "---\ntitle: Webhook retries need the idempotency key\ntype: reference\nlayer: project\nstate: draft\nsource: cli-memory\ncli: claude\nagent: scanner\nmemhash: aaaa\ntags: [cli-memory, cli:claude, memhash:aaaa, agent:scanner]\n---\n\nWebhook retries need the idempotency key.\n"
@@ -79,6 +82,40 @@ func TestKnowledgeAgentReadsHideAutoMemoryDrafts(t *testing.T) {
 	}
 	if _, body := tocGet(t, s, "/api/knowledge/toc?agent=scanner"); !strings.Contains(tocIDs(t, body), "cli-memory-aaaa") {
 		t.Errorf("approved auto-memory entry missing from the agent TOC: %s", tocIDs(t, body))
+	}
+}
+
+func TestAutoMemoryReviewUsesSelectedVault(t *testing.T) {
+	s := scopedKnowledgeTOCServer(t)
+	api := s.deps.Knowledge
+	const slug = "cli-memory-aaaa"
+	dir := t.TempDir()
+	other := "---\ntitle: Unrelated copy\nstate: draft\n---\n\nOther content.\n"
+	if err := os.WriteFile(filepath.Join(dir, slug+".md"), []byte(other), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.ConnectVault(dir, "other"); err != nil {
+		t.Fatal(err)
+	}
+	withAutoMemoryVault(t, s)
+	drafts := api.VaultFacts("bead-synth-wiki")
+	if len(drafts) != 1 || drafts[0].SourceLayer == "" {
+		t.Fatalf("drained facts = %+v", drafts)
+	}
+	if rec := doKnowledgeStatePut(s, slug, "alice", true, `{"state":"approved","source_layer":"vault:missing"}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown source status = %d: %s", rec.Code, rec.Body)
+	}
+	for _, state := range []knowledge.LifecycleState{knowledge.StateApproved, knowledge.StateDeprecated} {
+		body := fmt.Sprintf(`{"state":%q,"source_layer":%q}`, state, drafts[0].SourceLayer)
+		if rec := doKnowledgeStatePut(s, slug, "alice", true, body); rec.Code != http.StatusOK {
+			t.Fatalf("set %s status = %d: %s", state, rec.Code, rec.Body)
+		}
+		if got := api.VaultFacts("bead-synth-wiki")[0].EffectiveState(); got != state {
+			t.Fatalf("selected draft state = %s, want %s", got, state)
+		}
+		if got := api.VaultFacts("other")[0].EffectiveState(); got != knowledge.StateDraft {
+			t.Fatalf("unrelated copy state = %s, want draft", got)
+		}
 	}
 }
 

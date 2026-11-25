@@ -93,20 +93,6 @@
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
-    async function kbSearchVault(name) {
-      const el = document.getElementById('kb-fact-list');
-      if (!el) return;
-      try {
-        const r = await fetch('/api/knowledge/vaults/' + encodeURIComponent(name) + '/facts');
-        if (!r.ok) { _kbFacts = []; renderKnowledgeFacts(); return; }
-        _kbFacts = await r.json();
-        _kbServerPaged = false;
-        _kbPageOffset = 0;
-        _kbHasMore = false;
-        renderKnowledgeFacts();
-      } catch (e) { _kbFacts = []; renderKnowledgeFacts(); }
-    }
-
     // fetchKnowledgeStats() — deferred to _deferredInit
 
     // --- Audit Log ---
