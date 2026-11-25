@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v6.61.6)
+
+### Fixed
+
+- On a repository whose auto-merge is on, a contributor's or trusted author's PR no longer flips between `stage/050-review-pending` and the stage its reviewer verdict routes to on one head. The engine ticker and the queued automerge sweep share one stage tracker ([#12573](https://github.com/hivecommons/hive/issues/12573)); when one of them drained it between a lane noting the head's verdict and recording its observation, the next drain held the lane's reason with no verdict, so a `requires_human` head waiting at `contributor-lane:no-verdict` read as 050 instead of 085 and moved back on the next pass ([projectbluefin/utah#1502](https://github.com/projectbluefin/utah/pull/1502) flipped 050 and 085 ten times each overnight). [#19380](https://github.com/hivecommons/hive/pull/19380) and [#19523](https://github.com/hivecommons/hive/pull/19523) covered only the `repo-auto-merge-disabled` reason. The stage pass now reads the head's verdict from the review record the lanes read for a reason the lane returns only after it noted that verdict: the contributor lane's `contributor-lane:no-verdict` and `contributor-lane:soaking`, the trusted-author lane's `review-gate:` holds, and either lane's CI wait or red check. A verdict recorded only for an older head is not applied, and a CI wait or soak never takes a verdict that would route the head to 085, since a person's approval read beside the verdict is lost in the same split.
+
 ## 2026-11-24 (v6.61.5)
 
 ### Fixed
