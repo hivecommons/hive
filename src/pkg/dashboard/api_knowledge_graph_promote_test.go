@@ -15,6 +15,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,14 +25,13 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
-// fakeWikiLayer is a minimal llm-wiki-compatible endpoint: GET
-// /api/pages/<slug> serves the configured pages, POST /api/ingest records the
-// payload and answers with ingestStatus.
+// fakeWikiLayer serves configured pages and records writes.
 type fakeWikiLayer struct {
 	mu           sync.Mutex
 	pages        map[string]map[string]any
 	ingestStatus int
 	ingested     []string
+	mutations    []string
 	srv          *httptest.Server
 }
 
@@ -46,6 +46,14 @@ func newFakeWikiLayer(t *testing.T, pages map[string]map[string]any, ingestStatu
 			f.ingested = append(f.ingested, string(body))
 			f.mu.Unlock()
 			w.WriteHeader(f.ingestStatus)
+		case r.Method == http.MethodGet && (r.URL.Path == "/api/search" || r.URL.Path == "/api/pages"):
+			pages := make([]map[string]any, 0, len(f.pages))
+			for _, page := range f.pages {
+				pages = append(pages, page)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"results": pages})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/stats":
+			_ = json.NewEncoder(w).Encode(map[string]int{"total_pages": len(f.pages)})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/pages/"):
 			slug := strings.TrimPrefix(r.URL.Path, "/api/pages/")
 			page, ok := f.pages[slug]
@@ -54,6 +62,11 @@ func newFakeWikiLayer(t *testing.T, pages map[string]map[string]any, ingestStatu
 				return
 			}
 			_ = json.NewEncoder(w).Encode(page)
+		case (r.Method == http.MethodPost || r.Method == http.MethodDelete) && strings.HasPrefix(r.URL.Path, "/api/pages/"):
+			f.mu.Lock()
+			f.mutations = append(f.mutations, r.Method+" "+r.URL.Path)
+			f.mu.Unlock()
+			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
 		}
@@ -66,6 +79,12 @@ func (f *fakeWikiLayer) ingestedPayloads() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.ingested...)
+}
+
+func (f *fakeWikiLayer) pageMutations() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.mutations...)
 }
 
 // writeVaultFact writes a frontmatter fact file the FileStore indexer parses,
@@ -268,6 +287,13 @@ func TestHandleKnowledgePromote_VaultFallbackSyncsToLayer(t *testing.T) {
 	api := knowledge.NewKnowledgeAPI(layers, knowledge.KnowledgeConfig{Enabled: true}, slog.Default())
 	srv.deps.Knowledge = api
 
+	personal := t.TempDir()
+	if err := os.WriteFile(filepath.Join(personal, "vault-fact.md"), []byte("---\ntitle: Personal Copy\nlayer: personal\n---\n\nPersonal body.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := api.ConnectVault(personal, "personal-notes"); err != nil {
+		t.Fatal(err)
+	}
 	vaultDir := t.TempDir()
 	writeVaultFact(t, vaultDir, "vault-fact", "Vault Fact")
 	if err := api.ConnectVault(vaultDir, "testvault"); err != nil {
@@ -288,8 +314,263 @@ func TestHandleKnowledgePromote_VaultFallbackSyncsToLayer(t *testing.T) {
 	if result.Slug != "vault-fact" || result.FromLayer != "project" || result.ToLayer != "org" {
 		t.Errorf("unexpected result: %+v", result)
 	}
-	if payloads := dst.ingestedPayloads(); len(payloads) != 1 {
-		t.Errorf("expected the vault fact to be ingested into org, got %d ingests", len(payloads))
+	if payloads := dst.ingestedPayloads(); len(payloads) != 1 || !strings.Contains(payloads[0], "Vault Fact") {
+		t.Errorf("expected the Project vault fact to be ingested into org, got %q", payloads)
+	}
+}
+
+func TestHandleKnowledgePromote_ConfiguredSourceFailureDoesNotUseVault(t *testing.T) {
+	src := newFakeWikiLayer(t, nil, http.StatusOK)
+	dst := newFakeWikiLayer(t, nil, http.StatusOK)
+	srv := newMinimalServer(t)
+	api := knowledge.NewKnowledgeAPI([]knowledge.LayerConfig{
+		{Type: knowledge.LayerProject, URL: src.srv.URL},
+		{Type: knowledge.LayerOrg, URL: dst.srv.URL},
+	}, knowledge.KnowledgeConfig{Enabled: true}, slog.Default())
+	srv.deps.Knowledge = api
+	dir := t.TempDir()
+	writeVaultFact(t, dir, "shared-fact", "Unrelated Vault")
+	if err := api.ConnectVault(dir, "vault"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postPromote(t, srv, `{"slug":"shared-fact","from_layer":"project","to_layer":"org"}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "reading fact from project") {
+		t.Fatalf("expected project read failure, got %d: %s", rec.Code, rec.Body)
+	}
+	if payloads := dst.ingestedPayloads(); len(payloads) != 0 {
+		t.Fatalf("unexpected fallback promotion payloads: %q", payloads)
+	}
+}
+
+func TestHandleKnowledgeFact_DuplicateVaultNamesHaveExactRoutes(t *testing.T) {
+	srv := newMinimalServer(t)
+	api := knowledge.NewKnowledgeAPI(nil, knowledge.KnowledgeConfig{Enabled: true}, slog.Default())
+	srv.deps.Knowledge = api
+	first := t.TempDir()
+	second := t.TempDir()
+	writeVaultFact(t, first, "shared-fact", "First vault fact")
+	writeVaultFact(t, second, "shared-fact", "Second vault fact")
+	for _, dir := range []string{first, second} {
+		if err := api.ConnectVault(dir, "Same Name"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	read := func(selector string, want knowledge.Fact) {
+		t.Helper()
+		rec := doGet(srv, "/api/knowledge/"+url.PathEscape(selector)+"/shared-fact")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+		}
+		var fact knowledge.Fact
+		if err := json.NewDecoder(rec.Body).Decode(&fact); err != nil {
+			t.Fatal(err)
+		}
+		if fact.Title != want.Title || fact.SourceLayer != want.SourceLayer {
+			t.Fatalf("wrong fact: %+v", fact)
+		}
+	}
+	facts := api.SearchAllWithVaults(srv.deps.Ctx, "", "", 0)
+	if len(facts) != 2 || facts[0].SourceLayer == facts[1].SourceLayer {
+		t.Fatalf("vault rows lack distinct identities: %+v", facts)
+	}
+	for _, fact := range facts {
+		source, ok := strings.CutPrefix(string(fact.SourceLayer), "vault:")
+		if !ok || !strings.HasPrefix(source, "sha256:") {
+			t.Fatalf("expected opaque vault ID: %+v", fact)
+		}
+		read(string(fact.SourceLayer), fact)
+		filtered := api.VaultFacts(source)
+		if len(filtered) != 1 || filtered[0].SourceLayer != fact.SourceLayer || filtered[0].Title != fact.Title {
+			t.Fatalf("wrong vault listing: %+v", filtered)
+		}
+	}
+	read("vault:Same Name", facts[0])
+	if err := api.DisconnectVault(first); err != nil {
+		t.Fatal(err)
+	}
+	read(string(facts[1].SourceLayer), facts[1])
+	if rec := doGet(srv, "/api/knowledge/"+url.PathEscape(string(facts[0].SourceLayer))+"/shared-fact"); rec.Code != http.StatusNotFound {
+		t.Fatalf("removed vault route = %d: %s", rec.Code, rec.Body)
+	}
+}
+
+func TestHandleKnowledgePromote_UsesRequestedVault(t *testing.T) {
+	dst := newFakeWikiLayer(t, nil, http.StatusOK)
+	personal := newFakeWikiLayer(t, nil, http.StatusOK)
+	srv := newMinimalServer(t)
+	api := knowledge.NewKnowledgeAPI([]knowledge.LayerConfig{
+		{Type: knowledge.LayerOrg, URL: dst.srv.URL},
+		{Type: knowledge.LayerPersonal, URL: personal.srv.URL},
+	}, knowledge.KnowledgeConfig{Enabled: true}, slog.Default())
+	srv.deps.Knowledge = api
+	for _, name := range []string{"Unrelated Vault", "Selected Vault"} {
+		dir := t.TempDir()
+		writeVaultFact(t, dir, "shared-fact", name)
+		if err := api.ConnectVault(dir, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	source := api.VaultFacts("Selected Vault")[0].SourceLayer
+	rec := postPromote(t, srv, fmt.Sprintf(`{"slug":"shared-fact","from_layer":%q,"to_layer":"org"}`, source))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+	}
+	payloads := dst.ingestedPayloads()
+	if len(payloads) != 1 || !strings.Contains(payloads[0], "Selected Vault") || strings.Contains(payloads[0], "Unrelated Vault") {
+		t.Fatalf("wrong promotion payloads: %q", payloads)
+	}
+	rec = postPromote(t, srv, fmt.Sprintf(`{"slug":"shared-fact","from_layer":%q,"to_layer":"personal"}`, source))
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "promotion only flows upward") {
+		t.Fatalf("downward promotion status = %d: %s", rec.Code, rec.Body)
+	}
+	if len(personal.ingestedPayloads()) != 0 || len(personal.pageMutations()) != 0 {
+		t.Fatal("downward promotion wrote to the Personal wiki")
+	}
+}
+
+func TestHandleKnowledgeFact_UsesRequestedSource(t *testing.T) {
+	wiki := func(title string) *fakeWikiLayer {
+		return newFakeWikiLayer(t, map[string]map[string]any{
+			"shared": {"slug": "shared", "title": title, "body": title},
+		}, http.StatusOK)
+	}
+	srv := newMinimalServer(t)
+	api := knowledge.NewKnowledgeAPI([]knowledge.LayerConfig{
+		{Type: knowledge.LayerOrg, URL: wiki("Org").srv.URL},
+		{Type: knowledge.LayerProject, URL: wiki("Project").srv.URL},
+	}, knowledge.KnowledgeConfig{Enabled: true}, slog.Default())
+	srv.deps.Knowledge = api
+	for _, name := range []string{"my vault", "project"} {
+		dir := t.TempDir()
+		writeVaultFact(t, dir, "shared", name)
+		writeVaultFact(t, dir, "vault-only", name)
+		if err := api.ConnectVault(dir, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sources := make(map[string]knowledge.LayerType)
+	for _, f := range api.SearchAllWithVaults(srv.deps.Ctx, "", "", 0) {
+		if f.Slug == "shared" {
+			sources[f.Title] = f.SourceLayer
+		}
+	}
+
+	for _, tc := range []struct {
+		path, title, layer string
+	}{
+		{"project/shared", "Project", "project"},
+		{"org/shared", "Org", "org"},
+		{"all/shared", "Org", "org"},
+		{"vault:project/shared", "project", "project"},
+		{"my%20vault/shared", "my vault", "project"},
+		{"vault:my%20vault/shared", "my vault", "project"},
+		{"project/vault-only", "", ""},
+		{"community/shared", "", ""},
+		{"vault:missing/shared", "", ""},
+		{"git_source:missing/shared", "", ""},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			rec := doGet(srv, "/api/knowledge/"+tc.path)
+			if tc.title == "" {
+				if rec.Code != http.StatusNotFound {
+					t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body)
+				}
+				return
+			}
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body)
+			}
+			var fact knowledge.Fact
+			if err := json.NewDecoder(rec.Body).Decode(&fact); err != nil {
+				t.Fatal(err)
+			}
+			if fact.Title != tc.title || string(fact.Layer) != tc.layer || fact.SourceLayer == "" || fact.SourceLayer != sources[tc.title] {
+				t.Fatalf("wrong fact: %+v", fact)
+			}
+		})
+	}
+
+	var vaultSource knowledge.LayerType
+	for _, layer := range api.Stats(srv.deps.Ctx)["layers"].([]map[string]interface{}) {
+		if layer["type"] == "project" {
+			vaultSource, _ = layer["source_layer"].(knowledge.LayerType)
+		}
+	}
+	selector, qualified := strings.CutPrefix(string(vaultSource), "vault:")
+	if !qualified || vaultSource != sources["project"] {
+		t.Fatalf("project vault selector = %q, want %q", vaultSource, sources["project"])
+	}
+	rec := doGet(srv, "/api/knowledge/vaults/"+url.PathEscape(selector)+"/facts")
+	var listed []knowledge.Fact
+	if rec.Code != http.StatusOK || json.NewDecoder(rec.Body).Decode(&listed) != nil || len(listed) != 2 {
+		t.Fatalf("project vault listing = %d: %s", rec.Code, rec.Body)
+	}
+	for _, f := range listed {
+		if f.Title != "project" || f.SourceLayer != vaultSource {
+			t.Fatalf("listed fact was not from the project vault: %+v", f)
+		}
+	}
+}
+
+func TestKnowledgeActionsUseSelectedWikiEndpoint(t *testing.T) {
+	wiki := func(title string) *fakeWikiLayer {
+		return newFakeWikiLayer(t, map[string]map[string]any{
+			"shared": {"slug": "shared", "title": title, "body": title},
+		}, http.StatusOK)
+	}
+	first, second := wiki("First wiki"), wiki("Second wiki")
+	target := newFakeWikiLayer(t, nil, http.StatusOK)
+	srv := newMinimalServer(t)
+	api := knowledge.NewKnowledgeAPI([]knowledge.LayerConfig{
+		{Type: knowledge.LayerProject, URL: first.srv.URL},
+		{Type: knowledge.LayerOrg, URL: target.srv.URL},
+	}, knowledge.KnowledgeConfig{Enabled: true}, slog.Default())
+	srv.deps.Knowledge = api
+	if err := api.AddSubscription(knowledge.Subscription{Layer: knowledge.LayerProject, URL: second.srv.URL}); err != nil {
+		t.Fatal(err)
+	}
+	facts := api.SearchAllWithVaults(srv.deps.Ctx, "", "", 0)
+	if len(facts) != 2 || facts[0].SourceLayer == facts[1].SourceLayer || facts[1].Title != "Second wiki" {
+		t.Fatalf("wiki search identities = %+v", facts)
+	}
+	source := facts[1].SourceLayer
+	layerPath := "/api/knowledge/" + url.PathEscape(string(source))
+	list := decodeJSON(t, doGet(srv, layerPath))
+	if list["count"] != float64(1) {
+		t.Fatalf("selected wiki listing = %v", list)
+	}
+	row := list["facts"].([]interface{})[0].(map[string]interface{})
+	if row["title"] != "Second wiki" || row["source_layer"] != string(source) {
+		t.Fatalf("selected wiki row = %v", row)
+	}
+	factPath := layerPath + "/shared"
+	detail := decodeJSON(t, doGet(srv, factPath))
+	if detail["title"] != "Second wiki" || detail["source_layer"] != string(source) {
+		t.Fatalf("selected wiki detail = %v", detail)
+	}
+	if rec := doPut(srv, factPath, map[string]string{"title": "Edited"}); rec.Code != http.StatusOK {
+		t.Fatalf("edit status = %d: %s", rec.Code, rec.Body)
+	}
+	if rec := postPromote(t, srv, fmt.Sprintf(`{"slug":"shared","from_layer":%q,"to_layer":"org"}`, source)); rec.Code != http.StatusOK {
+		t.Fatalf("promote status = %d: %s", rec.Code, rec.Body)
+	}
+	if payloads := target.ingestedPayloads(); len(payloads) != 1 || !strings.Contains(payloads[0], "Second wiki") {
+		t.Fatalf("promoted wrong wiki fact: %q", payloads)
+	}
+	if rec := doDelete(srv, factPath, nil); rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d: %s", rec.Code, rec.Body)
+	}
+	if got := strings.Join(second.pageMutations(), ", "); got != "POST /api/pages/shared, DELETE /api/pages/shared" || len(first.pageMutations()) != 0 {
+		t.Fatalf("wiki writes = %q on first and %q on second", first.pageMutations(), got)
+	}
+	if err := api.RemoveSubscription(second.srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	if rec := doGet(srv, factPath); rec.Code != http.StatusNotFound {
+		t.Fatalf("removed wiki route = %d: %s", rec.Code, rec.Body)
 	}
 }
 

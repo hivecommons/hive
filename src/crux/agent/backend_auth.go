@@ -91,6 +91,10 @@ func classifyBackendAuthStatus(class, line string) (status string, ok bool) {
 			return BackendAuthTokenExpired, true
 		}
 		return BackendAuthForbidden, true
+	case "model_access":
+		// Entitlement denial for the configured model; the cause (project,
+		// plan, key) is not verifiable from the line.
+		return BackendAuthForbidden, true
 	case "quota":
 		return BackendAuthQuota, true
 	case "api_error", "backend_auth_error":

@@ -264,14 +264,15 @@ type GraphData struct {
 
 // GraphNode represents a fact in the graph visualization.
 type GraphNode struct {
-	Slug       string   `json:"slug"`
-	Title      string   `json:"title"`
-	Type       string   `json:"type"`
-	Layer      string   `json:"layer"`
-	Confidence float64  `json:"confidence"`
-	UsageCount int      `json:"usage_count"`
-	Tags       []string `json:"tags,omitempty"`
-	Body       string   `json:"body,omitempty"`
+	Slug        string   `json:"slug"`
+	Title       string   `json:"title"`
+	Type        string   `json:"type"`
+	Layer       string   `json:"layer"`
+	SourceLayer string   `json:"source_layer,omitempty"`
+	Confidence  float64  `json:"confidence"`
+	UsageCount  int      `json:"usage_count"`
+	Tags        []string `json:"tags,omitempty"`
+	Body        string   `json:"body,omitempty"`
 }
 
 // GraphEdge represents a relationship between two facts.
@@ -307,6 +308,7 @@ func (g *GraphStore) BuildGraphData(stores []*FileStore, rootSlug string, depth 
 				node.Title = f.Title
 				node.Type = string(f.Type)
 				node.Layer = string(f.Layer)
+				node.SourceLayer = string(vaultSourceLayer(store))
 				node.Confidence = f.Confidence
 				node.UsageCount = f.UsageCount
 				node.Tags = f.Tags

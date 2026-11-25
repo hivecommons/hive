@@ -370,6 +370,16 @@ func (s *HubServer) handleCustomerMatch(w http.ResponseWriter, r *http.Request) 
 		writeJSONError(w, http.StatusTooManyRequests, "match rate limit exceeded")
 		return
 	}
+	// Trust domain: only the project's own hives hear anything. Any other
+	// hive gets the same empty answer as a hive whose customers are unknown,
+	// before a hash is looked at, whatever its own hub_import switch says.
+	if !customerTrustedHive(hiveID) {
+		s.logger.Info("audit: customer match", "hive", hiveID, "requested", len(req.Hashes),
+			"delivered", 0, "public", 0, "cleared", 0, "trusted", false)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{\"matches\":[]}\n"))
+		return
+	}
 	if len(req.Hashes) > maxCustomerMatchBatch {
 		writeJSONError(w, http.StatusRequestEntityTooLarge, "too many hashes in one batch")
 		return
