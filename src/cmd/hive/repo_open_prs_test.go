@@ -95,6 +95,16 @@ func TestRelayPRCovered(t *testing.T) {
 		"planned but settled": {handoffState{planned: planned, log: []scheduler.WorkflowDispatchEntry{
 			{Ref: "acme/docs#7", Agent: "drafter", At: now.Add(-time.Minute), Status: scheduler.WorkflowHandoffStarted},
 		}}, false},
+		// A record is one hand-off (item, profile, state, trigger): an
+		// earlier hand-off of the same item that settled does not veto a
+		// later one to the same agent.
+		"earlier hand-off settled, later one pending": {handoffState{log: []scheduler.WorkflowDispatchEntry{
+			{Key: "k-old", Ref: "acme/docs#7", Agent: "drafter", At: now.Add(-3 * time.Hour), Status: scheduler.WorkflowHandoffStarted},
+			{Key: "k-new", Ref: "acme/docs#7", Agent: "drafter", At: now.Add(-time.Minute), Status: scheduler.WorkflowHandoffPending},
+		}}, true},
+		"earlier hand-off settled, later one planned": {handoffState{planned: planned, log: []scheduler.WorkflowDispatchEntry{
+			{Key: "k-old", Ref: "acme/docs#7", Agent: "drafter", At: now.Add(-3 * time.Hour), Status: scheduler.WorkflowHandoffNotStarted},
+		}}, true},
 	}
 	for name, c := range cases {
 		if got := relayPRCovered(c.st, "acme", "drafter", "docs", []int{7}, now); got != c.want {
@@ -145,6 +155,34 @@ func TestSandboxKickRefusal(t *testing.T) {
 	}
 	if _, reason := openPRsRefusal(cfg, func() handoffState { return st }, "drafter", "docs", nil, github.SandboxPRVia, now); reason != "" {
 		t.Errorf("backstop must allow the hand-off agent's sandbox PR, got %q", reason)
+	}
+}
+
+// The automatic pass records the hand-off kick with the text that is sent:
+// the knowledge primer prepends to the built prompt, and a record of the
+// unprimed text would refuse push to the real hand-off in a workflow_only
+// repo.
+func TestRecordPlannedHandoffKickUsesFinalText(t *testing.T) {
+	now := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)
+	cfg := openPRsTestConfig()
+	reg := &handoffKickRegistry{kicks: map[string]plannedHandoffKick{}}
+	built := "## Workflow hand-off: analysis for acme/docs#7\n..."
+	k := workflowDispatchKick{
+		Dispatch: github.WorkflowDispatch{Repo: "acme/docs", Number: 7},
+		Message:  scheduler.KickMessage{Agent: "drafter", Message: built},
+	}
+	// What PrimeWorkflowDispatch does when the primer has a section.
+	k.Message.Message = "📚 knowledge section\n\n" + k.Message.Message
+	recordPlannedHandoffKick(reg, k, now)
+
+	if _, reason := sandboxKickRefusal(cfg, reg, "drafter", "acme/docs", k.Message.Message, now); reason != "" {
+		t.Errorf("the sent (primed) hand-off kick must push, got %q", reason)
+	}
+	if _, reason := sandboxKickRefusal(cfg, reg, "drafter", "acme/docs", built, now); reason == "" {
+		t.Error("only the exact sent text is a planned hand-off kick")
+	}
+	if !relayPRCovered(handoffState{planned: reg.list(now)}, "acme", "drafter", "docs", []int{7}, now) {
+		t.Error("the recorded kick must cover its relay PR")
 	}
 }
 

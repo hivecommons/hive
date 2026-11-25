@@ -75,6 +75,14 @@ func (r *handoffKickRegistry) record(agent, ref, message string, now time.Time) 
 	r.kicks[handoffKickKey(agent, message)] = plannedHandoffKick{agent: agent, ref: ref, at: now}
 }
 
+// recordPlannedHandoffKick notes the automatic pass's hand-off kick k with
+// its final text. It must run after the last change to k.Message (the
+// knowledge primer prepends a section) and before the send: the sandbox
+// launch gate matches the exact text it receives.
+func recordPlannedHandoffKick(reg *handoffKickRegistry, k workflowDispatchKick, now time.Time) {
+	reg.record(k.Message.Agent, k.Dispatch.Ref(), k.Message.Message, now)
+}
+
 // byMessage returns the live planned kick with exactly this agent and text.
 func (r *handoffKickRegistry) byMessage(agent, message string, now time.Time) (plannedHandoffKick, bool) {
 	if r == nil {
@@ -131,9 +139,12 @@ type handoffState struct {
 
 // relayPRCovered reports whether a relay PR request from agent in repo that
 // names issues comes from a live hand-off: one of the issues is an item the
-// hive handed to this agent (planned, or delivered and still pending), and
-// no settled record (started or not started) of that item for this agent
-// exists. A request that names no issue is never covered.
+// hive handed to this agent and that hand-off is live: a delivered record
+// still pending within the window, or a planned kick no settled record
+// (started or not started) delivered at or after it has closed. A record
+// is one hand-off (item, profile, state, trigger), so an earlier, settled
+// hand-off of the same item does not veto a later one. A request that names
+// no issue is never covered.
 func relayPRCovered(st handoffState, org, agent, repo string, issues []int, now time.Time) bool {
 	agent = strings.TrimSpace(agent)
 	if agent == "" || len(issues) == 0 {
@@ -144,8 +155,9 @@ func relayPRCovered(st handoffState, org, agent, repo string, issues []int, now 
 	for _, n := range issues {
 		named[n] = true
 	}
-	live := map[int]bool{}
-	settled := map[int]bool{}
+	// lastSettled is, per named issue, the delivery time of the latest
+	// settled hand-off of it to this agent.
+	lastSettled := map[int]time.Time{}
 	for _, e := range st.log {
 		if e.Agent != agent {
 			continue
@@ -155,25 +167,29 @@ func relayPRCovered(st handoffState, org, agent, repo string, issues []int, now 
 			continue
 		}
 		if e.Settled() {
-			settled[n] = true
+			if prev, seen := lastSettled[n]; !seen || e.At.After(prev) {
+				lastSettled[n] = e.At
+			}
 			continue
 		}
 		if !e.At.IsZero() && !now.Before(e.At) && now.Sub(e.At) <= workflowOnlyPRWindow {
-			live[n] = true
+			return true
 		}
 	}
 	for _, k := range st.planned {
 		if k.agent != agent {
 			continue
 		}
-		if r, n, ok := splitHandoffRef(org, k.ref); ok && r == want && named[n] {
-			live[n] = true
+		r, n, ok := splitHandoffRef(org, k.ref)
+		if !ok || r != want || !named[n] {
+			continue
 		}
-	}
-	for n := range live {
-		if !settled[n] {
-			return true
+		// A kick is recorded before it is sent, so its own delivery
+		// record is at or after it; such a record that settled closes it.
+		if at, seen := lastSettled[n]; seen && !at.Before(k.at) {
+			continue
 		}
+		return true
 	}
 	return false
 }

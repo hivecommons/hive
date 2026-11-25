@@ -351,9 +351,9 @@ func buildWorkflowDispatchKicks(cfg *config.Config, rt *workflowDispatchRuntime,
 			refs = []string{c.Dispatch.Ref()}
 		}
 		rt.markPending(c.Key, now)
-		// Provenance for the per-repo open-PRs gate (repo_open_prs.go),
-		// recorded before the kick is sent.
-		workflowHandoffKicks.record(c.Agent, c.Dispatch.Ref(), msg, now)
+		// The open-PRs provenance (repo_open_prs.go) is recorded by the
+		// caller once the text is final: the knowledge primer still
+		// prepends to it (recordPlannedHandoffKick).
 		out = append(out, workflowDispatchKick{
 			Dispatch: c.Dispatch,
 			Message:  scheduler.KickMessage{Agent: c.Agent, Message: msg, IssueRefs: refs},
