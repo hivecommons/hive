@@ -1,0 +1,1 @@
+- Continue self-authored automerge sweeps for accessible repositories when another repository returns 404.

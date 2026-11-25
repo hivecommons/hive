@@ -181,6 +181,10 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 		}
 		prs, skipReason, err := c.openPullRequests(ctx, owner, repoName, opts.Targets)
 		if err != nil {
+			if isGitHubStatus(err, http.StatusNotFound) {
+				c.warn("self-authored automerge sweep skipped inaccessible repo", "repo", repo, "error", err)
+				continue
+			}
 			return result, err
 		}
 		if skipReason != "" {
