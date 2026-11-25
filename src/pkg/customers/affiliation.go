@@ -198,3 +198,42 @@ func SuggestAffiliation(p Person) *AffiliationSuggestion {
 	}
 	return nil
 }
+
+// AffiliationAutoAcceptedGitdm is the Rule an organization carries when the
+// gitdm_high auto-accept policy (customers.enrichment.auto_accept) filled it
+// from a current gitdm affiliation matched by GitHub login. It is an
+// automatic value: a person's edit replaces it, and dismissing it clears it
+// and keeps it from being accepted again.
+const AffiliationAutoAcceptedGitdm = "gitdm_auto_accepted"
+
+// AutoAcceptCandidate is the gitdm affiliation the gitdm_high policy may
+// write into p's organization, if any. Only a current gitdm affiliation
+// matched by GitHub login (confidence high) qualifies; an email match never
+// does. The field must be empty or hold an earlier auto-accepted value: a
+// value a person set or cleared, one shared from the hub, and the company on
+// the person's own public forge profile (their own statement, which outranks
+// gitdm on the hub too) are never replaced. A dismissed value is not
+// accepted again.
+func AutoAcceptCandidate(p Person, enriched []EnrichedAffiliation, now time.Time) (EnrichedAffiliation, bool) {
+	org := p.Profile.Organization
+	switch {
+	case org.Source == SourceManual, org.Source == SourceHub:
+		return EnrichedAffiliation{}, false
+	case org.Value != "" && org.Rule != AffiliationAutoAcceptedGitdm:
+		return EnrichedAffiliation{}, false
+	}
+	var high []EnrichedAffiliation
+	for _, a := range enriched {
+		if a.Source == EnrichSourceGitdm && a.Confidence == EnrichConfidenceHigh && a.MatchedBy == EnrichMatchedByLogin {
+			high = append(high, a)
+		}
+	}
+	cur, ok := currentEnrichedAffiliation(high, now)
+	if !ok || cur.Org == "" || len(cur.Org) > MaxProfileFieldLen {
+		return EnrichedAffiliation{}, false
+	}
+	if affiliationDismissed(p.Profile, strings.ToLower(cur.Org)) || org.Value == cur.Org {
+		return EnrichedAffiliation{}, false
+	}
+	return cur, true
+}

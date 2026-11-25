@@ -38,6 +38,7 @@ const (
 	MaxEnrichedActivity     = 50
 	maxEnrichedTextLen      = 200
 	maxEnrichedURLLen       = 500
+	maxEnrichedMatchedByLen = 32
 	// enrichmentDateLayout is how affiliation dates are kept: a calendar
 	// date, the precision gitdm publishes.
 	enrichmentDateLayout = "2006-01-02"
@@ -50,7 +51,22 @@ type EnrichedAffiliation struct {
 	From   string `json:"from,omitempty"`
 	Until  string `json:"until,omitempty"`
 	Source string `json:"source"`
+	// Confidence is the provider's confidence ("high", "medium", "low"),
+	// and MatchedBy the identifier kind that matched ("github_login",
+	// "email"), never its value. Both are empty in files written before
+	// they were recorded.
+	Confidence string `json:"confidence,omitempty"`
+	MatchedBy  string `json:"matched_by,omitempty"`
 }
+
+// Enrichment confidence and match kinds, as colony's gitdm provider reports
+// them.
+const (
+	EnrichConfidenceHigh   = "high"
+	EnrichConfidenceMedium = "medium"
+	EnrichConfidenceLow    = "low"
+	EnrichMatchedByLogin   = "github_login"
+)
 
 // EnrichedActivity is one project's public contribution count.
 type EnrichedActivity struct {
@@ -360,7 +376,17 @@ func cleanEnrichedAffiliation(a EnrichedAffiliation, source string) (EnrichedAff
 	if !okF || !okU {
 		return EnrichedAffiliation{}, false
 	}
-	return EnrichedAffiliation{Org: org, From: from, Until: until, Source: source}, true
+	conf := strings.ToLower(strings.TrimSpace(a.Confidence))
+	switch conf {
+	case "", EnrichConfidenceHigh, EnrichConfidenceMedium, EnrichConfidenceLow:
+	default:
+		conf = ""
+	}
+	by, okB := enrichedText(a.MatchedBy, maxEnrichedMatchedByLen)
+	if !okB {
+		by = ""
+	}
+	return EnrichedAffiliation{Org: org, From: from, Until: until, Source: source, Confidence: conf, MatchedBy: by}, true
 }
 
 func cleanEnrichedActivity(t EnrichedActivity, source string) (EnrichedActivity, bool) {

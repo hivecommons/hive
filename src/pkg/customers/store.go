@@ -606,6 +606,11 @@ func (s *Store) DismissAffiliation(id, value string) (Person, error) {
 		return Person{}, fmt.Errorf("%w: empty affiliation", ErrInvalid)
 	}
 	return s.changePerson(id, func(p *Person) error {
+		// Dismissing an auto-accepted organization clears it as well.
+		if org := p.Profile.Organization; org.Source == SourceAuto && org.Rule == AffiliationAutoAcceptedGitdm &&
+			strings.ToLower(org.Value) == key {
+			p.Profile.Organization = ProfileField{}
+		}
 		if affiliationDismissed(p.Profile, key) {
 			return nil
 		}
@@ -628,7 +633,8 @@ func (s *Store) ApplyAutoProfile(id string, values map[string]string) (Person, b
 		for _, name := range ProfileFields {
 			f := p.Profile.Field(name)
 			v, err := cleanText(values[name], MaxProfileFieldLen, false)
-			if err != nil || v == "" || f.Source == SourceManual || (f.Source == SourceHub && !HubValueYieldsToForge(*f)) || f.Value == v {
+			if err != nil || v == "" || f.Source == SourceManual || (f.Source == SourceHub && !HubValueYieldsToForge(*f)) || f.Value == v ||
+				f.Rule == AffiliationAutoAcceptedGitdm {
 				continue
 			}
 			*f = ProfileField{Value: v, Source: SourceAuto, Rule: ProfileSourceGitHub, At: s.now()}
@@ -743,6 +749,36 @@ func (s *Store) ApplyProfileFill(id string, values map[string]ProfileFillValue, 
 		return nil
 	})
 	return p, changed, err
+}
+
+// errNoChange makes change roll back a pass that found nothing to write, so
+// the file is not rewritten.
+var errNoChange = errors.New("customers: nothing changed")
+
+// AutoAcceptAffiliation applies the gitdm_high auto-accept policy to one
+// person: it writes the candidate AutoAcceptCandidate picks from enriched
+// into the organization, as an automatic value labelled
+// AffiliationAutoAcceptedGitdm. The rules are checked again under the lock,
+// so an edit made since the caller read the person wins. It reports whether
+// it wrote anything.
+func (s *Store) AutoAcceptAffiliation(id string, enriched []EnrichedAffiliation) (bool, error) {
+	changed := false
+	_, err := s.changePerson(id, func(p *Person) error {
+		if p.Status != StatusCustomer {
+			return errNoChange
+		}
+		cur, ok := AutoAcceptCandidate(*p, enriched, s.now())
+		if !ok {
+			return errNoChange
+		}
+		p.Profile.Organization = ProfileField{Value: cur.Org, Source: SourceAuto, Rule: AffiliationAutoAcceptedGitdm, At: s.now().UTC()}
+		changed = true
+		return nil
+	})
+	if errors.Is(err, errNoChange) {
+		err = nil
+	}
+	return changed, err
 }
 
 // ClearProfileFetched forgets the last profile-fill lookup of every customer,

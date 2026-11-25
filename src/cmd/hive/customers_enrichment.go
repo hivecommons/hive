@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -192,7 +193,8 @@ func enrichedAffiliations(res resolver.Result) []customers.EnrichedAffiliation {
 		if a.Source != "" && a.Source != gitdm.SourceName {
 			continue
 		}
-		e := customers.EnrichedAffiliation{Org: strings.TrimSpace(a.Org), Source: customers.EnrichSourceGitdm}
+		e := customers.EnrichedAffiliation{Org: strings.TrimSpace(a.Org), Source: customers.EnrichSourceGitdm,
+			Confidence: string(a.Confidence), MatchedBy: a.MatchedBy}
 		if !a.From.IsZero() {
 			e.From = a.From.UTC().Format(day)
 		}
@@ -230,6 +232,8 @@ type customersEnrichmentResult struct {
 	// Devstats counts devstats lookups; Budgeted the people left for a
 	// later pass because the hourly limit was reached.
 	Devstats, Budgeted int
+	// AutoAccepted counts organizations the auto-accept policy filled.
+	AutoAccepted int
 }
 
 // devstatsActivity turns colony's devstats activity into the stored shape.
@@ -352,9 +356,10 @@ func (b *boot) runCustomersEnrichment(ctx context.Context, cfg *config.Config) {
 		}
 	}
 	res := runCustomersEnrichmentPass(ctx, b.customers.svc, cfg, b.customersEnricher, time.Now, audit, b.logger)
-	if b.logger != nil && (res.Looked > 0 || res.Devstats > 0 || res.Changed > 0 || res.Pruned > 0 || res.Dropped > 0 || res.Errors > 0) {
+	if b.logger != nil && (res.Looked > 0 || res.Devstats > 0 || res.Changed > 0 || res.Pruned > 0 || res.Dropped > 0 ||
+		res.AutoAccepted > 0 || res.Errors > 0) {
 		b.logger.Info("[customers] enrichment", "looked_up", res.Looked, "devstats", res.Devstats, "budgeted", res.Budgeted,
-			"changed", res.Changed, "pruned", res.Pruned, "dropped", res.Dropped, "errors", res.Errors)
+			"changed", res.Changed, "pruned", res.Pruned, "dropped", res.Dropped, "auto_accepted", res.AutoAccepted, "errors", res.Errors)
 	}
 }
 
@@ -438,5 +443,44 @@ func runCustomersEnrichmentPass(ctx context.Context, svc *customers.Service, cfg
 			}
 		}
 	}
+	runAutoAcceptStep(svc, cfg, people, audit, &res)
 	return res
+}
+
+// customersAutoAcceptAuditProvider names the auto-accept policy on the
+// enrichment audit line of a person whose organization it filled.
+const customersAutoAcceptAuditProvider = "gitdm_auto_accept"
+
+// runAutoAcceptStep applies customers.enrichment.auto_accept after the gitdm
+// lookups. With the default policy, off, it does nothing. With gitdm_high a
+// current gitdm affiliation matched by GitHub login fills an organization
+// that is empty or was auto-accepted before (customers.AutoAcceptCandidate);
+// it never replaces a value a person set, one shared from the hub, or the
+// person's own forge profile company.
+func runAutoAcceptStep(svc *customers.Service, cfg *config.Config, people []customers.Person,
+	audit func(person, provider string), res *customersEnrichmentResult) {
+	if cfg.CustomersEnrichmentAutoAccept() != config.CustomersAutoAcceptGitdmHigh {
+		return
+	}
+	e := svc.Enrichment()
+	store := svc.Store()
+	for _, p := range people {
+		pe, ok := e.Get(p.ID)
+		if !ok {
+			continue
+		}
+		changed, err := store.AutoAcceptAffiliation(p.ID, pe.Affiliations)
+		if err != nil {
+			if !errors.Is(err, customers.ErrNotFound) {
+				res.Errors++
+			}
+			continue
+		}
+		if changed {
+			res.AutoAccepted++
+			if audit != nil {
+				audit(p.ID, customersAutoAcceptAuditProvider)
+			}
+		}
+	}
 }
