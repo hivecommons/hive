@@ -434,6 +434,7 @@ jobs:
           labels: |
             io.kubestellar.hive.github-actions-run-number=${{ github.run_number }}
             org.opencontainers.image.revision=${{ needs.gate.outputs.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           # STALE-BINARY FIX (unblocks the #3760 fix in the SHIPPED image).
           # `no-cache-filters: builder` alone rebuilt
           # a fresh /hive in the `builder` stage but let BuildKit serve the FINAL
@@ -790,6 +791,7 @@ jobs:
           labels: |
             io.kubestellar.hive.github-actions-run-number=${{ github.run_number }}
             org.opencontainers.image.revision=${{ needs.gate.outputs.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           # #3760: no default provenance/SBOM attestations → plain image
           # manifests, not an OCI index. See the note on the main build above.
           provenance: false
@@ -1010,6 +1012,7 @@ jobs:
           labels: |
             io.kubestellar.hive.github-actions-run-number=${{ github.run_number }}
             org.opencontainers.image.revision=${{ needs.gate.outputs.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           # STALE-BINARY FIX (see the main build step). The hub image also does
           # `COPY --from=builder /hive` into a `runtime` final stage, and its GHA
           # cache scope (hub-<slug>) is likewise branch-persistent — so without
@@ -1241,6 +1244,7 @@ jobs:
           labels: |
             io.kubestellar.hive.github-actions-run-number=${{ github.run_number }}
             org.opencontainers.image.revision=${{ needs.gate.outputs.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           # STALE-BINARY FIX (see the main build step). The hub image also does
           # `COPY --from=builder /hive` into a `runtime` final stage, and its GHA
           # cache scope (hub-<slug>) is likewise branch-persistent — so without
