@@ -819,8 +819,8 @@ func generateStageGoldens() map[string][]stageGoldenCase {
 				Route: &stageGoldenRoute{Checks: green, Verdict: humanDecisionRequested}},
 		},
 		{
-			Name: "regression/15202-human-author-decision-requested-green-is-071-with-question",
-			Note: "hivecommons/hive#15202: the same verdict on a green head routes the reviewer's question to the author (071), not to the decision queue (085).",
+			Name: "regression/19843-human-author-decision-requested-green-is-085",
+			Note: "hivecommons/hive#19843: the same verdict on a green head is a maintainer's decision (085) with the reviewer's question, not a wait on the author (071).",
 			Input: stageGoldenInput{Observations: single(stageLaneContributor, contributorLaneReasonNoVerdict, stageGoldenDetail{Verdict: humanDecisionRequested, Role: "trusted"}), AuthorKind: string(authorkind.Human),
 				Route: &stageGoldenRoute{Checks: green, Verdict: humanDecisionRequested}},
 		},
