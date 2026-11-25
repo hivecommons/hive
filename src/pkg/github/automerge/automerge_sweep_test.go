@@ -2176,6 +2176,59 @@ func TestSweepSelfAuthoredAutoMergesMergesGreenAppPRWithoutHumanReview(t *testin
 	}
 }
 
+func TestSweepSelfAuthoredAutoMergesInaccessibleRepo(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		wantErr bool
+	}{
+		{name: "not found", status: http.StatusNotFound},
+		{name: "server error", status: http.StatusInternalServerError, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var apiURL string
+			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/repos/acme/missing/pulls":
+					if r.URL.Query().Get("page") == "" {
+						w.Header().Set("Link", `<`+apiURL+`/repos/acme/missing/pulls?page=2>; rel="next"`)
+						_, _ = w.Write([]byte(`[{"number":42,"state":"open","user":{"login":"kubestellar-hive[bot]"}}]`))
+						return
+					}
+					http.Error(w, "repository unavailable", tc.status)
+				case "/repos/acme/widget/pulls":
+					_, _ = w.Write([]byte(`[{"number":7,"state":"open","user":{"login":"kubestellar-hive[bot]"},"labels":[{"name":"hold"}]}]`))
+				default:
+					t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
+					http.Error(w, "unexpected request", http.StatusInternalServerError)
+				}
+			}))
+			defer api.Close()
+			apiURL = api.URL
+			var logs bytes.Buffer
+			client := hgithub.NewClient("token", "acme", []string{"missing", "widget"}, nil, api.URL)
+			client.SetAppBotLogin(testHiveAppBotLogin)
+			c := New(client, Options{Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+			result, err := c.SweepSelfAuthoredAutoMerges(context.Background(), AutoMergeSweepOptions{})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("sweep error = %v, want error %v", err, tc.wantErr)
+			}
+			if tc.wantErr {
+				if result.Seen != 0 {
+					t.Fatalf("seen = %d, want no PRs processed after server error", result.Seen)
+				}
+				return
+			}
+			if result.Seen != 1 || result.Skipped != 1 || len(result.Merged) != 0 {
+				t.Fatalf("result = %+v, want only the held PR in the accessible repo processed", result)
+			}
+			if !strings.Contains(logs.String(), "missing") || !strings.Contains(logs.String(), "404") {
+				t.Fatalf("missing repository and 404 must be logged: %s", logs.String())
+			}
+		})
+	}
+}
+
 func TestTrySweepSelfAuthoredPRRequiredChecksDecision(t *testing.T) {
 	tests := []struct {
 		name       string
