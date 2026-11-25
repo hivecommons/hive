@@ -158,7 +158,7 @@ func (h *ContributeWSHub) recordAgentClaim(ctx context.Context, c *ContributorCo
 	if c.profile != nil {
 		tier = c.profile.TrustTier
 	}
-	canComment, mode := ghpkg.IssueClaimTierCanComment(tier)
+	canComment, mode := ghpkg.IssueClaimTierCanComment(ghpkg.TokenTier(tier))
 	posted := false
 	if commenter := h.claimCommenterFor(); commenter != nil && canComment {
 		postCtx, cancel := context.WithTimeout(ctx, claimCommentTimeout)

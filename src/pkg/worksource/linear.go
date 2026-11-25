@@ -298,16 +298,16 @@ type linearGraphQLResponse struct {
 }
 
 // linearPriorityString maps Linear's numeric priority to hive's normalized
-// priority strings. 0=urgent 1=high 2=medium 3=low 4=no priority.
+// priority strings. 0=no priority 1=urgent 2=high 3=medium 4=low.
 func linearPriorityString(p int) string {
 	switch p {
-	case 0:
-		return "urgent"
 	case 1:
-		return "high"
+		return "urgent"
 	case 2:
-		return "medium"
+		return "high"
 	case 3:
+		return "medium"
+	case 4:
 		return "low"
 	default:
 		return "none"

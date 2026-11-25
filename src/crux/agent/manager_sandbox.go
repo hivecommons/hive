@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/crux/kubejob"
@@ -70,10 +71,53 @@ func (m *Manager) setSandboxRunnerForTest(r sandboxCommandRunner) {
 	m.sandboxRunner = r
 }
 
+// sandboxGitWiring is what a sandbox kick clones and pushes with.
+type sandboxGitWiring struct {
+	// pushMinter is the GitHub App minter for repos on github.com.
+	pushMinter pushbroker.TokenMinter
+	// forgeRemotes resolves a repo that is not on github.com to its forge URL
+	// and minter (SetSandboxForgeRemotes). Nil: every repo is on github.com.
+	forgeRemotes pushbroker.ForgeRemoteResolver
+}
+
 func (m *Manager) SetSandboxPushMinter(minter pushbroker.TokenMinter) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.sandboxPushMinter = minter
+	m.sandboxGit.pushMinter = minter
+}
+
+// SetSandboxForgeRemotes installs the resolver that names the forge and
+// minter of a repo that is not on github.com. A kick on such a repo clones
+// from that forge and pushes only to it with that minter's token; a repo the
+// resolver refuses is not kicked. Nil keeps every repo on github.com.
+func (m *Manager) SetSandboxForgeRemotes(resolve pushbroker.ForgeRemoteResolver) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.sandboxGit.forgeRemotes = resolve
+}
+
+// sandboxForgeRemoteLocked resolves repo ("owner/name") through the installed
+// resolver. ok=false means github.com.
+func (m *Manager) sandboxForgeRemoteLocked(repo string) (pushbroker.ForgeRemote, bool, error) {
+	if m.sandboxGit.forgeRemotes == nil {
+		return pushbroker.ForgeRemote{}, false, nil
+	}
+	remote, ok, err := m.sandboxGit.forgeRemotes(repo)
+	if err != nil {
+		return pushbroker.ForgeRemote{}, false, fmt.Errorf("sandbox kick on %s: %w", repo, err)
+	}
+	if !ok {
+		return pushbroker.ForgeRemote{}, false, nil
+	}
+	base, err := pushbroker.NormalizeForgeBaseURL(remote.BaseURL)
+	if err != nil {
+		return pushbroker.ForgeRemote{}, false, fmt.Errorf("sandbox kick on %s: %w", repo, err)
+	}
+	if remote.Minter == nil {
+		return pushbroker.ForgeRemote{}, false, fmt.Errorf("sandbox kick on %s: no token minter for forge %s", repo, base)
+	}
+	remote.BaseURL = base
+	return remote, true, nil
 }
 
 func (m *Manager) SetSandboxPRClient(client PRCreator) {
@@ -89,7 +133,7 @@ func (m *Manager) SetSandboxPRClient(client PRCreator) {
 func (m *Manager) SandboxGitHubWiring() (PRCreator, pushbroker.TokenMinter) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.sandboxPRClient, m.sandboxPushMinter
+	return m.sandboxPRClient, m.sandboxGit.pushMinter
 }
 
 func (m *Manager) SetSandboxAuditCallback(fn func(agent, action, detail string)) {
@@ -176,6 +220,13 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message, source st
 	case config.SandboxRuntimeSubstrate:
 		launcher = m.substrateLauncherLocked(agent.Config.SandboxSubstrate(m.sandboxConfig))
 	}
+	// Resolve the forge before anything about the kick is recorded: a repo
+	// on a forge hive cannot clone from or push to is refused, never cloned
+	// from github.com under the same name.
+	forgeRemote, onForge, err := m.sandboxForgeRemoteLocked(m.project.Org + "/" + repo)
+	if err != nil {
+		return err
+	}
 	m.prepareJobKickLocked(launcher, agent, runtime)
 	now := time.Now()
 	agent.State = StateRunning
@@ -243,6 +294,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message, source st
 	if spec.AgentConfig.Backend == "cline" {
 		spec.AgentConfig.Model = agent.effectiveModel()
 	}
+	spec.InferenceRouted = m.routeSandboxInferenceLocked(agent, runtime)
 	// The verify list comes from config only. A kick message is not a trusted
 	// source for commands: by the time it reaches the manager it carries
 	// text from issue and PR titles, knowledge facts and delegated prompts,
@@ -255,21 +307,35 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message, source st
 	agent.cancel = cancel
 	runner := m.sandboxRunner
 	mutationBoundary := m.sandboxMutation
-	cloneMinter := m.tieredSandboxMinterLocked(TokenTierForRole(m.agentMode(agent), agent.Config.Role))
+	tier := TokenTierForRole(m.agentMode(agent), agent.Config.Role)
+	cloneMinter := m.tieredSandboxMinterLocked(tier)
+	// ghPRClient is the hive's GitHub client, which opens, reads and targets
+	// PRs. It only knows github.com, so a repo on another forge gets none:
+	// the kick pushes its branch there and opens no PR until a forge PR
+	// client is wired (#19494).
+	ghPRClient := m.sandboxPRClient
+	if onForge {
+		// The GitHub App minter must never be used for another forge: its
+		// token would be sent to that forge's host.
+		spec.ForgeBaseURL = forgeRemote.BaseURL
+		cloneMinter = pushbroker.WithTier(forgeRemote.Minter, tier)
+		ghPRClient = nil
+		m.logger.Info("sandbox kick on a non-GitHub forge: the branch is pushed there, and no PR is opened through the GitHub client", "name", agent.Name, "forge", forgeRemote.BaseURL)
+	}
 	var pushMinter pushbroker.TokenMinter
 	var prClient PRCreator
 	pushEnabled := false
 	// Review-only kicks never get the push broker or the PR client.
 	if m.agentMode(agent).CanPush() && m.project.PRsAllowed && !spec.reviewOnly() {
 		pushMinter = cloneMinter
-		prClient = m.sandboxPRClient
+		prClient = ghPRClient
 		pushEnabled = true
 	}
 	// The PR reader is the hive's GitHub client when it offers one; it is
 	// read-only and needed whether or not the kick may push.
 	var prReader crux.PRReviewContextReader
 	if spec.reviewOnly() {
-		prReader, _ = m.sandboxPRClient.(crux.PRReviewContextReader)
+		prReader, _ = ghPRClient.(crux.PRReviewContextReader)
 	}
 	// A fix kick that names one of the agent's PRs adds its commits to that
 	// PR (hivecommons/hive#18574). Only a kick that may push, through a PR
@@ -279,7 +345,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message, source st
 	var targetReader crux.PRPushTargetReader
 	if pushEnabled {
 		if n, source := sandboxTargetPRFromKickMessage(message, m.project.Org+"/"+repo); n > 0 {
-			if r, ok := m.sandboxPRClient.(crux.PRPushTargetReader); ok {
+			if r, ok := ghPRClient.(crux.PRPushTargetReader); ok {
 				spec.TargetPR, spec.TargetPRSource, targetReader = n, source, r
 			} else {
 				m.logger.Warn("sandbox kick names an existing PR but the PR client cannot read PR targets; the kick opens a new PR instead",
@@ -295,21 +361,8 @@ func (m *Manager) sandboxWorkspaceDirLocked() string {
 	return sandbox.WorkspaceRoot(m.sandboxConfig.WorkspaceDir, m.workDir)
 }
 
-func (m *Manager) tieredSandboxMinterLocked(tier string) pushbroker.TokenMinter {
-	switch minter := m.sandboxPushMinter.(type) {
-	case pushbroker.GitHubAppMinter:
-		minter.Tier = tier
-		return minter
-	case *pushbroker.GitHubAppMinter:
-		if minter == nil {
-			return nil
-		}
-		cp := *minter
-		cp.Tier = tier
-		return cp
-	default:
-		return m.sandboxPushMinter
-	}
+func (m *Manager) tieredSandboxMinterLocked(tier agentmode.TokenTier) pushbroker.TokenMinter {
+	return pushbroker.WithTier(m.sandboxGit.pushMinter, tier)
 }
 
 func (m *Manager) runSandboxKick(ctx context.Context, agent *AgentProcess, gen int, runtime string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator, prReader crux.PRReviewContextReader, targetReader crux.PRPushTargetReader, mutationBoundary effects.Boundary) {
@@ -342,6 +395,7 @@ func (m *Manager) runSandboxKick(ctx context.Context, agent *AgentProcess, gen i
 		exec.GitHubReadRelay = in.relay
 		exec.GitHubReadRelayNoProxy = in.noProxy
 	}
+	exec.InferenceRelay = m.sandboxInferenceRelayLoad()
 	res, err := exec.Run(ctx, spec)
 	ended := time.Now()
 	// The run record is written to disk after m.mu is released (defers run

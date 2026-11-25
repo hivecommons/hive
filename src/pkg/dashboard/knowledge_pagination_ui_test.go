@@ -31,7 +31,7 @@ func TestKnowledgeFactsPaginationUI(t *testing.T) {
 	script := `
 const assert = require('node:assert/strict');
 let _kbFacts = [], _kbPageSize = 50, _kbPageOffset = 0, _kbServerPaged = false,
-    _kbHasMore = false, _kbRequest = 0, _kbSelectedFact = null,
+    _kbHasMore = false, _kbRequest = 0, _kbFactRequest = 0, _kbSelectedFact = null,
     _kbSearchQuery = '', _kbSelectedLayer = 'all', _kbSelectedType = 'gotcha';
 const el = {innerHTML: ''};
 const document = {getElementById: () => el};

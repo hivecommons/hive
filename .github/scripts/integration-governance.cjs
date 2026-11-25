@@ -9,7 +9,7 @@ const MAX_COMMITS = 1000;
 const MAX_AUTHOR_BATCH = 50;
 // This literal is inside the enrolled .github closure. A caller-supplied
 // preparedBy.sourceSHA must never choose a new executable verifier tree.
-const TRUSTED_SCRIPTS_TREE = '14eb49eef1fbba0fbdc8f3977a16912e711934b1';
+const TRUSTED_SCRIPTS_TREE = '9ddf6f0a737064466ed67b0270c81174b9e786bb';
 const SOURCE = 'https://github.com/kubernetes-sigs/kubebuilder-release-tools/tree/012269a88fa4c034a0acf1ba84c26b195c0dbab4';
 const sha = value => crypto.createHash('sha256').update(value).digest('hex');
 const git = (args, cwd = process.cwd()) =>
@@ -174,7 +174,7 @@ async function verify(kind, subject, members, github) {
   if (kind === 'dco') {
     run('check-dco-trailers.sh', [String(count), range], root, {
       DCO_SKIP_BOT_AUTHORS: 'false', DCO_WAIVED_COMMITS: '', DCO_ALLOWLIST_EMAILS: '',
-      DCO_AUTHOR_LOGIN_MAP: '', DCO_SAME_PERSON_EVIDENCE_REFS: '',
+      DCO_AUTHOR_LOGIN_MAP: '', DCO_SAME_PERSON_EVIDENCE_REFS: '', DCO_PR_EVIDENCE: 'false',
       DCO_GITHUB_REPOSITORY: subject.repo,
     });
     for (const prefix of subject.prefixes) {

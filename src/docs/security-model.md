@@ -75,6 +75,7 @@ are enabled on a given hive.
 | Tiered GitHub tokens per agent mode | blast radius of a leaked token | `src/crux/agentmode`, `src/crux/agent/manager_tokens.go` | token tier on the agent card |
 | Proxy-side credential injection (opt-in) | token theft | `HIVE_PROXY_INJECT_GH_AUTH` | `security.credentialInjection` in governor config |
 | Sandbox Job GitHub read relay (opt-in) | anonymous 60/hr API cap; token in the Job | `agent_sandbox.job.github_read_proxy` | `sandbox GitHub read relay enabled` boot line |
+| Sandbox Job inference listener (opt-in) | gateway key in the Job | `agent_sandbox.job.inference_proxy` | `sandbox inference listener enabled` boot line |
 | Inference-key placeholder swap | provider key theft | `src/pkg/apiproxy` | agent env shows `sk-hive-<agent>` |
 | `gh` wrapper with per-agent restrictions | denied commands | `bin/gh-wrapper.sh` | `gh` resolves to `/usr/local/bin/gh` |
 | `hive-open-pr` / `hive-merge` relays | forged authorship, stale-commit merges | `bin/hive-merge.sh`, `bin/hive-open-pr.sh` | `POST /pulls` returns 403 for agents |

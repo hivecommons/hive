@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/authz"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
@@ -24,7 +25,7 @@ import (
 
 const (
 	DefaultRemote = "origin"
-	DefaultTier   = "contributor"
+	DefaultTier   = agentmode.TokenTierContributor
 	ReadOnlyTier  = "spektacular-read"
 )
 
@@ -54,11 +55,6 @@ var credentialEnvPrefixes = []string{
 	"GITHUB_TOKEN=", "GH_TOKEN=", "HIVE_GITHUB_TOKEN=", "COPILOT_GITHUB_TOKEN=", "GITLAB_TOKEN=", "GITEA_TOKEN=", "FORGEJO_TOKEN=",
 	"GIT_ASKPASS=", "SSH_ASKPASS=",
 }
-
-// pushRemoteHost is the only host a sandbox workspace is cloned from
-// (SandboxExecutor.prepareWorkspace), and therefore the only host the broker
-// will hand a minted token to.
-const pushRemoteHost = "github.com"
 
 type TokenMinter interface {
 	MintPushToken(ctx context.Context, repo string) (string, error)
@@ -94,7 +90,7 @@ func (ExecRunner) Run(ctx context.Context, dir string, env []string, name string
 // needs from the host's GitHub App credential (*github.AppAuth in hive), kept
 // as an interface so this package stays inside the Crux ring.
 type TokenScoper interface {
-	ScopedTokenForRepos(ctx context.Context, tier string, repos []string) (string, error)
+	ScopedTokenForRepos(ctx context.Context, tier agentmode.TokenTier, repos []string) (string, error)
 }
 
 // GitHubAppMinter mints a per-push token through the host's TokenScoper.
@@ -103,14 +99,14 @@ type TokenScoper interface {
 // storing a typed nil (see cmd/hive's appMinter).
 type GitHubAppMinter struct {
 	Auth TokenScoper
-	Tier string
+	Tier agentmode.TokenTier
 }
 
 func (m GitHubAppMinter) MintPushToken(ctx context.Context, repo string) (string, error) {
 	if m.Auth == nil {
 		return "", errors.New("pushbroker: nil GitHub App auth")
 	}
-	tier := strings.TrimSpace(m.Tier)
+	tier := agentmode.TokenTier(strings.TrimSpace(string(m.Tier)))
 	if tier == "" {
 		tier = DefaultTier
 	}
@@ -149,6 +145,11 @@ type Broker struct {
 	// pushed. Set BaseRef to the same commit so the scans judge only the
 	// kick's own commits.
 	LeaseSHA string
+	// RemoteBaseURL is the forge instance root the workspace was cloned from
+	// (SandboxExecutor.prepareWorkspace), and the only one the broker pushes
+	// to and hands the minted token to. Empty is DefaultForgeBaseURL
+	// (github.com). Minter must mint tokens for this forge.
+	RemoteBaseURL string
 }
 
 // leaseSHARE is a full object name; anything else is refused before it can
@@ -273,9 +274,17 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 	// process owner via /proc/<pid>/environ) and have a credential helper echo
 	// it back to git. The helper text itself carries only the variable NAME, so
 	// the secret stays out of argv and off disk.
+	//
+	// The helper is scoped to the forge's origin: git consults it only for a
+	// request to that exact scheme, host and port, so the token cannot follow
+	// a redirect or reach any other host.
+	helperKey, err := CredentialHelperKey(b.RemoteBaseURL)
+	if err != nil {
+		return b.fail(res, err)
+	}
 	args := []string{
 		"-c", "core.hooksPath=/dev/null",
-		"-c", "credential.helper=" + pushCredentialHelper,
+		"-c", helperKey + "=" + pushCredentialHelper,
 		"push", "--no-verify",
 	}
 	inputs := map[string]string{"commit": res.Commit, "remote": b.remote()}
@@ -312,6 +321,9 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 func (b *Broker) validate() error {
 	if strings.TrimSpace(b.Workspace) == "" || strings.TrimSpace(b.Branch) == "" || strings.TrimSpace(b.Repo) == "" {
 		return errors.New("pushbroker: workspace, branch, and repo are required")
+	}
+	if _, err := NormalizeForgeBaseURL(b.RemoteBaseURL); err != nil {
+		return err
 	}
 	if lease := strings.TrimSpace(b.LeaseSHA); lease != "" && !leaseSHARE.MatchString(lease) {
 		return fmt.Errorf("pushbroker: lease %q is not a full commit SHA", lease)
@@ -610,7 +622,7 @@ func (b *Broker) gitEnv() []string {
 			strings.HasPrefix(entry, "GIT_CONFIG_PARAMETERS=") ||
 			strings.HasPrefix(entry, "GIT_TRACE")
 	})
-	env = append(env, configEnv(workspaceConfigOverrides(b.remote(), b.Repo))...)
+	env = append(env, configEnv(workspaceConfigOverrides(b.remote(), b.expectedRemoteURL()))...)
 	if name, email, ok := gitidentity.AgentIdentity(strings.TrimSpace(b.AgentName)); ok {
 		env = append(env,
 			"GIT_AUTHOR_NAME="+name,

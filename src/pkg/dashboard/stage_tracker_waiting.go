@@ -147,7 +147,9 @@ func stageTrackerWaitStandingMeta(it StageTrackerItem) bool {
 // its contributor has outlived their grace, so the operator is now the
 // one the hive waits on (adopt / reroute / nudge by hand).
 func stageTrackerContributorGraceElapsed(it StageTrackerItem) bool {
-	if it.Takeover != nil && (it.Takeover.GraceElapsed || it.Takeover.AdoptNow) {
+	// A person's PR offering Adopt now still waits on its author: the
+	// operator's takeover is optional there (hivecommons/hive#19645).
+	if it.Takeover != nil && (it.Takeover.GraceElapsed || (it.Takeover.AdoptNow && !it.Takeover.Person)) {
 		return true
 	}
 	if it.Adoption != nil && it.Adoption.Due {

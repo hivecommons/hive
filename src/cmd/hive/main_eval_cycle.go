@@ -559,11 +559,21 @@ func runEvalCycle(
 	// /api/gh-rate-limits unless a step below names itself more narrowly.
 	ctx = github.WithRESTCaller(ctx, "hive:eval_cycle")
 
+	// A hive whose repos are all on another forge (#19494) enumerates through
+	// pkg/forge and runs the rest of the cycle with no GitHub client, even if
+	// one is configured: no GitHub API call can be about one of its repos. A
+	// mixed hive keeps its GitHub client and serves its other repos from their
+	// own forge (enumerateActionableForCycle, #19703).
+	forgeOnly := cfg.AllReposOffGitHub()
+	if forgeOnly {
+		ghClient = nil
+	}
+
 	// A hive running without GitHub credentials (placeholder app_id, or a real
 	// App whose key could not be read) has nothing to enumerate. Return before
 	// the first API call rather than logging a misleading enumeration failure
 	// once per eval interval — the dashboard banner already states the cause.
-	if ghClient == nil {
+	if ghClient == nil && !forgeOnly {
 		logger.Debug("skipping eval cycle: hive is running without GitHub credentials")
 		return
 	}
@@ -633,7 +643,7 @@ func runEvalCycle(
 			"stale", actionable.Stale())
 	} else {
 		enumCtx, enumSpan := tracing.StartSpan(ctx, "governor.enumerate_actionable")
-		fresh, err := ghClient.EnumerateActionable(github.WithRESTCaller(enumCtx, "hive:enumerate_actionable"))
+		fresh, err := enumerateActionableForCycle(github.WithRESTCaller(enumCtx, "hive:enumerate_actionable"), cfg, ghClient, logger)
 		enumSpan.End()
 		var ok bool
 		actionable, ok = actionableAfterGitHubEnumerate(cfg, fresh, err, logger)
@@ -659,13 +669,17 @@ func runEvalCycle(
 		logger.Info("swarm priority boost applied", "repo", swarmRepo)
 	}
 
-	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)
+	// On a mixed hive (#19703) a PR on another forge gets no GitHub
+	// enrichment; a GitHub-only hive enriches the slice as before.
+	enrichGitHubPRs(cfg, actionable.PRs.Items, func(prs []github.PullRequest) { ghClient.EnrichCIStatus(ctx, prs) })
 	// Approve workflow runs GitHub holds behind its approve-workflows gate
 	// on trusted heads (hivecommons/hive#16603). An optional step: shed with
 	// the other enrichment steps, while EnrichCIStatus keeps the gate and any
 	// recorded permission refusal visible.
 	if !budgetDecision.SkipOptional {
-		ghClient.SweepWorkflowApprovals(ctx, actionable.PRs.Items, cfg.Governor.CI)
+		enrichGitHubPRs(cfg, actionable.PRs.Items, func(prs []github.PullRequest) {
+			ghClient.SweepWorkflowApprovals(ctx, prs, cfg.Governor.CI)
+		})
 	}
 	// Held PRs need CI status too, or a red held PR can never be repaired:
 	// the hold label kept it out of PRs.Items, so nothing ever learned it was
@@ -673,7 +687,7 @@ func runEvalCycle(
 	// enriches the held list ONLY for the repair path — held PRs still never
 	// reach the merge sweep, escalation or the queue counts.
 	if budgetMode != github.APIBudgetCritical {
-		ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
+		enrichGitHubPRs(cfg, actionable.PRs.Held, func(prs []github.PullRequest) { ghClient.EnrichCIStatus(ctx, prs) })
 	}
 	// Stale drafts sit in the same dashboard PR column; they get the
 	// review/link signals only — no mergeability or check-run fetches, a

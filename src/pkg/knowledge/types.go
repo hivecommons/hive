@@ -269,8 +269,10 @@ type Fact struct {
 	Status           string    `json:"status"`
 	Tags             []string  `json:"tags"`
 	Layer            LayerType `json:"layer"`
-	Sources          []Source  `json:"sources,omitempty"`
-	Related          []string  `json:"related,omitempty"`
+	// SourceLayer identifies the concrete source when Layer describes scope.
+	SourceLayer LayerType `json:"source_layer,omitempty"`
+	Sources     []Source  `json:"sources,omitempty"`
+	Related     []string  `json:"related,omitempty"`
 	// Author is the entry's `author:` (or `owner:`) frontmatter: the agent or
 	// person who wrote it. The kick primer uses it to let a draft reach the
 	// agent that owns it (#17076); empty for sources that record no author.

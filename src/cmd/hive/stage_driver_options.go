@@ -95,5 +95,9 @@ func applyStageDriverOptions(opts *automerge.Options, cfg *config.Config, logger
 	opts.HumanMergePinOnly = func(repo string) (config.PinOnlyException, bool) { return humanMergePinOnlyFor(cfg, repo) }
 	opts.HumanMergeOwnerApproval = func(repo string) bool { return cfg.AutoMerge.HumanMergeOwnerApprovalFor(repo) }
 	opts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(cfg) }
+	// Decision gate: credential, keystore, auth and secret paths, and
+	// sentinel-flagged PRs, wait for a person's decision on the head in
+	// every lane (auto_merge.decision_gate, default on).
+	opts.DecisionGate = func(repo string) automerge.DecisionGatePolicy { return decisionGateFor(cfg, repo) }
 	opts.RequireCurrentBase = func(repo string) bool { return cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 }

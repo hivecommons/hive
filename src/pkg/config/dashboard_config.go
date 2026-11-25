@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/netip"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -67,6 +68,19 @@ type DashboardConfig struct {
 	// wrongly forced into direct-route mode (which broke their dashboard link and
 	// snapshot preview) the moment they were granted an authorized_users list.
 	HubProxied bool `yaml:"hub_proxied"`
+	// GitHubSignIn turns the GitHub device-flow sign-in on or off (#19618).
+	// Nil (the default) keeps it on. False removes the "Sign in with GitHub"
+	// button from the login page, shows a "Sign in through the hub" link in
+	// its place, and makes /api/gh-user-auth/start and /poll refuse, so
+	// `hivectl login` against this hive stops working too. Resolve with
+	// GitHubSignInEnabled, never the raw field.
+	GitHubSignIn *bool `yaml:"github_sign_in,omitempty" json:"github_sign_in,omitempty"`
+	// HubSignInURL is the browser-facing hub origin used for the "Sign in
+	// through the hub" link when GitHubSignIn is false. Empty falls back to
+	// hub.url; set it when hub.url is an in-cluster address a browser cannot
+	// reach. Only http and https URLs are used. Resolve with
+	// Config.HubSignInLink.
+	HubSignInURL string `yaml:"hub_sign_in_url,omitempty" json:"hub_sign_in_url,omitempty"`
 	// PublicURL is the externally reachable origin of THIS dashboard
 	// (scheme + host[:port], no path), used to build OAuth redirect URIs —
 	// the Linear agent install and the OpenRouter funding flow — when it
@@ -326,6 +340,43 @@ func IdentityMatchKey(id string) string {
 // token, breaking the dashboard link and the snapshot preview).
 func (d DashboardConfig) IsDirectRouteAuthzEnabled() bool {
 	return !d.HubProxied && len(d.AuthorizedUsers) > 0
+}
+
+// GitHubSignInEnabled reports whether the GitHub device-flow sign-in is
+// offered and served. An unset dashboard.github_sign_in means yes.
+func (d DashboardConfig) GitHubSignInEnabled() bool {
+	return d.GitHubSignIn == nil || *d.GitHubSignIn
+}
+
+// HubURLEnvVar overrides hub.url at runtime. Hosted spokes are provisioned
+// with it (the hub's public URL) and often leave hub.url empty in hive.yaml.
+const HubURLEnvVar = "HIVE_HUB_URL"
+
+// HubSignInLink returns the browser URL that signs a person in to this hive
+// through its hub: <hub>/api/saas/hives/<hive_id>/open, where <hub> is
+// dashboard.hub_sign_in_url, else HIVE_HUB_URL, else hub.url (the same
+// precedence the hub heartbeat uses). It returns "" when either part is
+// missing or the hub origin is not an http(s) URL.
+func (c *Config) HubSignInLink() string {
+	if c == nil {
+		return ""
+	}
+	hiveID := strings.TrimSpace(c.HiveID)
+	base := strings.TrimSpace(c.Dashboard.HubSignInURL)
+	if base == "" {
+		base = strings.TrimSpace(os.Getenv(HubURLEnvVar))
+	}
+	if base == "" {
+		base = strings.TrimSpace(c.Hub.URL)
+	}
+	if hiveID == "" || base == "" {
+		return ""
+	}
+	u, err := url.Parse(base)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return ""
+	}
+	return strings.TrimRight(base, "/") + "/api/saas/hives/" + url.PathEscape(hiveID) + "/open"
 }
 
 // splitAuthorizedEntry parses a "username" or "username:role" allowlist entry.

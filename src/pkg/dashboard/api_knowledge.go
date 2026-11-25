@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -624,14 +625,9 @@ func (s *Server) handleKnowledgeLayer(w http.ResponseWriter, r *http.Request) {
 	const gitSourcePrefix = "git_source:"
 	if strings.HasPrefix(layer, gitSourcePrefix) {
 		name := strings.TrimPrefix(layer, gitSourcePrefix)
-		store := s.deps.Knowledge.GetGitSourceStore(name)
-		if store == nil {
-			jsonResponse(w, map[string]interface{}{"layer": layer, "count": 0, "facts": []interface{}{}})
-			return
-		}
-		facts := knowledge.FilterByLifecycle(store.ListPages(typeFilter), includeStates)
-		for i := range facts {
-			facts[i].Layer = knowledge.LayerType(layer)
+		facts := knowledge.FilterByLifecycle(s.deps.Knowledge.GitSourceFacts(name, typeFilter), includeStates)
+		if facts == nil {
+			facts = []knowledge.Fact{}
 		}
 		jsonResponse(w, map[string]interface{}{
 			"layer": layer,
@@ -662,7 +658,14 @@ func (s *Server) handleKnowledgeFact(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slug := r.PathValue("slug")
-	fact, err := s.deps.Knowledge.ReadFact(s.deps.Ctx, slug)
+	layer := knowledge.LayerType(r.PathValue("layer"))
+	var fact *knowledge.Fact
+	var err error
+	if layer == "all" {
+		fact, err = s.deps.Knowledge.ReadFact(s.deps.Ctx, slug)
+	} else {
+		fact, err = s.deps.Knowledge.ReadFactInLayer(s.deps.Ctx, layer, slug)
+	}
 	if err != nil || fact == nil {
 		jsonError(w, "fact not found", http.StatusNotFound)
 		return
@@ -794,9 +797,20 @@ func (s *Server) handleKnowledgePromote(w http.ResponseWriter, r *http.Request) 
 
 	result := s.deps.Knowledge.PromoteFact(s.deps.Ctx, req)
 	if !result.Success {
-		fact, err := s.deps.Knowledge.VaultFact(req.Slug)
+		var fact *knowledge.Fact
+		var err error
+		switch {
+		case strings.HasPrefix(string(req.FromLayer), "vault:"):
+			fact, err = s.deps.Knowledge.ReadFactInLayer(s.deps.Ctx, req.FromLayer, req.Slug)
+		case knowledge.IsUpwardPromotion(req.FromLayer, req.ToLayer) && !slices.Contains(s.deps.Knowledge.Layers(), req.FromLayer):
+			fact, err = s.deps.Knowledge.VaultFactInScope(req.FromLayer, req.Slug)
+		}
 		if err != nil || fact == nil {
 			jsonError(w, result.Error, http.StatusBadRequest)
+			return
+		}
+		if !knowledge.IsUpwardPromotion(fact.Layer, req.ToLayer) {
+			jsonError(w, "promotion only flows upward", http.StatusBadRequest)
 			return
 		}
 		syncReq := knowledge.ObsidianSyncRequest{

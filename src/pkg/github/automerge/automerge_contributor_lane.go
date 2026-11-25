@@ -1731,6 +1731,12 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 	if linkedReason, err := c.linkedIssueGate(ctx, owner, repo, pr); err != nil || linkedReason != "" {
 		return eval, linkedReason, err
 	}
+	// Decision gate (auto_merge.decision_gate): a credential, keystore, auth
+	// or secret path waits for a person's decision on this head; the swarm
+	// verdict and the soak are not that decision.
+	if decisionReason, err := c.decisionGate(ctx, displayRepo, owner, repo, pr, headSHA); err != nil || decisionReason != "" {
+		return eval, decisionReason, err
+	}
 	// Current-base gate (hivecommons/hive#13634): only a green, soaked,
 	// approved head is worth an update-branch commit; a relay evaluation
 	// never updates the branch.

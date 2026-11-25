@@ -61,6 +61,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).SweepLegacyFleetReportIssues":           {Class: NotificationClassStatus},
 	"github.(*Client).closeDecomposedParent":                  {Class: NotificationClassStatus},
 	"github.(*Client).closeIssueForMergedPRClaimWithIssue":    {Class: NotificationClassStatus},
+	"forgesweep.(*Sweeper).closeOne":                          {Class: NotificationClassStatus},
 	"github.(*Client).closeDoneTracker":                       {Class: NotificationClassStatus},
 	"github.(*Client).closeVerified":                          {Class: NotificationClassStatus},
 	"github.(*Client).parkVerifiedForClose":                   {Class: NotificationClassStatus},
@@ -125,6 +126,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"main.reviewFeedbackSweep.checkRuleReply":                {Class: NotificationClassAttention},
 	"main.reviewFeedbackSweep.needsHuman":                    {Class: NotificationClassAttention},
 	"main.reviewFeedbackSweep.proposeRuleHome":               {Class: NotificationClassAttention},
+	"main.(*forgeRequestRelay).handleIssue":                  {Class: NotificationClassAttention},
 
 	// required_review: a review submission or request a merge depends on.
 	"github.(*Client).QueuePRAutoMergeWithNoteResultAtHead": {Class: NotificationClassRequiredReview},

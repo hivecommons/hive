@@ -31,6 +31,9 @@ const (
 	autoMergeReasonHumanChangesRequested   = prstage.AutoMergeReasonHumanChangesRequested
 	autoMergeReasonHumanMergePath          = prstage.AutoMergeReasonHumanMergePath
 	autoMergeReasonHumanMergePathEvidence  = prstage.AutoMergeReasonHumanMergePathEvidence
+	autoMergeReasonSensitivePathDecision   = prstage.AutoMergeReasonSensitivePathDecision
+	autoMergeReasonSensitivePathEvidence   = prstage.AutoMergeReasonSensitivePathEvidence
+	autoMergeReasonSentinelDecision        = prstage.AutoMergeReasonSentinelDecision
 	autoMergeReasonHumanMergeRequired      = prstage.AutoMergeReasonHumanMergeRequired
 	autoMergeReasonIntentEvidence          = prstage.AutoMergeReasonIntentEvidence
 	autoMergeReasonIntentUnauthorized      = prstage.AutoMergeReasonIntentUnauthorized
@@ -254,7 +257,7 @@ func StageHumanApprovalReason(d stageDetail, head string) string {
 var stageHandoffReasons = map[string]bool{
 	"not-app-authored": true, trustedBotLaneSkipReason: true,
 	trustedAuthorReasonAppAuthored: true, contributorLaneReasonAppAuthored: true, contributorLaneReasonNoAuthor: true, "missing-head-sha": true,
-	"fetch-pr": true, "fetch-pr-recheck": true,
+	"fetch-pr": true, "fetch-pr-recheck": true, prstage.StageReasonWorkflowModel: true,
 	// A merge to the destination was in flight, so the lane did not look at
 	// the PR. Read as an owned base-refresh stage it overwrote the stage the
 	// other sweep wrote one pass earlier, every pass
@@ -291,6 +294,10 @@ var stageNeedsHumanReasons = map[string]bool{
 	contributorLaneReasonReporterTrustHold: true,
 	contributorLaneReasonNoAppBotLogin:     true, contributorLaneReasonFilesEvidence: true,
 	autoMergeReasonHumanMergePath: true, autoMergeReasonHumanMergePathEvidence: true,
+	// A credential, keystore, auth or secret path, or a sentinel alert,
+	// waits for a person's decision on the head (auto_merge.decision_gate).
+	autoMergeReasonSensitivePathDecision: true, autoMergeReasonSensitivePathEvidence: true,
+	autoMergeReasonSentinelDecision:   true,
 	autoMergeReasonIntentUnauthorized: true, autoMergeReasonIntentEvidence: true,
 	autoMergeReasonWorkflowPermission: true, autoMergeReasonForkWorkflowUpdate: true,
 	"approval-desk-withheld": true, "author-permission-missing": true, "fork-non-member": true,

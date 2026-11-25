@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -784,11 +785,19 @@ func (h *ContributeWSHub) failFixTask(c *ContributorConnection, msg WSMessage) b
 	if len(requeued) == 0 {
 		h.logger.Info("[contribute-ws] fix-pr task failed", "username", user, "task", msg.TaskID, "reason", reason)
 	}
+	// A give-up caused by the contributor's own runtime is that contributor's
+	// to fix, not this hive's, so it stays at INFO and out of the fleet
+	// self-report feed (hivecommons/hive#19816). The PR is not lost either
+	// way: the stage engine's re-nudge and adoption path takes it over.
+	giveUpLevel := slog.LevelWarn
+	if relayEnvironmentFailure(msg, reason) {
+		giveUpLevel = slog.LevelInfo
+	}
 	for _, it := range requeued {
 		if it.Attempts >= fixTaskMaxAttempts {
 			sched.RemoveFor(user, it.Repo, it.Number, fixRemoveRelayGaveUp)
 			h.forgetFixOwner(user, it.Key())
-			h.logger.Warn("[contribute-ws] fix-pr task failed; giving up on relay delivery", "username", user, "task", msg.TaskID, "pr", it.Key(), "attempts", it.Attempts, "reason", reason)
+			h.logger.Log(context.Background(), giveUpLevel, "[contribute-ws] fix-pr task failed; giving up on relay delivery", "username", user, "task", msg.TaskID, "pr", it.Key(), "attempts", it.Attempts, "reason", reason)
 			continue
 		}
 		h.logger.Info("[contribute-ws] fix-pr task failed; requeued", "username", user, "task", msg.TaskID, "pr", it.Key(), "attempts", it.Attempts, "retry_after", it.NotBefore, "reason", reason)
@@ -819,6 +828,39 @@ func relayFailureReason(msg WSMessage) string {
 		}
 	}
 	return ""
+}
+
+// relayCLICredentialFailures are lower-cased phrases agent CLIs print when
+// they cannot authenticate to their own model provider: Claude Code's expired
+// OAuth session and missing login, an API key the provider rejects. They name
+// the contributor's credential, never the scoped GitHub token this hub mints,
+// so a generic "401" or "bad credentials" is deliberately not listed.
+var relayCLICredentialFailures = []string{
+	"failed to authenticate",
+	"oauth session expired",
+	"oauth token has expired",
+	"not logged in",
+	"please run /login",
+	"invalid api key",
+}
+
+// relayEnvironmentFailure reports whether a relay's task_failed blames the
+// contributor's runtime rather than the work: the relay declared
+// failure_kind "environment", or reason shows its agent CLI could not
+// authenticate. The relay sends no kind for a CLI credential failure, hence
+// the reason match. The answer only picks a log level; it never touches
+// retries or cooldowns.
+func relayEnvironmentFailure(msg WSMessage, reason string) bool {
+	if NormalizeTaskFailureKind(msg.FailureKind) == TaskFailureKindEnvironment {
+		return true
+	}
+	lower := strings.ToLower(reason)
+	for _, phrase := range relayCLICredentialFailures {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 // beginFixWait registers a Nudge waiting to learn whether its dispatch is

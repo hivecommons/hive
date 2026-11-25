@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	cruxconfig "github.com/hivecommons/hive/crux/config"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 
@@ -285,14 +286,14 @@ func TestBootAgentsWith_MintSuccessAttachesIssuer(t *testing.T) {
 
 type fakeMintIssuer struct{}
 
-func (fakeMintIssuer) Enabled() bool                                 { return true }
-func (fakeMintIssuer) MintAgentToken(string, string) (string, error) { return "tok", nil }
+func (fakeMintIssuer) Enabled() bool                                              { return true }
+func (fakeMintIssuer) MintAgentToken(string, agentmode.TokenTier) (string, error) { return "tok", nil }
 
 func TestDefaultBootAgentsDeps_IsFullyWired(t *testing.T) {
 	d := defaultBootAgentsDeps()
 	if d.startAgentLoops == nil || d.prepareRequestDirs == nil || d.startTokenAccessAudit == nil ||
 		d.startRequestRelays == nil || d.startSelfAuthoredSweep == nil || d.buildMinter == nil ||
-		d.startPermissionsWatcher == nil || d.superviseRuntime == nil {
+		d.startPermissionsWatcher == nil || d.superviseRuntime == nil || d.startForgeRequestRelay == nil {
 		t.Fatal("defaultBootAgentsDeps left a seam nil; production boot would panic")
 	}
 	// buildMinter's adapter must not smuggle a typed-nil pointer into the
@@ -328,5 +329,32 @@ func TestBootAgentsWith_UnavailableRuntimeModeExits(t *testing.T) {
 	}
 	if !strings.Contains(f.log.String(), "crux runtime unavailable") {
 		t.Fatalf("log missing the unavailable-mode error:\n%s", f.log.String())
+	}
+}
+
+// The forge request relay is armed with the manager's own authorizers, so a
+// forge-only hive's agent requests pass the same gates as the GitHub relays
+// (hivecommons/hive#19670).
+func TestBootAgentsWith_ArmsForgeRequestRelayWithManagerGates(t *testing.T) {
+	f := newBootAgentsFake()
+	var got *forgeRequestRelay
+	f.deps.startForgeRequestRelay = func(_ context.Context, r *forgeRequestRelay) <-chan struct{} {
+		got = r
+		done := make(chan struct{})
+		close(done)
+		return done
+	}
+	b := newBootAgentsBoot(t, f, bootAgentsConfig())
+
+	b.bootAgentsWith(f.deps)
+
+	if got == nil {
+		t.Fatal("forge request relay not started")
+	}
+	if got.prAuthz == nil || got.issueAuthz == nil {
+		t.Fatal("forge request relay started without the manager's authorizers")
+	}
+	if got.cfg() != b.cfg {
+		t.Fatal("forge request relay does not read the live config")
 	}
 }

@@ -188,10 +188,7 @@
       if (paging) {
         var multiPage = _reviewQueueHasMore || _reviewQueueOffset > 0;
         paging.style.display = multiPage ? 'flex' : 'none';
-        var prev = document.getElementById('review-queue-prev');
-        var next = document.getElementById('review-queue-next');
-        if (prev) prev.disabled = _reviewQueueOffset <= 0;
-        if (next) next.disabled = !_reviewQueueHasMore;
+        updateReviewQueuePageButtons();
         var range = document.getElementById('review-queue-range');
         if (range) {
           var first = items.length ? _reviewQueueOffset + 1 : 0;
@@ -201,31 +198,81 @@
       }
     }
 
-    async function fetchReviewQueue() {
+    const REVIEW_QUEUE_FETCH_TIMEOUT_MS = 12000;
+    let _reviewQueueRequest = null;
+
+    function updateReviewQueuePageButtons() {
+      const pagePending = _reviewQueueRequest?.paging === true;
+      const prev = document.getElementById('review-queue-prev');
+      const next = document.getElementById('review-queue-next');
+      // Keep the active button focusable during the request.
+      if (prev) {
+        prev.disabled = _reviewQueueOffset <= 0;
+        prev.setAttribute('aria-disabled', String(prev.disabled || pagePending));
+      }
+      if (next) {
+        next.disabled = !_reviewQueueHasMore;
+        next.setAttribute('aria-disabled', String(next.disabled || pagePending));
+      }
+    }
+
+    async function fetchReviewQueue(offset = _reviewQueueOffset) {
+      // Keep polling and repeat clicks from superseding an in-flight page change.
+      if (_reviewQueueRequest?.paging) return;
+      const request = { paging: offset !== _reviewQueueOffset };
+      _reviewQueueRequest = request;
+      if (request.paging) updateReviewQueuePageButtons();
       var panel = document.getElementById('review-queue-panel');
+      const controller = new AbortController();
+      let timer;
+      let expire;
+      const deadline = new Promise((_, reject) => {
+        expire = () => {
+          controller.abort();
+          reject(new Error('Review queue request timed out'));
+        };
+      });
+      // Pause the deadline while the operator enters a new dashboard token.
+      const onAuthPromptChange = open => {
+        clearTimeout(timer);
+        if (!open && !controller.signal.aborted) timer = setTimeout(expire, REVIEW_QUEUE_FETCH_TIMEOUT_MS);
+      };
+      onAuthPromptChange(false);
       try {
-        var resp = await fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + _reviewQueueOffset);
+        var resp = await Promise.race([
+          fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + offset, {
+            signal: controller.signal,
+            __hiveOnAuthPromptChange: onAuthPromptChange,
+          }),
+          deadline,
+        ]);
+        if (_reviewQueueRequest !== request) return;
         if (!resp.ok) {
           if (panel && !panel.querySelector('.review-queue-entry')) {
             panel.innerHTML = '<div class="review-queue-empty">Review queue unavailable.</div>';
           }
           return;
         }
-        var data = await resp.json();
-        renderReviewQueue(data);
-      } catch (e) {}
+        var data = await Promise.race([resp.json(), deadline]);
+        if (_reviewQueueRequest === request) renderReviewQueue(data);
+      } catch (e) {
+      } finally {
+        clearTimeout(timer);
+        if (_reviewQueueRequest === request) {
+          _reviewQueueRequest = null;
+          if (request.paging) updateReviewQueuePageButtons();
+        }
+      }
     }
 
     function reviewQueuePrevPage() {
       if (_reviewQueueOffset <= 0) return;
-      _reviewQueueOffset = Math.max(0, _reviewQueueOffset - REVIEW_QUEUE_PAGE_SIZE);
-      fetchReviewQueue();
+      return fetchReviewQueue(Math.max(0, _reviewQueueOffset - REVIEW_QUEUE_PAGE_SIZE));
     }
 
     function reviewQueueNextPage() {
       if (!_reviewQueueHasMore) return;
-      _reviewQueueOffset += REVIEW_QUEUE_PAGE_SIZE;
-      fetchReviewQueue();
+      return fetchReviewQueue(_reviewQueueOffset + REVIEW_QUEUE_PAGE_SIZE);
     }
     // fetchReviewQueue() — deferred to _deferredInit
 

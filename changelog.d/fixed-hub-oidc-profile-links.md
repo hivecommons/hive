@@ -1,1 +1,0 @@
-- The hub links an avatar to a GitHub profile only for a GitHub user. A user who signs in through another identity provider no longer gets a link to `github.com/<display name>` from their own avatar, the fleet page menu, or the hive access avatars. `/api/auth/user` now returns the user's `provider`.

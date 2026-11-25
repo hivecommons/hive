@@ -5,7 +5,7 @@ package agent
 // an embedded --text prompt to remain interactive.
 func backendDefersStartupKick(backend string) bool {
 	switch backend {
-	case "claude", "copilot", "gemini", "pi", bobBackend, "agy", "omp", "cline":
+	case "claude", "copilot", "gemini", "pi", bobBackend, "agy", "omp", "cline", "opencode":
 		return true
 	default:
 		return false

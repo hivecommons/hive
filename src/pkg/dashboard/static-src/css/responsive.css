@@ -33,11 +33,11 @@
          push the bar down over the first row. overflow:clip clips without
          creating a scroller, so the bar sticks to the viewport instead. */
       #activity-monitor-section .dash-card-body { overflow: clip; }
-      .ham-sticky { justify-content: flex-start; gap: var(--sp-2); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
+      .ham-sticky { justify-content: flex-start; gap: var(--sp-4); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
       .ham-sticky .ham-merged-sub { display: none; }
       .ham-sticky .ham-merged-count, .ham-sticky .ham-queue-chip { flex: 0 0 auto; min-height: var(--tap-target); }
-      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); }
-      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-4); }
+      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-4); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
       .ham-compact-scroll::-webkit-scrollbar { display: none; }
       .ham-compact .ham-chips { display: inline-flex; flex: 0 0 auto; }
       .ham-compact .ham-chip { flex: 0 0 auto; min-height: var(--tap-target); font-size: var(--fs-sm); white-space: nowrap; }
@@ -821,11 +821,11 @@
       #activity-monitor-meta > :not(.ham-count) { display: none; }
       #activity-monitor-section .dash-card-body { overflow: clip; }
       #activity-monitor-panel .ham-cols { display: none; }
-      .ham-sticky { justify-content: flex-start; gap: var(--sp-2); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
+      .ham-sticky { justify-content: flex-start; gap: var(--sp-4); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
       .ham-sticky .ham-merged-sub { display: none; }
       .ham-sticky .ham-merged-count, .ham-sticky .ham-queue-chip { flex: 0 0 auto; min-height: var(--tap-target); }
-      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); }
-      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-4); }
+      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-4); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
       .ham-compact-scroll::-webkit-scrollbar { display: none; }
       .ham-compact .ham-chips { display: inline-flex; flex: 0 0 auto; }
       .ham-compact .ham-chip { flex: 0 0 auto; min-height: var(--tap-target); font-size: var(--fs-sm); white-space: nowrap; }

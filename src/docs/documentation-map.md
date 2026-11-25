@@ -60,6 +60,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 
 - [Work source providers](integrations/work-source-providers.md) — **Developer:** implement an adapter. To configure an existing tracker, use [Work sources](work-sources.md).
 - [Forges: GitLab, Gitea and Forgejo](integrations/forges.md) — `project.forge`, the `gitlab:`/`gitea:` keys, which `pkg/forge` operations each adapter supports, which governor writes already use them, and how the dashboard shows the forge.
+- [Forgejo](integrations/forgejo.md): what Hive does with a Forgejo repository on v5 today (partial, in progress), the `forgejo:` config keys, and the open work in [#19494](https://github.com/hivecommons/hive/issues/19494).
 - [OpenBao Transit as the spoke keystore](integrations/openbao.md) — **Opt-in:** `HIVE_KEYSTORE_PROVIDER=openbao` seals the spoke's secrets at rest through an OpenBao transit engine; the `HIVE_OPENBAO_*` variables, token and Kubernetes auth, rotation, the refuse-to-boot failure mode and a dev-mode walkthrough.
 - [Hive Labels and Control Signals](labels-and-control-signals.md) — authoritative operator reference for labels, holds, approvals, contributor skip labels, planning labels, and dashboard bands. The old [Hive issue labels](issue-labels.md) page redirects here.
 - [Central stage engine implementation plan](stage-engine-plan.md) — the ADR-0025 rollout plan for `pkg/stageengine`: the PR sequence, shadow→enforce gates, and the facts/deriver/writer seams the issue and PR sweeps share.

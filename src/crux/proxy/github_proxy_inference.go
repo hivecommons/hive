@@ -323,13 +323,21 @@ func (p *GitHubProxy) ClearInferenceRoute(agentName string) {
 // inference backend. Agents use ANTHROPIC_BASE_URL=http://127.0.0.1:18444
 // to reach this server instead of api.anthropic.com.
 func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
+	return p.inferenceTranslatorHandlerFor(p.translatorAgentName, p.translatorRefusalAttrs)
+}
+
+// inferenceTranslatorHandlerFor is the translator with the caller identified
+// by identify and a refusal described by refusalAttrs: the loopback listener
+// uses the socket owner's UID, the sandbox inference listener a per-kick key
+// (#19619).
+func (p *GitHubProxy) inferenceTranslatorHandlerFor(identify func(*http.Request) (string, bool), refusalAttrs func(*http.Request) []any) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		agentName, ok := p.translatorAgentName(r)
+		agentName, ok := identify(r)
 		if !ok {
 			p.logger.Warn("inference request from unidentified caller refused",
-				p.translatorRefusalAttrs(r)...)
+				refusalAttrs(r)...)
 			setTranslatorOutcome(r.Context(), outcomeUnidentifiedCaller)
 			http.Error(w, `{"type":"error","error":{"type":"authentication_error","message":"caller could not be identified"}}`, http.StatusUnauthorized)
 			return

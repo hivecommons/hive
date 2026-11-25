@@ -19,6 +19,8 @@ project:
     - repo: tea
       forge: gitea
       forge_url: https://codeberg.org
+gitlab:
+  gitlab_url: https://gitlab.example.com
 `
 	var cfg Config
 	if err := yaml.Unmarshal([]byte(src), &cfg); err != nil {
@@ -126,6 +128,63 @@ func TestValidateRepoForges(t *testing.T) {
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("error = %v, want one containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestCheckForgeTokenHost(t *testing.T) {
+	cases := []struct {
+		name    string
+		kind    string
+		blockAt string
+		policy  string
+		wantErr bool
+	}{
+		{name: "gitea same host", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "https://git.example.com/", wantErr: false},
+		{name: "gitea host case and scheme differ", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "http://GIT.example.com", wantErr: false},
+		{name: "gitea other host", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "https://evil.example.net", wantErr: true},
+		{name: "gitea other port", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "https://git.example.com:8443", wantErr: true},
+		{name: "gitea block has no url", kind: ForgeGitea, blockAt: "", policy: "https://codeberg.org", wantErr: false},
+		{name: "forgejo same host", kind: ForgeForgejo, blockAt: "https://git.example.com", policy: "https://git.example.com", wantErr: false},
+		{name: "forgejo other host", kind: ForgeForgejo, blockAt: "https://git.example.com", policy: "https://evil.example.net", wantErr: true},
+		{name: "gitlab other host", kind: ForgeGitLab, blockAt: "https://gitlab.example.com", policy: "https://evil.example.net", wantErr: true},
+		{name: "gitlab default block names gitlab.com", kind: ForgeGitLab, blockAt: "", policy: "https://gitlab.self.example", wantErr: true},
+		{name: "gitlab default block matches gitlab.com policy", kind: ForgeGitLab, blockAt: "", policy: "https://gitlab.com", wantErr: false},
+		{name: "https default port equals none", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "https://git.example.com:443", wantErr: false},
+		{name: "https default port on block", kind: ForgeGitea, blockAt: "https://git.example.com:443", policy: "https://git.example.com", wantErr: false},
+		{name: "http default port equals none", kind: ForgeGitea, blockAt: "http://git.example.com", policy: "http://git.example.com:80", wantErr: false},
+		{name: "http port 443 is not default", kind: ForgeGitea, blockAt: "http://git.example.com", policy: "http://git.example.com:443", wantErr: true},
+		{name: "schemeless block url", kind: ForgeGitea, blockAt: "git.example.com", policy: "https://git.example.com", wantErr: true},
+		{name: "schemeless policy url", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "git.example.com", wantErr: true},
+		{name: "unparsable block url", kind: ForgeGitea, blockAt: "https://git.example.com:bad", policy: "https://git.example.com", wantErr: true},
+		{name: "no policy url", kind: ForgeGitea, blockAt: "https://git.example.com", policy: "", wantErr: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &Config{}
+			cfg.Project.Org = "acme"
+			cfg.Gitea.URL, cfg.Forgejo.URL, cfg.GitLab.URL = "", "", ""
+			switch tc.kind {
+			case ForgeGitea:
+				cfg.Gitea.URL = tc.blockAt
+			case ForgeForgejo:
+				cfg.Forgejo.URL = tc.blockAt
+			case ForgeGitLab:
+				cfg.GitLab.URL = tc.blockAt
+			}
+			cfg.Project.RepoPolicies = []RepoPolicy{{Repo: "app", Forge: tc.kind, ForgeURL: tc.policy}}
+
+			if err := cfg.CheckForgeTokenHost("acme/app"); (err != nil) != tc.wantErr {
+				t.Fatalf("CheckForgeTokenHost err = %v, wantErr %v", err, tc.wantErr)
+			}
+			// Load-time validation agrees, and its message names the field.
+			err := cfg.validateRepoForges()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateRepoForges err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if err != nil && !strings.Contains(err.Error(), "project.repo_policies[0].forge_url") {
+				t.Fatalf("error %q does not name the field", err)
 			}
 		})
 	}

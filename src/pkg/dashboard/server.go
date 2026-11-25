@@ -2696,7 +2696,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			} else {
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.WriteHeader(http.StatusUnauthorized)
-				_, _ = w.Write([]byte(loginPage))
+				_, _ = w.Write([]byte(s.signInPage()))
 			}
 			return
 		}
@@ -3067,6 +3067,64 @@ async function poll(interval,flowId){
   setTimeout(check,ms);
 }
 </script></body></html>`
+
+// signInPage returns the page served to an unauthenticated browser: the
+// GitHub device-flow loginPage, or hubSignInPage when the operator turned
+// GitHub sign-in off with dashboard.github_sign_in: false (#19618).
+func (s *Server) signInPage() string {
+	if s.githubSignInEnabled() {
+		return loginPage
+	}
+	return hubSignInPage(s.deps.Config.HubSignInLink())
+}
+
+// githubSignInEnabled reports whether the GitHub device flow is offered.
+// Without a config it stays on, as it always has.
+func (s *Server) githubSignInEnabled() bool {
+	if s.deps == nil || s.deps.Config == nil {
+		return true
+	}
+	return s.deps.Config.Dashboard.GitHubSignInEnabled()
+}
+
+// hubSignInPage is the login page of a hive whose GitHub sign-in is off. It
+// has no script: the only way in is a plain link to the hub's /open route,
+// which signs the person in at the hub and hands them back through /sso. An
+// empty link means the hive cannot build one (no hub URL or hive ID), and the
+// page says so instead of showing a dead link.
+func hubSignInPage(link string) string {
+	action := `<p class="error">Sign-in through the hub is not configured on this hive. ` +
+		`Ask the hive operator to set hub.url (or dashboard.hub_sign_in_url) and hive_id.</p>`
+	if link != "" {
+		action = `<a class="btn" href="` + html.EscapeString(link) + `">Sign in through the hub</a>`
+	}
+	return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+` + dashboardRobotsMetaTag + `
+<title>Hive Sign In</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{background:#1e293b;border-radius:12px;padding:40px;max-width:420px;width:90%;text-align:center;
+  box-shadow:0 4px 24px rgba(0,0,0,.4)}
+h1{font-size:1.5rem;margin-bottom:8px;color:#f8fafc}
+.subtitle{color:#94a3b8;margin-bottom:28px;font-size:.9rem}
+.logo{font-size:2.5rem;margin-bottom:16px}
+.btn{display:block;background:#238636;color:#fff;padding:12px 24px;border-radius:8px;font-size:1rem;
+  font-weight:600;text-decoration:none}
+.btn:hover{background:#2ea043}
+.error{color:#f87171;font-size:.9rem;line-height:1.6}
+</style></head><body>
+<div class="card">
+  <div class="logo">🐝</div>
+  <h1>Hive</h1>
+  <p class="subtitle">Sign in through your hub to access this dashboard</p>
+  ` + action + `
+</div>
+</body></html>`
+}
 
 func (s *Server) Handler() http.Handler {
 	return s.withRequestLog(s.withHostedGatewayPassthrough(s.noIndex(withDashboardRESTCaller(s.authenticatedMux()))))
@@ -3527,10 +3585,19 @@ func (s *Server) handleBannerDismissed(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]bool{"ok": true})
 }
 
+// systemAlertDismissible reports whether an owner may acknowledge the alert:
+// plan-stall banners, and the model-id rewrite notice, which reports a fix the
+// hive has already applied and so has nothing left for the operator to do
+// (#19747).
+func systemAlertDismissible(id string) bool {
+	return strings.HasPrefix(id, planning.ReplanAlertPrefix) || strings.HasPrefix(id, modelIDNormalizedAlertPrefix)
+}
+
 // handleSystemAlertDismiss lets an owner acknowledge a plan-stall/needs-human
-// banner after they have reviewed it. The replan lane remains level-triggered:
-// if the plan is still truly stalled on a later reconciliation pass, it can
-// reassert the alert; if the source issue disappeared, the pass clears it.
+// or model-id rewrite banner after they have reviewed it. The replan lane
+// remains level-triggered: if the plan is still truly stalled on a later
+// reconciliation pass, it can reassert the alert; if the source issue
+// disappeared, the pass clears it.
 func (s *Server) handleSystemAlertDismiss(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -3542,8 +3609,8 @@ func (s *Server) handleSystemAlertDismiss(w http.ResponseWriter, r *http.Request
 		jsonError(w, "missing alert id", http.StatusBadRequest)
 		return
 	}
-	if !strings.HasPrefix(body.ID, planning.ReplanAlertPrefix) {
-		jsonError(w, "only plan-stall alerts are dismissible", http.StatusBadRequest)
+	if !systemAlertDismissible(body.ID) {
+		jsonError(w, "only plan-stall and model-id rewrite alerts are dismissible", http.StatusBadRequest)
 		return
 	}
 	s.ClearSystemAlert(body.ID)

@@ -545,7 +545,7 @@ func TestGitHubClientRebuildSitesUseSharedConstructor(t *testing.T) {
 					switch {
 					case recv == "github" && sel.Sel.Name == "NewClientFromAppWithBotLogin":
 						gotConstructors[fn] = true
-					case recv == "b" && sel.Sel.Name == "newConfiguredGitHubAppClient":
+					case recv == "b" && (sel.Sel.Name == "newConfiguredGitHubAppClient" || sel.Sel.Name == "newConfiguredGitHubPATClient"):
 						rebuildSites++
 					case recv == "b" && sel.Sel.Name == "adoptGitHubClient":
 						// #9621: the rebuilt client goes live through the one
@@ -574,7 +574,7 @@ func TestGitHubClientRebuildSitesUseSharedConstructor(t *testing.T) {
 						}
 						if name == "newClient" && x.Tok == token.DEFINE {
 							call, ok := rhs.(*ast.CallExpr)
-							if !ok || exprString(call.Fun) != "b.newConfiguredGitHubAppClient" {
+							if !ok || (exprString(call.Fun) != "b.newConfiguredGitHubAppClient" && exprString(call.Fun) != "b.newConfiguredGitHubPATClient") {
 								t.Errorf("%s: newClient built without b.newConfiguredGitHubAppClient; a rebuilt "+
 									"client must get every boot-time hook (#9614)", fn)
 							}
@@ -600,7 +600,7 @@ func TestGitHubClientRebuildSitesUseSharedConstructor(t *testing.T) {
 	// The dashboard's ReinitGitHubFunc, the config watcher and the heartbeat
 	// App delivery. Fewer means a site stopped using the shared constructor
 	// (or the walk is broken).
-	const knownRebuildSites = 3
+	const knownRebuildSites = 4
 	if rebuildSites < knownRebuildSites {
 		t.Errorf("found %d calls to b.newConfiguredGitHubAppClient, want at least %d rebuild sites", rebuildSites, knownRebuildSites)
 	}

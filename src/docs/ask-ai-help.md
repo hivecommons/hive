@@ -2,8 +2,11 @@
 
 Ask AI help is an optional **Ask** panel that answers questions about using the
 hub and hive dashboards ("where do I pause an agent?") from the Hive docs, with
-the sources it used and an "AI generated, may be wrong" label. It is off by
-default everywhere and inert until configured. The design, threat model and
+the sources it used and an "AI generated, may be wrong" label. In Settings and
+in the Help menu it is called **Ask Hive**. It is **on by default on a hosted
+hive** (hub mode, through the hub relay, no key on the hive) and **off by
+default on a self-hosted hive**, which needs its own key. Either way each person
+confirms a notice before their first question. The design, threat model and
 isolation argument are in
 [Dashboard Ask AI help](design/dashboard-ask-ai-help.md) (#19177).
 
@@ -45,27 +48,34 @@ or refuse single hives (`HIVE_ASK_RELAY_DISABLED_HIVES`). In this round the
 relay serves hosted hives only; a self-hosted hive registered with a hub uses
 direct mode with its own key, or stays off.
 
-## Turning it on for a hosted hive
+## A hosted hive: on by default
 
-1. The hub operator turns Ask on at the hub ([Ask AI help on the
-   hub](hub-deployment.md#ask-ai-help)).
-2. The hive owner opens **Settings, Features**, turns on **Ask AI help** and
-   sets **Ask mode** to `hub`, or sets in `hive.yaml`:
+A hosted hive (`hub.hive_type: hosted`, with `hub.url` and `hive_id` set) has
+Ask on in hub mode when `hive.yaml` says nothing about `ask.enabled`. Nothing
+needs to be configured on the hive; it works once the hub operator has Ask on
+at the hub ([Ask AI help on the hub](hub-deployment.md#ask-ai-help)). Settings,
+Features shows **Ask Hive** on, with "On by default for this hosted hive".
 
-   ```yaml
-   ask:
-     enabled: true
-     mode: hub
-   ```
+To turn it off, the hive owner switches **Ask Hive** off in **Settings,
+Features**, which saves `ask.enabled: false`, or sets any of:
 
-   `HIVE_ASK_ENABLED` and `HIVE_ASK_MODE` override these.
-3. If the hive is not hosted, or has no hub link, Settings says why Ask stays
-   off.
+```yaml
+ask:
+  enabled: false   # or: mode: off
+```
+
+`HIVE_ASK_ENABLED=false` or `HIVE_ASK_MODE=off` does the same and wins over
+`hive.yaml`. The hub operator can also refuse a single hive with
+`HIVE_ASK_RELAY_DISABLED_HIVES`, or every hive with `HIVE_ASK_RELAY_HIVES=none`.
+A hosted hive with no hub link or no hive id gets no default; if Ask is
+switched on there, Settings says why it stays off.
 
 ## Turning it on for a self-hosted hive
 
-A self-hosted hive (no hub, or registered with a hub, which the relay does not
-serve in this round) calls Kapa.ai itself with its own key:
+A self-hosted hive is **off by default**: it has no vendor key, and the hub
+relay does not serve registered self-hosted hives in this round (#19177). A
+self-hosted hive (no hub, or registered with a hub) calls Kapa.ai itself with
+its own key:
 
 1. In the Kapa project, create an HTTP API integration and an API key.
 2. Put the key in a file under `/secrets` or `/data/secrets`, from a Secret
@@ -92,30 +102,36 @@ serve in this round) calls Kapa.ai itself with its own key:
 
    The project id and integration id are configuration, never committed to a
    repository; the config export redacts them.
-4. Settings, Features shows **Ask AI help** on, or the reason it stays off.
+4. Settings, Features shows **Ask Hive** on, or the reason it stays off.
 
 The hive applies the same limits as the hub to its own traffic; a busy shared
 vendor quota shows "Busy, try again in N seconds" and the docs link.
 
 ## Using the panel
 
-With Ask on, the dashboard header shows an **Ask** button. It opens a panel
-docked to the side (a bottom sheet on a phone). The first time, it shows the
+With Ask on, the hive dashboard shows **Ask Hive** in the Help menu, right
+after Getting started: in the top bar **? Help** menu and in the sidebar
+**Help** group. The header also keeps its **Ask** button, and the hub dashboard
+has that button only, since its header has no Help menu. Either opens a panel,
+titled **Ask Hive**, docked to the side (a bottom sheet on a phone). Choosing
+Ask Hive closes the Help menu (and the navigation drawer on a phone) first; it
+works with a tap, a click, or Enter and Space from the keyboard. The first time, it shows the
 notice and **I understand, continue**; after that the person types a question
 (Enter sends, Shift+Enter adds a line) and gets a plain-text answer with a
 **Sources** list and the "AI generated, may be wrong" label. The label of the
 section in view, or of the open Settings tab, goes with the question. Every
 state has a docs link for the section in view. Escape closes the panel and
-returns focus to the button; answers and errors are announced to screen
-readers. With Ask off the button is not shown and the page loads nothing for
-it.
+returns focus to the **Ask** button; answers and errors are announced to
+screen readers. With Ask off, or when the backend says Ask is not on for the
+person, neither the button nor the Help menu item is shown, and with Ask off
+the page loads nothing for it.
 
 ## Configuration keys
 
 | Key | Env | Default | Meaning |
 |---|---|---|---|
-| `ask.enabled` | `HIVE_ASK_ENABLED` | off | The owner or operator switch. It makes the panel available; each person still consents. |
-| `ask.mode` | `HIVE_ASK_MODE` | `off` | `off`, `direct` or `hub`. |
+| `ask.enabled` | `HIVE_ASK_ENABLED` | on for a hosted hive, off otherwise | The owner or operator switch. It makes the panel available; each person still consents. An explicit `false` always wins. |
+| `ask.mode` | `HIVE_ASK_MODE` | `hub` for a hosted hive, `off` otherwise | `off`, `direct` or `hub`. `off` keeps Ask off even on a hosted hive. |
 | `ask.kapa.project_id` | `HIVE_ASK_KAPA_PROJECT_ID` | unset | Direct mode only. Never logged or returned by an API; redacted in the config export. |
 | `ask.kapa.integration_id` | `HIVE_ASK_KAPA_INTEGRATION_ID` | unset | Direct mode only. Same handling. |
 | `ask.kapa.api_key_file` | `HIVE_ASK_KAPA_API_KEY_FILE` | unset | Direct mode only. A file under `/secrets` or `/data/secrets`, mounted from a Secret. |
@@ -164,9 +180,9 @@ has consented; nothing here needs a production change beyond the switch.
    token or key" and, in the Kapa analytics, no new question.
 4. **Withdraw.** Click **Stop sending my questions**, ask again, and expect the
    notice instead of an answer.
-5. **Hosted hive.** On a hosted hive, Settings, Features: turn on **Ask AI help**
-   and set **Ask mode** to `hub`. Open **Ask**, confirm, and ask "Where do I pause
-   an agent?". Expect an answer linking to the dashboard sections or agents
+5. **Hosted hive.** On a hosted hive with no `ask` block, Settings, Features
+   shows **Ask Hive** on and **Ask mode** `hub` by default. Open **? Help**, then **Ask Hive**, confirm, and
+   ask "Where do I pause an agent?". Expect an answer linking to the dashboard sections or agents
    docs. The hub log shows `audit: ask request` with `hive=<that hive>`; the hive
    log shows `audit: ask request` with `relay=true`. Neither line carries the
    question.
@@ -175,7 +191,8 @@ has consented; nothing here needs a production change beyond the switch.
 7. **Fallback.** On the self-hosted hive point `ask.kapa.api_key_file` at an
    empty file and restart: Settings shows why Ask stays off and the button is
    gone. Restore it.
-8. **Off again.** Turn Ask off on the hosted hive and on the hub. The button
+8. **Off again.** Turn **Ask Hive** off on the hosted hive (this saves
+   `ask.enabled: false`) and turn Ask off on the hub. The button
    disappears on the next reload, the routes answer `404`, and the hub's
    `GET /api/ask/stats` (while on) showed the counts by outcome for the test.
 9. **What left.** In Kapa analytics, the test questions appear with the section

@@ -8,6 +8,8 @@ The dashboard top bar includes a fleet breaker: a circular pause/play control pl
 
 Engage pauses every agent that is currently running and is not `on_demand`. Agents already paused before engage are skipped and keep their original pause reason. Release resumes only the exact agents the breaker paused and still owns (`PausedTrigger == fleet-breaker`); if an operator manually re-pauses an agent while the breaker is engaged, release leaves it paused. The breaker state is persisted so a crash/restart can still release the same captured set.
 
+A hive owner or hub admin can also pause and resume a hosted hive from the hub: **My Hives → ⋮ → Pause hive / Resume hive** queues the same engage or release, which the spoke applies on its next heartbeat. While the breaker is engaged, the My Hives row shows a **⏸ paused** pill next to the hive's mode. For the owner or an admin the pill reads **⏸ paused · ▶ resume** and clicking it resumes the hive; its hover names how many agents the breaker holds and who paused them. On the hive's own dashboard, an owner's chip reads **paused · resume**. A viewer who cannot release the breaker there sees a **Resume in My Hives ↗** link next to the chip when the hive is hub-linked (#19778).
+
 Fixes #2953.
 
 ## Self-reported issues

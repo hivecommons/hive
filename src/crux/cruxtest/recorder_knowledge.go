@@ -15,3 +15,9 @@ func (r *Recorder) SetKnowledgeAdviser(adviser crux.KnowledgeAdviser) {
 func (r *Recorder) SetSandboxGitHubReadRelay(relay crux.SandboxGitHubReadRelay, noProxy []string) {
 	r.record("SetSandboxGitHubReadRelay", relay != nil, noProxy)
 }
+
+// SetSandboxInferenceRelay records the sandbox inference listener seam
+// (hivecommons/hive#19619): whether one was installed.
+func (r *Recorder) SetSandboxInferenceRelay(relay crux.SandboxInferenceRelay) {
+	r.record("SetSandboxInferenceRelay", relay != nil)
+}

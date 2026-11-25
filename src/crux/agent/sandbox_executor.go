@@ -59,11 +59,15 @@ func (sandboxExecRunner) Run(ctx context.Context, dir string, env []string, name
 type PRCreator = crux.PRCreator
 
 type SandboxKickSpec struct {
-	Agent        string
-	AgentConfig  configSnapshot
-	Message      string
-	Org          string
-	Repo         string
+	Agent       string
+	AgentConfig configSnapshot
+	Message     string
+	Org         string
+	Repo        string
+	// ForgeBaseURL is the instance root of the forge Org/Repo lives on; the
+	// workspace is cloned from it and the broker pushes only to it. Empty is
+	// github.com. The minters must mint tokens for this forge.
+	ForgeBaseURL string
 	BaseRef      string
 	Branch       string
 	WorkspaceDir string
@@ -107,6 +111,9 @@ type SandboxKickSpec struct {
 	// from config (hivecommons/hive#19549). Non-nil prepends the
 	// [hive:sandbox-environment] section to the prompt.
 	Environment *sandboxEnvironment
+	// InferenceRouted marks a Job kick on a model gateway backend whose CLI
+	// reaches hive's translator through the inference listener (#19619).
+	InferenceRouted bool
 
 	// targetHead and targetURL are set by workspace prep for a TargetPR
 	// kick: the head commit checked out (the push's lease) and the PR URL.
@@ -191,13 +198,20 @@ type SandboxExecutor struct {
 	// PRTargetReader reads an existing PR a kick pushes to (spec.TargetPR):
 	// before the checkout and again before the push. Nil refuses every
 	// TargetPR kick.
-	PRTargetReader         crux.PRPushTargetReader
-	Logger                 *slog.Logger
-	Now                    func() time.Time
-	Mutation               effects.Boundary
-	onStarted              func()
-	GitHubReadRelay        SandboxGitHubReadRelay // routes a Job kick's GitHub reads through hive's read relay (#18865); nil leaves the Job as before
-	GitHubReadRelayNoProxy []string               // extra NO_PROXY entries for relayed Jobs
+	PRTargetReader crux.PRPushTargetReader
+	Logger         *slog.Logger
+	Now            func() time.Time
+	Mutation       effects.Boundary
+	// GitHubReadRelay, when set, routes a Job-runtime kick's GitHub reads
+	// through hive's read relay (#18865). Nil leaves the Job on its own
+	// network path, exactly as before.
+	GitHubReadRelay SandboxGitHubReadRelay
+	// GitHubReadRelayNoProxy is extra NO_PROXY entries for relayed Jobs.
+	GitHubReadRelayNoProxy []string
+	// InferenceRelay, when set, points a Job kick with InferenceRouted at
+	// hive's inference translator through a per-kick key (#19619).
+	InferenceRelay SandboxInferenceRelay
+	onStarted      func()
 }
 
 func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (SandboxKickResult, error) {
@@ -268,6 +282,8 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	}()
 	relayEnv, releaseRelay := e.enrollGitHubReadRelay(spec, workspace)
 	defer releaseRelay()
+	inferenceEnv, releaseInference := e.enrollInferenceRelay(spec, workspace)
+	defer releaseInference()
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
 	var notifyStarted func()
@@ -282,7 +298,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		WorkspaceMount: sandbox.DefaultWorkspaceMount,
 		WorkDir:        sandbox.DefaultWorkspaceMount,
 		Command:        command,
-		Env:            mergeSandboxEnv(spool.sandboxEnv(), relayEnv),
+		Env:            mergeSandboxEnv(mergeSandboxEnv(spool.sandboxEnv(), inferenceEnv), relayEnv),
 		EnvAllowlist:   spec.EnvAllowlist,
 		NetworkMode:    spec.NetworkMode,
 		PidsLimit:      spec.PidsLimit,
@@ -406,6 +422,9 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		Logger:    e.Logger,
 		Mutation:  e.Mutation,
 		LeaseSHA:  spec.targetHead,
+		// The workspace was cloned from this forge; the broker pushes to it
+		// and nowhere else.
+		RemoteBaseURL: spec.ForgeBaseURL,
 	}
 	bres, brokerErr := broker.Run(ctx)
 	res.Broker = &bres

@@ -1689,3 +1689,15 @@ nous:
 #       listen_addr: ":8443"                       # required when enabled; no default
 #       endpoint: https://hive.hive-system.svc:8443  # how Job pods reach hive; required when enabled
 #       no_proxy: []                               # optional extra hosts Jobs reach directly
+
+# Sandbox Job inference listener (docs/sandbox-isolation.md, #19619): lets
+# Job kicks on a model gateway backend reach hive's inference translator with
+# a per-kick key, so the gateway key never enters the Job. Default off; the
+# same rules as github_read_proxy (no default bind, https endpoint only,
+# hive-wide only). Pair it with a Service and a NetworkPolicy.
+# agent_sandbox:
+#   job:
+#     inference_proxy:
+#       enabled: false
+#       listen_addr: ":18446"                                   # required when enabled; no default
+#       endpoint: https://hive-inference.hive-system.svc:18446  # how Job pods reach hive; required when enabled

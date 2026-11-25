@@ -39,7 +39,7 @@ const MEETINGS = ['meetingsIsOwner', 'meetingsRoleKnown', 'meetingsOnRoleReady',
   'meetingsRowHtml', 'meetingsFormatTime', 'meetingsFriendlyReason', 'meetingsReasonHtml', 'meetingsLabel',
   'meetingsFinished', 'meetingsCanDelete', 'meetingsDeleteButtonHtml', 'fetchMeetingsBudget', 'meetingsBudgetHtml', 'meetingsBudgetText', 'meetingsTrustedHtml', 'rowChevronHtml'];
 const CALENDAR = ['calendarRoleKnown', 'calendarOnRoleReady', 'calendarCanView', 'calendarIsOwner', 'fetchCalendar', 'calendarRefreshMeetings',
-  'fetchMeetingDrafts', 'renderCalendar', 'renderMeetingDrafts', 'meetingDraftsSplit', 'calendarFormHtml', 'calendarViewerTimeZone',
+  'fetchMeetingDrafts', 'renderCalendar', 'renderMeetingDrafts', 'meetingDraftsSplit', 'calendarFormHtml', 'calendarField', 'calendarViewerTimeZone',
   'calendarRowHtml', 'calendarFormatTime', 'calendarPlatformLabel', 'calendarMeetingLink', 'calendarActionButtons', 'renderCalendarIndicator',
   'calendarIndicatorState', 'calendarBadgeCount', 'calendarMeetingList', 'calendarCanDelete',
   'calendarDisplayTitle', 'calendarLooksForwarded', 'calendarRepeatText', 'calendarFormatRange', 'calendarWhen', 'calendarApprovalWhy'];
@@ -47,6 +47,8 @@ const CALENDAR = ['calendarRoleKnown', 'calendarOnRoleReady', 'calendarCanView',
 function makeSandbox(opts) {
   const els = {};
   const el = (id) => (els[id] = els[id] || { id, innerHTML: '', dataset: {}, querySelector: () => null, setAttribute() {} });
+  el('calendar-email-in').hidden = true;
+  el('calendar-add-form').hidden = true;
   const calls = [];
   const sb = {
     window: { _hiveRoleListeners: [] },
@@ -92,13 +94,24 @@ test('meetings and calendar are in the dashboard layout template', () => {
   assert.match(m[1], /'inbox-section','calendar-section','meetings-section'/);
 });
 
+test('calendar link label follows the selected meeting after moving back to an earlier occurrence', () => {
+  const sb = makeSandbox({});
+  const link = sb.calendarMeetingLink({
+    meeting_id: 'earlier',
+    status: 'ended',
+    history: [{ meeting_id: 'earlier', status: 'ended' }, { meeting_id: 'later', status: 'live' }],
+  });
+  assert.match(link, /data-arg0="earlier">Notes</);
+});
+
 test('while the role is unknown both panels show loading, not the not-allowed notice, and fetch nothing', async () => {
   const sb = makeSandbox({});
   await sb.fetchMeetings();
   await sb.fetchCalendar();
   assert.match(sb.els['meetings-panel'].innerHTML, /Loading meetings/);
-  assert.match(sb.els['calendar-panel'].innerHTML, /Loading calendar/);
-  assert.doesNotMatch(sb.els['meetings-panel'].innerHTML + sb.els['calendar-panel'].innerHTML, /visible to the hive owner/);
+  assert.match(sb.els['calendar-results'].innerHTML, /Loading calendar/);
+  assert.equal(sb.els['calendar-add-form'].hidden, true);
+  assert.doesNotMatch(sb.els['meetings-panel'].innerHTML + sb.els['calendar-results'].innerHTML, /visible to the hive owner/);
   assert.deepEqual(sb.calls, []);
 });
 
@@ -114,7 +127,9 @@ test('role arriving as owner fetches and renders the join form and the calendar'
   assert.ok(sb.calls.includes('/api/meetings/schedule'));
   assert.match(sb.els['meetings-panel'].innerHTML, /data-action="meetingsJoin"/);
   assert.match(sb.els['meetings-panel'].innerHTML, /No meetings yet/);
-  assert.match(sb.els['calendar-panel'].innerHTML, /Nothing scheduled/);
+  assert.match(sb.els['calendar-results'].innerHTML, /Nothing scheduled/);
+  assert.equal(sb.els['calendar-add-form'].hidden, false);
+  assert.match(sb.els['calendar-add-form'].innerHTML, /data-action="calendarAdd"/);
   assert.match(sb.els['meeting-drafts-panel'].innerHTML, /No drafts waiting/);
   assert.doesNotMatch(sb.els['meetings-panel'].innerHTML, /visible to the hive owner/);
 });
@@ -125,7 +140,8 @@ test('role arriving as read shows the not-allowed notices', async () => {
   sb.hiveRoleSettled(false);
   await settle();
   assert.match(sb.els['meetings-panel'].innerHTML, /visible to the hive owner only/);
-  assert.match(sb.els['calendar-panel'].innerHTML, /visible to the hive owner and read-write users/);
+  assert.match(sb.els['calendar-results'].innerHTML, /visible to the hive owner and read-write users/);
+  assert.equal(sb.els['calendar-add-form'].hidden, true);
   assert.equal(sb.calls.length, 0);
 });
 

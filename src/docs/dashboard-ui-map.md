@@ -101,6 +101,7 @@ terminal, sign in that agent's CLI (for example Copilot or Claude); see
 | Troubleshooting | **Diagnostics** | Diagnostics | Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working. | [Diagnostics](dashboard-sections.md#diagnostics) |
 | Troubleshooting | **Audit log** | Audit log | A searchable record of everything Hive has done, newest first. The collapsed “sensitive” badge opens a 24h sensitive-only view, matching the server-side risk count. | [Audit log](dashboard-sections.md#audit-log) |
 | Help | **Getting started** | | A link or dialog, not a dashboard section. | |
+| Help | **Ask Hive** | | A link or dialog, not a dashboard section. | |
 | Help | **FAQ** | FAQ | Short answers to the questions people ask once a hive is running, each linking to the guide that explains it fully. | [FAQ](dashboard-sections.md#faq) |
 | Help | **Docs** | | A link or dialog, not a dashboard section. | |
 | Help | **API reference** | | A link or dialog, not a dashboard section. | |

@@ -9,7 +9,7 @@
 > [Forge setup: GitLab, Gitea, and Forgejo](forge-app-setup.md) for exactly what
 > is and is not implemented before you attempt an install.
 
-Hive can authenticate with either a personal access token or a GitHub App. Use a GitHub App for production hives because installation tokens are scoped to selected repositories and can author PRs as the app bot when `github.app_authored_prs` is enabled.
+Hive can authenticate with either a personal access token or a GitHub App. A PAT is enough only for L1-L2. **L3 and above need a GitHub App**, because agents never write to GitHub directly: every agent issue, claim, review, PR, and merge goes through request relays that start only when the hive has a usable App (`app_id` set and an installation). On a PAT-only hive those requests stay queued on disk, unprocessed, with no warning. Use a GitHub App for production hives because installation tokens are scoped to selected repositories and can author PRs as the app bot when `github.app_authored_prs` is enabled.
 
 ## Personal access token (PAT) scopes
 
@@ -19,19 +19,19 @@ Hive never validates token scopes at startup. A PAT with missing scopes fails **
 
 ### Classic PATs
 
-Classic scopes are coarse, so one scope covers every ACMM tier:
+Classic scopes are coarse, so one scope covers every ACMM tier. The PAT alone only covers L1-L2 in practice; the L3+ rows list the scopes for the hive's own writes and assume a GitHub App is also configured:
 
 | ACMM tier | Minimum classic scopes | Why |
 | --- | --- | --- |
 | L1–L2 (advisory) | `repo` (private repos) or `public_repo` (public repos only) | Read issues/PRs/contents; post advisory digest comments to the pinned tracking issue (an issues **write**, even though the tier is otherwise read-only). |
-| L3–L4 (issue filing) | same | Create, label, comment on, and close issues. |
-| L5–L6 (PR/merge) | same, plus `workflow` if agent PRs may touch `.github/workflows/` | Push branches, open/update/merge PRs, read checks/statuses. GitHub rejects workflow-file pushes without `workflow`. |
+| L3–L4 (issue filing) | same, **plus a GitHub App** | Create, label, comment on, and close issues. Agent issue requests are carried out by the App-gated relays, so a PAT alone does not file them. |
+| L5–L6 (PR/merge) | same, **plus a GitHub App**, plus `workflow` if agent PRs may touch `.github/workflows/` | Push branches, open/update/merge PRs, read checks/statuses. GitHub rejects workflow-file pushes without `workflow`. |
 
 Add `read:org` when Hive should identify org members and contributor roles (recommended for org-owned hives).
 
 ### Fine-grained PATs
 
-Fine-grained PATs are supported — the token is sent as a plain bearer, same as a classic PAT. Grant the token access to every repository the hive works on, with repository permissions mirroring the App table below:
+Fine-grained PATs are supported — the token is sent as a plain bearer, same as a classic PAT. Grant the token access to every repository the hive works on, with repository permissions mirroring the App table below. The L3–L4 and L5–L6 columns apply only alongside a GitHub App, because agent issues, PRs, reviews, and merges are carried out by the App-gated request relays:
 
 | Permission | L1–L2 (advisory) | L3–L4 (issues) | L5–L6 (PR/merge) |
 | --- | --- | --- | --- |

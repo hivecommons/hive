@@ -16,6 +16,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/agentmode"
 )
 
 // --------------------------------------------------------------------------
@@ -246,17 +247,17 @@ func generateTestKey(t *testing.T) (*rsa.PrivateKey, string) {
 }
 
 func TestScopedToken_AllTiers(t *testing.T) {
-	tiers := []string{"newcomer", "contributor", "trusted", "merger", "advisor", "unknown-tier", ""}
+	tiers := []agentmode.TokenTier{"newcomer", "contributor", "trusted", "merger", "advisor", "unknown-tier", ""}
 
 	for _, tier := range tiers {
-		t.Run("tier_"+tier, func(t *testing.T) {
+		t.Run("tier_"+string(tier), func(t *testing.T) {
 			key, _ := generateTestKey(t)
 
 			// Mock server that returns a fake installation token
 			mux := http.NewServeMux()
 			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 				json.NewEncoder(w).Encode(map[string]any{
-					"token":      "scoped-token-" + tier,
+					"token":      "scoped-token-" + string(tier),
 					"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
 				})
 			})
@@ -275,7 +276,7 @@ func TestScopedToken_AllTiers(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ScopedToken(%q): %v", tier, err)
 			}
-			expected := "scoped-token-" + tier
+			expected := "scoped-token-" + string(tier)
 			if token != expected {
 				t.Errorf("token = %q, want %q", token, expected)
 			}

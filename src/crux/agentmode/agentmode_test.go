@@ -59,7 +59,7 @@ func TestAgentModeSuffix(t *testing.T) {
 func TestAgentModeTokenTier(t *testing.T) {
 	tests := []struct {
 		mode AgentMode
-		want string
+		want TokenTier
 	}{
 		{ModeAdvisory, "advisor"},
 		{ModeIssuesOnly, "newcomer"},

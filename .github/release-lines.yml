@@ -190,6 +190,9 @@ pinned:
   # and one line's coverage is enough for a shared package — v6 inherits the
   # package through the top-ups, and v4 is feature-frozen.
   forgejo-smoke.yml: [-v4, -v6]
+  # The Forgejo e2e (#19683) follows the smoke lane: the forge path it drives
+  # is v5 code, and v4 is feature-frozen.
+  forgejo-e2e.yml: [-v4, -v6]
   # Publishes the headless Twitch streamer image (#15594) from v5 only: the
   # image is operator tooling, not a hive release channel, so it follows the
   # default branch rather than every release line; v4 is feature-frozen.

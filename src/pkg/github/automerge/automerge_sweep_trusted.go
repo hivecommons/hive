@@ -244,6 +244,12 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if verdictReason, err := c.reviewVerdictGateForLane(ctx, displayRepo, owner, repo, pr, lane); err != nil || verdictReason != "" {
 		return AutoMergeSweepEvent{}, verdictReason, err
 	}
+	// Decision gate (auto_merge.decision_gate): a credential, keystore,
+	// auth or secret path, or the sentinel alert label, waits for a person's
+	// decision on this head. The App's own authorship is never that decision.
+	if decisionReason, err := c.decisionGate(ctx, displayRepo, owner, repo, pr, evaluatedHeadSHA); err != nil || decisionReason != "" {
+		return AutoMergeSweepEvent{}, decisionReason, err
+	}
 	if intentReason, err := c.selfMergeIntentGate(ctx, displayRepo, owner, repo, pr, author, selfLabels); err != nil {
 		return AutoMergeSweepEvent{}, intentReason, err
 	} else if intentReason != "" {
@@ -811,6 +817,14 @@ func (c *Engine) trySweepTrustedAuthorPRAdmitting(ctx context.Context, displayRe
 	}
 	if linkedReason, err := c.linkedIssueGate(ctx, owner, repo, pr); err != nil || linkedReason != "" {
 		return AutoMergeSweepEvent{}, linkedReason, err
+	}
+	// Decision gate (auto_merge.decision_gate): a trusted author's role
+	// vouches for who they are, not for a credential change nobody read. A
+	// credential, keystore, auth or secret path, or the sentinel alert label
+	// (which labelBlockReason lets through for trusted authors), waits for a
+	// person's decision on this head.
+	if decisionReason, err := c.decisionGate(ctx, displayRepo, owner, repo, pr, headSHA); err != nil || decisionReason != "" {
+		return AutoMergeSweepEvent{}, decisionReason, err
 	}
 	// Current-base gate (hivecommons/hive#13634): only a green head that
 	// every gate above lets through is worth an update-branch commit.

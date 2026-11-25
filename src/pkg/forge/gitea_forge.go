@@ -111,10 +111,12 @@ type gtLabel struct {
 type gtIssue struct {
 	Number      int       `json:"number"`
 	Title       string    `json:"title"`
+	Body        string    `json:"body"`
 	State       string    `json:"state"`
 	Labels      []gtLabel `json:"labels"`
 	HTMLURL     string    `json:"html_url"`
 	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 	User        gtUser    `json:"user"`
 	Assignees   []gtUser  `json:"assignees"`
 	PullRequest *gtPRStub `json:"pull_request"`
@@ -218,6 +220,8 @@ func (f *giteaForge) ListOpenIssues(ctx context.Context, repo string) ([]Issue, 
 				State:     it.State,
 				CreatedAt: it.CreatedAt,
 				URL:       it.HTMLURL,
+				Body:      it.Body,
+				UpdatedAt: it.UpdatedAt,
 			})
 		}
 		return len(page), nil

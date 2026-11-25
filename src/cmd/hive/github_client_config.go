@@ -73,6 +73,15 @@ func (b *boot) newConfiguredGitHubAppClient(auth *github.AppAuth) *github.Client
 	return client
 }
 
+// newConfiguredGitHubPATClient is the PAT counterpart of
+// newConfiguredGitHubAppClient: the boot constructor plus configureGitHubClient,
+// used when a config reload delivers a rotated github.token.
+func (b *boot) newConfiguredGitHubPATClient(token string) *github.Client {
+	client := github.NewClient(token, b.cfg.Project.Org, b.cfg.Project.Repos, b.logger, b.cfg.GitHub.ResolvedAPIURL())
+	b.configureGitHubClient(client)
+	return client
+}
+
 // githubHoldLabels is the hold-label set every client carries: the canonical
 // per-hive hold label (hive-pause/<id>), the configured sentinel alert label,
 // plus the clanker-requested label while reporter_trust.clanker_requested is

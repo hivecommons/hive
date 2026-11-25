@@ -81,12 +81,13 @@ const (
 // hive.yaml.runtime is copy-forward, so a spoke that has not yet saved since
 // upgrading still carries only hive.yaml.bak, and a backup that skipped it
 // would silently lose that spoke's config.
-var spokeFiles = []string{
+var spokeConfigFiles = []string{
 	"hive.yaml.dashboard",
 	spokeRuntimeConfigFile,
 	spokeRuntimeConfigFileLegacy,
-	"hive-id",
 }
+
+var spokeFiles = append(spokeConfigFiles, "hive-id")
 
 const (
 	// spokeRuntimeConfigFile is the PVC runtime config, basename only (these
@@ -135,6 +136,7 @@ type ClusterTarget struct {
 	InCluster      bool
 	KubeconfigPath string
 	Context        string
+	PullOnly       bool
 }
 
 // kubectlArgs prefixes cluster-selection flags, mirroring the hub's existing
@@ -269,6 +271,11 @@ func (k KubectlSpokeCollector) Collect(logger *slog.Logger) ([]SpokeConfig, erro
 				Err: fmt.Sprintf("unknown cluster %q", clusterID)})
 			continue
 		}
+		if target.PullOnly {
+			out = append(out, SpokeConfig{ID: id, Cluster: clusterID,
+				Err: "the hub cannot read this push-reported cluster"})
+			continue
+		}
 		sc := k.collectOne(target, id, logger)
 		out = append(out, sc)
 	}
@@ -340,6 +347,13 @@ func (k KubectlSpokeCollector) collectOne(target ClusterTarget, id string, logge
 		sc.Err = fmt.Sprintf("parse spoke stream: %v", err)
 		return sc
 	}
+	// Omit blank files so a whitespace-only newer runtime file cannot prevent
+	// the restored spoke from booting with a usable fallback.
+	for _, name := range spokeConfigFiles {
+		if len(bytes.TrimSpace(files[name])) == 0 {
+			delete(files, name)
+		}
+	}
 	sc.Files = files
 
 	if reason := spokeConfigUnrecoverable(sc.Files); reason != "" {
@@ -356,8 +370,8 @@ func (k KubectlSpokeCollector) collectOne(target ClusterTarget, id string, logge
 //
 // EITHER config file is sufficient. The overlay carries the configuration that
 // wins the boot merge; the runtime config is a post-merge snapshot of the same
-// config that additionally serves the disaster fallback. Missing both means the
-// spoke cannot be faithfully rebuilt.
+// config that additionally serves the disaster fallback. Without a nonempty
+// config, the spoke cannot be faithfully rebuilt.
 //
 // The runtime config counts under either its new or legacy name: a spoke that
 // has not saved since the hive.yaml.runtime rename still carries only
@@ -367,13 +381,12 @@ func (k KubectlSpokeCollector) collectOne(target ClusterTarget, id string, logge
 // never had a dashboard save legitimately has no overlay yet, and failing its
 // backup would be a false alarm.
 func spokeConfigUnrecoverable(files map[string][]byte) string {
-	_, haveOverlay := files["hive.yaml.dashboard"]
-	_, haveRuntime := files[spokeRuntimeConfigFile]
-	_, haveLegacy := files[spokeRuntimeConfigFileLegacy]
-	if !haveOverlay && !haveRuntime && !haveLegacy {
-		return "hive.yaml.dashboard, " + spokeRuntimeConfigFile + " and " + spokeRuntimeConfigFileLegacy + " all absent — spoke config not recoverable from this backup"
+	for _, name := range spokeConfigFiles {
+		if len(bytes.TrimSpace(files[name])) > 0 {
+			return ""
+		}
 	}
-	return ""
+	return "hive.yaml.dashboard, " + spokeRuntimeConfigFile + " and " + spokeRuntimeConfigFileLegacy + " are absent or empty — spoke config not recoverable from this backup"
 }
 
 // spokeStreamDelim separates the filename marker from its base64 payload.
@@ -388,12 +401,12 @@ func buildSpokeReadScript() string {
 	var sb strings.Builder
 	for _, f := range spokeFiles {
 		fmt.Fprintf(&sb,
-			"if [ -f /data/%s ]; then echo '%s%s%s'; base64 /data/%s; fi; ",
+			"if [ -f /data/%s ]; then echo '%s%s%s'; base64 /data/%s || exit 1; fi; ",
 			f, spokeStreamPrefix, f, spokeStreamDelim, f)
 	}
 	// GitHub App keys use varying filenames across clusters.
 	fmt.Fprintf(&sb,
-		"for p in /data/%s; do if [ -f \"$p\" ]; then echo \"%s$(basename $p)%s\"; base64 \"$p\"; fi; done",
+		"for p in /data/%s; do if [ -f \"$p\" ]; then echo \"%s$(basename \"$p\")%s\"; base64 \"$p\" || exit 1; fi; done",
 		spokeKeyGlob, spokeStreamPrefix, spokeStreamDelim)
 	return sb.String()
 }

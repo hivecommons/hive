@@ -1382,3 +1382,21 @@ func TestGitLabMerge_Validation(t *testing.T) {
 		t.Error("expected error with unsupported strategy, got nil")
 	}
 }
+
+func TestGitLabListOpenIssuesCarriesBodyAndUpdatedAt(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"iid": 3, "title": "t", "description": "the body", "state": "opened",
+			"created_at": "2026-11-01T12:00:00Z", "updated_at": "2026-11-02T08:00:00Z",
+			"author": {"username": "alice"}}]`))
+	}))
+	defer srv.Close()
+
+	issues, err := newTestGitLab(t, srv.URL, "acme").ListOpenIssues(context.Background(), "acme/widgets")
+	if err != nil {
+		t.Fatalf("ListOpenIssues: %v", err)
+	}
+	if len(issues) != 1 || issues[0].Body != "the body" || issues[0].UpdatedAt.IsZero() {
+		t.Fatalf("issues = %+v, want one with the description as body and updated_at", issues)
+	}
+}

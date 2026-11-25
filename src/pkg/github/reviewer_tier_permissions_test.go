@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux/agentmode"
 )
 
 // Regression tests for #7469 and #7487. #7469 gave the reviewer tier
@@ -23,14 +25,14 @@ import (
 // would let a silent re-widening back to write slip through.
 
 // mintTierPermissions captures the permission set a tier asks GitHub for.
-func mintTierPermissions(t *testing.T, tier string) map[string]string {
+func mintTierPermissions(t *testing.T, tier agentmode.TokenTier) map[string]string {
 	t.Helper()
 	var got map[string]string
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		got = decodePermissions(t, r)
 		json.NewEncoder(w).Encode(map[string]any{
-			"token":      "scoped-token-" + tier,
+			"token":      "scoped-token-" + string(tier),
 			"expires_at": time.Now().Add(time.Hour).Format(time.RFC3339),
 		})
 	})

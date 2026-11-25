@@ -72,6 +72,10 @@
       if (username) window._hiveUser = username;
       if (role) window._hiveRole = role;
       if (typeof subscriptionGaugeRefresh === 'function') subscriptionGaugeRefresh();
+      // The breaker chip first renders at DOMContentLoaded, before the role is
+      // known, so an owner saw a disabled "paused" chip with no way to resume
+      // until the next status poll (#19778). Repaint it for the real role.
+      if (typeof refreshFleetBreakerState === 'function') refreshFleetBreakerState();
       const banner = document.getElementById('gh-auth-banner');
       const topBtn = document.getElementById('oc-gh-login-btn');
       const avatarWrap = document.getElementById('oc-gh-avatar-wrap');

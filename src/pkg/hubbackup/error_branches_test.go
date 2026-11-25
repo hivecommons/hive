@@ -78,13 +78,16 @@ func TestBuilderAddBytesFailsAfterFinish(t *testing.T) {
 
 // ---- builder tree walking ----
 
-// A missing source root is logged and skipped: WalkDir hands the callback an
-// error, which must not abort the archive.
+// A missing source root is recorded without aborting the archive.
 func TestBuilderAddTreeToleratesMissingRoot(t *testing.T) {
 	x := NewBuilder()
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
-	if err := x.b.addTree(missing, "hub/x", false, quietLogger()); err != nil {
+	saas, err := x.b.addTree(missing, "hub/x", false)
+	if err != nil {
 		t.Fatalf("a missing tree root must be skipped, not fatal: %v", err)
+	}
+	if saas.gaps["hub/x"] == "" {
+		t.Fatal("missing source root was not recorded")
 	}
 	if len(x.b.files) != 0 {
 		t.Fatalf("nothing should have been archived, got %d files", len(x.b.files))
@@ -99,7 +102,7 @@ func TestBuilderAddTreePrunesExcludedDirs(t *testing.T) {
 	mustWrite(t, filepath.Join(dir, "keep.json"), `{"ok":1}`)
 
 	x := NewBuilder()
-	if err := x.b.addTree(dir, "hub", true, quietLogger()); err != nil {
+	if _, err := x.b.addTree(dir, "hub", true); err != nil {
 		t.Fatalf("addTree: %v", err)
 	}
 	if len(x.b.files) != 1 || x.b.files[0].Path != "hub/keep.json" {
@@ -335,56 +338,28 @@ func TestRunSucceedsWhenPruneFails(t *testing.T) {
 	t.Setenv(EnvDataDir, dir)
 	t.Setenv(EnvBackupKey, testKey)
 	t.Setenv(EnvRetention, "1")
+	fakeBackupKubectl(t, "pod")
 
 	objects := map[string][]byte{
 		"hive-hub-backup-20260101T000000Z.tar.gz.enc": []byte("old1"),
 		"hive-hub-backup-20260102T000000Z.tar.gz.enc": []byte("old2"),
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == ociNamespacePath {
-			json.NewEncoder(w).Encode("testnamespace")
-			return
-		}
+	var methods []string
+	handler := ociBucketHandler(t, objects, &methods)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/o") {
-			// Run only lists during Prune, so a broken list breaks exactly
-			// the prune step while upload and read-back stay healthy.
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		idx := strings.Index(r.URL.Path, "/o/")
-		if idx == -1 {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-		name := r.URL.Path[idx+3:]
-		switch r.Method {
-		case http.MethodPut:
-			buf := make([]byte, r.ContentLength)
-			if r.ContentLength > 0 {
-				if _, err := r.Body.Read(buf); err != nil && err.Error() != "EOF" {
-					t.Errorf("read body: %v", err)
-				}
-			}
-			objects[name] = buf
-			w.WriteHeader(http.StatusOK)
-		case http.MethodGet:
-			data, ok := objects[name]
-			if !ok {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			w.Write(data)
-		}
-	})
-	srv := httptest.NewServer(mux)
+		handler(w, r)
+	}))
 	t.Cleanup(srv.Close)
 
 	setOCIEnv(t)
 	t.Setenv(envOCIEndpoint, srv.URL)
 	t.Setenv(EnvBucket, "backups")
 
-	man, name, err := Run(Options{SkipSpokes: true, SkipSecrets: true}, quietLogger())
+	man, name, err := Run(Options{SkipSpokes: true}, quietLogger())
 	if err != nil {
 		t.Fatalf("a failed prune must not fail the backup: %v", err)
 	}

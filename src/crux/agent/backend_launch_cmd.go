@@ -67,6 +67,8 @@ func toolRulesToLaunchCmdWithBobSession(binary, model, backend string, tools *co
 		return agyLaunchCmd(binary, model, effort)
 	case "omp":
 		return ompLaunchCmd(binary, model, effort)
+	case "opencode":
+		return opencodeLaunchCmd(binary)
 	default:
 		return binary + config.ModelFlag(model)
 	}
@@ -148,6 +150,8 @@ func backendLaunchCmdWithBobSession(binary, model, backend string, isInference b
 		launchCmd = codexUnattendedLaunchCmd(binary) + config.ModelFlag(model) + codexEffortFlag(effort)
 	case "omp":
 		launchCmd = ompLaunchCmd(binary, model, effort)
+	case "opencode":
+		launchCmd = opencodeLaunchCmd(binary)
 	default:
 		launchCmd = binary
 	}

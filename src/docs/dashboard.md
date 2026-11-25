@@ -98,7 +98,9 @@ questions with links to the docs. Answers are AI-generated; check the cited
 page before acting. Use the `?` marks or the docs directly if Ask is off,
 unavailable, or has no cited answer.
 
-Ask is off by default. Before your first question, review and accept the
+Ask (**Ask Hive** in Settings and the Help menu) is on by default on a hosted
+hive and off by default on a self-hosted hive; an owner can turn it off in
+Settings, Features. Before your first question, review and accept the
 disclosure in the panel. Consent is recorded server-side for your signed-in
 dashboard identity, not shared with other users, and can be withdrawn in the
 panel. Hive asks again if the disclosure changes. Withdrawal stops future

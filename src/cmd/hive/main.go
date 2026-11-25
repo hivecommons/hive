@@ -2294,6 +2294,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		b.agentMgr.SetSandboxPRClient(b.ghClient)
 		b.agentMgr.SetSandboxMutationBoundary(b.mutationBoundary)
 	}
+	b.wireForgeRemotes()
 
 	// PR-open-as-the-App-bot: agents push their branch (App-token credential
 	// helper) then drop a request file; the hive opens the PR here with the App
@@ -2582,6 +2583,26 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		return joinDone(relaysDone, sweepDone)
 	}, b.logger)
 	b.armRequestRelays(b.ghClient)
+	// A forge-only hive has no GitHub client, so the relays above never
+	// start; its PR and issue requests are served through the forge instead
+	// (hivecommons/hive#19670), with the same manager authorizers. The relay
+	// idles on each scan unless every repo is off GitHub, so a reload either
+	// way hands the queues to the right relays. It stops with b.ctx, which
+	// is all shutdown needs, so its done channel is not joined.
+	if deps.startForgeRequestRelay != nil {
+		_ = deps.startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
+			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger))
+	}
+	// Forgejo repos (#19671): the GitHub sweeps above skip them
+	// (RepoOnGitHub), so they get their own automerge and close-on-merge
+	// sweeps. These need no GitHub client, so a Forgejo-only hive runs them.
+	if b.ctx != nil {
+		startForgejoSweeps(b.ctx, func() *config.Config { return b.cfg }, forgejoSweepDeps{
+			Mutation: b.mutationBoundary,
+			Gate:     b.writebackGate(),
+			Logger:   b.logger,
+		}, forgejoSweepInterval)
+	}
 	b.integrationEligibility = func(ctx context.Context, repo, base string, number int, head string) (*gh.PullRequest, string, error) {
 		client := b.currentGitHubClient()
 		if client == nil {
@@ -4354,6 +4375,17 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 			}
 		}
 
+		// Rebuild the PAT client when github.token was rotated in hive.yaml
+		// (hivecommons/hive#19633). The PAT client is built once at boot, so
+		// without this the old token kept being used until a restart. App mode
+		// is untouched: it rebuilds above on App identity changes.
+		if !b.cfg.GitHub.HasApp() && b.cfg.GitHub.Token != "" && prevGitHub.Token != b.cfg.GitHub.Token {
+			newClient := b.newConfiguredGitHubPATClient(b.cfg.GitHub.Token)
+			b.adoptGitHubClient(newClient, nil)
+			deps.refreshAgentTokens(b.ctx, b.agentMgr)
+			b.logger.Info("github token client rebuilt after config reload")
+		}
+
 		b.refreshDashboard()
 		return prevACMMLevel, nextACMMLevel
 	}
@@ -4816,6 +4848,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 
 		deps.startProxy(b.githubProxy, b.logger)
 		b.wireSandboxGitHubReadRelay()
+		b.wireSandboxInferenceRelay()
 		// Jev decision endpoint (hivecommons/hive#8939). Always bound so a
 		// jev_mode toggle in the dashboard takes effect on the agent's next
 		// call; every predicate reads the LIVE config, and an agent whose
@@ -8063,6 +8096,8 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 	case auditVerifySubcommand:
 		// Checks the audit log's hash chain; see audit_verify_cmd.go.
 		return true, runAuditVerify(args[1:], stdout, stderr)
+	case forgeSubcommand:
+		return true, runForge(args[1:], stdout, stderr)
 	case memoryDrainSubcommand:
 		// Run as the agent by the Claude Code memory hooks Hive seeds; see
 		// memory_drain_cmd.go. Always exits 0.

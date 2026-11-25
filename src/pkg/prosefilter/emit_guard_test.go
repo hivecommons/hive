@@ -19,6 +19,7 @@ var emitDirs = []string{
 	"pkg/github",
 	"pkg/priorart",
 	"pkg/dupsweep",
+	"pkg/forgesweep",
 	"pkg/hotspot",
 	"pkg/advisory",
 	"pkg/escalation",

@@ -1392,6 +1392,27 @@ func TestGHCRTokenTimeoutStaysInLog(t *testing.T) {
 	}
 }
 
+// #19706: a proactive App-token refresh that times out while the cached token
+// is still valid is retried on a backoff; it is not a hive defect.
+func TestAppTokenRefreshTimeoutStaysInLog(t *testing.T) {
+	const msg = "github app token proactive refresh failed; serving still-valid cached token"
+	logger, seen, out := newFeed(t)
+	for range 10 {
+		logger.Warn(msg, "expires_at", "2026-11-24T15:10:55Z", "installation_id", 148549259,
+			"error", errors.New("creating installation token: context deadline exceeded"))
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("App token refresh timeout was observed for fleet reporting: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 10 {
+		t.Fatalf("wrapped handler saw %d records, want 10", n)
+	}
+	logger.Warn(msg, "installation_id", 148549259, "error", "creating installation token: POST https://api.github.com/app/installations/148549259/access_tokens: 401 A JSON web token could not be decoded []")
+	if len(*seen) != 1 {
+		t.Fatalf("non-timeout refresh failure must stay reportable, observed %+v", *seen)
+	}
+}
+
 // #19407: an unresolved-conversation refusal of the native enqueue is a normal not-ready state.
 func TestUnresolvedConversationsSkipLogsWithoutFleetReport(t *testing.T) {
 	const refusal = "effect outcome uncertain, reconciliation required: graphql: UNPROCESSABLE: Pull request All comments must be resolved."

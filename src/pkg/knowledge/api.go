@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -141,22 +142,24 @@ type LayerStatus struct {
 // SearchAll queries all reachable layers and returns tagged results.
 func (k *KnowledgeAPI) SearchAll(ctx context.Context, query string, typeFilter string, limit int) []Fact {
 	var all []Fact
-	for _, lc := range k.layers {
+	for _, lc := range k.wikiLayers() {
 		results, err := lc.client.Search(ctx, query, typeFilter, limit)
 		if err != nil {
 			k.logger.Warn("knowledge search failed", "layer", lc.layerType, "error", err)
 			continue
 		}
+		source := lc.wikiSourceLayer()
 		for _, r := range results {
 			all = append(all, applyConfidence(Fact{
-				Slug:       r.Slug,
-				Title:      r.Title,
-				Type:       FactType(r.Type),
-				Body:       r.Snippet,
-				Confidence: r.Confidence,
-				Status:     r.Status,
-				Tags:       r.Tags,
-				Layer:      lc.layerType,
+				Slug:        r.Slug,
+				Title:       r.Title,
+				Type:        FactType(r.Type),
+				Body:        r.Snippet,
+				Confidence:  r.Confidence,
+				Status:      r.Status,
+				Tags:        r.Tags,
+				Layer:       lc.layerType,
+				SourceLayer: source,
 			}, confidenceInput{Raw: r.Confidence, HasRaw: r.Confidence > 0, Type: FactType(r.Type), Layer: lc.layerType, Status: r.Status, Tags: r.Tags}))
 		}
 	}
@@ -165,8 +168,8 @@ func (k *KnowledgeAPI) SearchAll(ctx context.Context, query string, typeFilter s
 
 // LayerFacts returns facts from a specific layer.
 func (k *KnowledgeAPI) LayerFacts(ctx context.Context, layer LayerType, typeFilter string) []Fact {
-	for _, lc := range k.layers {
-		if lc.layerType != layer {
+	for _, lc := range k.wikiLayers() {
+		if !lc.matchesWikiLayer(layer) {
 			continue
 		}
 		results, err := lc.client.ListPages(ctx, typeFilter)
@@ -175,17 +178,19 @@ func (k *KnowledgeAPI) LayerFacts(ctx context.Context, layer LayerType, typeFilt
 			return nil
 		}
 		facts := make([]Fact, len(results))
+		source := lc.wikiSourceLayer()
 		for i, r := range results {
 			facts[i] = applyConfidence(Fact{
-				Slug:       r.Slug,
-				Title:      r.Title,
-				Type:       FactType(r.Type),
-				Body:       r.Snippet,
-				Confidence: r.Confidence,
-				Status:     r.Status,
-				Tags:       r.Tags,
-				Layer:      layer,
-			}, confidenceInput{Raw: r.Confidence, HasRaw: r.Confidence > 0, Type: FactType(r.Type), Layer: layer, Status: r.Status, Tags: r.Tags})
+				Slug:        r.Slug,
+				Title:       r.Title,
+				Type:        FactType(r.Type),
+				Body:        r.Snippet,
+				Confidence:  r.Confidence,
+				Status:      r.Status,
+				Tags:        r.Tags,
+				Layer:       lc.layerType,
+				SourceLayer: source,
+			}, confidenceInput{Raw: r.Confidence, HasRaw: r.Confidence > 0, Type: FactType(r.Type), Layer: lc.layerType, Status: r.Status, Tags: r.Tags})
 		}
 		return facts
 	}
@@ -194,22 +199,8 @@ func (k *KnowledgeAPI) LayerFacts(ctx context.Context, layer LayerType, typeFilt
 
 // ReadFact returns a single fact from the first layer that has it.
 func (k *KnowledgeAPI) ReadFact(ctx context.Context, slug string) (*Fact, error) {
-	for _, lc := range k.layers {
-		page, err := lc.client.ReadPage(ctx, slug)
-		if err != nil {
-			continue
-		}
-		f := applyConfidence(Fact{
-			Slug:       page.Slug,
-			Title:      page.Title,
-			Type:       FactType(page.Type),
-			Body:       page.Body,
-			Confidence: page.Confidence,
-			Status:     page.Status,
-			Tags:       page.Tags,
-			Layer:      lc.layerType,
-		}, confidenceInput{Raw: page.Confidence, HasRaw: page.Confidence > 0, Type: FactType(page.Type), Layer: lc.layerType, Status: page.Status, Tags: page.Tags})
-		return &f, nil
+	if f := k.readWikiFact(ctx, "", slug); f != nil {
+		return f, nil
 	}
 	if f, err := k.VaultFact(slug); err == nil {
 		return f, nil
@@ -217,10 +208,61 @@ func (k *KnowledgeAPI) ReadFact(ctx context.Context, slug string) (*Fact, error)
 	return nil, nil
 }
 
+// ReadFactInLayer reads a fact only from the requested wiki, vault or git source.
+func (k *KnowledgeAPI) ReadFactInLayer(ctx context.Context, layer LayerType, slug string) (*Fact, error) {
+	if layer == "" {
+		return nil, nil
+	}
+	if name, ok := strings.CutPrefix(string(layer), "git_source:"); ok {
+		return k.readGitSourceFact(name, slug)
+	}
+	name, qualified := strings.CutPrefix(string(layer), "vault:")
+	if !qualified && (strings.HasPrefix(string(layer), wikiSourcePrefix) || k.clientForLayer(layer) != nil) {
+		return k.readWikiFact(ctx, layer, slug), nil
+	}
+	if store := vaultForRead(k.FileStores(), name); store != nil {
+		f, err := store.ReadPage(slug)
+		if err == nil {
+			f.SourceLayer = vaultSourceLayer(store)
+		}
+		return f, err
+	}
+	if !qualified {
+		return k.readGitSourceFact(name, slug)
+	}
+	return nil, nil
+}
+
+func (k *KnowledgeAPI) readWikiFact(ctx context.Context, layer LayerType, slug string) *Fact {
+	for _, lc := range k.wikiLayers() {
+		if layer != "" && !lc.matchesWikiLayer(layer) {
+			continue
+		}
+		page, err := lc.client.ReadPage(ctx, slug)
+		if err != nil {
+			continue
+		}
+		f := applyConfidence(Fact{
+			Slug:        page.Slug,
+			Title:       page.Title,
+			Type:        FactType(page.Type),
+			Body:        page.Body,
+			Confidence:  page.Confidence,
+			Status:      page.Status,
+			Tags:        page.Tags,
+			Layer:       lc.layerType,
+			SourceLayer: lc.wikiSourceLayer(),
+		}, confidenceInput{Raw: page.Confidence, HasRaw: page.Confidence > 0, Type: FactType(page.Type), Layer: lc.layerType, Status: page.Status, Tags: page.Tags})
+		return &f
+	}
+	return nil
+}
+
 // Health checks all configured layers and returns their status.
 func (k *KnowledgeAPI) Health(ctx context.Context) []LayerStatus {
-	statuses := make([]LayerStatus, len(k.layers))
-	for i, lc := range k.layers {
+	layers := k.wikiLayers()
+	statuses := make([]LayerStatus, len(layers))
+	for i, lc := range layers {
 		statuses[i] = LayerStatus{
 			Type:    lc.layerType,
 			URL:     lc.client.baseURL,
@@ -243,12 +285,15 @@ func (k *KnowledgeAPI) Stats(ctx context.Context) map[string]interface{} {
 		"engine":  k.config.Engine,
 	}
 
-	layerStats := make([]map[string]interface{}, 0, len(k.layers)+len(k.vaults))
-	for _, lc := range k.layers {
+	layers := k.wikiLayers()
+	vaults := k.FileStores()
+	layerStats := make([]map[string]interface{}, 0, len(layers)+len(vaults))
+	for _, lc := range layers {
 		ls := map[string]interface{}{
-			"type":    lc.layerType,
-			"url":     lc.client.baseURL,
-			"healthy": false,
+			"type":         lc.layerType,
+			"source_layer": lc.wikiSourceLayer(),
+			"url":          lc.client.baseURL,
+			"healthy":      false,
 		}
 		stats, err := lc.client.Stats(ctx)
 		if err == nil {
@@ -262,25 +307,32 @@ func (k *KnowledgeAPI) Stats(ctx context.Context) map[string]interface{} {
 		layerStats = append(layerStats, ls)
 	}
 
-	for _, v := range k.vaults {
+	for _, v := range vaults {
 		vs := v.Stats()
 		layerStats = append(layerStats, map[string]interface{}{
-			"type":        v.Name(),
-			"healthy":     true,
-			"total_pages": vs.TotalPages,
+			"type":         v.Name(),
+			"source_layer": vaultSourceLayer(v),
+			"healthy":      true,
+			"total_pages":  vs.TotalPages,
 		})
 	}
 
-	for _, gs := range k.gitSources {
+	sources := k.gitSourceSnapshot()
+	gitLayers := gitSourceLayers(sources)
+	for _, gs := range sources {
 		info := gs.Info()
-		layerStats = append(layerStats, map[string]interface{}{
+		ls := map[string]interface{}{
 			"type":        "git_source:" + info.Name,
 			"layer":       info.Layer,
 			"url":         info.URL,
 			"subpath":     info.Subpath,
 			"healthy":     info.Ready,
 			"total_pages": info.Pages,
-		})
+		}
+		if source := gitLayers[gs]; source != LayerType("git_source:"+info.Name) {
+			ls["source_layer"] = source
+		}
+		layerStats = append(layerStats, ls)
 	}
 
 	result["layers"] = layerStats
@@ -506,7 +558,13 @@ type EntryStateChange struct {
 // writable local channel holds it. A non-empty supersededBy marks the entry
 // superseded by that entry, which must live in the same channel.
 func (k *KnowledgeAPI) SetEntryState(id string, state LifecycleState, supersededBy string) (EntryStateChange, error) {
-	v, before := k.writableVaultHolding(id)
+	return k.SetEntryStateInLayer("", id, state, supersededBy)
+}
+
+// SetEntryStateInLayer changes an entry in its identified vault. An empty
+// source retains the legacy lookup by slug for existing callers.
+func (k *KnowledgeAPI) SetEntryStateInLayer(source LayerType, id string, state LifecycleState, supersededBy string) (EntryStateChange, error) {
+	v, before := k.writableVaultHolding(source, id)
 	if v == nil {
 		return EntryStateChange{}, ErrEntryNotWritable
 	}
@@ -523,6 +581,7 @@ func (k *KnowledgeAPI) SetEntryState(id string, state LifecycleState, superseded
 	if err != nil {
 		return change, err
 	}
+	after.SourceLayer = vaultSourceLayer(v)
 	change.Fact = after
 	return change, nil
 }
@@ -533,14 +592,14 @@ func (k *KnowledgeAPI) SetEntryState(id string, state LifecycleState, superseded
 // (`source: cli-memory`, #17058): the drain writes those once and never
 // rewrites them, so approving or discarding one cannot fight the
 // synthesizer, and review is the only way a drained draft is ever primed.
-func (k *KnowledgeAPI) writableVaultHolding(id string) (*FileStore, *Fact) {
+func (k *KnowledgeAPI) writableVaultHolding(source LayerType, id string) (*FileStore, *Fact) {
 	if id == "" {
 		return nil, nil
 	}
-	k.mu.RLock()
-	vaults := append([]*FileStore(nil), k.vaults...)
-	k.mu.RUnlock()
-	for _, v := range vaults {
+	for _, v := range k.FileStores() {
+		if source != "" && source != vaultSourceLayer(v) {
+			continue
+		}
 		f, err := v.ReadPage(id)
 		if err != nil {
 			continue
@@ -589,6 +648,10 @@ func (k *KnowledgeAPI) Promoter() *Promoter {
 
 // PromoteFact promotes a fact from one layer to another (upward only).
 func (k *KnowledgeAPI) PromoteFact(ctx context.Context, req PromoteRequest) PromoteResult {
+	if strings.HasPrefix(string(req.FromLayer), wikiSourcePrefix) {
+		source := k.wikiLayerFor(req.FromLayer)
+		return k.promoter.promoteFrom(ctx, req, source.layerType, source.client)
+	}
 	return k.promoter.Promote(ctx, req)
 }
 
@@ -643,7 +706,14 @@ func (k *KnowledgeAPI) ImportFacts(ctx context.Context, layer LayerType, content
 // or nil. The reserved automation vault is intentionally NOT matchable here — it
 // is filtered so it can never be resolved as an import target.
 func (k *KnowledgeAPI) vaultByName(name string) *FileStore {
-	if name == "" || name == reservedVaultName {
+	if name == reservedVaultName {
+		return nil
+	}
+	return k.readableVaultByName(name)
+}
+
+func (k *KnowledgeAPI) readableVaultByName(name string) *FileStore {
+	if name == "" {
 		return nil
 	}
 	k.mu.RLock()
@@ -927,6 +997,48 @@ func (k *KnowledgeAPI) ReindexVault(rootDir string) error {
 	return fmt.Errorf("vault not found: %s", rootDir)
 }
 
+// VaultSourceLayerForFile identifies the connected vault at the file's parent directory.
+func (k *KnowledgeAPI) VaultSourceLayerForFile(path string) LayerType {
+	if path == "" {
+		return ""
+	}
+	dir := filepath.Dir(path)
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	for _, vault := range k.vaults {
+		if filepath.Clean(vault.RootDir()) == dir {
+			return vaultSourceLayer(vault)
+		}
+	}
+	return ""
+}
+
+// Use the vault root to keep selectors stable across changes to display names.
+func vaultSourceLayer(v *FileStore) LayerType {
+	return LayerType(fmt.Sprintf("vault:sha256:%x", sha256.Sum256([]byte(v.RootDir()))))
+}
+
+func vaultForRead(vaults []*FileStore, selector string) *FileStore {
+	if selector == "" {
+		return nil
+	}
+	if digest, ok := strings.CutPrefix(selector, "sha256:"); ok && len(digest) == sha256.Size*2 {
+		source := LayerType("vault:" + selector)
+		for _, v := range vaults {
+			if vaultSourceLayer(v) == source {
+				return v
+			}
+		}
+		return nil
+	}
+	for _, v := range vaults {
+		if v.Name() == selector {
+			return v
+		}
+	}
+	return nil
+}
+
 // SearchAllWithVaults queries wiki layers, file-based vaults, and git sources.
 func (k *KnowledgeAPI) SearchAllWithVaults(ctx context.Context, query string, typeFilter string, limit int) []Fact {
 	k.mu.RLock()
@@ -935,15 +1047,21 @@ func (k *KnowledgeAPI) SearchAllWithVaults(ctx context.Context, query string, ty
 	k.mu.RUnlock()
 
 	results := k.SearchAll(ctx, query, typeFilter, limit)
-
 	for _, v := range vaults {
+		var facts []Fact
 		if query == "" {
-			results = append(results, v.ListPages(typeFilter)...)
+			facts = v.ListPages(typeFilter)
 		} else {
-			results = append(results, v.Search(query, limit)...)
+			facts = v.Search(query, limit)
 		}
+		source := vaultSourceLayer(v)
+		for i := range facts {
+			facts[i].SourceLayer = source
+		}
+		results = append(results, facts...)
 	}
 
+	gitLayers := gitSourceLayers(sources)
 	for _, gs := range sources {
 		if !gs.Ready() {
 			continue
@@ -957,6 +1075,7 @@ func (k *KnowledgeAPI) SearchAllWithVaults(ctx context.Context, query string, ty
 		}
 		for i := range facts {
 			facts[i].Layer = gs.Config().Layer
+			facts[i].SourceLayer = gitLayers[gs]
 		}
 		results = append(results, facts...)
 	}
@@ -966,19 +1085,30 @@ func (k *KnowledgeAPI) SearchAllWithVaults(ctx context.Context, query string, ty
 
 // VaultFacts returns all facts from a specific vault by name.
 func (k *KnowledgeAPI) VaultFacts(name string) []Fact {
-	for _, v := range k.vaults {
-		if v.Name() == name {
-			return v.ListPages("")
+	vaults := k.FileStores()
+	if v := vaultForRead(vaults, name); v != nil {
+		facts := v.ListPages("")
+		source := vaultSourceLayer(v)
+		for i := range facts {
+			facts[i].SourceLayer = source
 		}
+		return facts
 	}
 	return nil
 }
 
 // VaultFact reads a single fact from any connected vault.
 func (k *KnowledgeAPI) VaultFact(slug string) (*Fact, error) {
-	for _, v := range k.vaults {
+	return k.VaultFactInScope("", slug)
+}
+
+// VaultFactInScope reads the first matching vault fact in the given scope.
+// An empty scope searches all vaults.
+func (k *KnowledgeAPI) VaultFactInScope(layer LayerType, slug string) (*Fact, error) {
+	for _, v := range k.FileStores() {
 		fact, err := v.ReadPage(slug)
-		if err == nil {
+		if err == nil && (layer == "" || fact.Layer == layer) {
+			fact.SourceLayer = vaultSourceLayer(v)
 			return fact, nil
 		}
 
@@ -1058,7 +1188,7 @@ func mergeFullFact(dst *Fact, src *Fact) {
 func (k *KnowledgeAPI) Layers() []LayerType {
 	seen := make(map[LayerType]bool)
 	var result []LayerType
-	for _, lc := range k.layers {
+	for _, lc := range k.wikiLayers() {
 		if !seen[lc.layerType] {
 			seen[lc.layerType] = true
 			result = append(result, lc.layerType)
@@ -1128,16 +1258,91 @@ func startGitSourceSync(gs *GitSource, ctx context.Context) {
 	}()
 }
 
-// GetGitSourceStore returns the underlying FileStore for a git source by name.
-func (k *KnowledgeAPI) GetGitSourceStore(name string) *FileStore {
+func (k *KnowledgeAPI) gitSourceSnapshot() []*GitSource {
 	k.mu.RLock()
 	defer k.mu.RUnlock()
-	for _, gs := range k.gitSources {
-		if gs.Config().Name == name && gs.Ready() {
-			return gs.Store()
+	return k.gitSources
+}
+
+func gitSourceID(gs *GitSource) string {
+	cfg := gs.Config()
+	return fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(cfg.URL+"\x00"+cfg.Subpath)))
+}
+
+func gitSourceLayers(sources []*GitSource) map[*GitSource]LayerType {
+	counts := make(map[string]int, len(sources))
+	for _, gs := range sources {
+		counts[gs.Config().Name]++
+	}
+	layers := make(map[*GitSource]LayerType, len(sources))
+	for _, gs := range sources {
+		name := gs.Config().Name
+		if counts[name] > 1 || strings.HasPrefix(name, "sha256:") {
+			name = gitSourceID(gs)
+		}
+		layers[gs] = LayerType("git_source:" + name)
+	}
+	return layers
+}
+
+func gitSourceForRead(sources []*GitSource, selector string) *GitSource {
+	if selector == "" {
+		return nil
+	}
+	if strings.HasPrefix(selector, "sha256:") {
+		for _, gs := range sources {
+			if gitSourceID(gs) == selector {
+				if gs.Ready() {
+					return gs
+				}
+				return nil
+			}
+		}
+	}
+	for _, gs := range sources {
+		if gs.Config().Name == selector && gs.Ready() {
+			return gs
 		}
 	}
 	return nil
+}
+
+// GetGitSourceStore returns the underlying FileStore for a Git source name or ID.
+func (k *KnowledgeAPI) GetGitSourceStore(selector string) *FileStore {
+	if gs := gitSourceForRead(k.gitSourceSnapshot(), selector); gs != nil {
+		return gs.Store()
+	}
+	return nil
+}
+
+// GitSourceFacts lists facts from the Git source addressed by selector.
+func (k *KnowledgeAPI) GitSourceFacts(selector, typeFilter string) []Fact {
+	sources := k.gitSourceSnapshot()
+	gs := gitSourceForRead(sources, selector)
+	if gs == nil {
+		return nil
+	}
+	facts := gs.Store().ListPages(typeFilter)
+	source := gitSourceLayers(sources)[gs]
+	layer := LayerType("git_source:" + gs.Config().Name)
+	for i := range facts {
+		facts[i].Layer = layer
+		facts[i].SourceLayer = source
+	}
+	return facts
+}
+
+func (k *KnowledgeAPI) readGitSourceFact(selector, slug string) (*Fact, error) {
+	gs := gitSourceForRead(k.gitSourceSnapshot(), selector)
+	if gs == nil {
+		return nil, nil
+	}
+	f, err := gs.Store().ReadPage(slug)
+	if err == nil {
+		f.Layer = LayerType("git_source:" + gs.Config().Name)
+		f.SourceLayer = LayerType("git_source:" + selector)
+	}
+	return f, err
 }
 
 // DisconnectGitSource removes a git source by URL and subpath.
@@ -1889,13 +2094,37 @@ func extractFrontmatterFloat(fm map[string]interface{}, key string, defaultVal f
 	}
 }
 
-func (k *KnowledgeAPI) clientForLayer(layer LayerType) *Client {
-	for _, lc := range k.layers {
-		if lc.layerType == layer {
-			return lc.client
+const wikiSourcePrefix = "wiki:"
+
+func (lc layerClient) wikiSourceLayer() LayerType {
+	key := string(lc.layerType) + "\x00" + lc.client.baseURL
+	return LayerType(fmt.Sprintf("%ssha256:%x", wikiSourcePrefix, sha256.Sum256([]byte(key))))
+}
+
+func (lc layerClient) matchesWikiLayer(layer LayerType) bool {
+	if strings.HasPrefix(string(layer), wikiSourcePrefix) {
+		return lc.wikiSourceLayer() == layer
+	}
+	return lc.layerType == layer
+}
+
+func (k *KnowledgeAPI) wikiLayers() []layerClient {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return k.layers
+}
+
+func (k *KnowledgeAPI) wikiLayerFor(layer LayerType) layerClient {
+	for _, lc := range k.wikiLayers() {
+		if lc.matchesWikiLayer(layer) {
+			return lc
 		}
 	}
-	return nil
+	return layerClient{}
+}
+
+func (k *KnowledgeAPI) clientForLayer(layer LayerType) *Client {
+	return k.wikiLayerFor(layer).client
 }
 
 func parseJSONFacts(content string, facts *[]ExtractedFact) error {

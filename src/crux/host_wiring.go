@@ -81,4 +81,9 @@ type Host interface {
 	// proxy, and the relay holds the read credential, which must not cross
 	// into a runtime process.
 	SetSandboxGitHubReadRelay(relay SandboxGitHubReadRelay, noProxy []string)
+	// SetSandboxInferenceRelay installs (nil removes) the listener sandbox
+	// Job kicks reach the inference translator through
+	// (hivecommons/hive#19619). In-process-only for the same reason as the
+	// read relay: Enroll is a Go call into hive's proxy.
+	SetSandboxInferenceRelay(relay SandboxInferenceRelay)
 }

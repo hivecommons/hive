@@ -141,8 +141,12 @@ per request with the hive id and counts.
 ### Ask AI help
 
 Ask AI help is an optional docs-help backend for the hub dashboard (design:
-[Dashboard Ask AI help](design/dashboard-ask-ai-help.md)). It is off by
-default. With it off, or switched on but missing a value, the hub registers no
+[Dashboard Ask AI help](design/dashboard-ask-ai-help.md)). On the hub it is
+off by default. Hosted hives default to Ask on in hub mode (**Ask Hive** in
+their Settings and Help menu), so turning it on here serves every hosted hive
+whose owner has not switched it off; `HIVE_ASK_RELAY_DISABLED_HIVES` refuses
+single hives and `HIVE_ASK_RELAY_HIVES=none` refuses all of them. With it off,
+or switched on but missing a value, the hub registers no
 Ask route, reads no key and sends nothing. The hub calls the Kapa.ai Chat API
 itself, server side; the browser only ever talks to the hub, and no
 third-party script or Content-Security-Policy change is involved.
@@ -206,8 +210,12 @@ counters at `GET /api/ask/stats`.
 ### Ask AI help
 
 Ask AI help is an optional docs-help backend for the hub dashboard (design:
-[Dashboard Ask AI help](design/dashboard-ask-ai-help.md)). It is off by
-default. With it off, or switched on but missing a value, the hub registers no
+[Dashboard Ask AI help](design/dashboard-ask-ai-help.md)). On the hub it is
+off by default. Hosted hives default to Ask on in hub mode (**Ask Hive** in
+their Settings and Help menu), so turning it on here serves every hosted hive
+whose owner has not switched it off; `HIVE_ASK_RELAY_DISABLED_HIVES` refuses
+single hives and `HIVE_ASK_RELAY_HIVES=none` refuses all of them. With it off,
+or switched on but missing a value, the hub registers no
 Ask route, reads no key and sends nothing. The hub calls the Kapa.ai Chat API
 itself, server side; the browser only ever talks to the hub, and no
 third-party script or Content-Security-Policy change is involved.

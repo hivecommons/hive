@@ -9,6 +9,8 @@ catch mistakes are put in place. Hive enforces each level in code: the level
 decides which agents run, in which policy mode, with which GitHub permissions.
 Background: [the ACMM paper](https://arxiv.org/abs/2604.09388).
 
+**GitHub App prerequisite:** L3 and above need a GitHub App. Agents open issues, claims, reviews, PRs, and merges through request relays that start only when the hive has a usable App; on a PAT-only hive those requests stay queued and nothing processes them. A PAT is enough for L1-L2 only. See [GitHub App setup](github-app-setup.md).
+
 **Terms used in the tables:** a **PR** is a pull request proposing a code
 change; **CI** is continuous integration (automated checks); **GH Auth** means
 GitHub credentials. **Beads** are internal work-ledger entries, not GitHub

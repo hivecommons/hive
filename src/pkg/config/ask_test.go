@@ -124,3 +124,107 @@ func TestResolveAskProblemsNameNoValues(t *testing.T) {
 		t.Fatal("a key file outside the secret dirs must never be read")
 	}
 }
+
+// askClearEnv blanks every Ask env var so Config.AskSettings sees only the
+// config under test.
+func askClearEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{EnvAskEnabled, EnvAskMode, EnvAskKapaProjectID, EnvAskKapaIntegrationID,
+		EnvAskKapaAPIKeyFile, EnvAskSendSectionLabel, EnvAskRelayHives, EnvAskRelayDisabledHives} {
+		t.Setenv(k, "")
+	}
+}
+
+func askHostedConfig(ask AskConfig) *Config {
+	return &Config{HiveID: "hosted-hive", Hub: HubConfig{HiveType: HiveTypeHosted, URL: "https://hub.example"}, Ask: ask}
+}
+
+// TestAskDefaultsOnForHostedHives: a hosted hive with a hub link and a hive
+// id and no ask config resolves as requested and on, in hub mode.
+func TestAskDefaultsOnForHostedHives(t *testing.T) {
+	askClearEnv(t)
+	cfg := askHostedConfig(AskConfig{})
+	if !cfg.AskHostedDefault() {
+		t.Fatal("a hosted hive with a hub link and a hive id must take the hosted default")
+	}
+	s := cfg.AskSettings()
+	if !s.Requested || !s.Enabled || !s.Defaulted || s.Mode != AskModeHub || s.Problem != "" {
+		t.Fatalf("hosted hive with no ask config must be on in hub mode: %+v", s)
+	}
+	// An explicit hub mode with nothing else set is the same default.
+	if s := askHostedConfig(AskConfig{Mode: AskModeHub}).AskSettings(); !s.Enabled || !s.Defaulted || s.Mode != AskModeHub {
+		t.Fatalf("hosted hive with mode hub only: %+v", s)
+	}
+	// ask.enabled: true alone means hub mode on a hosted hive.
+	on := true
+	if s := askHostedConfig(AskConfig{Enabled: &on}).AskSettings(); !s.Enabled || s.Defaulted || s.Mode != AskModeHub {
+		t.Fatalf("hosted hive with ask.enabled true only: %+v", s)
+	}
+	// Case and spacing in hub.hive_type do not matter.
+	cfg.Hub.HiveType = " Hosted "
+	if !cfg.AskHostedDefault() || !cfg.AskSettings().Enabled {
+		t.Fatal("hive_type matching must ignore case and spacing")
+	}
+}
+
+// TestAskExplicitOffWinsOnHostedHives: ask.enabled false, HIVE_ASK_ENABLED
+// false and ask.mode off each keep a hosted hive off, and quietly.
+func TestAskExplicitOffWinsOnHostedHives(t *testing.T) {
+	off := false
+	cases := map[string]struct {
+		ask AskConfig
+		env map[string]string
+	}{
+		"yaml enabled false":               {ask: AskConfig{Enabled: &off}},
+		"env enabled false":                {env: map[string]string{EnvAskEnabled: "false"}},
+		"env enabled 0":                    {env: map[string]string{EnvAskEnabled: "0"}},
+		"yaml mode off":                    {ask: AskConfig{Mode: AskModeOff}},
+		"env mode off":                     {env: map[string]string{EnvAskMode: AskModeOff}},
+		"yaml enabled false with mode hub": {ask: AskConfig{Enabled: &off, Mode: AskModeHub}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			askClearEnv(t)
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			s := askHostedConfig(tc.ask).AskSettings()
+			if s.Requested || s.Enabled || s.Defaulted || s.Problem != "" {
+				t.Fatalf("an explicit off must win over the hosted default: %+v", s)
+			}
+		})
+	}
+	// An explicit direct mode is the operator asking for direct: the hosted
+	// default never switches it on without ask.enabled.
+	askClearEnv(t)
+	if s := askHostedConfig(AskConfig{Mode: AskModeDirect}).AskSettings(); s.Requested || s.Enabled {
+		t.Fatalf("direct mode without ask.enabled must stay off: %+v", s)
+	}
+}
+
+// TestAskStaysOffByDefaultOffHostedHives: self-hosted, standalone and
+// half-linked hosted hives keep the off default (the relay does not serve
+// registered self-hosted hives yet, #19177).
+func TestAskStaysOffByDefaultOffHostedHives(t *testing.T) {
+	askClearEnv(t)
+	cases := map[string]*Config{
+		"nil config":             nil,
+		"standalone":             {HiveID: "solo"},
+		"self-hosted with a hub": {HiveID: "self", Hub: HubConfig{Enabled: true, URL: "https://hub.example"}},
+		"self-hosted typed":      {HiveID: "self", Hub: HubConfig{HiveType: "self-hosted", URL: "https://hub.example"}},
+		"hosted without hub url": {HiveID: "hosted-hive", Hub: HubConfig{HiveType: HiveTypeHosted}},
+		"hosted without hive id": {Hub: HubConfig{HiveType: HiveTypeHosted, URL: "https://hub.example"}},
+	}
+	for name, cfg := range cases {
+		if cfg.AskHostedDefault() {
+			t.Errorf("%s: must not take the hosted default", name)
+		}
+		if s := cfg.AskSettings(); s.Requested || s.Enabled || s.Defaulted || s.Mode != AskModeOff || s.Problem != "" {
+			t.Errorf("%s: must be off and quiet: %+v", name, s)
+		}
+	}
+	// The hub itself never takes the hosted default.
+	if s := ResolveAsk(AskConfig{}, nil, true); s.Requested || s.Enabled {
+		t.Fatalf("the hub must stay off without HIVE_ASK_ENABLED: %+v", s)
+	}
+}

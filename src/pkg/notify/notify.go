@@ -192,6 +192,70 @@ func (n *Notifier) logNtfyError(msg, errDetail string) {
 	n.ntfyErrCount = 0
 }
 
+type webhookRedirectTransport struct {
+	base http.RoundTripper
+}
+
+func (t webhookRedirectTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	if err != nil || resp == nil {
+		return resp, err
+	}
+
+	// Without a Location header, net/http returns the redirect status to the caller.
+	switch resp.StatusCode {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther:
+		// These redirects would turn the webhook POST into a bodyless GET.
+		resp.Header.Del("Location")
+	case http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		// Keep the redirect status when Location cannot be used as an HTTP URL.
+		target, err := req.URL.Parse(resp.Header.Get("Location"))
+		if err == nil && target.Port() != "" {
+			_, err = strconv.ParseUint(target.Port(), 10, 16)
+		}
+		if err != nil || target.Hostname() == "" || (target.Scheme != "http" && target.Scheme != "https") ||
+			!webhookRedirectStaysOnOrigin(req.URL, target) {
+			resp.Header.Del("Location")
+		}
+	}
+	return resp, nil
+}
+
+// webhookRedirectStaysOnOrigin reports whether a 307/308 target keeps the
+// webhook's host and does not downgrade https to http. Following a redirect to
+// another host would hand it the alert payload and, through the Referer
+// header, the secret webhook URL.
+func webhookRedirectStaysOnOrigin(from, to *url.URL) bool {
+	if !strings.EqualFold(from.Host, to.Host) {
+		return false
+	}
+	return from.Scheme != "https" || to.Scheme == "https"
+}
+
+func (n *Notifier) postWebhook(provider, webhookURL string, body []byte, sendErrorMessage, statusMessage string) {
+	client := *n.client
+	transport := client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	client.Transport = webhookRedirectTransport{base: transport}
+
+	resp, err := client.Post(webhookURL, "application/json", bytes.NewReader(body))
+	if resp == nil {
+		// Transport errors may include the secret webhook URL, so only the
+		// host is logged.
+		n.logger.Warn(sendErrorMessage, "provider", provider, "webhook_host", webhookHost(webhookURL))
+		return
+	}
+	if err == nil {
+		// The client closes the body if its redirect policy returns an error.
+		defer func() { _ = resp.Body.Close() }()
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		n.logger.Warn(statusMessage, "provider", provider, "status", resp.StatusCode, "webhook_host", webhookHost(webhookURL))
+	}
+}
+
 func (n *Notifier) sendSlack(title, message string) {
 	if !strings.HasPrefix(n.cfg.Slack.Webhook, "http://") && !strings.HasPrefix(n.cfg.Slack.Webhook, "https://") {
 		return
@@ -205,15 +269,7 @@ func (n *Notifier) sendSlack(title, message string) {
 		n.logger.Warn("slack payload marshal failed", "error", err)
 		return
 	}
-	resp, err := n.client.Post(n.cfg.Slack.Webhook, "application/json", bytes.NewReader(body))
-	if err != nil {
-		n.logger.Warn("slack send failed", webhookLogAttrs(n.cfg.Slack.Webhook, err)...)
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		n.logger.Warn("slack send returned status", "status", resp.StatusCode, "webhook_host", webhookHost(n.cfg.Slack.Webhook))
-	}
+	n.postWebhook("slack", n.cfg.Slack.Webhook, body, "slack send failed", "slack send returned status")
 }
 
 // DiscordSuppressEmbeds is the Discord message flag (1<<2, SUPPRESS_EMBEDS)
@@ -236,15 +292,7 @@ func (n *Notifier) sendDiscordWebhook(title, message string) {
 		n.logger.Warn("discord payload marshal failed", "error", err)
 		return
 	}
-	resp, err := n.client.Post(n.cfg.Discord.Webhook, "application/json", bytes.NewReader(body))
-	if err != nil {
-		n.logger.Warn("discord webhook send failed", webhookLogAttrs(n.cfg.Discord.Webhook, err)...)
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		n.logger.Warn("discord webhook send returned status", "status", resp.StatusCode, "webhook_host", webhookHost(n.cfg.Discord.Webhook))
-	}
+	n.postWebhook("discord", n.cfg.Discord.Webhook, body, "discord webhook send failed", "discord webhook send returned status")
 }
 
 func webhookLogAttrs(raw string, err error) []any {

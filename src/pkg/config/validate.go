@@ -235,6 +235,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateRepoForges(); err != nil {
 		return err
 	}
+	if err := c.Forgejo.Integration.Validate(); err != nil {
+		return err
+	}
 	advisorWarnings, err := c.validateKnowledgeAdvisorLLM()
 	if err != nil {
 		return err
@@ -258,6 +261,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		return err
 	}
 	if err := c.AutoMerge.TrustedAuthors.Validate(); err != nil {
+		return err
+	}
+	if err := c.AutoMerge.DecisionGate.Validate(); err != nil {
 		return err
 	}
 	if err := c.AutoMerge.PRGate.Validate(); err != nil {
@@ -577,6 +583,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 func (c *Config) validateJobAffinities() error {
 	if c.AgentSandbox.Job != nil {
 		if err := c.AgentSandbox.Job.GitHubReadProxy.Validate(); err != nil {
+			return err
+		}
+		if err := c.AgentSandbox.Job.InferenceProxy.Validate(); err != nil {
 			return err
 		}
 	}

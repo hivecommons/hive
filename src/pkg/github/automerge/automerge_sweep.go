@@ -135,6 +135,11 @@ type Options struct {
 	// approval of a PR's current head releases the HumanMergePaths refusal
 	// there. nil, or false, keeps the refusal absolute.
 	HumanMergeOwnerApproval func(repo string) bool
+	// DecisionGate returns the live auto_merge.decision_gate policy for an
+	// owner/repo. Every lane that merges without a person holds a PR that
+	// touches one of its paths, or wears the sentinel alert label, until a
+	// person decides on the head. nil means the gate is off.
+	DecisionGate func(repo string) DecisionGatePolicy
 	// HumanMergeRule returns the live auto_merge.human_merge_title_prefixes /
 	// human_merge_labels rule (hivecommons/hive#15442). Every lane and the
 	// merge train skip a PR RequiresHumanMerge. nil means the defaults.
@@ -420,6 +425,11 @@ type Engine struct {
 	humanMergePinOnly       func(repo string) (config.PinOnlyException, bool)
 	humanMergeOwnerApproval func(repo string) bool
 
+	// decisionGatePolicy is the live auto_merge.decision_gate lookup
+	// (automerge_decision_gate.go); nil means the gate is off.
+	decisionGateMu     sync.RWMutex
+	decisionGatePolicy func(repo string) DecisionGatePolicy
+
 	humanMergeRuleMu sync.RWMutex
 	humanMergeRule   func() prstage.HumanMergeRule
 
@@ -572,6 +582,7 @@ func New(transport Transport, opts Options) *Engine {
 		scanCommitClosingKeywords:         opts.ScanCommitClosingKeywords,
 		humanMergePinOnly:                 opts.HumanMergePinOnly,
 		humanMergeOwnerApproval:           opts.HumanMergeOwnerApproval,
+		decisionGatePolicy:                opts.DecisionGate,
 		humanMergeRule:                    opts.HumanMergeRule,
 		requireCurrentBase:                opts.RequireCurrentBase,
 		requireCurrentBaseStrict:          opts.RequireCurrentBaseStrict,

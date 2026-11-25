@@ -49,11 +49,16 @@ func rescanRepos(
 	refresh func(),
 	logger *slog.Logger,
 ) (*github.ActionableResult, error) {
-	if ghClient == nil {
+	// A hive whose repos are all on another forge enumerates through pkg/forge
+	// and needs no GitHub client, the same rule the eval cycle applies
+	// (#19494); without it the manual rescan failed on every forge-only hive.
+	if cfg.AllReposOffGitHub() {
+		ghClient = nil
+	} else if ghClient == nil {
 		return nil, errNoForgeCredentials
 	}
 
-	actionable, err := ghClient.EnumerateActionable(ctx)
+	actionable, err := enumerateActionableForCycle(ctx, cfg, ghClient, logger)
 	if err != nil {
 		// Same tolerance as the eval cycle: on a hive whose issues come from a
 		// non-GitHub work source, a GitHub failure must not sink the whole
@@ -73,10 +78,12 @@ func rescanRepos(
 		actionable.Issues, _ = workSourceIssuesForConfiguredCycle(ctx, cfg, ghClient, actionable.Issues, logger)
 	}
 
-	ghClient.EnrichCIStatus(ctx, actionable.PRs.Items)
+	// Mixed hives skip GitHub enrichment for PRs on another forge, as the
+	// eval cycle does.
+	enrichGitHubPRs(cfg, actionable.PRs.Items, func(prs []github.PullRequest) { ghClient.EnrichCIStatus(ctx, prs) })
 	// Held PRs are enriched on the same terms as the eval tick so a manual
 	// rescan produces the same red-held-PR view (hivecommons/hive#7438).
-	ghClient.EnrichCIStatus(ctx, actionable.PRs.Held)
+	enrichGitHubPRs(cfg, actionable.PRs.Held, func(prs []github.PullRequest) { ghClient.EnrichCIStatus(ctx, prs) })
 	ghClient.EnrichReviewSignalsAndWorkPRs(ctx, actionable.PRs.StaleDrafts, actionable.WorkDetailsByRepo)
 	ghClient.EnrichLinkedIssueTitles(ctx, actionable.WorkDetailsByRepo, actionable.PRs.Items, actionable.PRs.Held, actionable.PRs.StaleDrafts)
 	applyDuplicatePRGuard(ctx, cfg, ghClient, actionable, logger)

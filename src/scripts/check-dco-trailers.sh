@@ -4,8 +4,12 @@
 # GitHub commits API identifies the commit author as that exact login. A
 # noreply AUTHOR (the shape GitHub's squash writes for a private-email PR
 # author) signed off under another address is accepted only when the branch's
-# own history supplies local evidence that the two identities are one person;
-# see same_person_noreply_evidence below (#15401).
+# own history supplies local evidence that the two identities are one person
+# (same_person_noreply_evidence, #15401), or when the merged pull request
+# itself proves it: the squash author is the PR author's own id+login noreply
+# address and every sign-off was carried by that author's GitHub-attributed PR
+# commits (pr_noreply_evidence, #19660). Neither relaxes the sign-off
+# requirement; they only recognise two addresses as one signer.
 # Maintainer override identities can be supplied with DCO_ALLOWLIST_EMAILS, but
 # the default is intentionally empty so normal runs require the squash author's
 # own sign-off.
@@ -50,6 +54,7 @@ waived_raw="${DCO_WAIVED_COMMITS:-}"
 skip_bots="${DCO_SKIP_BOT_AUTHORS:-true}"
 same_person_window="${DCO_SAME_PERSON_WINDOW:-500}"
 same_person_extra_refs="${DCO_SAME_PERSON_EVIDENCE_REFS:-}"
+pr_evidence_enabled="${DCO_PR_EVIDENCE:-true}"
 
 usage() {
   cat >&2 <<'USAGE'
@@ -82,6 +87,13 @@ Environment:
                          Optional extra refs (space-separated) whose history is
                          searched for that evidence in addition to the inspected
                          ref, e.g. a fetched refs/pull/N/head. Empty by default.
+  DCO_PR_EVIDENCE        true/false; for a GitHub-noreply author whose sign-off uses
+                         another address, accept the commit when its merged pull
+                         request proves the link (see pr_noreply_evidence). Default:
+                         true. Needs pull-requests: read on the GitHub token.
+  DCO_GITHUB_API_FIXTURES
+                         Optional directory of canned GitHub API responses used
+                         instead of the network, for tests/offline runs.
 USAGE
 }
 
@@ -303,7 +315,247 @@ EOF_EV_SIGNOFFS
   return 1
 }
 
+# The PR-evidence rule below reads at most this many pages of a pull request's
+# commits. GitHub's pulls/{n}/commits endpoint stops at 250 commits, so three
+# full pages means the list may be truncated and the rule fails closed.
+PR_COMMITS_PER_PAGE=100
+PR_COMMITS_MAX_PAGES=3
+
+# The decision half of pr_noreply_evidence, kept in Python because it reasons
+# over JSON. argv: <squash-sha> <author-email-lc> <signoff-emails-file>
+# <pulls-json> <commits-json>... Prints `ok <evidence>` and exits 0 only when
+# every condition holds; otherwise prints `no <reason>` and exits 1.
+# shellcheck disable=SC2016 # Python source, not shell
+pr_evidence_py='
+import json, re, sys
+
+NOREPLY = "@users.noreply.github.com"
+SIGNOFF = re.compile(r"^signed-off-by:\s*", re.I)
+EMAIL = re.compile(r"<([^<>\s]+@[^<>\s]+)>")
+
+def no(reason):
+    print("no " + reason)
+    sys.exit(1)
+
+def signoffs(message):
+    # Same rule as extract_signoff_emails: every body line, first <email>.
+    found = set()
+    for line in (message or "").split("\n"):
+        if SIGNOFF.match(line):
+            m = EMAIL.search(SIGNOFF.sub("", line, count=1))
+            if m:
+                found.add(m.group(1).lower())
+    return found
+
+try:
+    sha, author_email = sys.argv[1].lower(), sys.argv[2].lower()
+    with open(sys.argv[3], encoding="utf-8") as fh:
+        wanted = [l.strip().lower() for l in fh if l.strip()]
+    with open(sys.argv[4], encoding="utf-8") as fh:
+        pulls = json.load(fh)
+    commits = []
+    for path in sys.argv[5:]:
+        with open(path, encoding="utf-8") as fh:
+            page = json.load(fh)
+        if not isinstance(page, list):
+            no("api-error")
+        commits.extend(page)
+except SystemExit:
+    raise
+except Exception:
+    no("api-error")
+
+if not isinstance(pulls, list):
+    no("api-error")
+merged = [p for p in pulls if isinstance(p, dict)
+          and str(p.get("merge_commit_sha") or "").lower() == sha
+          and p.get("merged_at")]
+if len(merged) != 1:
+    no("no-merged-pr")
+pr = merged[0]
+user = pr.get("user") or {}
+login = str(user.get("login") or "").lower()
+uid = user.get("id")
+if not login or not isinstance(uid, int):
+    no("pr-author-unknown")
+
+local = author_email[:-len(NOREPLY)] if author_email.endswith(NOREPLY) else ""
+id_part, plus, login_part = local.partition("+")
+if not plus or not id_part.isdigit() or int(id_part) != uid or login_part != login:
+    no("author-not-pr-author-noreply")
+
+def same_user(account):
+    account = account or {}
+    return (str(account.get("login") or "").lower() == login
+            and account.get("id") == uid)
+
+# The hive App, the only account whose Update-branch merges are exempt. Login
+# AND numeric id must both match, so another GitHub App with write access to
+# the PR branch cannot merge an arbitrary ref and have it ignored.
+HIVE_APP_LOGIN = "hivecommons-hive[bot]"
+HIVE_APP_ID = 280983584
+
+def update_branch_merge(c):
+    # GitHub "Update branch" merge of the base into the PR head (#19775): two
+    # or more parents, authored by the hive App, committed and verified by
+    # GitHub itself (web-flow). GitHub refuses that merge on any conflict and
+    # the App has no conflict editor, so it carries only base-branch content
+    # and authors none of the squashed change.
+    author = c.get("author") or {}
+    committer = c.get("committer") or {}
+    verification = (c.get("commit") or {}).get("verification") or {}
+    return (len(c.get("parents") or []) >= 2
+            and author.get("type") == "Bot"
+            and author.get("login") == HIVE_APP_LOGIN
+            and author.get("id") == HIVE_APP_ID
+            and committer.get("login") == "web-flow"
+            and verification.get("verified") is True)
+
+if not commits:
+    no("pr-has-no-commits")
+if not all(isinstance(c, dict) for c in commits):
+    no("pr-commit-not-by-pr-author")
+commits = [c for c in commits if not update_branch_merge(c)]
+if not commits:
+    no("pr-has-no-commits")
+for c in commits:
+    if not same_user(c.get("author")):
+        no("pr-commit-not-by-pr-author")
+
+evidence = []
+for want in wanted:
+    if want == author_email:
+        continue
+    backing = None
+    for c in commits:
+        body = c.get("commit") or {}
+        a_email = str((body.get("author") or {}).get("email") or "").lower()
+        c_email = str((body.get("committer") or {}).get("email") or "").lower()
+        owns = (a_email == want) or (c_email == want and same_user(c.get("committer")))
+        if owns and want in signoffs(body.get("message")):
+            backing = c
+            break
+    if backing is None:
+        no("signoff-not-on-pr-commits")
+    evidence.append(str(backing.get("sha") or "")[:8])
+
+if not evidence:
+    no("no-foreign-signoff")
+print("ok pr#%s:%s" % (pr.get("number"), ",".join(evidence)))
+'
+
+# pr_noreply_evidence <sha> <author-email-lc> <signoff-emails>
+#
+# The first-squash case same_person_noreply_evidence cannot reach (#19660):
+# the contributor's private-email squash (author `<id>+<login>@users.noreply.
+# github.com`, sign-off their real address) is their FIRST on the branch, so
+# local history holds no link between the two addresses. The merged pull
+# request itself does, and it is GitHub-attributed rather than self-asserted.
+# This accepts the commit only when ALL of these hold:
+#
+#   - exactly one merged PR has this commit as its merge_commit_sha;
+#   - the squash author is that PR author's noreply address, with BOTH the
+#     numeric id and the login matching the PR author;
+#   - EVERY commit on the PR is attributed by GitHub to that same account
+#     (login and id), so a multi-author PR never qualifies. The one exception
+#     is a GitHub "Update branch" merge: a verified web-flow merge commit with
+#     two or more parents authored by the hive App, login and id (#19775),
+#     which carries only base-branch content and is ignored, never counted as
+#     evidence;
+#   - EVERY Signed-off-by on the squash other than the noreply author itself
+#     is the author or committer email of one of those commits, and that very
+#     commit carried that Signed-off-by.
+#
+# The sign-off requirement is unchanged: a squash with no Signed-off-by never
+# reaches this function. Anything else, including any API error, a missing
+# token scope or an unresolvable PR, is "no evidence" and the commit fails
+# exactly as before. Prints `ok <evidence>` or `no <reason>`.
+pr_noreply_evidence() {
+  pe_sha="$1"
+  pe_author_lc="$2"
+  pe_signoffs="$3"
+
+  if [ "$pr_evidence_enabled" != "true" ]; then
+    printf 'no disabled'
+    return 1
+  fi
+  case "$pe_author_lc" in
+    *+*@users.noreply.github.com) ;;
+    *) printf 'no author-not-numeric-noreply'; return 1 ;;
+  esac
+  pe_repo=$(github_repository)
+  if [ -z "$pe_repo" ] || ! command -v python3 >/dev/null 2>&1; then
+    printf 'no api-error'
+    return 1
+  fi
+
+  pe_work=$(mktemp -d "${TMPDIR:-/tmp}/dco-pr-evidence.XXXXXX") || { printf 'no api-error'; return 1; }
+  printf '%s\n' "$pe_signoffs" > "$pe_work/signoffs"
+  if ! github_api_get "repos/${pe_repo}/commits/${pe_sha}/pulls" > "$pe_work/pulls.json"; then
+    rm -rf "$pe_work"
+    printf 'no api-error'
+    return 1
+  fi
+  pe_number=$(python3 -c 'import json,sys
+sha = sys.argv[1].lower()
+try:
+    pulls = json.load(open(sys.argv[2], encoding="utf-8"))
+    hits = [p for p in pulls if str(p.get("merge_commit_sha") or "").lower() == sha and p.get("merged_at")]
+    n = hits[0].get("number") if len(hits) == 1 else None
+    print(n if isinstance(n, int) and n > 0 else "")
+except Exception:
+    print("")
+' "$pe_sha" "$pe_work/pulls.json" 2>/dev/null)
+  if [ -z "$pe_number" ]; then
+    rm -rf "$pe_work"
+    printf 'no no-merged-pr'
+    return 1
+  fi
+
+  pe_pages=()
+  pe_page=1
+  pe_complete=0
+  while [ "$pe_page" -le "$PR_COMMITS_MAX_PAGES" ]; do
+    pe_file="$pe_work/commits-${pe_page}.json"
+    if ! github_api_get "repos/${pe_repo}/pulls/${pe_number}/commits?per_page=${PR_COMMITS_PER_PAGE}&page=${pe_page}" > "$pe_file"; then
+      rm -rf "$pe_work"
+      printf 'no api-error'
+      return 1
+    fi
+    pe_pages+=("$pe_file")
+    pe_len=$(python3 -c 'import json,sys
+try:
+    v = json.load(open(sys.argv[1], encoding="utf-8"))
+    print(len(v) if isinstance(v, list) else -1)
+except Exception:
+    print(-1)
+' "$pe_file" 2>/dev/null)
+    case "$pe_len" in
+      ''|-*) rm -rf "$pe_work"; printf 'no api-error'; return 1 ;;
+    esac
+    if [ "$pe_len" -lt "$PR_COMMITS_PER_PAGE" ]; then
+      pe_complete=1
+      break
+    fi
+    pe_page=$((pe_page + 1))
+  done
+  if [ "$pe_complete" -ne 1 ]; then
+    rm -rf "$pe_work"
+    printf 'no pr-commits-truncated'
+    return 1
+  fi
+
+  pe_verdict=$(python3 -c "$pr_evidence_py" "$pe_sha" "$pe_author_lc" "$pe_work/signoffs" "$pe_work/pulls.json" "${pe_pages[@]}" 2>/dev/null)
+  pe_rc=$?
+  rm -rf "$pe_work"
+  [ -n "$pe_verdict" ] || pe_verdict='no api-error'
+  printf '%s' "$pe_verdict"
+  [ "$pe_rc" -eq 0 ] && [ "${pe_verdict%% *}" = ok ]
+}
+
 failures=""
+pr_evidence_report=""
+pr_evidence_count=0
 same_person_report=""
 same_person_count=0
 waived_report=""
@@ -398,9 +650,28 @@ $signoff_emails
 EOF_SAME_PERSON
   fi
 
+  # Last resort before failing: the merged PR's own GitHub-attributed commits
+  # (#19660). Skipped for a commit that already carries a waiver, so existing
+  # dispositions keep reading as WAIVED exactly as before (no STALE-WAIVER
+  # churn for entries this rule would now cover) and cost no API calls.
+  pr_evidence_note=""
+  if [ "$matched" -ne 1 ] && ! commit_waived "$sha"; then
+    case "$author_lc" in
+      *+*@users.noreply.github.com)
+        if pr_verdict=$(pr_noreply_evidence "$sha" "$author_lc" "$signoff_emails"); then
+          matched=1
+          pr_evidence_count=$((pr_evidence_count + 1))
+          pr_evidence_report="${pr_evidence_report}pr-noreply ${sha} author=${author_name} <${author_email}> signed-off-by=$(printf '%s' "$signoff_emails" | paste -sd, -) evidence=${pr_verdict#ok }\n"
+        else
+          pr_evidence_note=" pr-evidence=${pr_verdict#no }"
+        fi
+        ;;
+    esac
+  fi
+
   if [ "$matched" -ne 1 ]; then
     rendered=$(printf '%s' "$signoff_emails" | paste -sd, -)
-    record_failure "$sha" "mismatched-signoff author=${author_name} <${author_email}> signed-off-by=${rendered}"
+    record_failure "$sha" "mismatched-signoff author=${author_name} <${author_email}> signed-off-by=${rendered}${pr_evidence_note}"
   else
     # A waiver on a commit that now PASSES is dead weight: it no longer
     # suppresses anything, but it stays in the config as an unexamined
@@ -420,8 +691,8 @@ case "$ref" in
   *..*) scanned_scope='commits in' ;;
   *)    scanned_scope='recent commits on' ;;
 esac
-printf 'DCO trailer check inspected %s %s %s (%s non-merge, non-bot checked; %s merge skipped; %s bot skipped; %s waived; %s same-person-noreply).\n' \
-  "$limit" "$scanned_scope" "$ref" "$checked" "$skipped_merges" "$skipped_bots" "$waived_count" "$same_person_count"
+printf 'DCO trailer check inspected %s %s %s (%s non-merge, non-bot checked; %s merge skipped; %s bot skipped; %s waived; %s pr-noreply; %s same-person-noreply).\n' \
+  "$limit" "$scanned_scope" "$ref" "$checked" "$skipped_merges" "$skipped_bots" "$waived_count" "$pr_evidence_count" "$same_person_count"
 
 # Waived commits print on every run, above the failures. A disposition that
 # produced no output would be an invisible hole in a compliance check; keeping
@@ -436,6 +707,12 @@ fi
 # audit the inference rather than take it on trust.
 if [ -n "$same_person_report" ]; then
   printf '%b' "$same_person_report"
+fi
+
+# PR-evidence acceptances print too, each naming the PR and the PR commit(s)
+# whose GitHub-attributed author carried the sign-off.
+if [ -n "$pr_evidence_report" ]; then
+  printf '%b' "$pr_evidence_report"
 fi
 
 # Stale waivers are advisory, not fatal: failing the monitor over config

@@ -39,7 +39,7 @@ func seedHubData(t *testing.T) string {
 	mustWrite(t, filepath.Join(saas, "hives", "hosted-x", "meta.json"),
 		`{"id":"hosted-x","org":"acme","acmm_level":3}`)
 	mustWrite(t, filepath.Join(saas, "clusters.json"),
-		`[{"id":"hive-oke","in_cluster":true},{"id":"vllm-d","in_cluster":false,`+
+		`[{"id":"hive-oke","in_cluster":true,"domain":"oke.example"},{"id":"vllm-d","in_cluster":false,"domain":"remote.example",`+
 			`"kubeconfig_path":"/etc/hive/kubeconfigs/vllm-d.yaml","context":"vllm-d"}]`)
 	mustWrite(t, filepath.Join(dir, "hub-registry.json"),
 		`{"hives":[{"id":"hosted-x","clusterId":"hive-oke"}],"updatedAt":"now"}`)
@@ -639,5 +639,105 @@ func TestResolveKeyRejectsMalformedConfiguredKeyWithoutEcho(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), bad) {
 		t.Fatalf("error echoed key material: %v", err)
+	}
+}
+
+func TestBuildHeartbeatMasterSources(t *testing.T) {
+	const validRotation = `{"current":2,"generations":[{"id":2,"secret":"fixture-master"}]}`
+	const archivedMaster = `{"kind":"Secret","data":{"HIVE_HUB_SECRET":"Zml4dHVyZS1tYXN0ZXI="}}`
+	for _, tt := range []struct {
+		name        string
+		legacy      string
+		rotation    string
+		quarantined bool
+		secrets     []SecretItem
+		wantGap     string
+	}{
+		{name: "legacy key", legacy: "fixture-master"},
+		{name: "persisted rotation with bootstrap key", legacy: "fixture-master", rotation: validRotation},
+		{name: "persisted rotation without bootstrap key", rotation: validRotation, wantGap: heartbeatMasterFile},
+		{name: "quarantined rotation", legacy: "fixture-master", quarantined: true, wantGap: heartbeatGenerations},
+		{name: "replaced quarantine", legacy: "fixture-master", quarantined: true, rotation: validRotation},
+		{name: "archived environment key", secrets: []SecretItem{{Name: "hive-hub-secrets", JSON: []byte(archivedMaster)}}},
+		{name: "process environment alone", wantGap: heartbeatMasterFile},
+		{name: "blank legacy key", legacy: " \n", wantGap: heartbeatMasterFile},
+		{name: "unrelated secret", secrets: []SecretItem{{Name: "oci-api-key", JSON: []byte(archivedMaster)}}, wantGap: heartbeatMasterFile},
+		{name: "invalid archived key", secrets: []SecretItem{{Name: "hive-hub-secrets", JSON: []byte(`{"kind":"Secret","data":{"HIVE_HUB_SECRET":"!!!"}}`)}}, wantGap: heartbeatMasterFile},
+		{name: "invalid rotation with legacy key", legacy: "fixture-master",
+			rotation: `{"current":2,"generations":[{"id":1,"secret":"old-master"}]}`, wantGap: heartbeatGenerations},
+		{name: "nonsecret archive entry", secrets: []SecretItem{{Name: "hive-hub-secrets", JSON: []byte(`{"kind":"ConfigMap","data":{"HIVE_HUB_SECRET":"Zml4dHVyZS1tYXN0ZXI="}}`)}}, wantGap: heartbeatMasterFile},
+		{name: "malformed rotation", legacy: "fixture-master", rotation: `{"current":2`, wantGap: heartbeatGenerations},
+		{name: "invalid generation timestamp", legacy: "fixture-master",
+			rotation: `{"current":2,"generations":[{"id":2,"secret":"fixture-master","created":"invalid"}]}`, wantGap: heartbeatGenerations},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := seedHubData(t)
+			t.Setenv(EnvDataDir, dir)
+			t.Setenv("HIVE_HUB_SECRET", "unarchived-environment-key")
+			legacyPath := filepath.Join(dir, saasSubdir, heartbeatMasterFile)
+			if tt.legacy == "" {
+				if err := os.Remove(legacyPath); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				mustWrite(t, legacyPath, tt.legacy)
+			}
+			if tt.quarantined {
+				mustWrite(t, filepath.Join(dir, saasSubdir, heartbeatGenerations+recoveryQuarantineSuffix), "{bad json")
+			}
+			if tt.rotation != "" {
+				mustWrite(t, filepath.Join(dir, saasSubdir, heartbeatGenerations), tt.rotation)
+			}
+
+			key := decodeTestKey(t)
+			sealed, _, err := Build(key, nil, fakeSecrets{items: tt.secrets}, quietLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+			man, err := Verify(key, sealed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantGap == "" {
+				if len(man.HubErrors) != 0 {
+					t.Fatalf("usable master must not leave a gap: %v", man.HubErrors)
+				}
+			} else if len(man.HubErrors) != 1 || man.HubErrors[filepath.Join(hubPrefix, saasSubdir, tt.wantGap)] == "" {
+				t.Fatalf("want one heartbeat gap at %q, got %v", tt.wantGap, man.HubErrors)
+			}
+		})
+	}
+}
+
+func TestBuildRecordsDirectoriesAtRecoveryFilePaths(t *testing.T) {
+	for _, filename := range []string{clustersFile, credentialKeyFile, heartbeatMasterFile, heartbeatGenerations} {
+		t.Run(filename, func(t *testing.T) {
+			dir := seedHubData(t)
+			t.Setenv(EnvDataDir, dir)
+			path := filepath.Join(dir, saasSubdir, filename)
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			mustWrite(t, filepath.Join(path, "stray"), "unrelated data")
+
+			key := decodeTestKey(t)
+			sealed, _, err := Build(key, nil, nil, quietLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+			man, err := Verify(key, sealed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			archivePath := filepath.Join(hubPrefix, saasSubdir, filename)
+			if man.HubErrors[archivePath] != "not a regular file" {
+				t.Fatalf("directory at a recovery file path must leave a gap: %v", man.HubErrors)
+			}
+			for _, member := range man.Files {
+				if strings.HasPrefix(member.Path, archivePath+"/") {
+					t.Fatalf("recovery file directory leaked into the archive: %s", member.Path)
+				}
+			}
+		})
 	}
 }

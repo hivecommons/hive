@@ -640,7 +640,8 @@
     .avatar-menu-signout { color: var(--red); }
     /* Guide button remains the topbar CTA through the shared primary chip
        recipe; its size/shape intentionally match every other nav chip. */
-    #fleet-breaker-wrap { display: inline-flex; align-items: center; }
+    #fleet-breaker-wrap { display: inline-flex; align-items: center; gap: var(--nav-chip-gap, 8px); }
+    #fleet-breaker-hub-link[hidden] { display: none; }
     #fleet-breaker-btn2[data-status="ok"] { --nav-chip-color: var(--status-ok); }
     #fleet-breaker-btn2[data-status="error"] { --nav-chip-color: var(--status-error); }
     #fleet-breaker-dot, #fleet-breaker-icon { transition: color .15s, transform .15s; }
@@ -2769,12 +2770,23 @@
          one-line box so a card row stays under the #17161 height budget; the
          hit area is padded out to the tap target like .ham-pill (#17453). */
       #activity-monitor-section .ham-badge-mod.ham-decision-trigger { position: relative; }
-      /* Gate segments keep the one-line pill; each segment pads its hit area
-         out to the tap target so the phone harness sees ≥44×44. */
-      #activity-monitor-section .ham-human-gate { display: inline-flex; line-height: inherit; vertical-align: baseline; }
-      #activity-monitor-section .ham-human-gate > .ham-gate-act, #activity-monitor-section .ham-human-gate .ham-gate-more, #activity-monitor-section .ham-human-gate > button.ham-gate-status { position: relative; display: inline-flex; min-width: var(--tap-target); min-height: 0; height: auto; padding-block: 0; line-height: inherit; }
-
-      #activity-monitor-section .ham-human-gate > .ham-gate-act::before, #activity-monitor-section .ham-human-gate .ham-gate-more::before, #activity-monitor-section .ham-human-gate > button.ham-gate-status::before { content: ""; position: absolute; inset: calc((1lh - var(--tap-target)) / 2) 0; }
+      /* Gate segments keep the one-line pill (the #17161 card budget) and
+         pad their hit area out to the tap target with a ::before. The pill
+         used to clip that slop with overflow: hidden (it rounds the segment
+         fills), so the … took taps on its 16px painted line only. The pill
+         no longer clips; its end segments carry the pill radius instead. The
+         slop reaches --sp-1 above the pill and the rest of the tap target
+         below it, into the strip line beside the step pill, so it never
+         covers the title link above; z-index lifts it over the strip line,
+         which paints later. The … sits --sp-4 (8px) clear of the verb
+         before it, so a near miss on … never lands on Approve. */
+      #activity-monitor-section .ham-human-gate { display: inline-flex; overflow: visible; line-height: inherit; vertical-align: baseline; }
+      #activity-monitor-section .ham-human-gate > .ham-gate-act, #activity-monitor-section .ham-human-gate .ham-gate-more, #activity-monitor-section .ham-human-gate > button.ham-gate-status { position: relative; z-index: 1; display: inline-flex; align-items: center; justify-content: center; min-width: var(--tap-target); min-height: 0; height: auto; padding-block: 0; line-height: inherit; }
+      #activity-monitor-section .ham-human-gate > .ham-gate-act::before, #activity-monitor-section .ham-human-gate .ham-gate-more::before, #activity-monitor-section .ham-human-gate > button.ham-gate-status::before { content: ""; position: absolute; left: 0; right: 0; top: calc(-1 * var(--sp-1)); bottom: calc(100% + var(--sp-1) - var(--tap-target)); }
+      #activity-monitor-section .ham-human-gate > :first-child { border-radius: var(--r-pill) 0 0 var(--r-pill); }
+      #activity-monitor-section .ham-human-gate > .ham-gate-act:last-child, #activity-monitor-section .ham-human-gate .ham-gate-more { --ham-gate-seg-radius: 0 var(--r-pill) var(--r-pill) 0; }
+      #activity-monitor-section .ham-human-gate .ham-gate-more-wrap { display: inline-flex; align-items: stretch; margin-left: var(--sp-4); }
+      #activity-monitor-section .ham-human-gate .ham-gate-more:focus-visible, #activity-monitor-section .ham-kebab:focus-visible { outline: calc(var(--line-width) * 2) solid var(--accent); outline-offset: calc(var(--line-width) * -2); }
       #activity-monitor-section .ham-badge-mod.ham-decision-trigger::before { content: ""; position: absolute; inset: calc((1lh - var(--tap-target)) / 2) calc((100% - var(--tap-target)) / 2); }
       /* A card keeps its two-line head and its density (#17161): the 🗒
          shows on a phone only once the item has notes; the row's ⋯ menu
@@ -2786,8 +2798,12 @@
       #activity-monitor-section .ham-repo-filter { min-height: var(--tap-target); align-items: center; }
       #activity-monitor-section .ham-header-tool { width: var(--tap-target); min-width: var(--tap-target); height: var(--tap-target); min-height: var(--tap-target); padding: 0; font-size: var(--tap-glyph); }
       #activity-monitor-panel { padding-left: 0; }
-      #activity-monitor-section .ham-row > .ham-row-tools, #activity-monitor-section .ham-sub > .ham-row-tools { left: auto; right: 0; top: 0; width: auto; flex-direction: row; align-items: flex-start; gap: var(--sp-2); z-index: 1; }
-      #activity-monitor-section .ham-row > .ham-row-head, #activity-monitor-section .ham-sub > .ham-row-head { padding-right: calc(2 * var(--tap-target) + var(--sp-2) + var(--sp-3)); min-height: var(--tap-target); }
+      #activity-monitor-section .ham-row > .ham-row-tools, #activity-monitor-section .ham-sub > .ham-row-tools { left: auto; right: 0; top: 0; width: auto; flex-direction: row; align-items: flex-start; gap: var(--sp-4); z-index: 1; }
+      #activity-monitor-section .ham-row > .ham-row-head, #activity-monitor-section .ham-sub > .ham-row-head { padding-right: calc(2 * var(--tap-target) + var(--sp-4) + var(--sp-4)); min-height: var(--tap-target); }
+      /* The decision popover's "More ⋯" (and its sibling verbs) is a sheet
+         on a phone, hosted outside the section: tap-sized and 8px apart. */
+      .ham-decision-acts { gap: var(--sp-4); }
+      .ham-decision-act { min-height: var(--tap-target-touch); min-width: var(--tap-target-touch); padding-inline: var(--sp-4); font-size: var(--fs-sm); }
       #activity-monitor-section .ham-sel, #activity-monitor-section .ham-kebab { width: var(--tap-target); height: var(--tap-target); min-width: var(--tap-target); min-height: var(--tap-target); font-size: var(--tap-glyph); opacity: 1; }
       .ham-menu.ham-menu-sheet { position: static; min-width: 0; max-width: none; padding: 0; border: 0; box-shadow: none; background: transparent; font-size: var(--fs-touch); }
       .ham-menu-sheet .ham-menu-head { display: none; }
@@ -4928,7 +4944,10 @@
     .tabbed-modal-body { flex:1 1 auto; min-height:0; overflow:auto; }
     .hive-dialog-title { font-size: var(--fs-lg); font-weight: 700; color: var(--text); margin-bottom: var(--sp-5); }
     .hive-dialog-body { font-size: 0.9rem; color: var(--muted); line-height: 1.5; white-space: pre-wrap; margin-bottom: var(--sp-7); }
-    .hive-dialog-body.long { max-height: min(55vh, 520px); overflow: auto; }
+    .hive-dialog-body.long { max-height: min(55vh, 520px); }
+    .hive-dialog.hive-confirm-scroll { display: flex; flex-direction: column; overflow: hidden; }
+    .hive-confirm-scroll > .modal-scroll { min-height: 0; overflow-wrap: anywhere; }
+    .hive-confirm-scroll > :not(.modal-scroll) { flex-shrink: 0; }
     /* .modal-scroll — shared long-content scroll region for every modal
        (release notes, alerts, export viewer, decision dialogs, settings
        bodies). Scrollability is made discoverable: a thin always-visible
@@ -4951,6 +4970,7 @@
     .hive-dialog-error { min-height: 1.2em; margin-top: var(--sp-3); font-size: var(--fs-sm); color: var(--red); }
     /* Optional "remember my choice" row under the body (hiveConfirm cfg.check) */
     .hive-dialog-check { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--muted); margin: calc(-1 * var(--sp-4)) 0 var(--sp-6); cursor: pointer; }
+    .hive-confirm-scroll > .hive-dialog-check { margin-top: 0; }
     .hive-dialog-check input { accent-color: var(--accent); margin: 0; }
     .hive-dialog-buttons { display: flex; gap: 10px; justify-content: flex-end; }
     /* Export / link viewer (hiveExportViewer): the handed-over text sits in
@@ -5279,6 +5299,7 @@
       background: var(--green);
       border-color: var(--green);
     }
+    .config-toggle-note-warn { color: var(--status-warn); }
     .config-toggle-switch.disabled {
       opacity: 0.5;
       cursor: not-allowed;
@@ -5661,6 +5682,8 @@
     .wf-enabled-toggle { margin: var(--sp-3) 0 var(--sp-1); }
     .wf-enabled-toggle .config-toggle-label { font-weight: 700; }
     .wf-enabled-explain { margin: 0 0 var(--sp-4); max-width: 60em; }
+    .wf-repo-binding { min-width: 0; max-width: 100%; }
+    .wf-repo-select { min-width: 0; max-width: min(100%, 32em); text-overflow: ellipsis; }
     .wf-derivation-off { color: var(--status-warn); }
     .wf-dispatch-gap { color: var(--status-warn); white-space: normal; }
     .wf-prov, .wf-compiled { display: inline-block; border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; border: var(--line-width) solid var(--border); color: var(--muted); }
@@ -7528,11 +7551,11 @@
          push the bar down over the first row. overflow:clip clips without
          creating a scroller, so the bar sticks to the viewport instead. */
       #activity-monitor-section .dash-card-body { overflow: clip; }
-      .ham-sticky { justify-content: flex-start; gap: var(--sp-2); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
+      .ham-sticky { justify-content: flex-start; gap: var(--sp-4); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
       .ham-sticky .ham-merged-sub { display: none; }
       .ham-sticky .ham-merged-count, .ham-sticky .ham-queue-chip { flex: 0 0 auto; min-height: var(--tap-target); }
-      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); }
-      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-4); }
+      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-4); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
       .ham-compact-scroll::-webkit-scrollbar { display: none; }
       .ham-compact .ham-chips { display: inline-flex; flex: 0 0 auto; }
       .ham-compact .ham-chip { flex: 0 0 auto; min-height: var(--tap-target); font-size: var(--fs-sm); white-space: nowrap; }
@@ -8316,11 +8339,11 @@
       #activity-monitor-meta > :not(.ham-count) { display: none; }
       #activity-monitor-section .dash-card-body { overflow: clip; }
       #activity-monitor-panel .ham-cols { display: none; }
-      .ham-sticky { justify-content: flex-start; gap: var(--sp-2); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
+      .ham-sticky { justify-content: flex-start; gap: var(--sp-4); padding-left: max(var(--sp-2), var(--safe-area-left)); padding-right: max(var(--sp-2), var(--safe-area-right)); }
       .ham-sticky .ham-merged-sub { display: none; }
       .ham-sticky .ham-merged-count, .ham-sticky .ham-queue-chip { flex: 0 0 auto; min-height: var(--tap-target); }
-      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); }
-      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-2); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+      .ham-compact { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-4); }
+      .ham-compact-scroll { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; gap: var(--sp-4); overflow-x: auto; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
       .ham-compact-scroll::-webkit-scrollbar { display: none; }
       .ham-compact .ham-chips { display: inline-flex; flex: 0 0 auto; }
       .ham-compact .ham-chip { flex: 0 0 auto; min-height: var(--tap-target); font-size: var(--fs-sm); white-space: nowrap; }
@@ -8856,6 +8879,8 @@
     .sessions-pane-meta { color: var(--muted); font-size: var(--fs-sm); flex: 1 1 auto; }
     .sessions-menu { position: relative; }
     .sessions-menu > summary { list-style: none; cursor: pointer; }
+    /* The session ⋯ menu meets the coarse-pointer floor on touch screens. */
+    @media (pointer: coarse) { .sessions-menu > summary { display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; min-width: var(--tap-target-touch); min-height: var(--tap-target-touch); font-size: var(--tap-glyph); } }
     .sessions-menu-items { position: absolute; right: 0; z-index: var(--z-sticky); display: flex; flex-direction: column; min-width: 12em; background: var(--panel); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow-raised); padding: var(--sp-2); }
     .sessions-menu-items button { background: none; border: 0; color: var(--fg); font: inherit; font-size: var(--fs-sm); text-align: left; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm); cursor: pointer; }
     .sessions-menu-items button:hover { background: color-mix(in srgb, var(--border) 30%, transparent); }
@@ -9899,10 +9924,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item" data-section="audit-section" data-action="ocNavigate" data-arg0="audit-section"><span class="oc-nav-emoji">📜</span><span class="oc-nav-text">Audit log</span></a>
     </div>
     <!-- Help mirrors the top bar "? Help" menu (#oc-help-menu): same labels,
-         same targets. A future Ask AI entry goes right after Getting started. -->
+         same targets. Ask Hive starts hidden and is shown by askShowHelpItems()
+         only once the Ask panel is built (ask_enabled on). -->
     <div class="oc-nav-group" id="help-nav-group">
       <div class="oc-nav-label">Help</div>
       <a class="oc-nav-item" id="welcome-nav-item" style="display:none" data-action="openWelcomeDialog" title="Open the Getting started checklist: one-time setup steps for a new hive, with a link to the full guide"><span class="oc-nav-emoji">🚀</span><span class="oc-nav-text">Getting started</span></a>
+      <a class="oc-nav-item" id="ask-nav-item" style="display:none" role="button" tabindex="0" data-action="openAskFromHelp" data-keydown-action="openAskFromHelp" data-keys="Enter, " data-prevent="1" title="Ask a question about using the dashboard. Answers come from the Hive docs, with sources. AI generated, may be wrong."><span class="oc-nav-emoji">✨</span><span class="oc-nav-text">Ask Hive</span></a>
       <a class="oc-nav-item" data-section="faq-section" data-action="ocNavigate" data-arg0="faq-section" title="Short answers to the questions people ask once a hive is running: levels and holds, the Evidence card, release channels, the Model Gateway, pausing, cost, and where to get help"><span class="oc-nav-emoji">❓</span><span class="oc-nav-text">FAQ</span></a>
       <a class="oc-nav-item" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer" title="The Hive documentation, including the Getting Started guide"><span class="oc-nav-emoji">📖</span><span class="oc-nav-text">Docs</span></a>
       <a class="oc-nav-item" href="/api/docs" target="_blank"><span class="oc-nav-emoji">🔌</span><span class="oc-nav-text">API reference</span></a>
@@ -9979,6 +10006,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
           <span id="fleet-breaker-pill" class="nav-chip__label">running</span>
           <span id="fleet-breaker-icon" class="nav-chip__icon" aria-hidden="true"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span>
         </button>
+        <!-- Shown only while the breaker is engaged and this viewer cannot
+             release it here: points at the hub My Hives page, whose ⋮ menu
+             carries "Resume hive" for the owner or a hub admin (#19778). -->
+        <a id="fleet-breaker-hub-link" class="nav-chip nav-chip--action" href="#" target="_blank" rel="noopener noreferrer"
+           title="Resume this hive from the hub: My Hives → ⋮ → Resume hive (hive owner or hub admin)"
+           aria-label="Resume this hive from My Hives on the hub" hidden><span class="nav-chip__label">Resume in My Hives ↗</span></a>
       </span>
       <span id="agent-navbar-upnext" class="agent-navbar-upnext" hidden aria-label="Upcoming agent run order" title="Upcoming agent run order"></span>
     </div>
@@ -9999,11 +10032,13 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <!-- Help menu: mirrors the sidebar Help group (#help-nav-group) with the
            same labels and targets. It reuses the account menu's .avatar-menu
-           dropdown. A future Ask AI item goes right after Getting started. -->
+           dropdown. Ask Hive starts hidden and is shown by askShowHelpItems()
+           only once the Ask panel is built (ask_enabled on). -->
       <div id="oc-help-menu-wrap">
-        <button type="button" class="nav-chip nav-chip--primary" id="welcome-topbar-btn" data-action="toggleHelpMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="oc-help-menu" title="Help: Getting started, Docs, FAQ, Report an issue" aria-label="Help menu"><span class="nav-chip__icon" aria-hidden="true">?</span><span class="nav-chip__label">Help</span><span class="nav-chip__caret" aria-hidden="true">▾</span></button>
+        <button type="button" class="nav-chip nav-chip--primary" id="welcome-topbar-btn" data-action="toggleHelpMenu" aria-haspopup="menu" aria-expanded="false" aria-controls="oc-help-menu" title="Help: Getting started, Ask Hive, Docs, FAQ, Report an issue" aria-label="Help menu"><span class="nav-chip__icon" aria-hidden="true">?</span><span class="nav-chip__label">Help</span><span class="nav-chip__caret" aria-hidden="true">▾</span></button>
         <div id="oc-help-menu" class="avatar-menu" role="menu" aria-label="Help" hidden>
           <button type="button" class="avatar-menu-item" role="menuitem" id="welcome-help-menu-item" style="display:none" data-action="openWelcomeDialog">🚀 Getting started</button>
+          <button type="button" class="avatar-menu-item" role="menuitem" id="ask-help-menu-item" style="display:none" data-action="openAskFromHelp" title="Ask a question about using the dashboard. Answers come from the Hive docs, with sources. AI generated, may be wrong.">✨ Ask Hive</button>
           <a class="avatar-menu-item" role="menuitem" href="https://docs.hivecommons.dev" target="_blank" rel="noopener noreferrer">📖 Docs</a>
           <button type="button" class="avatar-menu-item" role="menuitem" data-action="ocNavigate" data-arg0="faq-section">❓ FAQ</button>
           <button type="button" class="avatar-menu-item" role="menuitem" data-action="openFeedbackModal" data-arg0="bug">🐛 Report an issue</button>
@@ -10404,7 +10439,11 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
   <div class="mt-6 mb-8" id="calendar-section" data-dashboard-section="calendar-section">
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="calendar-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Calendar section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📅 Calendar</h2>
     <div class="section-body">
-      <div id="calendar-panel" class="calendar-panel"><p class="muted-xs">Loading calendar…</p></div>
+      <div id="calendar-panel" class="calendar-panel">
+        <div id="calendar-email-in" hidden></div>
+        <div id="calendar-add-form" hidden></div>
+        <div id="calendar-results" class="calendar-panel"><p class="muted-xs">Loading calendar…</p></div>
+      </div>
       <div id="meeting-drafts-panel" class="calendar-panel"></div>
     </div>
   </div>
@@ -10834,6 +10873,13 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       // token. Without this, every one of those failures would open its own
       // the in-app dialog. All concurrent callers now share one dialog.
       let _ensureAuthTokenFlight = null;
+      const _authPromptEvents = new EventTarget();
+      let _authPromptOpen = false;
+      function _setAuthPromptOpen(open) {
+        _authPromptOpen = open;
+        _authPromptEvents.dispatchEvent(new Event('change'));
+      }
+
       function _ensureAuthToken() {
         if (!_ensureAuthTokenFlight) {
           _ensureAuthTokenFlight = _ensureAuthTokenInner().finally(() => { _ensureAuthTokenFlight = null; });
@@ -10862,12 +10908,14 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
           } catch {}
           // Self-hosted hive with a token configured but none stored locally:
           // ask the operator to paste it once. It persists in localStorage.
-          const entered = await hivePrompt({
+          const prompt = hivePrompt({
             title: 'Dashboard token required',
             label: _authRejected
               ? 'The stored dashboard token was rejected — it is probably stale (rotated since this browser saved it). Paste the current HIVE_DASHBOARD_TOKEN:'
               : 'This hive requires its dashboard token to make changes. Paste HIVE_DASHBOARD_TOKEN:'
           });
+          _setAuthPromptOpen(true);
+          const entered = await prompt.finally(() => _setAuthPromptOpen(false));
           if (entered && entered.trim()) {
             _authToken = entered.trim();
             try { localStorage.setItem('hive-token', _authToken); } catch {}
@@ -10991,9 +11039,16 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
             _authToken = null;
             _authRejected = true;
           }
+          const onPromptChange = opts.__hiveOnAuthPromptChange;
+          const notifyPrompt = onPromptChange && (() => onPromptChange(_authPromptOpen));
+          if (notifyPrompt) {
+            _authPromptEvents.addEventListener('change', notifyPrompt, { signal: opts.signal });
+            if (_authPromptOpen) notifyPrompt();
+          }
           try {
             await _ensureAuthToken();
           } finally {
+            if (notifyPrompt) _authPromptEvents.removeEventListener('change', notifyPrompt);
             _authRejected = false;
           }
           if (_authToken) {
@@ -13715,42 +13770,80 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // that invariant is enforced server-side (Manager.EngageBreaker/
     // ReleaseBreaker); the UI only reflects and triggers it.
     let _fleetBreakerEngaged = false;
+    // fleetBreakerChipView decides the chip's text for a breaker state and
+    // viewer. An engaged breaker must always say how to get out of it
+    // (#19778): an owner's chip names the action in its visible label, not
+    // only in the ▶ icon, and a viewer who cannot release it here is pointed
+    // at the hub My Hives page, whose ⋮ menu carries "Resume hive" — the
+    // place a hub-initiated pause comes from. hubURL is '' unless the link
+    // should show and the URL is http(s).
+    function fleetBreakerChipView(engaged, canToggle, count, myHivesURL) {
+      const held = count + ' agent' + (count === 1 ? '' : 's');
+      if (!engaged) {
+        return {
+          label: 'running',
+          ariaLabel: canToggle ? 'Fleet breaker: running — click to pause all agents' : 'Fleet breaker: running',
+          title: 'Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched.',
+          hubURL: '',
+        };
+      }
+      if (canToggle) {
+        return {
+          label: 'paused · resume',
+          ariaLabel: 'Fleet breaker: paused — click to resume paused agents',
+          title: 'Hive paused — the fleet breaker is holding ' + held + '. Click to resume; only the agents the breaker paused restart, on-demand and manually-paused agents stay as they are.',
+          hubURL: '',
+        };
+      }
+      const url = String(myHivesURL || '');
+      const hubURL = /^https?:\/\//i.test(url) ? url : '';
+      return {
+        label: 'paused',
+        ariaLabel: 'Fleet breaker: paused',
+        title: 'Hive paused — the fleet breaker is holding ' + held + '. Only the hive owner can resume it: from this chip when signed in as owner' +
+          (hubURL ? ', or from My Hives on the hub (⋮ → Resume hive).' : '.'),
+        hubURL: hubURL,
+      };
+    }
     // Renders the topbar breaker as one status chip button: state dot + label +
     // action icon. Owners can toggle it; read-only viewers get the same chip in a
-    // disabled status-only state (server also 403s non-owner POSTs).
+    // disabled status-only state (server also 403s non-owner POSTs) plus, while
+    // engaged, a link to where they can resume it.
     function _renderFleetBreaker(engaged, agents) {
       _fleetBreakerEngaged = !!engaged;
       const wrap = document.getElementById('fleet-breaker-wrap');
       if (!wrap) return;
       wrap.style.display = '';
       const count = (agents || []).length;
+      const canToggle = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const view = fleetBreakerChipView(_fleetBreakerEngaged, canToggle, count, window._myHivesURL);
       const btn = document.getElementById('fleet-breaker-btn2');
       if (btn) {
         const fleetStatus = statusMeta(_fleetBreakerEngaged ? 'paused' : 'running');
-        const canToggle = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
         const label = document.getElementById('fleet-breaker-pill');
         const dot = document.getElementById('fleet-breaker-dot');
         const icon = document.getElementById('fleet-breaker-icon');
-        const stateText = _fleetBreakerEngaged ? 'paused' : fleetStatus.label;
-        const actionText = _fleetBreakerEngaged ? 'resume paused agents' : 'pause all agents';
         btn.style.display = '';
         btn.classList.toggle('paused', _fleetBreakerEngaged);
         btn.dataset.status = fleetStatus.status;
         btn.disabled = !canToggle;
         btn.setAttribute('aria-disabled', canToggle ? 'false' : 'true');
         btn.setAttribute('aria-pressed', _fleetBreakerEngaged ? 'true' : 'false');
-        btn.setAttribute('aria-label', canToggle
-          ? ('Fleet breaker: ' + stateText + ' — click to ' + actionText)
-          : ('Fleet breaker: ' + stateText));
-        btn.title = _fleetBreakerEngaged
-          ? ('Fleet breaker is ENGAGED — ' + count + ' agent' + (count === 1 ? '' : 's') +
-             ' held paused. Release resumes only those; on-demand and manually-paused agents are untouched.')
-          : 'Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched.';
-        if (label) label.textContent = stateText;
+        btn.setAttribute('aria-label', view.ariaLabel);
+        btn.title = view.title;
+        if (label) label.textContent = view.label;
         if (dot) dot.textContent = _fleetBreakerEngaged ? '○' : '●';
         if (icon) icon.innerHTML = _fleetBreakerEngaged
           ? '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.2v7.6a.6.6 0 0 0 .92.5l6-3.8a.6.6 0 0 0 0-1l-6-3.8a.6.6 0 0 0-.92.5Z"/></svg>'
           : '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg>';
+      }
+      // href is assigned as a property from a URL fleetBreakerChipView already
+      // limited to http(s); it is never interpolated into markup.
+      const hubLink = document.getElementById('fleet-breaker-hub-link');
+      if (hubLink) {
+        if (view.hubURL) hubLink.href = view.hubURL;
+        else hubLink.removeAttribute('href');
+        hubLink.hidden = !view.hubURL;
       }
       // When engaged, make it obvious the whole fleet is held.
       const section = document.getElementById('agents-section');
@@ -26868,11 +26961,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const enabled = !!decide.enabled && !!o.enabled;
         return Object.assign({}, o, { target: decide.target, enabled, why: enabled ? '' : (decide.enabled ? o.why : decide.why) });
       }
+      const fallback = stageTrackerFallbackLead(item, actions);
+      if (fallback) return fallback;
+      if (typeof stageTrackerDevWarn === 'function' && stageTrackerMaintainerMoved(item)) stageTrackerDevWarn('row ' + stageTrackerRefOf(item) + ' waits on the maintainer but offers no lead action');
+      return null;
+    }
+    // Pure: the lead when nothing else leads: Adopt, Adopt now or Let hive
+    // decide — all N PRs, from the row's ⋯ actions. Adopt now never leads on
+    // a person's PR (author_kind 'human', or takeover.person on a linked
+    // sub-row): taking over a person's work is an
+    // explicit operator choice, so it stays in the ⋯ menu only
+    // (hivecommons/hive#19645).
+    function stageTrackerFallbackLead(item, actions) {
+      const human = !!item && (item.author_kind === 'human' || !!(item.takeover && item.takeover.person));
       for (const id of ['decide:adopt', 'decide:adopt-now', 'decide:delegate-all']) {
-        const a = actions.find(x => x.id === id);
+        if (id === 'decide:adopt-now' && human) continue;
+        const a = (actions || []).find(x => x.id === id);
         if (a && (a.enabled || id !== 'decide:adopt-now')) return a;
       }
-      if (typeof stageTrackerDevWarn === 'function' && stageTrackerMaintainerMoved(item)) stageTrackerDevWarn('row ' + stageTrackerRefOf(item) + ' waits on the maintainer but offers no lead action');
       return null;
     }
     // Pure: whether the server says the next move is the maintainer's.
@@ -29319,6 +29425,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_GATE_SETTLING = 'settling…';
     const STAGE_TRACKER_GATE_VISIBLE = 3;
     const STAGE_TRACKER_GATE_FOLD_QUERY = '(max-width: 1100px)';
+    // The phone sheet's title for the folded verbs, before the row's ref.
+    const STAGE_TRACKER_GATE_SHEET_TITLE = 'More ways to settle';
     // Reason → verbs, in the order they stand on the pill. The same reason
     // always offers the same verbs (the maintainer's "consistent way").
     const STAGE_TRACKER_GATE_VERBS = {
@@ -29547,23 +29655,111 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (word) word.textContent = STAGE_TRACKER_GATE_SETTLING;
       gate.querySelectorAll('.ham-gate-act').forEach(b => b.setAttribute('aria-disabled', 'true'));
     }
-    // The `…` menu: open / close on its button, close on outside click or
-    // Escape, the same popover pattern the row's ⋯ menu uses.
+    // Whether the `…` menu opens as the phone sheet: the same query the
+    // row's ⋯ menu uses (STAGE_TRACKER_SHEET_QUERY, tracker-actions.js).
+    function stageTrackerHumanGateSheetOn() {
+      return typeof stageTrackerIsPhoneSheet === 'function' && stageTrackerIsPhoneSheet();
+    }
+    // Pure: one folded verb as a sheet item. The pill classes go (the sheet
+    // is not the row, so its taps are handled here, not by the row's lead
+    // listener) and the verb's hover text is written out under the label:
+    // what it posts, or why it is disabled. A phone has no hover, so a
+    // greyed verb otherwise never says why.
+    function stageTrackerHumanGateSheetItem(b) {
+      if (!b || !b.classList) return b;
+      b.classList.remove('ham-lead-act', 'ham-gate-act');
+      b.removeAttribute('tabindex');
+      const note = String(b.getAttribute('title') || '').trim();
+      if (note && typeof document !== 'undefined') {
+        const hint = document.createElement('span');
+        hint.className = 'ham-menu-hint';
+        hint.textContent = note;
+        b.classList.add('ham-menu-item-hinted');
+        b.appendChild(hint);
+      }
+      return b;
+    }
+    // Open the folded verbs as a full-screen sheet (phone tier,
+    // hivecommons/hive#19655): tap-sized items, ✕ / backdrop / Esc close,
+    // and a tap runs the verb on the row the `…` sits on, the same
+    // runRowAction path an inline verb takes.
+    function stageTrackerOpenHumanGateSheet(b, menu) {
+      if (typeof stageTrackerOpenSheet !== 'function') return false;
+      const sub = b.closest('[data-ham-sub-key]');
+      const row = b.closest('.ham-row[data-ham-key]');
+      const key = sub ? sub.dataset.hamSubKey : (row ? row.dataset.hamKey : '');
+      const find = () => key && typeof stageTrackerItemByKey === 'function' && typeof _stageTracker !== 'undefined' ? stageTrackerItemByKey(_stageTracker, key) : null;
+      const shown = find();
+      const ref = shown && typeof stageTrackerRefOf === 'function' ? stageTrackerRefOf(shown) : '';
+      const list = menu.cloneNode(true);
+      list.hidden = false;
+      list.classList.add('ham-menu-sheet');
+      list.querySelectorAll('[data-ham-act]').forEach(stageTrackerHumanGateSheetItem);
+      let host = null;
+      list.addEventListener('click', e => {
+        const i = e.target.closest ? e.target.closest('[data-ham-act]') : null;
+        if (!i) return;
+        e.preventDefault(); e.stopPropagation();
+        if (i.getAttribute('aria-disabled') === 'true') return;
+        const item = find();
+        if (host && host.hiveDialogClose) host.hiveDialogClose();
+        if (!item || typeof stageTrackerDecisionRun !== 'function') return;
+        const run = stageTrackerDecisionRun(item, i.dataset.hamAct);
+        if (run && typeof run.then === 'function') {
+          run.then(r => { if (r && !r.cancelled && Array.isArray(r.results) && r.results.length && r.results.every(x => x && x.ok) && document.contains(b)) stageTrackerHumanGateSettling(b); }, () => {});
+        }
+      });
+      b.setAttribute('aria-expanded', 'true');
+      host = stageTrackerOpenSheet(STAGE_TRACKER_GATE_SHEET_TITLE + (ref ? ' ' + ref : ''), list, 'ham-menu-dialog ham-gate-sheet', () => {
+        b.setAttribute('aria-expanded', 'false');
+        if (document.contains(b) && typeof b.focus === 'function') b.focus();
+      }, () => {
+        const f = document.activeElement && document.activeElement.closest ? document.activeElement.closest('[data-ham-act]') : null;
+        if (f && list.contains(f)) f.click();
+      });
+      const first = list.querySelector('[role="menuitem"]:not([aria-disabled="true"])') || list.querySelector('[role="menuitem"]');
+      if (first) setTimeout(() => first.focus(), 0);
+      return true;
+    }
+    // Anchor the popover under its button, clamped into the viewport. The
+    // menu is position: fixed; left unplaced it fell to its static spot,
+    // shifted by the page scroll, and opened off-screen (#19655).
+    function stageTrackerPlaceHumanGateMenu(b, menu) {
+      if (typeof stageTrackerMenuPosition !== 'function' || typeof b.getBoundingClientRect !== 'function') return;
+      const r = b.getBoundingClientRect();
+      const pos = stageTrackerMenuPosition(r.left, r.bottom, menu.offsetWidth, menu.offsetHeight, window.innerWidth, window.innerHeight);
+      menu.style.setProperty('left', pos.left + 'px');
+      menu.style.setProperty('top', pos.top + 'px');
+    }
+    // The `…` menu: open / close on its button, close on outside click,
+    // scroll, resize or Escape. On a phone it opens as the row menu's sheet;
+    // elsewhere as a popover anchored to the button.
     function stageTrackerWireHumanGate(el) {
       if (!el || el._hamGateWired) return;
       el._hamGateWired = true;
       const closeAll = () => el.querySelectorAll('.ham-gate-menu:not([hidden])').forEach(m => { m.hidden = true; const b = m.previousElementSibling; if (b) b.setAttribute('aria-expanded', 'false'); });
       el.addEventListener('click', e => {
         const b = e.target.closest ? e.target.closest('[data-ham-gate-more]') : null;
-        if (!b) { if (!(e.target.closest && e.target.closest('.ham-gate-menu'))) closeAll(); return; }
+        // Outside the menu, or a live verb picked in it: close.
+        if (!b) { if (!(e.target.closest && e.target.closest('.ham-gate-menu')) || e.target.closest('[data-ham-act]:not([aria-disabled="true"])')) closeAll(); return; }
         e.preventDefault(); e.stopPropagation();
         let menu = b.nextElementSibling;
         if (menu && menu.tagName === 'TEMPLATE') { const stamped = menu.content.firstElementChild.cloneNode(true); menu.replaceWith(stamped); menu = stamped; }
         const open = menu && menu.hidden;
         closeAll();
-        if (menu && open) { menu.hidden = false; b.setAttribute('aria-expanded', 'true'); const first = menu.querySelector('[role="menuitem"]'); if (first) first.focus(); }
+        if (!menu || !open) return;
+        if (stageTrackerHumanGateSheetOn() && stageTrackerOpenHumanGateSheet(b, menu)) return;
+        menu.hidden = false;
+        b.setAttribute('aria-expanded', 'true');
+        stageTrackerPlaceHumanGateMenu(b, menu);
+        const first = menu.querySelector('[role="menuitem"]');
+        if (first) first.focus({ preventScroll: true });
       });
       el.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
+      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('scroll', closeAll, true);
+        window.addEventListener('resize', closeAll);
+      }
     }
     /* ---- The human gate's one source of truth (hivecommons/hive#18769) ---
        The gate pill and its verbs used to read two different things: the
@@ -35353,8 +35549,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         var bg = a.severity === 'error' ? 'color-mix(in srgb, var(--red) 14%, transparent)' : 'color-mix(in srgb, var(--yellow) 14%, transparent)';
         var border = a.severity === 'error' ? 'var(--red)' : 'var(--yellow)';
         var textColor = 'var(--text)'; // banner copy stays neutral; severity lives in the tint/border
-        var dismiss = (a.id || '').indexOf('plan-stall-') === 0
-          ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="dismissSystemAlert" data-arg0="' + esc(a.id || '') + '" data-stop="1" title="Dismiss this needs-human plan alert">Dismiss</button>'
+        // Mirrors systemAlertDismissible in server.go.
+        var alertID = a.id || '';
+        var dismissible = alertID.indexOf('plan-stall-') === 0 || alertID.indexOf('model-id-normalized-') === 0;
+        var dismiss = dismissible
+          ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="dismissSystemAlert" data-arg0="' + esc(alertID) + '" data-stop="1" title="Dismiss this alert">Dismiss</button>'
           : '';
         var guideTip = a.onboarding ? '<div class="onboarding-guide-tip">' + onboardingGuideTipHtml(a.guideStep || 'github-app') + '</div>' : '';
         return '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:10px;font-size:0.85rem">'
@@ -50226,6 +50425,7 @@ function burnAreaChart() {
     let _kbSelectedType = '';
     let _kbSearchQuery = '';
     let _kbSelectedFact = null;
+    let _kbFactRequest = 0;
     let _kbFacts = [];
     const _kbPageSize = 50;
     let _kbPageOffset = 0;
@@ -50390,7 +50590,8 @@ function burnAreaChart() {
         }
         _kbInitialLoad = false;
         const enabledChanged = !prev || prev.enabled !== _kbCache.enabled || JSON.stringify(prev.primer || null) !== JSON.stringify(_kbCache.primer || null);
-        const layersChanged = !prev || JSON.stringify((prev.layers||[]).map(l=>l.type)) !== JSON.stringify((_kbCache.layers||[]).map(l=>l.type));
+        const layerKeys = stats => JSON.stringify((stats.layers || []).map(l => [l.type, l.source_layer]));
+        const layersChanged = !prev || layerKeys(prev) !== layerKeys(_kbCache);
         const docsChanged = !prev || JSON.stringify((prev._documents||[]).map(d=>d.slug)) !== JSON.stringify((_kbCache._documents||[]).map(d=>d.slug));
         const reviewDraftsChanged = !prev || prev._reviewDrafts !== _kbCache._reviewDrafts;
         if (!_kbRendered || enabledChanged || layersChanged || docsChanged || reviewDraftsChanged) {
@@ -50416,9 +50617,8 @@ function burnAreaChart() {
       const list = document.getElementById('kb-layer-btns');
       if (list) {
         for (const btn of list.children) {
-          const isAll = btn.textContent.includes('All Layers');
           const btnLayer = btn.dataset.action === 'gh14' ? 'vault:' + btn.dataset.arg0 : btn.dataset.arg0;
-          btn.classList.toggle('active', layer === 'all' ? isAll : btnLayer === layer);
+          btn.classList.toggle('active', btnLayer === layer);
         }
       }
       kbSearch();
@@ -50441,8 +50641,15 @@ function burnAreaChart() {
     const KB_AUTO_MEMORY_VIEW = 'auto-memory';
     const KB_AUTO_MEMORY_TAG = 'cli-memory';
 
-    async function kbLoadFacts(offset) {
+    async function kbLoadFacts(offset, keepFact = false) {
       const request = ++_kbRequest;
+      if (!keepFact) {
+        ++_kbFactRequest;
+        if (_kbSelectedFact) {
+          _kbSelectedFact = null;
+          renderKnowledgeDetail();
+        }
+      }
       const query = _kbSearchQuery;
       const layer = _kbSelectedLayer;
       const typeFilter = _kbSelectedType;
@@ -50454,13 +50661,13 @@ function burnAreaChart() {
         url = '/api/knowledge/search?tag=' + KB_AUTO_MEMORY_TAG + '&include_states=draft&limit=200';
         if (typeFilter) url += '&type=' + encodeURIComponent(typeFilter);
       } else if (layer && layer !== 'all') {
-        // Check if this is a vault, document, or standard layer type
+        // Keep legacy layer names working alongside concrete source selectors.
         const standardLayers = ['personal','project','org','community'];
         if (layer.startsWith('doc:')) {
           const docSlug = layer.slice(4);
           url = '/api/knowledge/search?tag=' + encodeURIComponent(docSlug) + '&limit=50';
-        } else if (!standardLayers.includes(layer) && !layer.startsWith('git_source:')) {
-          url = '/api/knowledge/vaults/' + encodeURIComponent(layer) + '/facts';
+        } else if (!standardLayers.includes(layer) && !layer.startsWith('wiki:') && !layer.startsWith('git_source:')) {
+          url = '/api/knowledge/vaults/' + encodeURIComponent(layer.replace(/^vault:/, '')) + '/facts';
         } else {
           url = '/api/knowledge/' + encodeURIComponent(layer);
         }
@@ -50483,7 +50690,6 @@ function burnAreaChart() {
         _kbHasMore = !!data.has_more;
         _kbFacts = Array.isArray(data) ? data : (data.results || data.facts || []);
         if (!query && layer === KB_AUTO_MEMORY_VIEW) _kbFacts = _kbFacts.filter(f => f.state === 'draft');
-        _kbSelectedFact = null;
         renderKnowledgeFacts();
       } catch (e) {
         if (request !== _kbRequest) return;
@@ -50494,15 +50700,17 @@ function burnAreaChart() {
       }
     }
 
-    async function kbReadFact(slug, layer) {
-      if (!layer) {
-        const match = _kbFacts.find(f => f.slug === slug);
-        layer = match ? match.layer : 'project';
-      }
+    async function kbReadFact(slug, layer = 'all') {
+      const request = ++_kbFactRequest;
+      _kbSelectedFact = null;
+      renderKnowledgeDetail();
       try {
         const r = await fetch('/api/knowledge/' + encodeURIComponent(layer) + '/' + encodeURIComponent(slug) + '?include_states=all');
         if (!r.ok) return;
-        _kbSelectedFact = await r.json();
+        const fact = await r.json();
+        if (request !== _kbFactRequest || fact.slug !== slug) return;
+        if (/^(wiki:|vault:sha256:|git_source:)/.test(layer) && fact.source_layer !== layer) return;
+        _kbSelectedFact = fact;
         renderKnowledgeDetail();
       } catch (e) { /* ignore */ }
     }
@@ -50852,8 +51060,8 @@ function burnAreaChart() {
         if (node && !dragNode) {
           _kbGraphView = false;
           _kbSelectedLayer = 'all';
-          kbReadFact(node.slug);
           renderKnowledge();
+          kbReadFact(node.slug, node.data.source_layer || node.data.layer || undefined);
         }
       });
 
@@ -51236,19 +51444,21 @@ function burnAreaChart() {
       html += '<div class="kb-sidebar">';
       html += '<div class="section-label m-0">Knowledge Sources</div>';
       html += '<div class="kb-layer-list" id="kb-layer-btns">';
-      // Aggregate row stays on top as the filter reset (kbSelectLayer keys on the 'All Layers' text)
+      // Aggregate row stays on top as the filter reset.
       html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === 'all' ? ' active' : ''}" data-action="kbSelectLayer" data-arg0="all"><span class="kb-layer-label">📋 All Layers</span><span class="kb-layer-count">${totalPages}</span></button>`;
       html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === KB_AUTO_MEMORY_VIEW ? ' active' : ''}" data-action="kbSelectLayer" data-arg0="${KB_AUTO_MEMORY_VIEW}" title="Drafts drained from the coding CLIs' own memory stores. No agent sees one until it is approved."><span class="kb-layer-label">🧠 Auto-memory drafts</span></button>`;
       for (const l of layers) {
-        const isGitSource = l.type && l.type.startsWith('git_source:');
-        const icon = KB_LAYER_ICONS[l.type] || (isGitSource ? '📄' : '📂');
-        const label = KB_LAYER_LABELS[l.type] || l.type;
-        const active = _kbSelectedLayer === l.type ? ' active' : '';
+        const sourceLayer = l.source_layer || l.type || '';
+        const isVault = sourceLayer.startsWith('vault:');
+        const isGitSource = sourceLayer.startsWith('git_source:');
+        const icon = isVault ? '📂' : KB_LAYER_ICONS[l.type] || (isGitSource ? '📄' : '📂');
+        const label = isVault ? l.type : KB_LAYER_LABELS[l.type] || l.type;
+        const active = _kbSelectedLayer === sourceLayer ? ' active' : '';
         const count = l.total_pages || 0;
         const layerStatus = statusMeta(l.healthy ? 'ready' : 'error');
         const healthTip = `${escapeHtml(label)}: ${l.healthy ? 'healthy' : 'unreachable'}`;
         const repoUrl = isGitSource && l.url ? (l.subpath ? l.url + '/tree/' + 'main/' + l.subpath : l.url) : '';
-        html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${active}" data-action="kbSelectLayer" data-arg0="${escapeHtml(l.type)}" title="${healthTip}">`;
+        html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${active}" data-action="kbSelectLayer" data-arg0="${escapeHtml(sourceLayer)}" title="${healthTip}">`;
         html += `<span class="kb-layer-label"><span class="kb-health-dot status-dot" data-status="${layerStatus.status}" title="${healthTip}"></span>${icon} ${escapeHtml(label)}</span>`;
         if (isGitSource && repoUrl) {
           html += `<a href="${escapeHtml(repoUrl)}" target="_blank" rel="noopener" data-action="gh3" style="color:var(--accent);text-decoration:none;font-size:var(--fs-base);flex-shrink:0" title="Open source repo in new tab">↗</a>`;
@@ -51315,7 +51525,8 @@ function burnAreaChart() {
       if (_kbGraphView) {
         fetchKnowledgeGraph();
       } else {
-        kbSearch();
+        renderKnowledgeDetail();
+        kbLoadFacts(0, true);
       }
     }
 
@@ -51554,8 +51765,9 @@ function burnAreaChart() {
         const confPct = Math.round(conf * 100);
         const typeClass = 'kb-type-' + (f.type || 'pattern');
         const layerClass = 'kb-layer-' + (f.layer || 'project');
-        const selected = _kbSelectedFact && _kbSelectedFact.slug === f.slug ? ' selected' : '';
-        html += `<div class="kb-fact-item${selected}" data-action="gh17" data-arg0="${escapeHtml(f.slug || '')}">`;
+        const sourceLayer = f.source_layer || f.layer || '';
+        const selected = _kbSelectedFact && _kbSelectedFact.slug === f.slug && (_kbSelectedFact.source_layer || _kbSelectedFact.layer) === sourceLayer ? ' selected' : '';
+        html += `<div class="kb-fact-item${selected}" data-action="gh17" data-arg0="${escapeHtml(f.slug || '')}" data-arg1="${escapeHtml(sourceLayer)}">`;
         html += '<div class="kb-fact-meta">';
         html += kbConfidenceBadge(f);
         if (f.confidence_scored !== false) html += `<div class="kb-fact-conf-bar" title="${escapeHtml(f.confidence_reason || '')}"><div class="kb-fact-conf-fill" style="width:${confPct}%;background:${confColor(conf)}"></div></div>`;
@@ -51593,15 +51805,17 @@ function burnAreaChart() {
         const m = /^agent:(.+)$/i.exec(String(t).trim());
         if (m) html += `<span class="kb-layer-badge" title="Drained from this agent's CLI memory">agent ${escapeHtml(m[1])}</span>`;
       }
-      if (f.state === 'draft' && viewerIsOwner()) {
+      if (f.state === 'draft' && f.source_layer?.startsWith('vault:') && viewerIsOwner()) {
         const slug = escapeHtml(f.slug || '');
-        html += `<button class="hv-btn btn-primary btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="approved" data-stop="1" title="Approve: agents whose scope includes this entry receive it in their kicks">Approve</button>`;
-        html += `<button class="hv-btn btn-danger btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="deprecated" data-stop="1" title="Discard: mark it deprecated so no agent receives it and the drain never re-drafts it">Discard</button>`;
+        const source = escapeHtml(f.source_layer);
+        html += `<button class="hv-btn btn-primary btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="approved" data-arg2="${source}" data-stop="1" title="Approve: agents whose scope includes this entry receive it in their kicks">Approve</button>`;
+        html += `<button class="hv-btn btn-danger btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="deprecated" data-arg2="${source}" data-stop="1" title="Discard: mark it deprecated so no agent receives it and the drain never re-drafts it">Discard</button>`;
       }
       return html;
     }
 
-    async function kbAutoMemoryReview(slug, state) {
+    async function kbAutoMemoryReview(slug, state, sourceLayer) {
+      if (!sourceLayer) return;
       const question = state === 'approved'
         ? 'Approve "' + slug + '"? It was written by an agent, and once approved it is injected into the kicks of every agent whose scope includes it.'
         : 'Discard "' + slug + '"? It is marked deprecated, no agent receives it, and the drain will not re-draft it.';
@@ -51609,7 +51823,7 @@ function burnAreaChart() {
       try {
         const r = await fetch('/api/knowledge/entry/' + encodeURIComponent(slug) + '/state', {
           method: 'PUT', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ state, reason: 'auto-memory review (dashboard)' }),
+          body: JSON.stringify({ state, source_layer: sourceLayer, reason: 'auto-memory review (dashboard)' }),
         });
         if (!r.ok) { const e = await r.json().catch(() => ({})); await hiveAlert(e.error || 'Failed to change state'); return; }
         fetchKnowledgeStats();
@@ -51617,10 +51831,19 @@ function burnAreaChart() {
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
+    function kbIsWikiFact(f) {
+      return f && (!f.source_layer || f.source_layer.startsWith('wiki:'));
+    }
+
     function renderKnowledgeDetail() {
       const el = document.getElementById('kb-fact-detail');
-      if (!el || !_kbSelectedFact) { if (el) el.innerHTML = ''; return; }
+      if (!el) return;
       const f = _kbSelectedFact;
+      const sourceLayer = f?.source_layer || f?.layer;
+      document.querySelectorAll('.kb-fact-item').forEach(item => {
+        item.classList.toggle('selected', item.dataset.arg0 === f?.slug && item.dataset.arg1 === sourceLayer);
+      });
+      if (!f) { el.innerHTML = ''; return; }
       const conf = typeof f.confidence === 'number' ? f.confidence : 0;
       const confPct = Math.round(conf * 100);
       const typeClass = 'kb-type-' + (f.type || 'pattern');
@@ -51644,29 +51867,23 @@ function burnAreaChart() {
       if (f.tags && f.tags.length) html += `<div><span class="kb-detail-label">Tags:</span> ${f.tags.map(t => escapeHtml(t)).join(', ')}</div>`;
       html += '</div>';
 
-      // Action buttons
       html += '<div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-5);flex-wrap:wrap">';
-      html += `<button class="hv-btn btn-secondary nous-btn btn-primary btn-sm" data-action="kbOpenEdit">✏️ Edit</button>`;
+      const wiki = kbIsWikiFact(f);
+      if (wiki) {
+        html += `<button class="hv-btn btn-secondary nous-btn btn-primary btn-sm" data-action="kbOpenEdit">✏️ Edit</button>`;
+      }
       const promoteTargets = { personal: 'project', project: 'org', org: 'community' };
       const promoteTo = promoteTargets[f.layer];
-      if (promoteTo) {
-        html += `<button class="hv-btn btn-secondary nous-btn btn-primary btn-sm" data-action="kbPromote" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(f.layer)}" data-arg2="${promoteTo}">⬆ Promote to ${promoteTo}</button>`;
+      if (promoteTo && (wiki || sourceLayer.startsWith('vault:'))) {
+        html += `<button class="hv-btn btn-secondary nous-btn btn-primary btn-sm" data-action="kbPromote" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(sourceLayer)}" data-arg2="${promoteTo}">⬆ Promote to ${promoteTo}</button>`;
       }
-      html += `<button class="hv-btn btn-danger nous-btn btn-sm" data-action="kbDelete" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(f.layer)}">🗑 Delete</button>`;
+      if (wiki) {
+        html += `<button class="hv-btn btn-danger nous-btn btn-sm" data-action="kbDelete" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(sourceLayer)}" data-arg2="${escapeHtml(f.layer)}">🗑 Delete</button>`;
+      }
       html += '</div>';
 
       html += '</div>';
       el.innerHTML = html;
-
-      // Highlight selected fact in list
-      document.querySelectorAll('.kb-fact-item').forEach(item => item.classList.remove('selected'));
-      const items = document.querySelectorAll('.kb-fact-item');
-      for (const item of items) {
-        if (item.querySelector('.kb-fact-title')?.textContent === (kbCleanFactTitle(f.title) || f.slug)) {
-          item.classList.add('selected');
-          break;
-        }
-      }
     }
 
     // ── Knowledge modals and actions ──
@@ -51769,8 +51986,9 @@ function burnAreaChart() {
     }
 
     function kbOpenEdit() {
-      if (!_kbSelectedFact) return;
       const f = _kbSelectedFact;
+      if (!kbIsWikiFact(f)) return;
+      const sourceLayer = f.source_layer || f.layer;
 
       let typeOpts = '';
       for (const t of KB_FACT_TYPES) {
@@ -51808,15 +52026,14 @@ function burnAreaChart() {
           <div class="muted-xs">Layer: ${escapeHtml(f.layer || '')} · Slug: ${escapeHtml(f.slug || '')}</div>
           <div class="row-end mt-4">
             <button class="hv-btn btn-secondary nous-btn nous-config-btn-cancel" data-action="kbCloseModal">Cancel</button>
-            <button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbSubmitEdit">Save Changes</button>
+            <button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbSubmitEdit" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(sourceLayer)}">Save Changes</button>
           </div>
         </div>`;
       kbShowModal('Edit Fact', html);
     }
 
-    async function kbSubmitEdit() {
-      if (!_kbSelectedFact) return;
-      const f = _kbSelectedFact;
+    async function kbSubmitEdit(slug, sourceLayer) {
+      const request = _kbFactRequest;
       const title = document.getElementById('kb-edit-title')?.value?.trim();
       const body = document.getElementById('kb-edit-body')?.value?.trim();
       const type = document.getElementById('kb-edit-type')?.value;
@@ -51826,27 +52043,34 @@ function burnAreaChart() {
       const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
 
       try {
-        const r = await fetch('/api/knowledge/' + encodeURIComponent(f.layer) + '/' + encodeURIComponent(f.slug), {
+        const r = await fetch('/api/knowledge/' + encodeURIComponent(sourceLayer) + '/' + encodeURIComponent(slug), {
           method: 'PUT', headers: _inceptionAuthHeaders(),
           body: JSON.stringify({ title, body, type, status, confidence: conf, tags }),
         });
         if (!r.ok) { const e = await r.json(); await hiveAlert(e.error || 'Failed to update'); return; }
         kbCloseModal();
-        kbReadFact(f.slug, f.layer);
-        kbSearch();
+        kbLoadFacts(0, true);
+        const f = _kbSelectedFact;
+        if (request === _kbFactRequest && f?.slug === slug && (f.source_layer || f.layer) === sourceLayer) {
+          kbReadFact(slug, sourceLayer);
+        }
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
-    async function kbDelete(slug, layer) {
+    async function kbDelete(slug, sourceLayer, layer) {
+      const request = _kbFactRequest;
       if (!(await hiveConfirm('Delete fact "' + slug + '" from ' + layer + '?'))) return;
       try {
-        const r = await fetch('/api/knowledge/' + encodeURIComponent(layer) + '/' + encodeURIComponent(slug), { method: 'DELETE' });
+        const r = await fetch('/api/knowledge/' + encodeURIComponent(sourceLayer) + '/' + encodeURIComponent(slug), { method: 'DELETE' });
         if (!r.ok) { const e = await r.json(); await hiveAlert(e.error || 'Failed to delete'); return; }
-        _kbSelectedFact = null;
-        const detail = document.getElementById('kb-fact-detail');
-        if (detail) detail.innerHTML = '';
+        const f = _kbSelectedFact;
+        if (request === _kbFactRequest || (f?.slug === slug && (f.source_layer || f.layer) === sourceLayer)) {
+          ++_kbFactRequest;
+          _kbSelectedFact = null;
+          renderKnowledgeDetail();
+        }
         fetchKnowledgeStats();
-        kbSearch();
+        kbLoadFacts(0, true);
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
@@ -53823,7 +54047,8 @@ function burnAreaChart() {
       const href = inboxShareTargetHref(rec, canOpen);
       if (href) return '<a' + attrs + ' href="' + escapeHtml(href) + '"' + (/^https?:/.test(href) ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + inner + '</a>';
       if (canOpen && rec.destination === 'knowledge' && (rec.ref || {}).id && it && it.fact_slug) {
-        return '<a' + attrs + ' href="#" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '">' + inner + '</a>';
+        const layer = inboxFactLayer(it);
+        if (layer) return '<a' + attrs + ' href="#" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(layer) + '">' + inner + '</a>';
       }
       return '<span' + attrs + '>' + inner + '</span>';
     }
@@ -53854,7 +54079,8 @@ function burnAreaChart() {
       const dur = inboxFmtDuration(it.duration_ms);
       // The backing Knowledge fact is a plain link in the metadata line, not
       // an action: it only opens the fact.
-      const factLink = it.fact_slug ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
+      const factLayer = it.fact_slug && inboxFactLayer(it);
+      const factLink = factLayer ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(factLayer) + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
       // The title is shown without its trailing recording id; the id and the
       // Knowledge state join the meta line, and the full title is the tooltip.
       const tp = inboxTitleParts(it.title || it.id);
@@ -54217,7 +54443,12 @@ function burnAreaChart() {
       const settings = data.settings || {};
       const rules = Array.isArray(settings.rules) ? settings.rules.length : 0;
       if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
-      const shown = items.filter(it => _inboxShowProcessed || !it.processed);
+      const shown = inboxShownItems();
+      const selectedBeforeRender = _inboxSelected.size;
+      inboxPruneSelection(shown);
+      const closeBulkMenu = _inboxSelected.size !== selectedBeforeRender && _inboxShareMenu?.btn.dataset.action === 'inboxBulkMenu';
+      const restoreBulkFocus = closeBulkMenu && (_inboxShareMenu.btn === document.activeElement || _inboxShareMenu.el.contains(document.activeElement));
+      if (closeBulkMenu) inboxShareMenuClose(false);
       // Sources line: only configured sources are chips (with the account
       // hint); the rest sit behind a "+N more" disclosure next to Connect
       // sources, so the header is one quiet line instead of a wall of
@@ -54249,6 +54480,10 @@ function burnAreaChart() {
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
       const paint = () => { panel.innerHTML = html; };
       inboxPreserveAudio(panel, typeof inboxNoteKeepFocus === 'function' ? () => inboxNoteKeepFocus(paint) : paint);
+      if (restoreBulkFocus) {
+        const control = panel.querySelector('[data-action="inboxBulkMenu"]') || panel.querySelector('[data-action="inboxToggleProcessed"]');
+        control?.focus();
+      }
       inboxApplyFocus(panel);
     }
 
@@ -54271,6 +54506,16 @@ function burnAreaChart() {
     }
     function inboxToggleSources() { _inboxSourcesOpen = !_inboxSourcesOpen; renderInbox(); }
 
+    function inboxShownItems() {
+      return ((_inboxCache || {}).items || []).filter(it => _inboxShowProcessed || !it.processed);
+    }
+    function inboxPruneSelection(shown) {
+      if (!_inboxSelected.size) return;
+      const shownKeys = new Set(shown.map(inboxItemKey));
+      for (const key of _inboxSelected) {
+        if (!shownKeys.has(key)) _inboxSelected.delete(key);
+      }
+    }
     function inboxToggleProcessed() { _inboxShowProcessed = !_inboxShowProcessed; renderInbox(); }
     function inboxToggleSelect(src, id) {
       const key = src + '/' + id;
@@ -54278,12 +54523,15 @@ function burnAreaChart() {
       renderInbox();
     }
     function inboxSelectAll() {
-      const shown = ((_inboxCache || {}).items || []).filter(it => _inboxShowProcessed || !it.processed);
+      const shown = inboxShownItems();
       if (_inboxSelected.size === shown.length) _inboxSelected.clear();
       else _inboxSelected = new Set(shown.map(inboxItemKey));
       renderInbox();
     }
     function inboxFind(src, id) { return ((_inboxCache || {}).items || []).find(it => it.source === src && it.id === id); }
+    function inboxFactLayer(it) {
+      return it.fact_source_layer || (it.fact_path ? '' : it.layer || 'all');
+    }
     function inboxOpenFact(slug, layer) {
       ocNavigate('knowledge-section');
       kbReadFact(slug, layer || undefined);
@@ -55111,7 +55359,7 @@ function burnAreaChart() {
           kept ? n(kept, 'Knowledge fact', 'Knowledge facts') + ' of synced sources ' + (kept === 1 ? 'is' : 'are') + ' kept: the sync maintains ' + (kept === 1 ? 'it' : 'them') + '.' : ''
         ];
       }
-      parts.push(inboxDeleteSharesText(shares), 'This cannot be undone.');
+      parts.push(list.map(it => '• ' + (it.title || inboxItemKey(it))).join('\n'), inboxDeleteSharesText(shares), 'This cannot be undone.');
       return {
         title: list.length === 1 ? 'Delete this item?' : 'Delete ' + list.length + ' items?',
         message: parts.filter(Boolean).join('\n\n'),
@@ -55130,17 +55378,35 @@ function burnAreaChart() {
       if (window._hiveRole !== 'owner' && window._hiveRole !== 'read-write') return [];
       return [{ id: 'manage', label: 'Manage', items: [{ id: 'delete', label: 'Delete…', disabled: false, hint: '' }] }];
     }
-    async function inboxDeleteRun(items) {
+    function inboxDeleteEligible(it) {
+      return inboxCanDelete(it, window._hiveRole, window._hiveUser) && !inboxDeleteBusy(it);
+    }
+    async function inboxDeleteRun(items, bulk = false) {
       const list = (items || []).filter(Boolean);
       if (!list.length) return;
       const dlg = inboxDeleteDialog(list);
-      const cfg = { title: dlg.title, message: dlg.message, confirmLabel: 'Delete', danger: true };
+      const cfg = { title: dlg.title, message: dlg.message, confirmLabel: 'Delete', danger: true, scrollBody: list.length > 1 };
       if (dlg.knowledge) cfg.check = { label: INBOX_DELETE_KNOWLEDGE_LABEL, checked: false };
       const answer = await hiveConfirm(cfg);
       if (!answer) return;
+      const visible = bulk ? new Map(inboxShownItems().map(it => [inboxItemKey(it), it])) : null;
+      const current = list.map(it => bulk ? visible.get(inboxItemKey(it)) : inboxFind(it.source, it.id));
+      if (current.some(it => !inboxDeleteEligible(it) || (bulk && !_inboxSelected.has(inboxItemKey(it))))) {
+        showToast(bulk ? 'The Inbox selection changed. Review it before deleting.' : 'This item can no longer be deleted. Review the Inbox.', 'error');
+        return;
+      }
+      const removeKnowledge = !!(dlg.knowledge && answer.checked);
+      if (removeKnowledge && list.some((it, i) => {
+        const latest = current[i];
+        return (inboxDeleteKnowledgeRemovable(it) || inboxDeleteKnowledgeRemovable(latest)) &&
+          (it.fact_slug !== latest.fact_slug || it.layer !== latest.layer);
+      })) {
+        showToast('A Knowledge copy changed. Review the items before deleting.', 'error');
+        return;
+      }
       try {
         const r = await fetch('/api/inbox/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: list.map(it => ({ source: it.source, item_id: it.id })), remove_knowledge: !!(dlg.knowledge && answer.checked) }) });
+          body: JSON.stringify({ items: list.map(it => ({ source: it.source, item_id: it.id })), remove_knowledge: removeKnowledge }) });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         for (const d of (data.items || [])) {
@@ -55164,9 +55430,9 @@ function burnAreaChart() {
     // Delete… in the bulk menu: the selected items the viewer may delete.
     function inboxDeleteSelected() {
       const picked = Array.from(_inboxSelected).map(k => { const i = k.indexOf('/'); return inboxFind(k.slice(0, i), k.slice(i + 1)); }).filter(Boolean);
-      const allowed = picked.filter(it => inboxCanDelete(it, window._hiveRole, window._hiveUser) && !inboxDeleteBusy(it));
+      const allowed = picked.filter(inboxDeleteEligible);
       if (!allowed.length) { showToast(picked.length ? 'None of the selected items can be deleted by you right now' : 'Nothing selected', 'error'); return undefined; }
-      return inboxDeleteRun(allowed);
+      return inboxDeleteRun(allowed, true);
     }
     // ── Inbox: ● Record a meeting or note into the Inbox ──
     // The browser records with MediaRecorder and uploads one chunk every
@@ -57144,13 +57410,8 @@ function burnAreaChart() {
     }
 
     async function fetchCalendar() {
-      const host = document.getElementById('calendar-panel');
-      if (!calendarRoleKnown()) {
-        if (host) host.innerHTML = '<p class="muted-xs">Loading calendar…</p>';
-        return;
-      }
-      if (!calendarCanView()) {
-        if (host) host.innerHTML = '<p class="empty-dashed">The calendar is visible to the hive owner and read-write users.</p>';
+      if (!calendarRoleKnown() || !calendarCanView()) {
+        renderCalendar();
         return;
       }
       try {
@@ -57167,7 +57428,7 @@ function burnAreaChart() {
     dashboardSetInterval('calendar', fetchCalendar, CALENDAR_POLL_MS);
 
     function calendarFormHtml() {
-      return '<details class="calendar-add"><summary class="calendar-add-summary">Add meeting</summary><div class="calendar-add-grid mt-2">' +
+      return '<details class="calendar-add"><summary class="calendar-add-summary">Add meeting</summary><form><div class="calendar-add-grid mt-2">' +
         '<label>Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-calendar-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
         '<label>Title (optional)<input class="kb-search-box" type="text" data-calendar-field="title" maxlength="200" placeholder="Weekly sync" autocomplete="off"></label>' +
         '<label>Starts<input class="kb-search-box" type="datetime-local" data-calendar-field="start"></label>' +
@@ -57175,9 +57436,8 @@ function burnAreaChart() {
         '<label>Repeats<select class="kb-search-box" data-calendar-field="repeat"><option value="none">Does not repeat</option><option value="daily">Daily</option>' +
         '<option value="weekdays">Every weekday</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>' +
         '<button type="button" class="hv-btn btn-primary btn-sm" data-action="calendarAdd">Add meeting</button></div>' +
-        '<p class="muted-xs">Times are in your time zone (' + escapeHtml(calendarViewerTimeZone() || 'local') + '). ' +
-        (calendarIsOwner() ? 'Hive joins about a minute before the start.' : 'The hive owner approves meetings you add.') + '</p>' +
-        '<div class="hive-dialog-error" role="alert" data-calendar-field="error"></div></details>';
+        '<p class="muted-xs">Times are in your time zone (' + escapeHtml(calendarViewerTimeZone() || 'local') + '). <span data-calendar-field="hint"></span></p>' +
+        '<div class="hive-dialog-error" role="alert" data-calendar-field="error"></div></form></details>';
     }
 
     function calendarActionButtons(e) {
@@ -57231,7 +57491,8 @@ function burnAreaChart() {
       const last = (e.history || []).length ? e.history[e.history.length - 1] : null;
       const mid = e.meeting_id || (last && last.meeting_id) || '';
       if (!mid) return '';
-      const live = e.status === 'live' || (last && last.status === 'live');
+      const occurrence = (e.history || []).find(h => h?.meeting_id === mid);
+      const live = e.status === 'live' || occurrence?.status === 'live';
       return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="calendarOpenMeeting" data-arg0="' + escapeHtml(mid) + '">' + (live ? 'Open live panel' : 'Notes') + '</button>';
     }
 
@@ -57331,20 +57592,45 @@ function burnAreaChart() {
 
     function renderCalendar() {
       refreshSectionCardShell('calendar-section');
-      const host = document.getElementById('calendar-panel');
+      const email = document.getElementById('calendar-email-in');
+      const add = document.getElementById('calendar-add-form');
+      const results = document.getElementById('calendar-results');
+      const known = calendarRoleKnown();
+      const canView = known && calendarCanView();
+      if (!canView) {
+        _calendarData = null;
+        _calendarError = '';
+      }
       renderCalendarIndicator();
-      if (!host) return;
-      if (_calendarError) {
-        host.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_calendarError) + '</p>';
-        setSectionSummary('calendar-section', 'unavailable');
+      if (!email || !add || !results) return;
+      if (!canView) {
+        email.innerHTML = add.innerHTML = '';
+        email.hidden = add.hidden = true;
+        results.innerHTML = known
+          ? '<p class="empty-dashed">The calendar is visible to the hive owner and read-write users.</p>'
+          : '<p class="muted-xs">Loading calendar…</p>';
         return;
       }
       const data = _calendarData || {};
+      const emailHtml = !_calendarError && typeof emailInRowHtml === 'function' ? emailInRowHtml('calendar', data.email_in) : '';
+      email.innerHTML = emailHtml;
+      email.hidden = !emailHtml;
+      // Polls may update the schedule while an operator is editing the form.
+      if (add.hidden && !_calendarError) {
+        add.innerHTML = calendarFormHtml();
+        add.hidden = false;
+      }
+      const hint = calendarField('hint');
+      if (hint) hint.textContent = calendarIsOwner() ? 'Hive joins about a minute before the start.' : 'The hive owner approves meetings you add.';
+      if (_calendarError) {
+        results.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_calendarError) + '</p>';
+        setSectionSummary('calendar-section', 'unavailable');
+        return;
+      }
       const upcoming = data.upcoming || [];
       const recent = data.recent || [];
       const pending = upcoming.filter(e => e.status === 'awaiting_approval').length;
-      host.innerHTML = (typeof emailInRowHtml === 'function' ? emailInRowHtml('calendar', data.email_in) : '') + calendarFormHtml() +
-        '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
+      results.innerHTML = '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
         (recent.length ? '<div class="calendar-subsection"><div class="section-label m-0">Recent</div><div class="calendar-list">' + recent.map(calendarRowHtml).join('') + '</div></div>' : '');
       setSectionSummary('calendar-section', upcoming.length + ' upcoming' + (pending ? ' · ' + pending + ' awaiting approval' : ''));
     }
@@ -57368,21 +57654,37 @@ function burnAreaChart() {
 
     async function calendarAdd() {
       const err = calendarField('error');
-      const repeat = (calendarField('repeat') || {}).value || 'none';
+      if (!err) return;
+      const form = err.closest('form');
+      const button = form.querySelector('[data-action="calendarAdd"]');
+      if (button.disabled) return;
+      const fields = ['url', 'title', 'start', 'end', 'repeat'].map(calendarField);
+      const values = fields.map(field => field.value);
+      const [url, title, start, end, repeat] = values;
       const body = {
-        url: ((calendarField('url') || {}).value || '').trim(),
-        title: ((calendarField('title') || {}).value || '').trim(),
-        start: calendarLocalISO((calendarField('start') || {}).value),
-        end: calendarLocalISO((calendarField('end') || {}).value),
+        url: url.trim(),
+        title: title.trim(),
+        start: calendarLocalISO(start),
+        end: calendarLocalISO(end),
         rrule: CALENDAR_REPEAT_RULES[repeat] || '',
         timezone: calendarViewerTimeZone()
       };
-      if (!body.url || !body.start) { if (err) err.textContent = 'A meeting link and a start time are required.'; return; }
+      if (!body.url || !body.start) { err.textContent = 'A meeting link and a start time are required.'; return; }
+      err.textContent = '';
+      button.disabled = true;
       try {
         const ev = await calendarPost('/api/meetings/schedule', body);
+        if (fields.every((field, i) => field.value === values[i])) {
+          form.reset();
+          form.closest('details').open = false;
+        }
         showToast(ev && ev.status === 'awaiting_approval' ? 'Meeting added; it waits for the owner to approve' : 'Meeting scheduled', 'success');
         fetchCalendar();
-      } catch (e) { if (err) err.textContent = e.message; }
+      } catch (e) {
+        err.textContent = e.message;
+      } finally {
+        button.disabled = false;
+      }
     }
 
     async function calendarAct(id, action) {
@@ -59696,20 +59998,6 @@ function burnAreaChart() {
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
-    async function kbSearchVault(name) {
-      const el = document.getElementById('kb-fact-list');
-      if (!el) return;
-      try {
-        const r = await fetch('/api/knowledge/vaults/' + encodeURIComponent(name) + '/facts');
-        if (!r.ok) { _kbFacts = []; renderKnowledgeFacts(); return; }
-        _kbFacts = await r.json();
-        _kbServerPaged = false;
-        _kbPageOffset = 0;
-        _kbHasMore = false;
-        renderKnowledgeFacts();
-      } catch (e) { _kbFacts = []; renderKnowledgeFacts(); }
-    }
-
     // fetchKnowledgeStats() — deferred to _deferredInit
 
     // --- Audit Log ---
@@ -60274,10 +60562,7 @@ function burnAreaChart() {
       if (paging) {
         var multiPage = _reviewQueueHasMore || _reviewQueueOffset > 0;
         paging.style.display = multiPage ? 'flex' : 'none';
-        var prev = document.getElementById('review-queue-prev');
-        var next = document.getElementById('review-queue-next');
-        if (prev) prev.disabled = _reviewQueueOffset <= 0;
-        if (next) next.disabled = !_reviewQueueHasMore;
+        updateReviewQueuePageButtons();
         var range = document.getElementById('review-queue-range');
         if (range) {
           var first = items.length ? _reviewQueueOffset + 1 : 0;
@@ -60287,31 +60572,81 @@ function burnAreaChart() {
       }
     }
 
-    async function fetchReviewQueue() {
+    const REVIEW_QUEUE_FETCH_TIMEOUT_MS = 12000;
+    let _reviewQueueRequest = null;
+
+    function updateReviewQueuePageButtons() {
+      const pagePending = _reviewQueueRequest?.paging === true;
+      const prev = document.getElementById('review-queue-prev');
+      const next = document.getElementById('review-queue-next');
+      // Keep the active button focusable during the request.
+      if (prev) {
+        prev.disabled = _reviewQueueOffset <= 0;
+        prev.setAttribute('aria-disabled', String(prev.disabled || pagePending));
+      }
+      if (next) {
+        next.disabled = !_reviewQueueHasMore;
+        next.setAttribute('aria-disabled', String(next.disabled || pagePending));
+      }
+    }
+
+    async function fetchReviewQueue(offset = _reviewQueueOffset) {
+      // Keep polling and repeat clicks from superseding an in-flight page change.
+      if (_reviewQueueRequest?.paging) return;
+      const request = { paging: offset !== _reviewQueueOffset };
+      _reviewQueueRequest = request;
+      if (request.paging) updateReviewQueuePageButtons();
       var panel = document.getElementById('review-queue-panel');
+      const controller = new AbortController();
+      let timer;
+      let expire;
+      const deadline = new Promise((_, reject) => {
+        expire = () => {
+          controller.abort();
+          reject(new Error('Review queue request timed out'));
+        };
+      });
+      // Pause the deadline while the operator enters a new dashboard token.
+      const onAuthPromptChange = open => {
+        clearTimeout(timer);
+        if (!open && !controller.signal.aborted) timer = setTimeout(expire, REVIEW_QUEUE_FETCH_TIMEOUT_MS);
+      };
+      onAuthPromptChange(false);
       try {
-        var resp = await fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + _reviewQueueOffset);
+        var resp = await Promise.race([
+          fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + offset, {
+            signal: controller.signal,
+            __hiveOnAuthPromptChange: onAuthPromptChange,
+          }),
+          deadline,
+        ]);
+        if (_reviewQueueRequest !== request) return;
         if (!resp.ok) {
           if (panel && !panel.querySelector('.review-queue-entry')) {
             panel.innerHTML = '<div class="review-queue-empty">Review queue unavailable.</div>';
           }
           return;
         }
-        var data = await resp.json();
-        renderReviewQueue(data);
-      } catch (e) {}
+        var data = await Promise.race([resp.json(), deadline]);
+        if (_reviewQueueRequest === request) renderReviewQueue(data);
+      } catch (e) {
+      } finally {
+        clearTimeout(timer);
+        if (_reviewQueueRequest === request) {
+          _reviewQueueRequest = null;
+          if (request.paging) updateReviewQueuePageButtons();
+        }
+      }
     }
 
     function reviewQueuePrevPage() {
       if (_reviewQueueOffset <= 0) return;
-      _reviewQueueOffset = Math.max(0, _reviewQueueOffset - REVIEW_QUEUE_PAGE_SIZE);
-      fetchReviewQueue();
+      return fetchReviewQueue(Math.max(0, _reviewQueueOffset - REVIEW_QUEUE_PAGE_SIZE));
     }
 
     function reviewQueueNextPage() {
       if (!_reviewQueueHasMore) return;
-      _reviewQueueOffset += REVIEW_QUEUE_PAGE_SIZE;
-      fetchReviewQueue();
+      return fetchReviewQueue(_reviewQueueOffset + REVIEW_QUEUE_PAGE_SIZE);
     }
     // fetchReviewQueue() — deferred to _deferredInit
 
@@ -64746,9 +65081,20 @@ function burnAreaChart() {
       el.addEventListener('scroll', sync, { passive: true });
       // Content arrives async (release notes fetch) and hidden modals have no
       // layout until opened: re-check whenever size or children change.
-      if (typeof ResizeObserver === 'function') new ResizeObserver(sync).observe(el);
-      if (typeof MutationObserver === 'function') new MutationObserver(sync).observe(el, { childList: true, subtree: true, characterData: true });
-      if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('resize', sync, { passive: true });
+      const size = typeof ResizeObserver === 'function' ? new ResizeObserver(sync) : null;
+      const content = typeof MutationObserver === 'function' ? new MutationObserver(sync) : null;
+      const viewport = typeof window === 'undefined' ? null : window;
+      size?.observe(el);
+      content?.observe(el, { childList: true, subtree: true, characterData: true });
+      viewport?.addEventListener?.('resize', sync, { passive: true });
+      el.hiveModalScrollCleanup = () => {
+        size?.disconnect();
+        content?.disconnect();
+        viewport?.removeEventListener?.('resize', sync);
+        el.removeEventListener('scroll', sync);
+        if (el.dataset) delete el.dataset.modalScrollWired;
+        delete el.hiveModalScrollCleanup;
+      };
       sync();
       return el;
     }
@@ -64772,20 +65118,21 @@ function burnAreaChart() {
       x.addEventListener('click', () => { if (typeof onClose === 'function') onClose(); });
       dlg.insertBefore(x, dlg.firstChild);
     }
-    function hiveWireDialog(overlay, resolve, cancelValue, okSelector, cancelSelector, submit) {
+    function hiveWireDialog(overlay, resolve, cancelValue, okSelector, cancelSelector, submit, submitOnEnter = true) {
       let done = false;
       const focusableSelector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
       const close = (val) => {
         if (done) return;
         done = true;
         document.removeEventListener('keydown', onKey, true);
+        for (const el of overlay.querySelectorAll('.modal-scroll')) el.hiveModalScrollCleanup?.();
         overlay.remove();
         resolve(val);
       };
       overlay.hiveDialogClose = () => close(cancelValue);
       const onKey = (e) => {
         if (e.key === 'Escape') { e.preventDefault(); close(cancelValue); return; }
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' && submitOnEnter) {
           const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
           if (tag !== 'textarea') { e.preventDefault(); submit(close); }
           return;
@@ -64812,6 +65159,7 @@ function burnAreaChart() {
     // cfg.check = { label } adds a checkbox under the body (a "don't show this
     // again" opt-out); the promise then resolves { checked } instead of true
     // so the caller can persist the choice. Without cfg.check it is true/false.
+    // cfg.scrollBody keeps the heading and actions in view above and below long content.
     function hiveConfirm(opts, title) {
       const cfg = hiveNormalizeDialogOptions(opts, title);
       return new Promise(resolve => {
@@ -64824,17 +65172,18 @@ function burnAreaChart() {
         const body = cfg.title ? message : (parts.length > 1 ? parts.slice(1).join('\n\n') : message);
         const confirmLabel = cfg.confirmLabel || cfg.ok || 'OK';
         const check = cfg.check && typeof cfg.check === 'object' ? cfg.check : null;
-        overlay.innerHTML = `<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">
+        const scrollBody = cfg.scrollBody === true;
+        overlay.innerHTML = `<div class="hive-dialog${scrollBody ? ' hive-confirm-scroll' : ''}" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">
           <div id="hive-dialog-title" class="hive-dialog-title">${hiveDialogEscape(heading)}</div>
-          <div class="hive-dialog-body">${hiveDialogEscape(body)}</div>
+          <div class="hive-dialog-body${scrollBody ? ' long modal-scroll' : ''}"${scrollBody ? ' tabindex="0" data-initial-focus' : ''}>${hiveDialogEscape(body)}</div>
           ${check ? `<label class="hive-dialog-check"><input type="checkbox" class="hive-dialog-check-input"${check.checked ? ' checked' : ''}>${hiveDialogEscape(check.label || 'Don\'t show this again')}</label>` : ''}
           <div class="hive-dialog-buttons">
             <button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">${hiveDialogEscape(cfg.cancelLabel || 'Cancel')}</button>
-            <button type="button" class="hv-btn ${hiveConfirmIsDanger(cfg, message) ? 'btn-danger' : 'btn-primary'} hive-dialog-btn primary" data-initial-focus>${hiveDialogEscape(confirmLabel)}</button>
+            <button type="button" class="hv-btn ${hiveConfirmIsDanger(cfg, message) ? 'btn-danger' : 'btn-primary'} hive-dialog-btn primary">${hiveDialogEscape(confirmLabel)}</button>
           </div></div>`;
         document.body.appendChild(overlay);
         const box = check ? overlay.querySelector('.hive-dialog-check-input') : null;
-        hiveWireDialog(overlay, resolve, false, '.primary', '.cancel', close => close(check ? { checked: !!(box && box.checked) } : true));
+        hiveWireDialog(overlay, resolve, false, '.primary', '.cancel', close => close(check ? { checked: !!(box && box.checked) } : true), !scrollBody);
       });
     }
     // cfg.check = { label } adds the same opt-out box as hiveConfirm; the
@@ -69396,9 +69745,11 @@ function burnAreaChart() {
       window._aiAuthor = cfg.ai_author_effective || '';
       renderPRAuthorInMenu();
       // Hub My Hives page for the user-menu shortcut (#9696). Empty on a
-      // standalone hive, which keeps the entry hidden.
+      // standalone hive, which keeps the entry hidden. The paused breaker
+      // chip links there too (#19778), so repaint it now the URL is known.
       window._myHivesURL = cfg.my_hives_url || '';
       renderMyHivesMenuItem();
+      if (typeof refreshFleetBreakerState === 'function') refreshFleetBreakerState();
       // Ask AI help (#19184): load the panel only when this hive has it on.
       if (typeof loadAskPanel === 'function') loadAskPanel(cfg);
       const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')
@@ -69482,6 +69833,9 @@ function burnAreaChart() {
     const ASK_PANEL_SCRIPT = '/ask-panel.js';
     const ASK_PANEL_STYLE = '/ask-panel.css';
     const ASK_SLOT_ID = 'hive-ask-slot';
+    // The Ask Hive items in the top bar Help menu and the sidebar Help group.
+    // They start hidden and are shown only once the panel is built.
+    const ASK_HELP_ITEM_IDS = ['ask-help-menu-item', 'ask-nav-item'];
     // A section counts as "current" once its top is above this fraction of
     // the viewport height.
     const ASK_SECTION_VIEWPORT_FRACTION = 3;
@@ -69517,6 +69871,25 @@ function burnAreaChart() {
       return dashboardDocsHref(DASHBOARD_HELP_PAGE, entry ? dashboardSectionHelpAnchor(entry.heading) : '');
     }
 
+    // askShowHelpItems shows or hides the Ask Hive Help items. They follow the
+    // panel itself: shown only when ask_enabled loaded it and the backend
+    // built it for this person, so an item never opens nothing.
+    function askShowHelpItems(show) {
+      ASK_HELP_ITEM_IDS.forEach(id => {
+        const item = document.getElementById(id);
+        if (item) item.style.display = show ? '' : 'none';
+      });
+    }
+
+    // openAskFromHelp runs from either Ask Hive item (click, tap, or Enter
+    // and Space on the sidebar entry): it closes the Help menu and the phone
+    // navigation drawer, then opens the panel, which moves focus into it.
+    function openAskFromHelp() {
+      if (typeof closeHelpMenu === 'function') closeHelpMenu(false);
+      if (typeof window.hiveCloseMobileDrawer === 'function') window.hiveCloseMobileDrawer();
+      if (window.HiveAsk && typeof window.HiveAsk.open === 'function') window.HiveAsk.open();
+    }
+
     function loadAskPanel(cfg) {
       if (!cfg || cfg.ask_enabled !== true || askPanelRequested) return;
       if (!document.getElementById(ASK_SLOT_ID)) return;
@@ -69529,7 +69902,8 @@ function burnAreaChart() {
       script.src = ASK_PANEL_SCRIPT;
       script.addEventListener('load', () => {
         if (window.HiveAsk && typeof window.HiveAsk.mount === 'function') {
-          window.HiveAsk.mount({ slot: ASK_SLOT_ID, base: '/api/ask', section: askCurrentSection, docsHref: askCurrentDocsHref });
+          Promise.resolve(window.HiveAsk.mount({ slot: ASK_SLOT_ID, base: '/api/ask', section: askCurrentSection, docsHref: askCurrentDocsHref }))
+            .then(panel => askShowHelpItems(!!panel));
         }
       });
       document.head.appendChild(script);
@@ -71770,6 +72144,22 @@ function burnAreaChart() {
         '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.autostart !== false ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="autostart"></div><span class="config-toggle-label">Answer the CLI startup screens ' + yamlHint('dashboard.sessions.autostart') + ' ' + settingHelpMark('settings', 'dashboard', 'Session startup', 'When a session starts, Hive takes the vendor CLI through its startup screens (first-run notice, trust for the session folder, onboarding) to its input prompt, so the first request runs without a person. It never answers a tool or command permission prompt and never signs in. On by default; the HIVE_SESSIONS_AUTOSTART environment variable, when set, overrides this switch.') + '</span></div>';
     }
 
+    // dashboard.github_sign_in (#19721): an unset key reads as on. The note
+    // names the hub link the login page falls back to when it is off. With no
+    // link the switch is disabled while on (the server refuses that save too),
+    // because turning it off would lock everyone out, the owner included.
+    function renderGovDashboardGitHubSignIn(dash) {
+      const on = dash.github_sign_in !== false;
+      const link = dash.hub_sign_in_link || '';
+      const locked = on && !link;
+      const note = link
+        ? ' <span class="text-muted">When off, the login page links to ' + esc(link) + '.</span>'
+        : ' <span class="config-toggle-note-warn">' + (on
+          ? 'Cannot be turned off: this hive has no hub sign-in link, so the login page would offer no way to sign in. Set dashboard.hub_sign_in_url (or hub.url / HIVE_HUB_URL) and hive_id first.'
+          : 'No hub sign-in link: the login page says hub sign-in is not configured. Turn this back on, or set dashboard.hub_sign_in_url (or hub.url / HIVE_HUB_URL) and hive_id.') + '</span>';
+      return '<div class="config-toggle"><div class="config-toggle-switch' + (on ? ' on' : '') + (locked ? ' disabled' : '') + '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"' + (locked ? ' aria-disabled="true" data-disabled="true"' : '') + ' data-action="toggleConfigSwitch" data-section="dashboard" data-key="github_sign_in"></div><span class="config-toggle-label">GitHub sign-in ' + yamlHint('dashboard.github_sign_in') + ' ' + settingHelpMark('settings', 'dashboard', 'GitHub sign-in', 'Offers the "Sign in with GitHub" device flow on the login page. On by default. When off, the login page shows a "Sign in through the hub" link instead, /api/gh-user-auth/start and /poll refuse, and hivectl login to this hive stops working. It can only be turned off when the hive has a hub sign-in link. Applies without a restart.') + note + '</span></div>';
+    }
+
     function renderGovDashboard(dash) {
       const bands = dash.issue_bands || {};
       const authTokenText = dash.auth_token_configured ? 'Configured — enter a new token to rotate, or save an empty value to clear.' : 'Not configured.';
@@ -71784,6 +72174,7 @@ function burnAreaChart() {
         experimentLabToggleHelpHTML(currentACMMLevelForSettings(), 'dashboard') +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.subscription_gauge_header ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="subscription_gauge_header"></div><span class="config-toggle-label">Also show the usage gauge in the header ' + yamlHint('dashboard.subscription_gauge_header') + ' ' + settingHelpMark('settings', 'dashboard', 'Usage gauge in the header', 'The usage fuel gauge is on the Overview by default for the owner, with a row for each provider the agents use (Claude, Copilot and others). This also shows it as a small chip in the header on every page, with the needle on the limit closest to empty. It reads the usage measurements hive already makes, so it adds no calls to any provider. Only the hive owner sees it. These are the plans this hive is signed in with, not the hive token budget. Off by default.') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.hub_proxied ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="hub_proxied"></div><span class="config-toggle-label">Hub-proxied auth ' + yamlHint('dashboard.hub_proxied') + ' <span class="text-muted">Managed by hub on hosted hives.</span></span></div>' +
+        renderGovDashboardGitHubSignIn(dash) +
         renderGovDashboardSessions(dash) +
         '<div class="config-field"><label>Dashboard auth token ' + yamlHint('dashboard.auth_token') + '</label><input type="password" autocomplete="new-password" placeholder="' + esc(authTokenText) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="auth_token" data-arg-types="s,s,v"><div class="config-help">Write-only; the current token is never echoed.</div></div>' +
         '<h3>Access allowlist</h3>' +
@@ -79855,13 +80246,17 @@ function burnAreaChart() {
       const options = _workflowState.workflows.map(w => {
         const key = workflowKey(w.name, w.version);
         const compiled = w.compiled !== false;
-        const label = key + (w.description ? ' — ' + w.description : '') + (compiled ? '' : ' (draft, does not compile)');
-        return `<option value="${esc(key)}" ${key === current ? 'selected' : ''} ${compiled ? '' : 'disabled'}>${esc(label)}</option>`;
+        // The label is the key alone: the description can run to hundreds
+        // of characters and would widen the select past the dialog
+        // (hivecommons/hive#19744); it stays available on hover.
+        const label = key + (compiled ? '' : ' (draft, does not compile)');
+        const desc = w.description ? ` title="${esc(w.description)}"` : '';
+        return `<option value="${esc(key)}"${desc} ${key === current ? 'selected' : ''} ${compiled ? '' : 'disabled'}>${esc(label)}</option>`;
       }).join('');
       const flag = _workflowState.enabled || !bound
         ? ''
         : '<span class="rt-inherit wf-derivation-off" title="workflow.enabled is off: the binding is recorded and the monitor shows the model\'s columns, but stage derivation still runs the built-in engine. Turn on &quot;Derive stages from bound models&quot; on Settings → Workflows.">columns only — turn on derivation in Workflows</span>';
-      return `<div class="config-list-item ld-sub" data-wf-repo="${esc(repo)}"><label class="rt-check" title="Which workflow model this repository follows (hivecommons/hive#17620). hive-default is the built-in lifecycle; a custom model changes the monitor's columns and, when workflow.enabled is on, how stages are derived.">Workflow <select ${locked ? 'disabled' : ''} data-change-action="setRepoWorkflow" data-arg0="${esc(repo)}" data-arg-types="s,v">${options}</select></label>${flag}${bound ? `<span class="rt-inherit" title="Bound to ${esc(current)}">bound</span>` : '<span class="rt-inherit">default</span>'}</div>${bound ? renderRepoWorkflowProfileRows(repo, workflowDispatchProfilesFor(bound, _workflowState.dispatch), _workflowState.agents, locked) : ''}`;
+      return `<div class="config-list-item ld-sub" data-wf-repo="${esc(repo)}"><label class="rt-check wf-repo-binding" title="Which workflow model this repository follows (hivecommons/hive#17620). hive-default is the built-in lifecycle; a custom model changes the monitor's columns and, when workflow.enabled is on, how stages are derived.">Workflow <select class="wf-repo-select" ${locked ? 'disabled' : ''} data-change-action="setRepoWorkflow" data-arg0="${esc(repo)}" data-arg-types="s,v">${options}</select></label>${flag}${bound ? `<span class="rt-inherit" title="Bound to ${esc(current)}">bound</span>` : '<span class="rt-inherit">default</span>'}</div>${bound ? renderRepoWorkflowProfileRows(repo, workflowDispatchProfilesFor(bound, _workflowState.dispatch), _workflowState.agents, locked) : ''}`;
     }
 
     // Which hive agent fills each profile the bound model hands items to
@@ -86167,11 +86562,12 @@ function burnAreaChart() {
         <div class="settings-subsection">
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.askEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="askEnabled"></div>
-            <span class="config-toggle-label">Ask AI help ${yamlHint('ask.enabled')} ${settingHelpMark('settings', 'features', 'Ask AI help', `OFF by default. Shows an Ask panel that answers questions about using this dashboard from the Hive docs. What is sent: the question a person types, and the label of the dashboard section they are in (from a fixed list, never anything on screen), to Kapa.ai, an AI service; the project's Kapa administrators can read questions in their analytics. Nothing else leaves: no login, email, page content, URL, repo, hive or agent name. Each person confirms a notice before their first question and can withdraw. Questions that look like a password, token or key are refused and not sent. Answers show their sources and an "AI generated, may be wrong" label. Needs a mode: hub (hosted hives, through the hub relay; no key on this hive) or direct (this hive calls Kapa.ai with its own key, set as ask.kapa.project_id, ask.kapa.integration_id and ask.kapa.api_key_file in hive.yaml or HIVE_ASK_* env). Limits: ask.limits.person_per_minute, ask.limits.person_per_hour, ask.limits.hive_per_hour, ask.limits.global_per_minute, ask.limits.in_flight, ask.limits.daily. HIVE_ASK_ENABLED overrides the switch. See src/docs/design/dashboard-ask-ai-help.md.`)}</span>
+            <span class="config-toggle-label">Ask Hive ${yamlHint('ask.enabled')} ${settingHelpMark('settings', 'features', 'Ask Hive', `ON by default on a hosted hive (hub mode, through the hub relay, no key kept here); OFF by default on a self-hosted hive, which needs direct mode and its own key. Shows an Ask Hive panel, also in the Help menu, that answers questions about using this dashboard from the Hive docs. What is sent: the question a person types, and the label of the dashboard section they are in (from a fixed list, never anything on screen), to Kapa.ai, an AI service; the project's Kapa administrators can read questions in their analytics. Nothing else leaves: no login, email, page content, URL, repo, hive or agent name. Each person confirms a notice before their first question and can withdraw. Questions that look like a password, token or key are refused and not sent. Answers show their sources and an "AI generated, may be wrong" label. Turning it off here saves ask.enabled: false, which stays off. Needs a mode: hub (hosted hives, through the hub relay; no key on this hive; the default on a hosted hive) or direct (this hive calls Kapa.ai with its own key, set as ask.kapa.project_id, ask.kapa.integration_id and ask.kapa.api_key_file in hive.yaml or HIVE_ASK_* env). Limits: ask.limits.person_per_minute, ask.limits.person_per_hour, ask.limits.hive_per_hour, ask.limits.global_per_minute, ask.limits.in_flight, ask.limits.daily. HIVE_ASK_ENABLED overrides the switch. See src/docs/design/dashboard-ask-ai-help.md.`)}</span>
           </div>
           ${f.askEnabled && !f.askEffective ? `<p class="config-help">Ask stays off: ${esc(f.askProblem || 'HIVE_ASK_ENABLED overrides this setting')}.</p>` : ''}
           ${!f.askEnabled && f.askEffective ? `<p class="config-help">HIVE_ASK_ENABLED overrides this setting: Ask is currently <b>on</b>.</p>` : ''}
-          <div class="config-field"><label>Ask mode ${yamlHint('ask.mode')} ${settingHelpMark('settings', 'features', 'Ask mode', `off does nothing. hub (hosted hives) asks through the hub relay with this hive's existing hub credential, so no Kapa key is kept here. direct calls Kapa.ai with this hive's own key file. HIVE_ASK_MODE overrides it.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="askMode" data-arg-types="s,s,v">${['off', 'hub', 'direct'].map(m => `<option value="${esc(m)}"${(f.askMode || 'off') === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+          ${f.askDefaulted && f.askEffective ? `<p class="config-help">On by default for this hosted hive. Turn it off to save ask.enabled: false.</p>` : ''}
+          <div class="config-field"><label>Ask mode ${yamlHint('ask.mode')} ${settingHelpMark('settings', 'features', 'Ask mode', `off does nothing. hub (hosted hives, and their default) asks through the hub relay with this hive's existing hub credential, so no Kapa key is kept here. direct calls Kapa.ai with this hive's own key file. HIVE_ASK_MODE overrides it.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="askMode" data-arg-types="s,s,v">${['off', 'hub', 'direct'].map(m => `<option value="${esc(m)}"${(f.askMode || 'off') === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.askSendSectionLabel ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="askSendSectionLabel"></div>
             <span class="config-toggle-label">Send the section label with questions ${yamlHint('ask.send_section_label')} ${settingHelpMark('settings', 'features', 'Ask section label', `ON by default. Adds the name of the dashboard section the person is in, taken from a fixed list of section names, so "where is this button" finds the right page. Off sends the question alone. HIVE_ASK_SEND_SECTION_LABEL overrides it.`)}</span>
@@ -92259,6 +92655,10 @@ function burnAreaChart() {
       if (username) window._hiveUser = username;
       if (role) window._hiveRole = role;
       if (typeof subscriptionGaugeRefresh === 'function') subscriptionGaugeRefresh();
+      // The breaker chip first renders at DOMContentLoaded, before the role is
+      // known, so an owner saw a disabled "paused" chip with no way to resume
+      // until the next status poll (#19778). Repaint it for the real role.
+      if (typeof refreshFleetBreakerState === 'function') refreshFleetBreakerState();
       const banner = document.getElementById('gh-auth-banner');
       const topBtn = document.getElementById('oc-gh-login-btn');
       const avatarWrap = document.getElementById('oc-gh-avatar-wrap');
@@ -94562,10 +94962,10 @@ function burnAreaChart() {
       gh11: function (event, A) { _kbSetupView='webhook';renderKnowledge(); },
       gh12: function (event, A) { _kbSetupView='none';renderKnowledge(); },
       gh13: function (event, A) { _kbSetupView='choose';renderKnowledge(); },
-      gh14: function (event, A) { _kbSelectedLayer='vault:'+A[0];kbSearchVault(A[0]); },
+      gh14: function (event, A) { kbSelectLayer('vault:' + A[0]); },
       gh15: function (event, A) { _kbSearchQuery=this.value;kbSearch(); },
       gh16: function (event, A) { _kbSearchQuery=this.value; },
-      gh17: function (event, A) { kbReadFact(A[0]); },
+      gh17: function (event, A) { kbReadFact(A[0], A[1] || undefined); },
       kbPreviousPage: function () { kbChangePage(-1); },
       kbNextPage: function () { kbChangePage(1); },
       gh18: function (event, A) { kbRemoveGitSource(A[0],A[1]); },
