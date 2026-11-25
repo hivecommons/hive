@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.366.1)
+
+### Fixed
+
+- The supersession sweep no longer fails or warns on every tick when a PR claims an issue that does not exist; the claim is skipped quietly.
+
 ## 2026-11-25 (v5.366.0)
 
 ### Added
