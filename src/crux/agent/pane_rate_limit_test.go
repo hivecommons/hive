@@ -94,3 +94,22 @@ func TestMatchesAuthError_IgnoresRateLimitedValidation(t *testing.T) {
 		t.Fatal("genuine rejection must still count as an auth error")
 	}
 }
+
+func TestClassifyAuthPaneCodexModelAccessDenied(t *testing.T) {
+	pane := "■ Project `proj_abc123` does not have access to model `gpt-6.2-astra`\n› "
+	got := ClassifyAuthPane(strings.Split(pane, "\n"))
+	if !got.ModelAccessDenied {
+		t.Fatalf("ModelAccessDenied = false, state=%+v", got)
+	}
+	if strings.Contains(got.ModelAccessDeniedMsg, "proj_abc123") || !strings.Contains(got.ModelAccessDeniedMsg, "gpt-6.2-astra") {
+		t.Fatalf("summary = %q, want model name and no project id", got.ModelAccessDeniedMsg)
+	}
+	if status, ok := classifyBackendAuthStatus("model_access", got.ModelAccessDeniedMsg); !ok || status != BackendAuthForbidden {
+		t.Fatalf("status = %q ok=%v, want forbidden", status, ok)
+	}
+	// Echoed kick text that is not at the codex error glyph must not match.
+	echoed := "› #401 backend says Project x does not have access to model y"
+	if got := ClassifyAuthPane(strings.Split(echoed, "\n")); got.ModelAccessDenied {
+		t.Fatalf("echoed kick text matched: %+v", got)
+	}
+}
