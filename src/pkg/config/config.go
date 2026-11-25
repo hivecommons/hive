@@ -9339,6 +9339,10 @@ type AutoMergeConfig struct {
 	// means no such paths. This key only declares the paths; enforcement
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+	// DecisionGate holds credential, keystore, auth and secret paths (and
+	// sentinel-flagged PRs) for a person's decision on the head before any
+	// automerge lane merges them. Default on; see DecisionGateConfig.
+	DecisionGate DecisionGateConfig `yaml:"decision_gate,omitempty" json:"decision_gate,omitempty"`
 
 	// HumanMergePinOnly holds the opt-in pin-only exception, enforced by the
 	// automerge sweep and /approve gates (#16266), and the hive-merge relay

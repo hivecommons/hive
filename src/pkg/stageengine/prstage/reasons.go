@@ -31,6 +31,17 @@ const (
 	AutoMergeReasonHumanChangesRequested  = stagelabels.LaneReasonHumanChangesRequested
 	AutoMergeReasonHumanMergePath         = "human-merge-path"
 	AutoMergeReasonHumanMergePathEvidence = "human-merge-path-evidence"
+	// AutoMergeReasonSensitivePathDecision: the PR touches an
+	// auto_merge.decision_gate path (credential, keystore, auth, secret)
+	// and no person has decided on this head; no lane merges it until one
+	// does, whoever the author is.
+	AutoMergeReasonSensitivePathDecision = "sensitive-path-decision"
+	// AutoMergeReasonSensitivePathEvidence: the decision gate could not read
+	// the complete changed-file list. Fails closed.
+	AutoMergeReasonSensitivePathEvidence = "sensitive-path-evidence"
+	// AutoMergeReasonSentinelDecision: the PR wears the sentinel alert label
+	// and no person has decided on this head (auto_merge.decision_gate.sentinel).
+	AutoMergeReasonSentinelDecision = "sentinel-decision"
 	// AutoMergeReasonHumanMergeRequired: the PR's title says breaking
 	// change (⚠️, or an auto_merge.human_merge_title_prefixes prefix) or it
 	// wears an auto_merge.human_merge_labels label; no lane and no merge
@@ -167,7 +178,9 @@ func HumanMergeReason(reason string) string {
 		return HumanMergeReasonWorkflowFiles
 	case base == ContributorLaneReasonTestsRemoved:
 		return HumanMergeReasonTestsRemoved
-	case base == AutoMergeReasonHumanMergePath, base == AutoMergeReasonHumanMergePathEvidence:
+	case base == AutoMergeReasonHumanMergePath, base == AutoMergeReasonHumanMergePathEvidence,
+		base == AutoMergeReasonSensitivePathDecision, base == AutoMergeReasonSensitivePathEvidence,
+		base == AutoMergeReasonSentinelDecision:
 		return HumanMergeReasonManualMergePolicy
 	case base == AutoMergeReasonHumanMergeRequired:
 		return HumanMergeReasonBreakingChange
