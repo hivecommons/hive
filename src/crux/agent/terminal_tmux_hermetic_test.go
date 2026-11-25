@@ -17,6 +17,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux/internal/testutil"
 )
 
 type attachFakeTmux struct {
@@ -43,13 +45,10 @@ func installAttachFakeTmux(t *testing.T) attachFakeTmux {
 	}
 	t.Cleanup(func() {
 		var rmErr error
-		for i := 0; i < 50; i++ {
-			if rmErr = os.RemoveAll(dir); rmErr == nil {
-				return
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
-		t.Errorf("remove fake tmux dir: %v", rmErr)
+		testutil.EventuallyEveryFunc(t, time.Second, 20*time.Millisecond, func() bool {
+			rmErr = os.RemoveAll(dir)
+			return rmErr == nil
+		}, func() string { return fmt.Sprintf("remove fake tmux dir: %v", rmErr) })
 	})
 	fake := attachFakeTmux{
 		logPath:     filepath.Join(dir, "tmux.log"),
