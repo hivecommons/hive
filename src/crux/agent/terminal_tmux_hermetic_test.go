@@ -33,7 +33,24 @@ type attachFakeTmux struct {
 // on whichever subtest configuration is live at process start.
 func installAttachFakeTmux(t *testing.T) attachFakeTmux {
 	t.Helper()
-	dir := t.TempDir()
+	// Not t.TempDir(): background tmux probes that inherited this PATH can
+	// still append to tmux.log while cleanup runs, recreating the file and
+	// making a single RemoveAll fail with "directory not empty". Retry the
+	// removal until the stragglers exit.
+	dir, err := os.MkdirTemp("", "attach-fake-tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		var rmErr error
+		for i := 0; i < 50; i++ {
+			if rmErr = os.RemoveAll(dir); rmErr == nil {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		t.Errorf("remove fake tmux dir: %v", rmErr)
+	})
 	fake := attachFakeTmux{
 		logPath:     filepath.Join(dir, "tmux.log"),
 		clientsPath: filepath.Join(dir, "clients.out"),
