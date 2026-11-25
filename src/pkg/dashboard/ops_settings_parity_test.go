@@ -303,14 +303,11 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 		"evidenceEnabled":        false,
 		"evidenceSigningKeyFile": "/elsewhere/other.key",
 
-		"forgejoUrl":       "https://codeberg.org/",
 		"forgejoTokenEnv":  "MY_FORGEJO_TOKEN",
 		"giteaUrl":         "https://codeberg.org/",
 		"giteaTokenEnv":    "MY_GITEA_TOKEN",
-		"gitlabUrl":        "https://gitlab.example.com",
 		"gitlabTokenEnv":   "MY_GITLAB_TOKEN",
 		"forgejoTokenFile": root + "/forgejo-token",
-		"giteaTokenFile":   "/secrets/gitea-token",
 		"gitlabTokenFile":  "/data/secrets/gitlab-token",
 
 		"mintKeyPath":       "/elsewhere/other.pem",
@@ -347,11 +344,11 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 	if c.Evidence.IsEnabled() || c.Evidence.SigningKeyFile != "/keys/evidence.key" {
 		t.Fatalf("evidence not applied (or signing_key_file written): %+v", c.Evidence)
 	}
-	if c.Forgejo != (config.ForgejoConfig{URL: "https://codeberg.org", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_FORGEJO_TOKEN", TokenFile: root + "/forgejo-token"}}}) {
+	if c.Forgejo != (config.ForgejoConfig{ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_FORGEJO_TOKEN", TokenFile: root + "/forgejo-token"}}}) {
 		t.Fatalf("forgejo not applied: %+v", c.Forgejo)
 	}
-	if c.Gitea != (config.GiteaConfig{URL: "https://codeberg.org", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_GITEA_TOKEN", TokenFile: "/secrets/gitea-token"}}}) ||
-		c.GitLab != (config.GitLabConfig{URL: "https://gitlab.example.com", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_GITLAB_TOKEN", TokenFile: "/data/secrets/gitlab-token"}}}) {
+	if c.Gitea != (config.GiteaConfig{URL: "https://codeberg.org", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_GITEA_TOKEN"}}}) ||
+		c.GitLab != (config.GitLabConfig{ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: "MY_GITLAB_TOKEN", TokenFile: "/data/secrets/gitlab-token"}}}) {
 		t.Fatalf("forges not applied: gitea=%+v gitlab=%+v", c.Gitea, c.GitLab)
 	}
 	if c.Mint.MaxTTLSeconds != 1800 || c.Mint.KeyPath != "/keys/mint.pem" {
@@ -443,13 +440,13 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 	if f.EvidenceEnabled || f.EvidenceSigningKeyFile != "/keys/evidence.key" || f.MintKeyPath != "/keys/mint.pem" || f.MintMaxTTLSeconds != 0 {
 		t.Fatalf("evidence/mint payload = %+v", f)
 	}
-	if f.ForgejoURL != "https://codeberg.org" || f.ForgejoTokenEnv != "MY_FORGEJO_TOKEN" {
+	if f.ForgejoURL != "" || f.ForgejoTokenEnv != "MY_FORGEJO_TOKEN" {
 		t.Fatalf("forgejo payload = %+v", f)
 	}
 	if f.GiteaURL != "https://codeberg.org" || f.GiteaTokenEnv != "MY_GITEA_TOKEN" || f.GitLabURL != "" || f.GitLabTokenEnv != "MY_GITLAB_TOKEN" {
 		t.Fatalf("forge payload = %+v", f)
 	}
-	if f.ForgejoTokenFile != root+"/forgejo-token" || f.GiteaTokenFile != "/secrets/gitea-token" || f.GitLabTokenFile != "/data/secrets/gitlab-token" {
+	if f.ForgejoTokenFile != root+"/forgejo-token" || f.GiteaTokenFile != "" || f.GitLabTokenFile != "/data/secrets/gitlab-token" {
 		t.Fatalf("token file payload = %+v", f)
 	}
 	if f.SupersessionGracePeriod != "" || f.CompliancePostureWindowDays != 60 || f.CompliancePostureHistoryDays != 730 {
@@ -467,6 +464,37 @@ func TestGovernorFeaturesPlatformSettingsRoundTrip(t *testing.T) {
 		d["mintMaxTtlSeconds"] != float64(900) || d["planningDesignApprovedLabel"] != config.DefaultDesignApprovedLabel {
 		t.Fatalf("platform defaults = %+v", d)
 	}
+}
+
+func TestPlatformSettingsRejectForgeURLWithTokenFile(t *testing.T) {
+	s := covApiServer(t)
+	root := t.TempDir()
+	defer cruxconfig.AllowSecretFileRoot(root)()
+	tokenFile := root + "/gitea-token"
+
+	reject := func(label string, body map[string]any) {
+		t.Helper()
+		if rec := doPut(s, opsFeaturesPath, body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: expected 400, got %d", label, rec.Code)
+		}
+	}
+	accept := func(label string, body map[string]any) {
+		t.Helper()
+		if rec := doPut(s, opsFeaturesPath, body); rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d — %s", label, rec.Code, rec.Body.String())
+		}
+	}
+
+	reject("url and token_file in one write", map[string]any{"giteaUrl": "https://evil.example", "giteaTokenFile": tokenFile})
+	if g := s.deps.Config.Gitea; g.URL != "" || g.TokenFile != "" {
+		t.Fatalf("a rejected write changed the config: %+v", g)
+	}
+
+	accept("token_file alone", map[string]any{"giteaTokenFile": tokenFile})
+	reject("url change while token_file is set", map[string]any{"giteaUrl": "https://evil.example"})
+	accept("env change while token_file is set", map[string]any{"giteaTokenEnv": "MY_GITEA_TOKEN"})
+	accept("clear token_file and set url", map[string]any{"giteaTokenFile": "", "giteaUrl": "https://gitea.example"})
+	reject("token_file while url is set", map[string]any{"giteaTokenFile": tokenFile})
 }
 
 // Every batch-3 key is rendered in the Settings dialog with its YAML-key hint
