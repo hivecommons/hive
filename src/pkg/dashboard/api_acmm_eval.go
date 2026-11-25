@@ -704,43 +704,74 @@ func (s *Server) checkCriterion(ctx context.Context, owner, repo string, c ACMMC
 // cannot collide with a directory path because it contains a NUL byte.
 const acmmTreeCacheKey = "\x00tree"
 
-// nestedPatternExists reports whether any literal pattern exists below the
-// repo root, using one recursive tree listing shared across criteria. Globs
-// are skipped: they only ever match workflow files, which GitHub reads from
-// the root .github/workflows directory.
+// acmmNestedMaxDepth caps how many path segments below the repo root a
+// nested directory match may sit.
+const acmmNestedMaxDepth = 6
+
+// acmmNestedExcludedDirs are never searched for nested matches: vendored or
+// generated trees would otherwise satisfy criteria for repos that have none.
+var acmmNestedExcludedDirs = map[string]bool{
+	"node_modules": true, "vendor": true, "third_party": true, ".git": true,
+}
+
+// nestedPatternExists reports whether any directory pattern (for example
+// "tests/") exists below the repo root, using one recursive tree listing
+// shared across criteria. File patterns and globs are skipped: config files
+// such as codecov.yml are only read from fixed locations, and workflow globs
+// only match the root .github/workflows directory. When the tree is
+// truncated or cannot be fetched the answer is false (root-only behavior).
 func (s *Server) nestedPatternExists(ctx context.Context, owner, repo string, patterns []string, dirCache map[string]map[string]bool) bool {
 	paths, ok := dirCache[acmmTreeCacheKey]
 	if !ok {
 		paths = map[string]bool{}
+		cacheable := false
 		if ghClient := s.deps.GHClient.GoGitHub(); ghClient != nil {
-			tree, _, err := ghClient.Git.GetTree(github.WithRESTCaller(ctx, "hive:acmm_tree"), owner, repo, "HEAD", true)
+			ref := "HEAD"
+			if r, _, err := ghClient.Repositories.Get(ctx, owner, repo); err == nil && r.GetDefaultBranch() != "" {
+				ref = r.GetDefaultBranch()
+			}
+			tree, _, err := ghClient.Git.GetTree(github.WithRESTCaller(ctx, "hive:acmm_tree"), owner, repo, ref, true)
 			if err == nil {
-				for _, e := range tree.Entries {
-					paths[e.GetPath()] = true
+				cacheable = true
+				if !tree.GetTruncated() {
+					for _, e := range tree.Entries {
+						paths[e.GetPath()] = true
+					}
 				}
 			}
 		}
-		if dirCache != nil {
+		// Cache only definitive results so a transient error is retried.
+		if dirCache != nil && cacheable {
 			dirCache[acmmTreeCacheKey] = paths
 		}
 	}
 	for _, pattern := range patterns {
-		if strings.ContainsAny(pattern, "*?[") {
+		if !strings.HasSuffix(pattern, "/") || strings.ContainsAny(pattern, "*?[") {
 			continue
 		}
 		clean := strings.TrimSuffix(pattern, "/")
-		if strings.HasSuffix(pattern, "/") {
-			for p := range paths {
-				if p == clean || strings.HasPrefix(p, clean+"/") || strings.HasSuffix(p, "/"+clean) || strings.Contains(p, "/"+clean+"/") {
-					return true
-				}
-			}
-			continue
-		}
 		for p := range paths {
-			if p == clean || strings.HasSuffix(p, "/"+clean) {
+			if nestedDirMatch(p, clean) {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// nestedDirMatch reports whether path p contains directory name dir as a
+// segment below the root, outside excluded trees and within the depth cap.
+func nestedDirMatch(p, dir string) bool {
+	segs := strings.Split(p, "/")
+	if len(segs) > acmmNestedMaxDepth {
+		segs = segs[:acmmNestedMaxDepth]
+	}
+	for i, seg := range segs {
+		if acmmNestedExcludedDirs[seg] {
+			return false
+		}
+		if seg == dir && i > 0 {
+			return true
 		}
 	}
 	return false

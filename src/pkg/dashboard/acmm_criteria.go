@@ -9,9 +9,10 @@ type ACMMCriterion struct {
 	Category string
 	Name     string
 	Patterns []string // paths or file-basename globs (pass if ANY exists)
-	// AnyDepth also matches the literal patterns below the repo root (for
-	// example kustomization/tests/ for "tests/"), for capabilities that
-	// monorepos keep in a subdirectory. Workflow-style globs stay root-only.
+	// AnyDepth also matches the directory patterns (test/, tests/,
+	// __tests__/, spec/) below the repo root (for example
+	// kustomization/tests/ for "tests/"), skipping vendored trees and
+	// capped in depth. File patterns and workflow globs stay root-only.
 	AnyDepth bool
 }
 
@@ -56,10 +57,10 @@ var universalCriteria = []ACMMCriterion{
 	// code-style configuration at all.
 	{ID: "acmm:prereq-code-style", Source: "acmm", Level: 0, Category: "prerequisite", Name: "Code style config",
 		Patterns: []string{".eslintrc", ".eslintrc.json", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.yaml", ".eslintrc.yml", "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs", "eslint.config.ts", "eslint.config.mts", "eslint.config.cts", ".prettierrc", ".prettierrc.json", ".prettierrc.yml", ".prettierrc.yaml", ".prettierrc.json5", ".prettierrc.js", ".prettierrc.cjs", ".prettierrc.mjs", ".prettierrc.ts", ".prettierrc.toml", "prettier.config.js", "prettier.config.cjs", "prettier.config.mjs", "prettier.config.ts", "ruff.toml", ".ruff.toml", ".golangci.yml", ".golangci.yaml", ".golangci.toml", ".golangci.json", "biome.json", "biome.jsonc", ".shellcheckrc", ".editorconfig", ".clang-format", "checkstyle.xml", "config/checkstyle/checkstyle.xml", ".rubocop.yml", ".rubocop.yaml", "rustfmt.toml", ".rustfmt.toml", "clippy.toml", ".clippy.toml", ".swiftlint.yml", ".stylelintrc", ".stylelintrc.json", ".stylelintrc.yaml", ".stylelintrc.yml", ".stylelintrc.js", ".stylelintrc.cjs", ".stylelintrc.mjs", "stylelint.config.js", "stylelint.config.cjs", "stylelint.config.mjs"}},
-	{ID: "acmm:prereq-coverage-gate", Source: "acmm", Level: 0, Category: "prerequisite", Name: "Coverage gate", AnyDepth: true,
-		Patterns: []string{"codecov.yml", ".codecov.yml", ".github/workflows/coverage-gate.yml", "coverage.yml", ".coverage-thresholds.json"}},
+	{ID: "acmm:prereq-coverage-gate", Source: "acmm", Level: 0, Category: "prerequisite", Name: "Coverage gate",
+		Patterns: []string{"codecov.yml", ".codecov.yml", ".github/codecov.yml", "dev/codecov.yml", ".github/workflows/coverage-gate.yml", ".github/workflows/coverage.yml", "coverage.yml", ".coverage-thresholds.json"}},
 
-	// ── L2 Advisory (8) ──
+	// ── L2 Advisory (5) ──
 	// Any one agent instruction file satisfies the Instructed gate, so a repo
 	// that keeps its instructions in a single tool-agnostic AGENTS.md is not
 	// forced to add vendor-specific copies (matches the console scanner's

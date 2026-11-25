@@ -1320,6 +1320,46 @@ func TestCheckCriterion_AnyDepthFindsNestedTests(t *testing.T) {
 	}
 }
 
+func TestNestedPatternExists_Guards(t *testing.T) {
+	cases := []struct {
+		name      string
+		paths     []string
+		truncated bool
+		patterns  []string
+		want      bool
+	}{
+		{"nested tests dir", []string{"pkg/tests/a_test.go"}, false, []string{"tests/"}, true},
+		{"node_modules excluded", []string{"node_modules/x/tests/a.js"}, false, []string{"tests/"}, false},
+		{"vendor excluded", []string{"vendor/x/spec/a.rb"}, false, []string{"spec/"}, false},
+		{"too deep", []string{"a/b/c/d/e/f/tests/x"}, false, []string{"tests/"}, false},
+		{"nested codecov file not matched", []string{"packages/app/codecov.yml"}, false, []string{"codecov.yml"}, false},
+		{"nested go.mod not matched", []string{"vendor/x/go.mod", "svc/go.mod"}, false, []string{"go.mod"}, false},
+		{"truncated tree falls back to root-only", []string{"pkg/tests/a_test.go"}, true, []string{"tests/"}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux := http.NewServeMux()
+			mux.HandleFunc("/repos/myorg/repo1/git/trees/", func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				var entries []map[string]interface{}
+				for _, p := range tc.paths {
+					entries = append(entries, map[string]interface{}{"path": p, "type": "blob"})
+				}
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"sha": "abc", "truncated": tc.truncated, "tree": entries})
+			})
+			ts := httptest.NewServer(mux)
+			t.Cleanup(ts.Close)
+			s := NewServer(0, acmmEvalTestLogger())
+			deps := testDeps(t)
+			deps.GHClient = ghpkg.NewClientForTest(ts.URL, "myorg", []string{"repo1"}, acmmEvalTestLogger())
+			s.RegisterAPI(deps)
+			if got := s.nestedPatternExists(t.Context(), "myorg", "repo1", tc.patterns, map[string]map[string]bool{}); got != tc.want {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestUniversalCriteria_AgentInstructionsAnySingleFile(t *testing.T) {
 	s := NewServer(0, acmmEvalTestLogger())
 	var c ACMMCriterion
