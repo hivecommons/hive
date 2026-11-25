@@ -509,8 +509,11 @@ whether or not the repo's auto-merge is on; the merge itself is still a
 person's. Those reasons are a trust or admission reason, which is also listed
 under `needs_maintainer_merge`, and the lane switched off
 (`contributor-lane:disabled`) or scoped to other repos
-(`contributor-lane:repo-not-allowed`), which is not. A soak, a head too new or
-a missing reviewer verdict clears by itself and is not a hand merge.
+(`contributor-lane:repo-not-allowed`), or a diff fence the lane never lifts by
+itself (`contributor-lane:workflow-path`, which only a person's approval of the
+head or merge clears, and `contributor-lane:tests-removed`), which are not. A
+soak, a head too new or a missing reviewer verdict clears by itself and is not
+a hand merge.
 
 **Actionable merge failures alert the operator.** Failures that require an
 operator configuration change raise one dashboard system alert per repo+reason,
