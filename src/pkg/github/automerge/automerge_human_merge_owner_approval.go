@@ -78,8 +78,16 @@ func (c *Engine) humanMergeOwnerApprovalFor(ctx context.Context, owner, repo str
 	}
 	number := pr.GetNumber()
 	author := strings.TrimSpace(hgithub.SafeGetLogin(pr.GetUser()))
-	if approval, ok := c.workflowFenceApproval(ctx, owner, repo, pr, number, head, comments); ok && !humanMergeSelfApproval(approval.Login, author) {
-		return approval, true
+	if approval, ok := c.workflowFenceApproval(ctx, owner, repo, pr, number, head, comments); ok {
+		if !humanMergeSelfApproval(approval.Login, author) {
+			return approval, true
+		}
+		// The newest approval is the author's own (an owner typing
+		// `/hive decision approve <why>` on their PR to answer the
+		// verdict): it must not hide another merger's earlier approval.
+		if approval, ok := c.workflowFenceApproval(ctx, owner, repo, pr, number, head, commentsNotBy(comments, author)); ok && !humanMergeSelfApproval(approval.Login, author) {
+			return approval, true
+		}
 	}
 	headPushedAt := c.headObservedAt(owner, repo, number, head, pr)
 	appLogin := strings.TrimSpace(c.transport.AppBotLogin())
@@ -286,4 +294,17 @@ func (c *Engine) humanMergeOwnerApprovalReply(ctx context.Context, owner, repo s
 		return "`/hive approve` acknowledged: released for " + short + ". This PR changes a path a person must merge (`" + hgithub.HumanMergePathsConfigKey + "`), and on this repository (`" + humanMergeOwnerApprovalConfigKey + "`) `" + approval.Login + "`'s approval of this head releases the hive's `" + hgithub.HumanMergePathLabel + "` label: the hive takes it off on its next pass and merges the PR when CI, review, soak and the other merge gates clear. A new push needs a new approval. This reply does not mean the PR has merged.", nil
 	}
 	return "`/hive approve` acknowledged, but no approval of the current head (" + short + ") is recorded yet. This PR changes a path a person must merge (`" + hgithub.HumanMergePathsConfigKey + "`); on this repository (`" + humanMergeOwnerApprovalConfigKey + "`) a trusted merger's GitHub **Approve** review on that head, a `/hive decision approve` reply, or a `/hive approve` reply posted after the head releases the hive's `" + hgithub.HumanMergePathLabel + "` label, and the hive then merges the PR once the other gates clear.", nil
+}
+
+// commentsNotBy returns comments without the ones login posted, oldest
+// first as given.
+func commentsNotBy(comments []*gh.IssueComment, login string) []*gh.IssueComment {
+	out := make([]*gh.IssueComment, 0, len(comments))
+	for _, comment := range comments {
+		if strings.EqualFold(strings.TrimSpace(hgithub.SafeGetLogin(comment.GetUser())), login) {
+			continue
+		}
+		out = append(out, comment)
+	}
+	return out
 }
