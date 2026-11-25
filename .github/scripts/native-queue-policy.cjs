@@ -233,11 +233,12 @@ async function assertActionsProvenance(github, repo, number, head, run, source, 
 // can come from another workflow: feedback.yml's `gate` job is skipped when a
 // PR closes unmerged, and a same-head adoption (copy opened, original closed)
 // leaves that skip newer than docker.yml's `gate`. Pass over, newest first,
-// only runs that are completed and not successful AND whose suite-bound
+// only runs that are completed as skipped AND whose suite-bound
 // workflow run is another workflow file. The scan stops at the first run that
-// is still running (no API call, so the pending poll costs what it did), is a
-// success, is not an Actions run of this repository, or is not bound to its
-// workflow run's suite; that run, and everything older, is left for
+// is still running (no API call, so the pending poll costs what it did), did
+// not conclude skipped (a foreign failure or success still blocks), is not an
+// Actions run of this repository, or is not bound to its workflow run's
+// suite; that run, and everything older, is left for
 // evidenceForHead and assertActionsProvenance exactly as before. If every run
 // of the name is passed over, the newest is bound here, so the result is its
 // provenance failure, never its conclusion read as this PR's verdict.
@@ -248,7 +249,7 @@ async function sourceWorkflowRuns(github, repo, number, head, runs, checks, work
     const candidates = runs.filter(r => r.name === name).sort((a, b) => b.id - a.id);
     const passed = [];
     for (const run of candidates) {
-      if (run.status !== 'completed' || run.conclusion === 'success' || run.app?.id !== ACTIONS_APP_ID) break;
+      if (run.status !== 'completed' || run.conclusion !== 'skipped' || run.app?.id !== ACTIONS_APP_ID) break;
       const runID = actionsRunID(repo, run);
       if (runID === null) break;
       const { workflow } = await workflowRunFor(github, repo, runID, workflows);

@@ -550,6 +550,13 @@ test('a newer feedback.yml gate success is not passed over and stays a provenanc
   await assert.rejects(evaluate(f), /Unexpected workflow\/event\/head for gate on #1/);
 });
 
+test('a newer feedback.yml gate that is not skipped still blocks as today', async () => {
+  for (const conclusion of ['failure', 'cancelled', 'neutral']) {
+    const f = feedbackGateFixture('pull_request', { feedback: { conclusion } });
+    await rejectsAsVerdict(evaluate(f), 'gate', conclusion);
+  }
+});
+
 test('only a feedback.yml gate on the head is a provenance failure, never a skipped verdict', async () => {
   for (const eventName of [...PR_EVENTS, 'merge_group']) {
     const f = feedbackGateFixture(eventName, { dockerGate: false });
