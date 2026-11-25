@@ -1346,7 +1346,7 @@ func TestUniversalCriteria_CodeStyleConfigNames(t *testing.T) {
 		}
 	}
 	for _, name := range []string{".prettierrc.yml", "eslint.config.ts", "biome.jsonc", ".ruff.toml", "stylelint.config.js"} {
-		cache := map[string]map[string]bool{"": {name: true}}
+		cache := map[string]map[string]bool{"": {name: true}, "config/checkstyle": {}}
 		if !s.checkCriterion(context.TODO(), "o", "r", c, cache) {
 			t.Errorf("%s should satisfy the code style criterion", name)
 		}
