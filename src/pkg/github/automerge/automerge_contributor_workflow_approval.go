@@ -18,9 +18,10 @@ package automerge
 //     `/hive decision` and the requires_human release use);
 //   - a dashboard approval (`/hive decision approve`, which posts `/lgtm`
 //     and `/approve` attributed to the maintainer — ParsePRApprovalCommandComment)
-//     or a person's own `/hive decision approve` comment, by a trusted
-//     merger, bound to the current head: the comment's head marker names
-//     it, or the comment was posted after the head was first observed
+//     or a person's own `/hive decision approve` comment (a rationale may
+//     follow on the same line), by a trusted merger, bound to the current
+//     head: the comment's head marker names it, or the comment was posted
+//     after the head was first observed
 //     (headObservedAt — the pinned server-side updated_at, never the
 //     commit's own committer date, which the pusher chooses).
 //
@@ -53,6 +54,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
@@ -68,16 +70,20 @@ const (
 	// unauthorizedPermissionWorkflowsWrite is the App permission the merge
 	// of a workflow-path PR needs.
 	unauthorizedPermissionWorkflowsWrite = "workflows: write"
-	// workflowApprovalDecisionCommand is the person-typed form of the
-	// dashboard approval, read off a comment's first line.
-	workflowApprovalDecisionCommand = "/hive decision approve"
+	// workflowApprovalDelegateCommand is the first line a delegate-written
+	// `/hive decision` comment must carry to release the fence; the
+	// delegate's comments are read by this exact rule, a person's by
+	// hgithub.ParseTypedDecisionApproval.
+	workflowApprovalDelegateCommand = "/hive decision approve"
 	// workflowApprovalRESTCaller tags the audit comment write.
 	workflowApprovalRESTCaller = "hive:workflow_fence_release"
 	// typedDecisionApprovalRESTCaller tags the comment read on a PR no diff
 	// fence tripped (typedDecisionApprovalAnswer).
 	typedDecisionApprovalRESTCaller = "hive:typed_decision_approval"
 	// workflowApprovalDecisionBody is the decision text a typed approval is
-	// recorded with (the un-park sweep and the dashboard record "approve").
+	// recorded with when its own text cannot be read back (the dashboard
+	// records "approve"; the un-park sweep records the comment's decision
+	// text, which recordTypedApprovalDecision writes too).
 	workflowApprovalDecisionBody = "approve"
 )
 
@@ -185,11 +191,14 @@ type workflowApproval struct {
 // recordTypedApprovalDecision records a typed `/hive decision approve` as
 // the trusted merger's answer on headSHA, the same record the dashboard's
 // approval and the un-park sweep write (Source decision, Kind approve,
-// SourceID the comment), so the lanes and the stage engine read the
-// reviewer's question as answered (DecisionAnswerFor) on every pass and
-// after a restart. A decision recorded on the head after the comment
-// stands instead: a later instruction is never overwritten by an earlier
-// approval. Reports whether the head now carries this approval.
+// SourceID the comment, Body the comment's decision text with any
+// rationale, as the sweep records it), so the lanes and the stage engine
+// read the reviewer's question as answered (DecisionAnswerFor) on every
+// pass and after a restart. When the sweep already recorded this comment
+// on the head, that record stands and nothing is written again. A decision
+// recorded on the head after the comment stands instead: a later
+// instruction is never overwritten by an earlier approval. Reports whether
+// the head now carries this approval.
 func (c *Engine) recordTypedApprovalDecision(displayRepo, owner, repo string, number int, headSHA string, approval workflowApproval) bool {
 	if c == nil || c.humanChangeRequests == nil || approval.Typed == nil || strings.TrimSpace(approval.Login) == "" {
 		return false
@@ -197,6 +206,10 @@ func (c *Engine) recordTypedApprovalDecision(displayRepo, owner, repo string, nu
 	full := owner + "/" + repo
 	head := strings.TrimSpace(headSHA)
 	comment := approval.Typed
+	body, ok := hgithub.ParseTypedDecisionApproval(comment.GetBody())
+	if !ok {
+		body = workflowApprovalDecisionBody
+	}
 	if existing, ok := c.humanChangeRequests.For(full, number, head); ok {
 		if existing.Source == review.HumanChangeRequestSourceDecision && existing.SourceID == comment.GetID() {
 			return existing.IsApproval()
@@ -208,7 +221,7 @@ func (c *Engine) recordTypedApprovalDecision(displayRepo, owner, repo string, nu
 	req := review.HumanChangeRequest{
 		Repo: full, Number: number, HeadSHA: head,
 		Source: review.HumanChangeRequestSourceDecision, SourceID: comment.GetID(),
-		Actor: approval.Login, Body: workflowApprovalDecisionBody, URL: comment.GetHTMLURL(),
+		Actor: approval.Login, Body: body, URL: comment.GetHTMLURL(),
 		Kind: review.HumanChangeRequestKindApprove, RecordedAt: comment.GetCreatedAt().Time,
 	}
 	if err := c.humanChangeRequests.Record(req); err != nil {
@@ -408,7 +421,10 @@ func (c *Engine) latestTrustedCommentApproval(owner, repo string, pr *gh.PullReq
 // workflowApprovalCommentActor reads one comment as an explicit approval
 // bound to headSHA and returns the login it is attributed to. A dashboard
 // `/approve` posted by the App counts for the maintainer it names; a
-// person's `/hive decision approve` counts for its author. Either binds to
+// person's `/hive decision approve` counts for its author, with or without
+// a rationale after it (`/hive decision approve <why>`, the form the PR
+// reply options teach), read by hgithub.ParseTypedDecisionApproval so it
+// accepts only what the un-park sweep records as that approval. Either binds to
 // the head through its marker, or — for comments without one — by having
 // been posted after the head (headPushedAt, when known). An edited comment
 // never counts: collaborators can edit others' comments, and an edit to an
@@ -441,11 +457,45 @@ func workflowApprovalCommentActor(comment *gh.IssueComment, headSHA string, head
 	if !hgithub.IsPersonLogin(comment.GetUser(), appLogin) {
 		return "", false
 	}
-	line := strings.ToLower(strings.Join(strings.Fields(firstCommentLine(body)), " "))
-	if line != workflowApprovalDecisionCommand || !boundToHead("") {
+	if delegatedecision.IsDelegatedComment(body) {
+		// The delegate's own comment keeps the rule it had before a
+		// rationale was accepted: the bare command alone on the first line.
+		line := strings.ToLower(strings.Join(strings.Fields(firstCommentLine(body)), " "))
+		if line != workflowApprovalDelegateCommand || !boundToHead("") {
+			return "", false
+		}
+		return author, true
+	}
+	if _, ok := hgithub.ParseTypedDecisionApproval(body); !ok || typedApprovalConditional(body) || !boundToHead("") {
 		return "", false
 	}
 	return author, true
+}
+
+// workflowApprovalConditionWords open a reason that makes the approval
+// conditional ("approve but rename the job first", "approve once CI is
+// green"). The un-park sweep still records such a reply as the approval,
+// but a gate that lets a person's approval merge a change unattended (the
+// workflow fence, the human-merge owner approval) waits for an
+// unconditional one.
+var workflowApprovalConditionWords = map[string]bool{
+	"but": true, "after": true, "once": true, "if": true, "when": true,
+	"until": true, "unless": true, "pending": true, "provided": true,
+	"only": true, "however": true, "though": true, "although": true,
+	"except": true, "contingent": true, "conditional": true, "assuming": true,
+}
+
+// typedApprovalConditional reports whether the reason on a typed
+// `/hive decision approve` command line opens with a condition word. Only
+// the command line is read: a reason in a later paragraph is commentary,
+// and the bare command alone on its line released the fence before a
+// same-line reason was accepted.
+func typedApprovalConditional(body string) bool {
+	words := strings.Fields(firstCommentLine(body))
+	if len(words) < 4 {
+		return false
+	}
+	return workflowApprovalConditionWords[strings.ToLower(strings.Trim(words[3], ".,:;!?()[]\"'"))]
 }
 
 // firstCommentLine returns the first non-empty line of body, trimmed; a

@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v6.61.7)
+
+### Fixed
+
+- A trusted merger's `/hive decision approve <why>`, with the reason on the same line as the hive's own reply options suggest, now releases the contributor lane's `contributor-lane:workflow-path` fence and answers a `requires_human` verdict on that head. The un-park sweep already recorded that comment as the approval ("Approval recorded by ..."), but the fence and the lane's typed verdict answer read only a comment whose whole first line was `/hive decision approve`, so a PR that edits workflow files sat at `stage/090` with no `hive:workflow-approval` comment while an approval with its reason on later lines released and merged. Both now read the comment with the un-park sweep's own parser: `/hive decision approve` followed by nothing, punctuation, or a rationale counts; `/hive decision approved`, `/hive decision approvefoo`, any other decision, a quoted or fenced first line, an edited comment, and a comment posted before the head still do not; a comment the hive's delegate wrote keeps the old rule (the bare command alone on its first line). A typed approval the lane records now carries the same decision text the un-park sweep records for that comment. The same reading applies where `auto_merge.human_merge_owner_approval` lets an approval lift `needs-owner-merge`, and there the PR author's own reasoned approval, which never counts, no longer hides another trusted merger's approval of the same head.
+
+## 2026-11-25 (v6.61.6)
+
+### Fixed
+
+- On a repository whose auto-merge is on, a contributor's or trusted author's PR no longer flips between `stage/050-review-pending` and the stage its reviewer verdict routes to on one head. The engine ticker and the queued automerge sweep share one stage tracker ([#12573](https://github.com/hivecommons/hive/issues/12573)); when one of them drained it between a lane noting the head's verdict and recording its observation, the next drain held the lane's reason with no verdict, so a `requires_human` head waiting at `contributor-lane:no-verdict` read as 050 instead of 085 and moved back on the next pass ([projectbluefin/utah#1502](https://github.com/projectbluefin/utah/pull/1502) flipped 050 and 085 ten times each overnight). [#19380](https://github.com/hivecommons/hive/pull/19380) and [#19523](https://github.com/hivecommons/hive/pull/19523) covered only the `repo-auto-merge-disabled` reason. The stage pass now reads the head's verdict from the review record the lanes read for a reason the lane returns only after it noted that verdict: the contributor lane's `contributor-lane:no-verdict` and `contributor-lane:soaking`, the trusted-author lane's `review-gate:` holds, and either lane's CI wait or red check. A verdict recorded only for an older head is not applied, and a CI wait or soak never takes a verdict that would route the head to 085, since a person's approval read beside the verdict is lost in the same split.
+
 ## 2026-11-24 (v6.61.5)
 
 ### Fixed

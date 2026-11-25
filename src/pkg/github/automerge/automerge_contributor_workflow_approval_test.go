@@ -13,6 +13,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/delegatedecision"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
@@ -151,6 +152,37 @@ func TestContributorLaneWorkflowFenceOwnerApproval(t *testing.T) {
 			trusted:    []string{"clubanderson"},
 			wantMerges: 1,
 			wantMarker: "<!-- hive:workflow-approval head=sha7 by=clubanderson -->",
+		},
+		{
+			// The live shape: the reason on the command line, as the PR reply
+			// options teach (`/hive decision approve <why>`), which the
+			// un-park sweep recorded as the approval while the fence held.
+			name: "typed /hive decision approve with the reason on the same line releases",
+			mutate: func(fx *contributorLaneFixture) {
+				fx.headCommittedAt = "2026-10-27T11:00:00Z"
+				fx.prComments = []map[string]any{{"id": 5, "user": map[string]string{"login": "clubanderson"}, "body": "/hive decision approve The hive's review of 27c88f5b found it correct.\n\nThe pin bump is what we want.", "created_at": "2026-10-27T12:00:00Z"}}
+			},
+			trusted:    []string{"clubanderson"},
+			wantMerges: 1,
+			wantMarker: "<!-- hive:workflow-approval head=sha7 by=clubanderson -->",
+		},
+		{
+			name: "typed /hive decision approved is not the approval",
+			mutate: func(fx *contributorLaneFixture) {
+				fx.headCommittedAt = "2026-10-27T11:00:00Z"
+				fx.prComments = []map[string]any{{"id": 5, "user": map[string]string{"login": "clubanderson"}, "body": "/hive decision approved", "created_at": "2026-10-27T12:00:00Z"}}
+			},
+			trusted:    []string{"clubanderson"},
+			wantReason: contributorLaneReasonWorkflowPath,
+		},
+		{
+			name: "typed approval with a condition on its line keeps the fence",
+			mutate: func(fx *contributorLaneFixture) {
+				fx.headCommittedAt = "2026-10-27T11:00:00Z"
+				fx.prComments = []map[string]any{{"id": 5, "user": map[string]string{"login": "clubanderson"}, "body": "/hive decision approve but rename the job first", "created_at": "2026-10-27T12:00:00Z"}}
+			},
+			trusted:    []string{"clubanderson"},
+			wantReason: contributorLaneReasonWorkflowPath,
 		},
 		{
 			name: "plain /hive approve is not consumed",
@@ -672,8 +704,35 @@ func TestWorkflowApprovalCommentActor(t *testing.T) {
 		{name: "typed decision approve after push", comment: comment("clubanderson", "/hive decision approve\n\nfine", after), wantLogin: "clubanderson", wantOK: true},
 		{name: "typed decision approve before push", comment: comment("clubanderson", "/hive decision approve", before)},
 		{name: "quoted decision approve", comment: comment("clubanderson", "> /hive decision approve", after)},
+		{name: "fenced decision approve", comment: comment("clubanderson", "```\n/hive decision approve\n```", after)},
 		{name: "plain hive approve", comment: comment("clubanderson", "/hive approve", after)},
-		{name: "decision with other text", comment: comment("clubanderson", "/hive decision approve the rename later", after)},
+		// The un-park sweep records an approval with its rationale on the
+		// command line (`/hive decision approve <why>`), so the fence reads it
+		// the same way.
+		{name: "typed decision approve with the reason on the same line", comment: comment("clubanderson", "/hive decision approve the rename later", after), wantLogin: "clubanderson", wantOK: true},
+		{name: "typed decision approve with punctuation and a reason", comment: comment("clubanderson", "/HIVE Decision Approve: the pin is right\n\nmore", after), wantLogin: "clubanderson", wantOK: true},
+		{name: "typed decision approve with a reason before push", comment: comment("clubanderson", "/hive decision approve the rename later", before)},
+		// A reason that opens with a condition waits for an unconditional
+		// approval; a condition in a later paragraph is commentary.
+		{name: "typed decision approve but", comment: comment("clubanderson", "/hive decision approve but rename the job first", after)},
+		{name: "typed decision approve, once", comment: comment("clubanderson", "/hive decision approve, once CI is green", after)},
+		{name: "typed decision approve: If", comment: comment("clubanderson", "/hive decision approve: If the pin holds", after)},
+		{name: "typed decision approve (after", comment: comment("clubanderson", "/hive decision approve (after the rename)", after)},
+		{name: "typed decision approve then a condition on a later line", comment: comment("clubanderson", "/hive decision approve\n\nbut rename the job when you next touch it", after), wantLogin: "clubanderson", wantOK: true},
+		{name: "typed decision approve only after", comment: comment("clubanderson", "/hive decision approve only after CI is green", after)},
+		{name: "typed decision approve however", comment: comment("clubanderson", "/hive decision approve however rename the job", after)},
+		{name: "typed decision approve with butter", comment: comment("clubanderson", "/hive decision approve butterfly effect is fine", after), wantLogin: "clubanderson", wantOK: true},
+		{name: "typed decision approved", comment: comment("clubanderson", "/hive decision approved", after)},
+		{name: "typed decision approvefoo", comment: comment("clubanderson", "/hive decision approvefoo", after)},
+		{name: "typed decision lgtm", comment: comment("clubanderson", "/hive decision lgtm", after)},
+		{name: "typed decision reject", comment: comment("clubanderson", "/hive decision reject x", after)},
+		{name: "typed decision instruction ending in approve", comment: comment("clubanderson", "/hive decision rename the job, then approve", after)},
+		{name: "typed decision approve not on the first line", comment: comment("clubanderson", "Looks right.\n/hive decision approve", after)},
+		// The delegate's comment keeps the bare-command rule it had before.
+		{name: "delegate's bare decision under a person's login", comment: comment("clubanderson", "/hive decision approve\n\nRationale: low risk.\n"+delegatedecision.Marker("h1"), after), wantLogin: "clubanderson", wantOK: true},
+		{name: "delegate's reasoned decision under a person's login", comment: comment("clubanderson", "/hive decision approve the pin bump\n\nRationale: low risk.\n"+delegatedecision.Marker("h1"), after)},
+		{name: "edited typed decision approve with a reason", comment: edited(comment("clubanderson", "/hive decision approve the rename later", after), after.Add(time.Minute))},
+		{name: "bot typed decision approve with a reason", comment: comment("someone[bot]", "/hive decision approve the rename later", after)},
 		{name: "edited typed decision approve", comment: edited(comment("clubanderson", "/hive decision approve", after), after.Add(time.Minute))},
 		{name: "edited dashboard approve", comment: edited(comment(testHiveAppBotLogin, dashboard("clubanderson", "sha7"), after), after.Add(time.Minute))},
 		{name: "bot typed decision", comment: comment("someone[bot]", "/hive decision approve", after)},

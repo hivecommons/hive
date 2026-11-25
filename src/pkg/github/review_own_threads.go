@@ -28,13 +28,21 @@ import (
 // on every sweep (projectbluefin/gutenprint-printer-app#254,
 // projectbluefin/ps-printer-app#221, 2026-11-20).
 //
-// The hive resolves its own threads at exactly one point: when GitHub
-// refuses a merge or merge-queue enqueue because conversations are
-// unresolved (ResolveOwnReviewThreadsForMerge, called by the automerge
-// lanes). So it only ever happens on a repository that requires
-// conversation resolution, after the lane's merge gate passed. It resolves
-// the hive's own threads marked non-blocking, and only when every
-// unresolved thread on the PR is one of those.
+// The hive resolves its own threads at two points, both only on a
+// repository that requires conversation resolution:
+//
+//   - when GitHub refuses a merge or merge-queue enqueue because
+//     conversations are unresolved (ResolveOwnReviewThreadsForMerge, called
+//     by the automerge lanes), after the lane's merge gate passed;
+//   - when the stage pass hands a head to a person at
+//     090-ready-for-human-merge (ResolveOwnReviewThreadsForHumanMerge), once
+//     per head, after reading that the base requires conversation
+//     resolution (conversation_resolution.go). The hive never attempts that
+//     merge itself (auto-merge off, a human-merge path), so without it the
+//     person's merge was refused for the hive's own notes.
+//
+// Both resolve the hive's own threads marked non-blocking, and only when
+// every unresolved thread on the PR is one of those.
 //
 // Never resolved by this path: a thread whose first comment is not the
 // hive's App (a person's or another bot's thread), a hive thread anyone else
@@ -65,6 +73,10 @@ const ownThreadsAuditAgent = "automerge"
 
 // ownThreadsTrigger is the audit trigger detail.
 const ownThreadsTrigger = "merge-refused-unresolved-conversations"
+
+// ownThreadsReadyTrigger is the audit trigger detail when the threads are
+// resolved for a person's merge at 090-ready-for-human-merge.
+const ownThreadsReadyTrigger = "ready-for-human-merge"
 
 // unresolvedConversationsRE matches GitHub's refusal when the base requires
 // conversation resolution: the GraphQL enqueuePullRequest UNPROCESSABLE
@@ -306,6 +318,16 @@ func (c *Client) reviewBlockAt() string {
 // like an agent's resolve_thread request (agent_pr_reviewed,
 // state=thread_resolved) with trigger=merge-refused-unresolved-conversations.
 func (c *Client) ResolveOwnReviewThreadsForMerge(ctx context.Context, repo string, number int) (OwnReviewThreadsOutcome, error) {
+	return c.resolveOwnReviewThreads(ctx, repo, number, ownThreadsTrigger, nil)
+}
+
+// resolveOwnReviewThreads is the one implementation of the rules above for
+// both points: it resolves every unresolved thread on repo#number when each
+// is the hive's own and marked non-blocking, and nothing otherwise. trigger
+// is the audit trigger detail. beforeResolve, when set, runs for each
+// thread just before its resolve call, only once every unresolved thread
+// qualified (the merge-refusal path passes nil and posts nothing).
+func (c *Client) resolveOwnReviewThreads(ctx context.Context, repo string, number int, trigger string, beforeResolve func(context.Context, rawReviewThread)) (OwnReviewThreadsOutcome, error) {
 	var out OwnReviewThreadsOutcome
 	if c == nil {
 		return out, ErrNoGitHubClient
@@ -320,7 +342,7 @@ func (c *Client) ResolveOwnReviewThreadsForMerge(ctx context.Context, repo strin
 		return out, err
 	}
 	blockAt := c.reviewBlockAt()
-	var resolvable []string
+	var resolvable []rawReviewThread
 	for _, t := range threads {
 		if t.IsResolved {
 			continue
@@ -329,7 +351,7 @@ func (c *Client) ResolveOwnReviewThreadsForMerge(ctx context.Context, repo strin
 		switch classifyOwnReviewThread(t, c.isOwnThreadAuthor, blockAt) {
 		case ownThreadNonBlocking:
 			out.Resolvable++
-			resolvable = append(resolvable, t.ID)
+			resolvable = append(resolvable, t)
 		case ownThreadOther:
 			out.Others++
 		case ownThreadAnswered:
@@ -346,7 +368,11 @@ func (c *Client) ResolveOwnReviewThreadsForMerge(ctx context.Context, repo strin
 		return out, nil
 	}
 	meta := c.attributionMeta(ownThreadsAuditAgent)
-	for _, id := range resolvable {
+	for _, t := range resolvable {
+		id := t.ID
+		if beforeResolve != nil {
+			beforeResolve(ctx, t)
+		}
 		if err := c.resolveReviewThread(ctx, id); err != nil {
 			out.Failed++
 			c.logger.Warn("review threads: could not resolve the hive's own thread",
@@ -359,7 +385,7 @@ func (c *Client) ResolveOwnReviewThreadsForMerge(ctx context.Context, repo strin
 			WriteTarget{Repo: repo, Number: number},
 			"state", reviewStateThreadResolved,
 			"thread", id,
-			"trigger", ownThreadsTrigger)
+			"trigger", trigger)
 	}
 	return out, nil
 }
