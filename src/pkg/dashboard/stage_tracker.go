@@ -717,6 +717,9 @@ type StageTrackerItem struct {
 	// triage (hivecommons/hive#19843). Display only — the triage gate and
 	// the PR's merge-side reporter-trust hold are unchanged.
 	TriagePR *StageTrackerTriagePR `json:"triage_pr,omitempty"`
+	// triageWaiting latches stageTrackerWaitsOnTriage before the linked-PR
+	// pass clears a 000-new hold's New block (stageTrackerLinkedPRProgress).
+	triageWaiting bool
 	// NestedUnder is, on a PR, the issue in the same repo whose row nests
 	// it (0 when the PR has no listed issue and stands on its own).
 	NestedUnder int `json:"nested_under,omitempty"`

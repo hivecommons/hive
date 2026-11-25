@@ -33,6 +33,9 @@ func stageTrackerWaitsOnTriage(it *StageTrackerItem) bool {
 	if it == nil || it.Kind != "issue" {
 		return false
 	}
+	if it.triageWaiting {
+		return true
+	}
 	if it.Stage == stagelabels.TriageNeeded.Number() || slices.Contains(it.Modifiers, modNeedsTriage) {
 		return true
 	}
