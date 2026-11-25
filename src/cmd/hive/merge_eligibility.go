@@ -677,6 +677,31 @@ func anyRequiredCheckFailing(failing []string, required map[string]bool) bool {
 	return false
 }
 
+// declaredRequiredChecks is the operator-declared required-check set the
+// merge classifier gates a PR of fullRepo on (auto_merge.required_checks,
+// per repo first), nil when none is declared.
+func declaredRequiredChecks(cfg *config.Config, fullRepo string) map[string]bool {
+	if cfg == nil {
+		return nil
+	}
+	if set, ok := cfg.AutoMerge.RequiredCheckSetForRepo(fullRepo); ok {
+		return set
+	}
+	return nil
+}
+
+// onlyOptionalChecksRed is the merge classifier's test for a red PR that is
+// nevertheless merge-eligible: a required-check set is declared, none of the
+// PR's failing checks is in it, and GitHub reports the PR mergeable. With no
+// declared set the classifier cannot tell optional from required and files
+// the PR as failing. The escalation ledger's required-green lift gates on the
+// same test, so it never returns a PR to a lane that would file it as failing.
+func onlyOptionalChecksRed(pr github.PullRequest, required map[string]bool) bool {
+	return len(required) > 0 &&
+		!anyRequiredCheckFailing(pr.FailingChecks, required) &&
+		pr.Mergeable == github.MergeableYes
+}
+
 // mergeBucket is where the merge-eligible classifier files a PR: the
 // merge-eligible.json list, the ci-failing.json list, or neither.
 type mergeBucket int
@@ -796,9 +821,7 @@ func classifyMergeEligibility(pr github.PullRequest, held bool, fullRepo string,
 		// set configured we cannot distinguish required from optional and
 		// keep the old fail-closed behavior. The merge step re-enforces
 		// branch protection, so this cannot merge anything GitHub blocks.
-		onlyOptionalRed := len(g.requiredChecks) > 0 &&
-			!anyRequiredCheckFailing(pr.FailingChecks, g.requiredChecks) &&
-			pr.Mergeable == github.MergeableYes
+		onlyOptionalRed := onlyOptionalChecksRed(pr, g.requiredChecks)
 		if !onlyOptionalRed {
 			reason := "CI failing"
 			if len(pr.FailingChecks) > 0 {
@@ -1542,11 +1565,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		openPRs[stagelabels.Key(fullRepo, pr.Number)] = true
 		prGates := gates
 		if cfg != nil {
-			if set, ok := cfg.AutoMerge.RequiredCheckSetForRepo(fullRepo); ok {
-				prGates.requiredChecks = set
-			} else {
-				prGates.requiredChecks = nil
-			}
+			prGates.requiredChecks = declaredRequiredChecks(cfg, fullRepo)
 			prGates.repoAutoMergeOff = !cfg.RepoAutoMergeEnabled(fullRepo)
 		}
 		prGates.mergeQueueRequired = hiveMergeQueueBases.Required(fullRepo, pr.BaseRef, time.Now())

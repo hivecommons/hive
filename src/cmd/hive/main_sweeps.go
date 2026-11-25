@@ -31,6 +31,7 @@ import (
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/rotation"
+	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/tracing"
@@ -106,6 +107,11 @@ func allEscalationObservations(cfg *config.Config, actionable *github.Actionable
 // current forge labels so Sweep can reconcile reviewer-lane verdicts
 // (label-only edits: needs-human removed, reviewer-passed added) back into
 // the ledger (#5511, gap G1).
+//
+// RequiredGreen narrows that advisory-only Pending case to a settled head
+// whose every required check passed (requiredChecksGreenOnly), which is what
+// lets Sweep lift a needs-human the hive raised itself without waiting for
+// the advisory check to turn green too.
 func escalationObservation(cfg *config.Config, pr github.PullRequest, owners map[string]string) escalation.Observation {
 	repo := pr.Repo
 	if !strings.Contains(repo, "/") && cfg.Project.Org != "" {
@@ -127,7 +133,49 @@ func escalationObservation(cfg *config.Config, pr github.PullRequest, owners map
 		Agent:              owners[escalation.Key(repo, pr.Number)],
 		IndependentControl: isIndependentCIControl(cfg, pr),
 		TransientTriaged:   red && pr.TransientCITriaged,
+		RequiredGreen:      !red && requiredChecksGreenOnly(cfg, repo, pr),
 	}
+}
+
+// requiredChecksGreenOnly reports a head whose CI has settled red while
+// every failing check lies outside the base branch's required set and every
+// required check passed, on a PR the merge classifier will file as
+// merge-eligible rather than failing once needs-human is gone. All of these
+// must hold:
+//   - CI concluded failure with no check still running (CIChecksRunning; a
+//     head with no failure that is still running is "pending", never this);
+//   - the required set read from the base branch is known, non-empty and
+//     fully reported with none failing (OnlyNonRequiredChecksFailing), and
+//     each required check completed on the head with conclusion success,
+//     neutral or skipped (ProtectionFacts.RequiredChecksPassed), so a
+//     required check that was cancelled, timed out, never ran or is still
+//     queued keeps it false;
+//   - the merge classifier's own optional-only test passes
+//     (onlyOptionalChecksRed over the declared auto_merge.required_checks),
+//     so a repository with no declared set, where the classifier files
+//     every red PR as failing, never qualifies;
+//   - GitHub reports the PR "unstable": mergeable, with only checks it does
+//     not require failing;
+//   - the reviewer lane left no verdict that keeps needs-human in place on
+//     purpose (reviewer-recommend-close, reviewer-handoff).
+//
+// The facts come from the enumeration pass's own CI enrichment and the
+// configuration: no API call.
+func requiredChecksGreenOnly(cfg *config.Config, fullRepo string, pr github.PullRequest) bool {
+	return pr.CIStatus == "failure" &&
+		!pr.CIChecksRunning &&
+		pr.OnlyNonRequiredChecksFailing() &&
+		pr.Protection.RequiredChecksPassed &&
+		onlyOptionalChecksRed(pr, declaredRequiredChecks(cfg, fullRepo)) &&
+		strings.EqualFold(pr.MergeableState, "unstable") &&
+		!hasAnyLabel(pr.Labels, scheduler.ReviewerRecommendCloseLabel, scheduler.ReviewerHandoffLabel)
+}
+
+// hasAnyLabel reports whether labels carries any of want, ignoring case.
+func hasAnyLabel(labels []string, want ...string) bool {
+	return slices.ContainsFunc(labels, func(l string) bool {
+		return slices.ContainsFunc(want, func(w string) bool { return strings.EqualFold(l, w) })
+	})
 }
 
 // redPRFixOwner resolves who should be asked to repair a red PR: the agent the
@@ -607,6 +655,9 @@ func runEscalationSweep(
 		obs = append(obs, o)
 		meta[escalation.Key(o.Repo, o.Number)] = prMeta{checks: o.FailingChecks}
 	}
+	for i := range obs {
+		confirmRequiredGreenLabelProvenance(ctx, writer, &obs[i], logger)
+	}
 	results := escalationStore.Sweep(obs, cfg.Escalation.EffectiveThreshold())
 
 	for _, o := range obs {
@@ -617,9 +668,11 @@ func runEscalationSweep(
 		}
 		if r.Unparked {
 			// The sweep returned this PR to the automated lane by itself: its
-			// head went green, or the shared incident it escalated over
-			// cleared. Take the label off (retried on later passes until a
-			// pass sees it gone) and say why, once.
+			// head went green, every required check passed on a head red
+			// only on non-required checks (an escalation the hive raised),
+			// or the shared incident it escalated over cleared. Take the
+			// label off (retried on later passes until a pass sees it gone)
+			// and say why, once.
 			unparkEscalatedPR(ctx, writer, o, r, logger)
 			continue
 		}
@@ -700,6 +753,41 @@ func runEscalationSweep(
 		}
 	}
 	return escalated
+}
+
+// confirmRequiredGreenLabelProvenance guards the required-green lift
+// (Observation.RequiredGreen): before Sweep may remove a needs-human the
+// ledger says the hive raised, the newest needs-human event on the PR must
+// be the hive App's own `labeled`, read with the same helper the stale-red
+// pass uses (staleRedLabelActorReader). It reads only for an observation the
+// lift would otherwise act on (labeled, required-green, and
+// RequiredGreenLiftDue), so a PR costs at most one events listing per
+// un-park. Everything else fails closed by clearing o.RequiredGreen: a
+// writer that cannot read label events, or a read error (retried next
+// pass). A label a person put back last disowns the escalation
+// (DisownEscalation), so it is never read again and never lifted.
+func confirmRequiredGreenLabelProvenance(ctx context.Context, writer forge.IssueWriter, o *escalation.Observation, logger *slog.Logger) {
+	if !o.RequiredGreen || !o.Labeled || !escalationStore.RequiredGreenLiftDue(o.Repo, o.Number) {
+		return
+	}
+	reader, ok := writer.(staleRedLabelActorReader)
+	if !ok {
+		o.RequiredGreen = false
+		return
+	}
+	own, err := reader.StaleRedNeedsHumanLabeledByApp(ctx, o.Repo, o.Number)
+	if err != nil {
+		o.RequiredGreen = false
+		logger.Warn("required-green un-park held: could not read the needs-human label events; retrying next pass",
+			"repo", o.Repo, "pr", o.Number, "error", err)
+		return
+	}
+	if !own {
+		o.RequiredGreen = false
+		escalationStore.DisownEscalation(o.Repo, o.Number)
+		logger.Info("required-green un-park skipped: needs-human was not last added by the hive App",
+			"repo", o.Repo, "pr", o.Number)
+	}
 }
 
 // labelRemover is the optional forge capability the auto-un-park path needs.
