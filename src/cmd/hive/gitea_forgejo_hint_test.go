@@ -6,10 +6,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -84,6 +87,42 @@ func TestGiteaForgejoHint(t *testing.T) {
 	}
 	if got := forgejo.requests(); len(got) != 1 || got[0] != "" {
 		t.Fatalf("forge_url on another host: requests %q, want one without the token", got)
+	}
+}
+
+// The probe sends the credential the other forge callers resolve: token_file
+// wins over token_env, an unset env sends nothing, and a bad token_file sends
+// no request and is retried once it is fixed.
+func TestGiteaForgejoHintResolvesTheCredential(t *testing.T) {
+	root := t.TempDir()
+	defer cruxconfig.AllowSecretFileRoot(root)()
+	good := filepath.Join(root, "token")
+	if err := os.WriteFile(good, []byte("file-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HIVE_TEST_HINT_TOKEN", "env-token")
+
+	cases := []struct {
+		name, tokenEnv, tokenFile string
+		want                      []string
+	}{
+		{"env only", "HIVE_TEST_HINT_TOKEN", "", []string{"token env-token"}},
+		{"file only", "", good, []string{"token file-token"}},
+		{"both prefers the file", "HIVE_TEST_HINT_TOKEN", good, []string{"token file-token"}},
+		{"bad file sends no request", "HIVE_TEST_HINT_TOKEN", filepath.Join(root, "missing"), nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newVersionServer(t, "1.22.3")
+			cfg := &config.Config{}
+			cfg.Project.Forge = config.ForgeGitea
+			cfg.Gitea.URL, cfg.Gitea.TokenEnv, cfg.Gitea.TokenFile = srv.URL, tc.tokenEnv, tc.tokenFile
+			newGiteaForgejoHint(slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))).check(context.Background(), cfg)
+			got := srv.requests()
+			if len(got) != len(tc.want) || (len(got) == 1 && got[0] != tc.want[0]) {
+				t.Fatalf("requests %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 
