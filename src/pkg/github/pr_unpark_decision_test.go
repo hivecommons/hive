@@ -723,6 +723,46 @@ func TestDecisionApprovalFirstWord(t *testing.T) {
 	}
 }
 
+// ParseTypedDecisionApproval is the typed approval the merge gates read: the
+// un-park sweep's own parse and approval rule, `approve` spelled out, with
+// or without a rationale, and the decision text the sweep records for it.
+func TestParseTypedDecisionApproval(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want string
+		ok   bool
+	}{
+		{name: "bare", body: "/hive decision approve", want: "approve", ok: true},
+		{name: "reason on later lines", body: "/hive decision approve\n\nShip it.", want: "approve\n\nShip it.", ok: true},
+		{name: "reason on the same line", body: "/hive decision approve The hive's review of 27c88f5b found it correct", want: "approve The hive's review of 27c88f5b found it correct", ok: true},
+		{name: "reason on both", body: "/hive decision approve since CI is green\n\nMore detail.", want: "approve since CI is green\n\nMore detail.", ok: true},
+		{name: "case and spacing", body: "  /HIVE   Decision   APPROVE   because  ", want: "APPROVE because", ok: true},
+		{name: "trailing punctuation", body: "/hive decision approve: the pin is right", want: "approve: the pin is right", ok: true},
+		{name: "blank lines first", body: "\r\n\n/hive decision approve\r\n", want: "approve", ok: true},
+		{name: "approved", body: "/hive decision approved"},
+		{name: "lgtm", body: "/hive decision lgtm"},
+		{name: "bare yes", body: "/hive decision yes"},
+		{name: "glued word", body: "/hive decision approvefoo"},
+		{name: "hyphenated word", body: "/hive decision approve-later"},
+		{name: "another decision", body: "/hive decision reject the workflow change"},
+		{name: "an instruction", body: "/hive decision change the body, then approve"},
+		{name: "no decision text", body: "/hive decision"},
+		{name: "plain hive approve", body: "/hive approve"},
+		{name: "quoted", body: "> /hive decision approve"},
+		{name: "fenced", body: "```\n/hive decision approve\n```"},
+		{name: "not on the first line", body: "Looks fine.\n/hive decision approve"},
+		{name: "delegate's decision", body: "/hive decision approve the pin bump\n\nRationale: low risk.\n" + delegatedecision.Marker("h1")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := ParseTypedDecisionApproval(tc.body)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("ParseTypedDecisionApproval(%q) = (%q, %v), want (%q, %v)", tc.body, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
 // A changes_requested recorded from the hive's own `/hive decision` comment
 // (before the self-decision guard existed) is dismissed on the next sweep;
 // a reviewer's real decision and an approval are left standing

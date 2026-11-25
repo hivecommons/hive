@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/review"
 )
 
@@ -284,6 +285,189 @@ func TestTypedDecisionApproveAnswersTheRequiresHumanVerdictOnANonFencedPR(t *tes
 			reason, _ := runWorkflowAsk(t, &fx, store, tc.verdict)
 			if reason != tc.reason || store.Len() != 0 {
 				t.Fatalf("reason=%q records=%d, want %q and nothing recorded", reason, store.Len(), tc.reason)
+			}
+		})
+	}
+}
+
+// typedDecisionApproveWith is typedDecisionApprove with its own body, for the
+// `/hive decision approve <why>` form the PR reply options teach.
+func typedDecisionApproveWith(id int, login, at, body string) map[string]any {
+	comment := typedDecisionApprove(id, login, at)
+	comment["body"] = body
+	return comment
+}
+
+// The live shape behind this fix: a trusted merger typed the approval with
+// the reason on the command line. The un-park sweep recorded it ("Approval
+// recorded by ... for head 27c88f5"), but the fence and the lane's own read
+// wanted the command alone on the first line, so the workflow-path PR sat
+// at 090 with no audit comment. It now releases the fence, answers the
+// verdict, and records the decision text the sweep records for the comment.
+func TestTypedDecisionApproveWithTheReasonOnTheSameLine(t *testing.T) {
+	const body = "/hive decision approve The hive's review of 27c88f5b found it correct.\n\nThe new job only reads."
+	const recorded = "approve The hive's review of 27c88f5b found it correct.\n\nThe new job only reads."
+	nonFenced := func(comments ...map[string]any) contributorLaneFixture {
+		fx := workflowAskFixture(comments...)
+		fx.files = nil
+		return fx
+	}
+	for _, tc := range []struct {
+		name    string
+		fixture func(...map[string]any) contributorLaneFixture
+		fenced  bool
+	}{
+		{name: "workflow-path PR", fixture: workflowAskFixture, fenced: true},
+		{name: "PR no fence trips", fixture: nonFenced},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := tc.fixture(typedDecisionApproveWith(5, "Danathar", "2026-10-31T15:06:57Z", body))
+			store := review.NewHumanChangeRequests("")
+			reason, engine := runWorkflowAsk(t, &fx, store, workflowAskVerdict)
+			if reason != "" || fx.merges != 1 {
+				t.Fatalf("reason=%q merges=%d, want the merge the owner approved (comments=%v)", reason, fx.merges, fx.allComments)
+			}
+			req, ok := review.DecisionAnswerFor(store, "acme/widget", 7, "sha7")
+			if !ok || !req.IsApproval() || !strings.EqualFold(req.Actor, workflowAskOwner) || req.SourceID != 5 || req.Source != review.HumanChangeRequestSourceDecision {
+				t.Fatalf("recorded = %+v, %v; want the owner's typed approval (comment 5) on sha7", req, ok)
+			}
+			if req.Body != recorded {
+				t.Fatalf("recorded body = %q, want the un-park sweep's decision text %q", req.Body, recorded)
+			}
+			if v := engine.contributorLaneVerdictFor("acme/widget", 7, "sha7"); !v.DecisionAnswered || !strings.EqualFold(v.DecisionAnsweredBy, workflowAskOwner) {
+				t.Fatalf("verdict after the record = %+v, want answered by the owner", v)
+			}
+			audited := false
+			for _, c := range fx.allComments {
+				if strings.HasPrefix(c, workflowApprovalMarkerPrefix) {
+					audited = true
+				}
+			}
+			if audited != tc.fenced {
+				t.Fatalf("workflow-approval comment posted = %v, want %v (comments=%v)", audited, tc.fenced, fx.allComments)
+			}
+		})
+	}
+}
+
+// The un-park sweep may have recorded the same comment first. The lane then
+// reads that record as the person's answer (the verdict is already answered,
+// so it never reaches recordTypedApprovalDecision), merges, and leaves the
+// record as the sweep wrote it. TestRecordTypedApprovalDecisionKeepsTheSweepsRecord
+// covers the record path itself.
+func TestTypedDecisionApproveWithAReasonMergesOnTheSweepsRecord(t *testing.T) {
+	const body = "/hive decision approve the pin bump is intended"
+	for _, tc := range []struct {
+		name  string
+		files bool
+	}{
+		{name: "workflow-path PR", files: true},
+		{name: "PR no fence trips"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := workflowAskFixture(typedDecisionApproveWith(5, "Danathar", "2026-10-31T15:06:57Z", body))
+			if !tc.files {
+				fx.files = nil
+			}
+			store := review.NewHumanChangeRequests("")
+			swept := review.HumanChangeRequest{
+				Repo: "acme/widget", Number: 7, HeadSHA: "sha7", Source: review.HumanChangeRequestSourceDecision, SourceID: 5,
+				Actor: workflowAskOwner, Body: "approve the pin bump is intended", Kind: review.HumanChangeRequestKindApprove,
+				URL:        "https://github.com/acme/widget/pull/7#issuecomment-5",
+				RecordedAt: mustParseTime(t, "2026-10-31T15:10:00Z"),
+			}
+			if err := store.Record(swept); err != nil {
+				t.Fatal(err)
+			}
+			reason, _ := runWorkflowAsk(t, &fx, store, workflowAskVerdict)
+			if reason != "" || fx.merges != 1 {
+				t.Fatalf("reason=%q merges=%d, want the merge the owner approved (comments=%v)", reason, fx.merges, fx.allComments)
+			}
+			got, ok := store.For("acme/widget", 7, "sha7")
+			if !ok || store.Len() != 1 || got.SourceID != swept.SourceID || got.Body != swept.Body || got.Kind != swept.Kind || !got.RecordedAt.Equal(swept.RecordedAt) {
+				t.Fatalf("store = %+v (len %d), want the sweep's record unchanged %+v", got, store.Len(), swept)
+			}
+		})
+	}
+}
+
+// countingChangeRequests counts the writes recordTypedApprovalDecision makes.
+type countingChangeRequests struct {
+	*review.HumanChangeRequests
+	records int
+}
+
+func (s *countingChangeRequests) Record(req review.HumanChangeRequest) error {
+	s.records++
+	return s.HumanChangeRequests.Record(req)
+}
+
+// recordTypedApprovalDecision on a comment the un-park sweep already
+// recorded on the head reports the approval and writes nothing; on a head
+// with no record it writes the sweep's own decision text for the comment.
+func TestRecordTypedApprovalDecisionKeepsTheSweepsRecord(t *testing.T) {
+	typedAt := mustParseTime(t, "2026-10-31T15:06:57Z")
+	comment := &gh.IssueComment{
+		ID: gh.Ptr(int64(5)), Body: gh.Ptr("/hive decision approve the pin bump is intended"),
+		HTMLURL: gh.Ptr("https://github.com/acme/widget/pull/7#issuecomment-5"), CreatedAt: &gh.Timestamp{Time: typedAt},
+	}
+	approval := workflowApproval{Login: workflowAskOwner, Typed: comment}
+	swept := review.HumanChangeRequest{
+		Repo: "acme/widget", Number: 7, HeadSHA: "sha7", Source: review.HumanChangeRequestSourceDecision, SourceID: 5,
+		Actor: workflowAskOwner, Body: "approve the pin bump is intended", Kind: review.HumanChangeRequestKindApprove,
+		URL:        "https://github.com/acme/widget/pull/7#issuecomment-5",
+		RecordedAt: mustParseTime(t, "2026-10-31T15:10:00Z"),
+	}
+	t.Run("the sweep recorded the comment", func(t *testing.T) {
+		store := &countingChangeRequests{HumanChangeRequests: review.NewHumanChangeRequests("")}
+		if err := store.HumanChangeRequests.Record(swept); err != nil {
+			t.Fatal(err)
+		}
+		e := &Engine{humanChangeRequests: store}
+		if !e.recordTypedApprovalDecision("widget", "acme", "widget", 7, "sha7", approval) {
+			t.Fatal("the sweep's approval of the same comment must read as the head's approval")
+		}
+		got, ok := store.For("acme/widget", 7, "sha7")
+		if store.records != 0 || !ok || store.Len() != 1 || got.Body != swept.Body || !got.RecordedAt.Equal(swept.RecordedAt) {
+			t.Fatalf("writes=%d record=%+v (len %d), want no write and the sweep's record %+v", store.records, got, store.Len(), swept)
+		}
+	})
+	t.Run("no record yet", func(t *testing.T) {
+		store := &countingChangeRequests{HumanChangeRequests: review.NewHumanChangeRequests("")}
+		e := &Engine{humanChangeRequests: store}
+		if !e.recordTypedApprovalDecision("widget", "acme", "widget", 7, "sha7", approval) {
+			t.Fatal("a typed approval on a head with no decision must be recorded")
+		}
+		got, ok := store.For("acme/widget", 7, "sha7")
+		if store.records != 1 || !ok || !got.IsApproval() || got.SourceID != 5 || got.Body != swept.Body || !got.RecordedAt.Equal(typedAt) {
+			t.Fatalf("writes=%d record=%+v, want one approval of comment 5 with the sweep's body %q at the comment's time", store.records, got, swept.Body)
+		}
+	})
+}
+
+// Only what the un-park sweep records as an approval, spelled `approve`,
+// answers the verdict on a PR no fence trips; nothing is recorded otherwise.
+func TestTypedDecisionApproveLookalikesAnswerNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		comment map[string]any
+	}{
+		{name: "approved", comment: typedDecisionApproveWith(5, "Danathar", "2026-10-31T15:06:57Z", "/hive decision approved")},
+		{name: "approvefoo", comment: typedDecisionApproveWith(5, "Danathar", "2026-10-31T15:06:57Z", "/hive decision approvefoo")},
+		{name: "another decision", comment: typedDecisionApproveWith(5, "Danathar", "2026-10-31T15:06:57Z", "/hive decision reject x")},
+		{name: "quoted", comment: typedDecisionApproveWith(5, "Danathar", "2026-10-31T15:06:57Z", "> /hive decision approve the pin bump")},
+		{name: "fenced", comment: typedDecisionApproveWith(5, "Danathar", "2026-10-31T15:06:57Z", "```\n/hive decision approve the pin bump\n```")},
+		{name: "with a reason, older than the head", comment: typedDecisionApproveWith(5, "Danathar", "2026-10-31T13:00:00Z", "/hive decision approve the pin bump")},
+		{name: "with a reason, edited", comment: editedInto(typedDecisionApproveWith(5, "Danathar", "2026-10-31T15:06:57Z", "/hive decision approve the pin bump"), "2026-10-31T15:10:00Z")},
+		{name: "with a reason, untrusted", comment: typedDecisionApproveWith(5, "passerby", "2026-10-31T15:06:57Z", "/hive decision approve the pin bump")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := workflowAskFixture(tc.comment)
+			fx.files = nil
+			store := review.NewHumanChangeRequests("")
+			reason, _ := runWorkflowAsk(t, &fx, store, workflowAskVerdict)
+			if reason != contributorLaneReasonNoVerdict || fx.merges != 0 || store.Len() != 0 {
+				t.Fatalf("reason=%q merges=%d records=%d, want %q, no merge and nothing recorded", reason, fx.merges, store.Len(), contributorLaneReasonNoVerdict)
 			}
 		})
 	}
