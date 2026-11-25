@@ -42,8 +42,8 @@ function cardFixture() {
   return {
     issues: [
       cardSpec('inspect', 'Inspect a sentinel flag', 'your-turn', 1, { hide_zero: true }), cardSpec('decide', 'Decide', 'your-turn', 0), cardSpec('review', 'Review', 'your-turn', 0),
-      cardSpec('triage', 'Triage', 'your-turn', 1, { hide_zero: true }), cardSpec('admit', 'Admit', 'your-turn', 0, { hide_zero: true }), cardSpec('your-turn-other', 'Other', 'your-turn', 0, { hide_zero: true }),
-      cardSpec('to-close', 'Yours to close', 'your-turn', 1), cardSpec('unexplained', 'Unexplained', 'your-turn', 0, { keep: true }),
+      cardSpec('triage', 'Triage', 'your-turn', 1, { hide_zero: true }), cardSpec('admit', 'Admit', 'your-turn', 0, { hide_zero: true }), cardSpec('your-turn-other', 'Other reason', 'your-turn', 0, { hide_zero: true }),
+      cardSpec('to-close', 'Yours to close', 'your-turn', 1), cardSpec('unexplained', 'No rule matched (hive bug)', 'your-turn', 0, { keep: true }),
       cardSpec('covered-by-pr', 'Covered by an open PR', 'waiting-elsewhere', 1), cardSpec('waiting-on-item', 'Waiting on another item', 'waiting-elsewhere', 0, { rule: waitRule }),
       cardSpec('human-hold', 'Human placed on hold', 'waiting-elsewhere', 1), cardSpec('reporter-confirm', 'Reporter to confirm the fix', 'waiting-elsewhere', 0),
       cardSpec('queued', 'Queued for agents', 'actionable-now', 0, { keep: true }), cardSpec('working', 'Agents are working it', 'actionable-now', 1),
@@ -52,15 +52,15 @@ function cardFixture() {
     prs: [
       cardSpec('inspect', 'Inspect a sentinel flag', 'your-turn', 1, { hide_zero: true, rule: 'PR inspect rule.' }), cardSpec('decide', 'Decide', 'your-turn', 0),
       cardSpec('approve', 'Approve', 'your-turn', 0, { hide_zero: true }), cardSpec('merge-by-hand', 'Merge by hand', 'your-turn', 0, { hide_zero: true }), cardSpec('review', 'Review', 'your-turn', 0),
-      cardSpec('triage', 'Triage', 'your-turn', 0, { hide_zero: true }), cardSpec('admit', 'Admit', 'your-turn', 0, { hide_zero: true }), cardSpec('your-turn-other', 'Other', 'your-turn', 0, { hide_zero: true }),
-      cardSpec('to-close', 'Yours to close', 'your-turn', 0), cardSpec('unexplained', 'Unexplained', 'your-turn', 0, { keep: true }),
+      cardSpec('triage', 'Triage', 'your-turn', 0, { hide_zero: true }), cardSpec('admit', 'Admit', 'your-turn', 0, { hide_zero: true }), cardSpec('your-turn-other', 'Other reason', 'your-turn', 0, { hide_zero: true }),
+      cardSpec('to-close', 'Yours to close', 'your-turn', 0), cardSpec('unexplained', 'No rule matched (hive bug)', 'your-turn', 0, { keep: true }),
       cardSpec('human-hold', 'Human placed on hold', 'waiting-elsewhere', 1),
       cardSpec('author-update', 'Author to update the PR', 'blocked', 1), cardSpec('bot-rebase', 'Dependency bot to rebase', 'blocked', 1),
       cardSpec('working', 'Agents are working it', 'actionable-now', 0), cardSpec('will-merge', 'Will merge on its own', 'actionable-now', 1),
       cardSpec('held', 'Held', 'held', 0, { hide_zero: true }), cardSpec('draft', 'Draft', 'outside', 2),
     ],
     groups: [
-      { key: 'your-turn', label: 'Your turn', rule: 'No agent will move these until a person acts.', headed: true, issues: 3, prs: 1 },
+      { key: 'your-turn', label: 'Needs a person', rule: 'No agent will move these until a person acts.', headed: true, issues: 3, prs: 1 },
       { key: 'waiting-elsewhere', label: 'Waiting on someone else', rule: 'Someone other than you has the next move. Nothing to do until they act.', headed: true, issues: 2, prs: 1 },
       { key: 'held', label: 'Held', rule: 'Paused by a hold no earlier rule explains.', headed: false, issues: 0, prs: 0 },
       { key: 'blocked', label: 'Blocked', rule: 'Someone else must push a fix: the author or a dependency bot.', headed: true, issues: 0, prs: 2 },
@@ -68,10 +68,10 @@ function cardFixture() {
       { key: 'outside', label: 'Outside', rule: "Not work, drafts, and items this hive's settings leave alone.", headed: false, issues: 2, prs: 2 },
     ],
     tiles: [
-      { key: 'your-turn', term: 'your_turn', label: 'Your turn', rule: 'No agent will move these until a person acts.', count: 4, issues: 3, prs: 1, breakdown: [
+      { key: 'your-turn', term: 'your_turn', label: 'Needs a person', rule: 'No agent will move these until a person acts.', count: 4, issues: 3, prs: 1, breakdown: [
         cardBrow('inspect', 'Inspect a sentinel flag', 1, 1), cardBrow('decide', 'Decide', 0, 0), cardBrow('approve', 'Approve', 0, 0), cardBrow('merge-by-hand', 'Merge by hand', 0, 0),
-        cardBrow('review', 'Review', 0, 0), cardBrow('triage', 'Triage', 1, 0), cardBrow('admit', 'Admit', 0, 0), cardBrow('your-turn-other', 'Other', 0, 0),
-        cardBrow('to-close', 'Yours to close', 1, 0), cardBrow('unexplained', 'Unexplained', 0, 0, { keep: true })] },
+        cardBrow('review', 'Review', 0, 0), cardBrow('triage', 'Triage', 1, 0), cardBrow('admit', 'Admit', 0, 0), cardBrow('your-turn-other', 'Other reason', 0, 0),
+        cardBrow('to-close', 'Yours to close', 1, 0), cardBrow('unexplained', 'No rule matched (hive bug)', 0, 0, { keep: true })] },
       { key: 'waiting-elsewhere', term: 'waiting_elsewhere', label: 'Waiting on someone else', rule: 'Someone other than you has the next move. Nothing to do until they act.', count: 3, issues: 2, prs: 1, breakdown: [cardBrow('covered-by-pr', 'Covered by an open PR', 1, 0), cardBrow('waiting-on-item', 'Waiting on another item', 0, 0), cardBrow('human-hold', 'Human placed on hold', 1, 1), cardBrow('reporter-confirm', 'Reporter to confirm the fix', 0, 0)] },
       { key: 'held', term: 'held', label: 'Held', rule: 'Paused by a hold no earlier rule explains.', count: 0, issues: 0, prs: 0, breakdown: [cardBrow('held', 'Held', 0, 0)] },
       { key: 'blocked', term: 'blocked', label: 'Blocked', rule: 'Someone else must push a fix: the author or a dependency bot.', count: 2, issues: 0, prs: 2, breakdown: [cardBrow('author-update', 'Author to update the PR', 0, 1), cardBrow('bot-rebase', 'Dependency bot to rebase', 0, 1)] },
@@ -106,7 +106,7 @@ function overviewApplyKPIProjectFilter(key) { applied = key; }
 		"issueUpdatedAt", "prUpdatedAt", "prCreatedAt", "prReviewClassRank",
 		"overviewAllRepoNames", "overviewSavedRepoNames", "overviewSelectedRepoNames",
 		"overviewCardMode", "overviewSliceSpecs", "overviewCardBandSlices", "overviewHistoryCounts", "overviewHBarRow", "renderOverviewBar", "overviewIssueBandSlices", "overviewPRBandSlices",
-		"overviewSliceLabel", "overviewExportURL", "overviewCardRuleTip", "overviewCardLegendRows", "overviewCardLegendHTML", "overviewLegendHTML",
+		"overviewSliceLabel", "overviewExportURL", "overviewCardRuleTip", "overviewCardOneOwner", "overviewCardWhereLine", "overviewCardSharedLines", "overviewCardRowTip", "overviewCardLegendRows", "overviewCardLegendHTML", "overviewLegendHTML",
 		"overviewCardTileForKey", "overviewNavigateBand",
 	} {
 		b.WriteString(jsFunc(t, html, name))
@@ -135,40 +135,48 @@ func runOverviewCardNode(t *testing.T, script string) string {
 	return string(out)
 }
 
-// The legend: headed groups are bold subtotal rows with their bands indented
-// under them, group rows never dim, zero bands dim except the keep bands,
-// Held is hidden at zero, and every band and group row downloads its own
-// card_band= or card_group= export. No inline handlers (CSP).
+// The legend: Needs a person lists the Your turn bands as plain rows under a
+// Needs a person subtotal; in Status, headed groups are bold subtotal rows
+// with their bands indented under them. Group and subtotal rows never dim,
+// zero bands dim except the keep bands, Held is hidden at zero, and every
+// band, group and subtotal row downloads its own card_band= or card_group=
+// export. No inline handlers (CSP).
 func TestOverviewCardLegendGroupsAndDownloads(t *testing.T) {
 	html := indexHTML(t)
 	script := overviewCardUIPrelude(t, html) + `
 window._lastStatus = { hiveId: 'h', overview_card: cardFixture() };
 const repoA = cardRepoA();
 _overviewLastRepos = [repoA];
-const legendRows = out => [...out.matchAll(/<div class="([^"]*)" data-action="overviewNavigateBand" data-arg0="([^"]*)" data-arg1="([^"]+)" data-stop="1" title="([^"]*)"><span class="overview-chart-swatch ([^"]*)"><\/span><span class="overview-chart-legend-label">([^<]*)<\/span><span class="overview-chart-legend-count">([^<]*)<\/span>(?:<button[^>]*data-arg0="([^"]*)")?/g)]
-  .map(m => ({ cls: m[1].split(' '), kind: m[2], key: m[3], title: m[4], swatch: m[5], label: m[6], count: m[7], url: m[8] || '' }));
+const legendRows = out => [...out.matchAll(/<div class="([^"]*)"(?: data-action="overviewNavigateBand" data-arg0="([^"]*)" data-arg1="([^"]+)" data-stop="1")? title="([^"]*)"><span class="overview-chart-swatch ([^"]*)"(?: aria-hidden="true")?><\/span><span class="overview-chart-legend-label">([^<]*)(?:<span class="overview-chart-legend-sr">,<\/span> <span class="overview-chart-legend-note">([^<]*)<\/span>)?<\/span>(?:<span class="overview-chart-legend-sr">[^<]*<\/span>)?<span class="overview-chart-legend-count">([^<]*)<\/span>(?:<button[^>]*data-arg0="([^"]*)")?/g)]
+  .map(m => ({ cls: m[1].split(' '), kind: m[2] || '', key: m[3] || '', title: m[4], swatch: m[5], label: m[6], note: m[7] || '', count: m[8], url: m[9] || '' }));
 const issueSlices = overviewIssueBandSlices([repoA]);
 assert.ok(issueSlices.every(s => s.card), 'the card bands replace the chart slices');
 assert.deepEqual(issueSlices.map(s => [s.key, s.count]), [['inspect', 1], ['decide', 0], ['review', 0], ['triage', 1], ['admit', 0], ['your-turn-other', 0], ['to-close', 1], ['unexplained', 0], ['covered-by-pr', 1], ['waiting-on-item', 0], ['human-hold', 1], ['reporter-confirm', 0], ['queued', 0], ['working', 1], ['held', 0], ['not-work', 1]]);
 const issueHTML = overviewLegendHTML(issueSlices, 'issues', { exportFormat: 'csv' });
 const issues = legendRows(issueHTML);
-assert.deepEqual(issues.map(r => r.label), ['Your turn', 'Inspect a sentinel flag', 'Decide', 'Review', 'Triage', 'Yours to close', 'Unexplained', 'Waiting on someone else', 'Covered by an open PR', 'Waiting on another item', 'Human placed on hold', 'Reporter to confirm the fix', 'Hive has it', 'Queued for agents', 'Agents are working it', 'Not work']);
+assert.deepEqual(issues.map(r => r.label), ['Inspect a sentinel flag', 'Decide', 'Review', 'Triage', 'Yours to close', 'Needs a person', 'No rule matched (hive bug)', 'Waiting on someone else', 'Covered by an open PR', 'Waiting on another item', 'Human placed on hold', 'Reporter to confirm the fix', 'Hive has it', 'Queued for agents', 'Agents are working it', 'Not work', 'Status']);
 const row = label => issues.find(r => r.label === label);
 // headed groups: a bold subtotal row and indented parts
 assert.ok(row('Waiting on someone else').cls.includes('overview-chart-legend-group'));
 assert.match(row('Waiting on someone else').count, /^2 · /);
 assert.equal(row('Waiting on someone else').key, 'waiting-elsewhere');
 for (const label of ['Covered by an open PR', 'Waiting on another item', 'Human placed on hold', 'Reporter to confirm the fix', 'Queued for agents', 'Agents are working it']) assert.ok(row(label).cls.includes('overview-chart-legend-part'), label + ' is indented');
-// Your turn is headed too: its what-to-do rows, Yours to close and
-// Unexplained sit under it, in plot order.
-assert.ok(row('Your turn').cls.includes('overview-chart-legend-group'));
-assert.equal(row('Your turn').key, 'your-turn');
-assert.match(row('Your turn').count, /^3 · /);
-assert.equal(row('Your turn').swatch, 'overview-card-group-your-turn');
-for (const label of ['Inspect a sentinel flag', 'Decide', 'Review', 'Triage', 'Yours to close', 'Unexplained']) assert.ok(row(label).cls.includes('overview-chart-legend-part'), label + ' is under Your turn');
+// Your turn is the Needs a person section: its what-to-do rows and Yours to
+// close are plain rows in plot order, then the Needs a person subtotal in the
+// group's colour, which opens the Your turn tile, then No rule matched (the
+// unexplained band, a hive bug) with a "should be 0" note, a warning only
+// above 0 (here it is 0).
+// No Your turn group row.
+assert.ok(!issues.some(r => r.label === 'Your turn'), 'the Your turn group row is gone');
+assert.ok(row('Needs a person').cls.includes('overview-chart-legend-subtotal'));
+assert.ok(!row('Needs a person').cls.includes('overview-chart-legend-group'));
+assert.equal(row('Needs a person').key, 'your-turn');
+assert.match(row('Needs a person').count, /^3 · /);
+assert.equal(row('Needs a person').swatch, 'overview-card-group-your-turn');
+for (const label of ['Inspect a sentinel flag', 'Decide', 'Review', 'Triage', 'Yours to close', 'No rule matched (hive bug)']) assert.ok(!row(label).cls.includes('overview-chart-legend-part'), label + ' is not indented in Needs a person');
 assert.ok(!row('Not work').cls.includes('overview-chart-legend-part') && !row('Not work').cls.includes('overview-chart-legend-group'), 'Not work is a plain row');
 // Your turn rows at zero: hide-zero ones are hidden, Decide and Review dim,
-// Unexplained (a keep band) stays at full strength.
+// No rule matched (a keep band) stays at full strength.
 for (const key of ['admit', 'your-turn-other']) assert.ok(!issues.some(r => r.key === key), key + ' is hidden at zero');
 for (const label of ['Decide', 'Review']) assert.ok(row(label).cls.includes('overview-chart-legend-zero'), label + ' dims at zero');
 for (const label of ['Inspect a sentinel flag', 'Triage', 'Yours to close']) assert.ok(!row(label).cls.includes('overview-chart-legend-zero'), label);
@@ -176,7 +184,9 @@ for (const label of ['Inspect a sentinel flag', 'Triage', 'Yours to close']) ass
 assert.ok(row('Waiting on another item').cls.includes('overview-chart-legend-zero'));
 assert.ok(row('Reporter to confirm the fix').cls.includes('overview-chart-legend-zero'));
 assert.ok(!row('Queued for agents').cls.includes('overview-chart-legend-zero'), 'Queued for agents is a keep band');
-assert.ok(!row('Unexplained').cls.includes('overview-chart-legend-zero'), 'Unexplained is a keep band');
+assert.ok(!row('No rule matched (hive bug)').cls.includes('overview-chart-legend-zero'), 'No rule matched is a keep band');
+assert.ok(!row('No rule matched (hive bug)').cls.includes('overview-chart-legend-warning'), 'at 0 it is not marked as a warning');
+assert.equal(row('No rule matched (hive bug)').note, 'should be 0', 'the note shows at 0 too');
 assert.ok(!row('Covered by an open PR').cls.includes('overview-chart-legend-zero'));
 const idle = cardRepoA();
 idle.actionableIssues = idle.actionableIssues.filter(r => r.card_band !== 'working');
@@ -193,14 +203,15 @@ assert.ok(legendRows(overviewLegendHTML(overviewIssueBandSlices([heldRepo]), 'is
 for (const r of issues) {
   const url = new URL(r.url, 'https://hive.test');
   assert.equal(url.pathname, '/api/overview/issues.csv', r.label);
-  if (r.cls.includes('overview-chart-legend-group')) assert.equal(url.searchParams.get('card_group'), r.key, r.label);
+  if (r.label === 'Status') assert.equal(url.searchParams.get('card_group'), 'waiting-elsewhere,actionable-now,held,outside', r.label);
+  else if (r.cls.includes('overview-chart-legend-group') || r.cls.includes('overview-chart-legend-subtotal')) assert.equal(url.searchParams.get('card_group'), r.key, r.label);
   else assert.equal(url.searchParams.get('card_band'), r.key, r.label);
 }
 // colours and plain-words tooltips
 assert.equal(row('Covered by an open PR').swatch, 'overview-card-issue-covered-by-pr');
 assert.equal(row('Waiting on someone else').swatch, 'overview-card-group-waiting-elsewhere');
 assert.equal(row('Waiting on another item').title, 'Waiting on another item: another issue or PR must finish first. Check that the blocker is still real and moving.');
-assert.equal(row('Waiting on someone else').title, 'Waiting on someone else: someone other than you has the next move. Nothing to do until they act.');
+assert.equal(row('Waiting on someone else').title, 'Waiting on someone else: someone other than you has the next move. Nothing to do until they act.&#10;Where: a 2');
 assert.doesNotMatch(issueHTML, /onclick=|[\u2013\u2014]/);
 
 // The PR donut also plots the drafts the hive sidelines.
@@ -210,10 +221,10 @@ localStorage.setItem(OVERVIEW_CHARTS_KEY, JSON.stringify({ exportFormat: 'json' 
 const prHTML = overviewLegendHTML(prSlices, 'prs', { exportFormat: 'json' });
 localStorage.removeItem(OVERVIEW_CHARTS_KEY);
 const prs = legendRows(prHTML);
-assert.deepEqual(prs.map(r => r.label), ['Your turn', 'Inspect a sentinel flag', 'Decide', 'Review', 'Yours to close', 'Unexplained', 'Waiting on someone else', 'Human placed on hold', 'Blocked', 'Author to update the PR', 'Dependency bot to rebase', 'Hive has it', 'Agents are working it', 'Will merge on its own', 'Draft']);
+assert.deepEqual(prs.map(r => r.label), ['Inspect a sentinel flag', 'Decide', 'Review', 'Yours to close', 'Needs a person', 'No rule matched (hive bug)', 'Waiting on someone else', 'Human placed on hold', 'Blocked', 'Author to update the PR', 'Dependency bot to rebase', 'Hive has it', 'Agents are working it', 'Will merge on its own', 'Draft', 'Status']);
 for (const key of ['approve', 'merge-by-hand', 'triage', 'admit', 'your-turn-other']) assert.ok(!prs.some(r => r.key === key), 'PR ' + key + ' is hidden at zero');
-assert.match(prs.find(r => r.label === 'Your turn').count, /^1 · /);
-assert.ok(prs.find(r => r.label === 'Unexplained').cls.includes('overview-chart-legend-part'), 'Unexplained stays under Your turn');
+assert.match(prs.find(r => r.label === 'Needs a person').count, /^1 · /);
+assert.equal(prs.indexOf(prs.find(r => r.label === 'No rule matched (hive bug)')), prs.indexOf(prs.find(r => r.label === 'Needs a person')) + 1, 'No rule matched follows the Needs a person subtotal');
 assert.ok(prs.find(r => r.label === 'Blocked').cls.includes('overview-chart-legend-group'));
 assert.equal(new URL(prs.find(r => r.label === 'Blocked').url, 'https://hive.test').searchParams.get('card_group'), 'blocked');
 assert.equal(new URL(prs.find(r => r.label === 'Draft').url, 'https://hive.test').pathname, '/api/overview/prs.json');
@@ -262,11 +273,14 @@ let kpi = tiles(out);
 const values = Object.fromEntries(Object.entries(kpi).map(([k, v]) => [k, v.value]));
 assert.deepEqual(values, { 'open-issues': 8, 'open-prs': 7, 'actionable-now': 2, 'your-turn': 4, 'waiting-elsewhere': 3, held: 0, blocked: 2, outside: 4 });
 assert.equal(kpi['actionable-now'].label, 'Hive has it');
+// The your-turn tile reads "Needs a person"; its key stays your-turn.
+assert.equal(kpi['your-turn'].label, 'Needs a person');
+assert.match(tip(out, 'your-turn'), /overview-partition-title">Needs a person · 4</);
 assert.equal(values['open-issues'] + values['open-prs'], values['actionable-now'] + values['your-turn'] + values['waiting-elsewhere'] + values.held + values.blocked + values.outside, 'the six tiles sum to the totals');
 // sublines: the totals in the mock-up's order, the splits in today's form
 const subs = sublines(out);
-assert.equal(subs[0], '3 your turn · 2 waiting · 1 hive has it · 2 outside');
-assert.equal(subs[1], '1 your turn · 1 waiting · 2 blocked · 1 hive has it · 2 outside');
+assert.equal(subs[0], '3 needs a person · 2 waiting · 1 hive has it · 2 outside');
+assert.equal(subs[1], '1 needs a person · 1 waiting · 2 blocked · 1 hive has it · 2 outside');
 assert.equal(subs[2], '2 = 1 issues + 1 PRs');
 assert.equal(subs[3], '4 = 3 issues + 1 PRs');
 // an ⓘ on all six term tiles
@@ -280,7 +294,7 @@ assert.match(tip(out, 'actionable-now'), /<div class="overview-partition-row" ti
 assert.match(tip(out, 'your-turn'), /title="Issues: Inspect a sentinel flag rule\. PRs: PR inspect rule\."><span class="overview-partition-label"><span class="overview-chart-swatch overview-card-issue-inspect"><\/span>Inspect a sentinel flag \(1 issue, 1 PR\)/, 'a combined row names both rules');
 assert.match(tip(out, 'your-turn'), /Triage \(1 issue, 0 PRs\)<\/span><span class="overview-partition-count">1</);
 assert.doesNotMatch(tip(out, 'your-turn'), />Decide<|>Review<|>Approve</, 'zero bands are left out');
-assert.doesNotMatch(tip(out, 'your-turn'), /Unexplained/, 'Unexplained is listed only above zero');
+assert.doesNotMatch(tip(out, 'your-turn'), /No rule matched/, 'No rule matched is listed only above zero');
 assert.equal(sparkCalls.filter(c => c[0] === 'overview-kpi:actionable-now').pop()[2], 'var(--band-unclaimed)', 'Hive has it is the mock-up blue');
 assert.match(tip(out, 'your-turn'), /Includes 1 the hive holds for a person that is not in the inbox\./);
 assert.match(tip(out, 'outside'), /Open but not listed \(1 issue, 0 PRs\)<\/span><span class="overview-partition-count">1</);
@@ -289,7 +303,7 @@ for (const key of ['your-turn', 'waiting-elsewhere', 'held', 'blocked', 'actiona
 assert.match(tip(out, 'outside'), /Settings → Labels/);
 assert.match(tip(out, 'outside'), /Learn more ↗/);
 // the KPI strip's aria label and the sidebar pill title use the card tiles
-const label = '8 total open issues + 7 total open PRs = 2 hive has it + 4 your turn + 3 waiting on someone else + 0 held + 2 blocked + 4 outside';
+const label = '8 total open issues + 7 total open PRs = 2 hive has it + 4 needs a person + 3 waiting on someone else + 0 held + 2 blocked + 4 outside';
 assert.ok(out.includes('<div class="overview-kpis" aria-label="' + label + '">'));
 assert.ok(document.getElementById('overview-sidebar-badge').title.endsWith(' · ' + label));
 // the card tiles sample their own history fields, never today's
@@ -308,13 +322,13 @@ renderOverviewKPIs([repoA], [], [], state);
 assert.deepEqual(sparkValues('your-turn'), [3, 4]);
 _overviewKPIHistory = [];
 
-// Unexplained is listed in Your turn with its count.
+// No rule matched is listed in Your turn with its count.
 const withBug = cardFixture();
 withBug.tiles[0].count = 5; withBug.tiles[0].issues = 4;
-withBug.tiles[0].breakdown[withBug.tiles[0].breakdown.findIndex(r => r.key === 'unexplained')] = cardBrow('unexplained', 'Unexplained', 1, 0, { keep: true });
+withBug.tiles[0].breakdown[withBug.tiles[0].breakdown.findIndex(r => r.key === 'unexplained')] = cardBrow('unexplained', 'No rule matched (hive bug)', 1, 0, { keep: true });
 window._lastStatus.overview_card = withBug;
 out = renderOverviewKPIs([repoA], [], [], state);
-assert.match(tip(out, 'your-turn'), /Unexplained \(1 issue, 0 PRs\)<\/span><span class="overview-partition-count">1</);
+assert.match(tip(out, 'your-turn'), /No rule matched \(hive bug\) \(1 issue, 0 PRs\)<\/span><span class="overview-partition-count">1</);
 window._lastStatus.overview_card = cardFixture();
 
 // Some repos selected: the same tiles, counted from card_group, card_band and
@@ -494,8 +508,9 @@ for (const [kind, slices, specs] of [['issue', issueSlices, card.issues], ['pr',
 }
 assert.equal(new Set(plotted).size, plotted.length, 'no item is plotted twice');
 assert.deepEqual([...plotted].sort(), [...stamped].sort(), 'every stamped row is on a donut');
-// The legend's subtotal rows are the server's groups.
-const groupRows = html => Object.fromEntries([...html.matchAll(/<div class="overview-chart-legend-row overview-chart-legend-group" data-action="overviewNavigateBand" data-arg0="[^"]*" data-arg1="([^"]+)"[^>]*>.*?<span class="overview-chart-legend-count">(\d+) /g)].map(m => [m[1], Number(m[2])]));
+// The legend's group rows and the Needs a person subtotal (the Your turn
+// group) are the server's groups.
+const groupRows = html => Object.fromEntries([...html.matchAll(/<div class="overview-chart-legend-row overview-chart-legend-(?:group|subtotal)" data-action="overviewNavigateBand" data-arg0="[^"]*" data-arg1="([^"]+)"[^>]*>.*?<span class="overview-chart-legend-count">(\d+) /g)].map(m => [m[1], Number(m[2])]));
 const headed = card.groups.filter(g => g.headed);
 const issueGroups = groupRows(overviewLegendHTML(issueSlices, 'issues', {}));
 const prGroups = groupRows(overviewLegendHTML(prSlices, 'prs', {}));

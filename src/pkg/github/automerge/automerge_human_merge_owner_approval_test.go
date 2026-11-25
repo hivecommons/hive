@@ -92,6 +92,15 @@ func TestHumanMergeApprovalCommentNamesApproverAndHead(t *testing.T) {
 // gate writes them, and reviews served for the PR.
 func ownerApprovalStageAPI(t *testing.T, reviews, events []map[string]any) *stageAPI {
 	t.Helper()
+	return ownerApprovalStageAPIFor(t, "shared-pat-account", "", reviews, events, nil)
+}
+
+// ownerApprovalStageAPIFor is ownerApprovalStageAPI with the PR's author,
+// its updated_at (which pins when the hive first observed the head, the time
+// a typed approval must follow; "" serves none, so nothing typed binds) and
+// the people's comments served after the App's notice.
+func ownerApprovalStageAPIFor(t *testing.T, author, updatedAt string, reviews, events, typed []map[string]any) *stageAPI {
+	t.Helper()
 	app := map[string]string{"login": testHiveAppBotLogin, "type": "Bot"}
 	notice := map[string]any{
 		"id":         11,
@@ -104,15 +113,19 @@ func ownerApprovalStageAPI(t *testing.T, reviews, events []map[string]any) *stag
 		events = []map[string]any{{"event": "labeled", "label": map[string]string{"name": hgithub.HumanMergePathLabel}, "actor": app, "created_at": humanMergePathLiftHoldAt}}
 	}
 	files := append([]string{".github/workflows/release.yml"}, humanMergePathLiftCleanFiles...)
-	api := newHumanMergePathLiftAPI(t, 21, files, []map[string]any{notice}, events)
+	api := newHumanMergePathLiftAPI(t, 21, files, append([]map[string]any{notice}, typed...), events)
 	api.extra = func(w http.ResponseWriter, r *http.Request) bool {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/21":
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			body := map[string]any{
 				"number": 21, "head": map[string]string{"sha": ownerApprovalHead}, "base": map[string]string{"ref": "main"},
-				"user": map[string]string{"login": "shared-pat-account", "type": "User"}, "changed_files": len(files),
+				"user": map[string]string{"login": author, "type": "User"}, "changed_files": len(files),
 				"labels": []map[string]string{{"name": hgithub.HumanMergePathLabel}},
-			})
+			}
+			if updatedAt != "" {
+				body["updated_at"] = updatedAt
+			}
+			_ = json.NewEncoder(w).Encode(body)
 			return true
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/21/reviews":
 			if reviews == nil {
@@ -198,6 +211,83 @@ func TestApplyStageLabels_OwnerApprovalReleasesHumanMergePathHold(t *testing.T) 
 				t.Fatalf("stored hold provenance survived the release: %+v", rec.Hold)
 			}
 		})
+	}
+}
+
+// A typed approval by a trusted merger who opened the PR never releases its
+// human-merge-path label, and since `/hive decision approve <why>` counts as
+// an approval, the author's own reasoned approval (typed to answer the
+// verdict on their PR) must not hide another merger's earlier approval of
+// the same head either: the newest approval found is the author's, so the
+// gate looks again without the author's comments and finds the other
+// merger's.
+func TestApplyStageLabels_OwnerApprovalTypedBehindTheAuthorsOwnApproval(t *testing.T) {
+	const (
+		author    = "owner-a"
+		merger    = "maintainer-b"
+		updatedAt = "2026-11-10T16:30:00Z"
+	)
+	typed := func(id int, login, body, at string) map[string]any {
+		return map[string]any{"id": id, "user": map[string]string{"login": login, "type": "User"}, "body": body, "created_at": at, "updated_at": at}
+	}
+	others := typed(31, merger, "/hive decision approve", "2026-11-10T17:00:00Z")
+	own := typed(32, author, "/hive decision approve, thanks "+merger, "2026-11-10T17:10:00Z")
+	for _, tc := range []struct {
+		name     string
+		typed    []map[string]any
+		released bool
+	}{
+		{name: "another merger's approval behind the author's reasoned one", typed: []map[string]any{others, own}, released: true},
+		{name: "the author's reasoned approval alone", typed: []map[string]any{own}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := ownerApprovalStageAPIFor(t, author, updatedAt, nil, nil, tc.typed)
+			e, _ := newHumanMergePathLiftEngine(t, api)
+			e.headFirstSeen = NewHeadFirstSeenTracker()
+			e.SetMergerAuthorizer(func(login string) bool { return login == author || login == merger })
+			e.humanMergeOwnerApproval = func(repo string) bool { return strings.EqualFold(repo, "acme/widget") }
+
+			pr := stagePR(21, hgithub.HumanMergePathLabel, "author/human", "role/contributor", "stage/050-review-pending")
+			pr.Head.SHA = gh.Ptr(ownerApprovalHead)
+			pr.User = &gh.User{Login: gh.Ptr(author)}
+			e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, autoMergeReasonHumanMergeRequired, false, nil)
+			e.noteStageRole("acme", "widget", 21, stagelabels.RoleContributor)
+			if _, err := e.ApplyStageLabels(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			removed := removedPathLabel(api)
+			notices := ownerApprovalNotices(api)
+			if !tc.released {
+				if removed != 0 || len(notices) != 0 {
+					t.Fatalf("label removed %d times, audit comments %q; want the author's own approval to keep the label", removed, notices)
+				}
+				return
+			}
+			if removed != 1 {
+				t.Fatalf("label removed %d times (removed=%v), want once", removed, api.removed)
+			}
+			if len(notices) != 1 || !strings.Contains(notices[0], "`"+merger+"` approved this head") || strings.Contains(notices[0], "`"+author+"` approved") {
+				t.Fatalf("audit comments = %q, want one naming %s, not the author", notices, merger)
+			}
+		})
+	}
+}
+
+func TestCommentsNotBy(t *testing.T) {
+	by := func(id int64, login string) *gh.IssueComment {
+		return &gh.IssueComment{ID: gh.Ptr(id), User: &gh.User{Login: gh.Ptr(login)}}
+	}
+	comments := []*gh.IssueComment{by(1, "Owner-A"), by(2, "maintainer-b"), {ID: gh.Ptr(int64(3))}, by(4, "owner-a"), by(5, "app[bot]")}
+	got := commentsNotBy(comments, "owner-a")
+	var ids []int64
+	for _, c := range got {
+		ids = append(ids, c.GetID())
+	}
+	if want := []int64{2, 3, 5}; len(ids) != len(want) || ids[0] != want[0] || ids[1] != want[1] || ids[2] != want[2] {
+		t.Fatalf("commentsNotBy kept %v, want %v (case-insensitive, order kept, a comment without a user kept)", ids, want)
+	}
+	if len(comments) != 5 || comments[0].GetID() != 1 {
+		t.Fatalf("commentsNotBy changed its input: %v", comments)
 	}
 }
 

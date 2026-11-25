@@ -86,9 +86,20 @@
       const actions = [];
       const after = [];
       const parkedIssue = ctx.kind === 'issue' && String(own.reason_code || '').indexOf('parked_needs_') === 0;
-      if (own.verb === 'DECIDE' || own.verb === 'STEER' || (own.verb === 'REVIEW' && parkedIssue)) {
+      // An untrusted reporter's design proposal carries no parking label, and
+      // the un-park sweep skips an issue without one, so /hive approve and
+      // /hive decision would do nothing there.
+      const openForDiscussion = own.reason_code === 'open_for_discussion';
+      // A PR Hive's review holds for a human decision (the card's Decide
+      // band): /hive approve releases the hold on any PR, while a
+      // /hive decision <text> reply answers it only on a PR Hive opened.
+      const reviewQuestion = ctx.kind === 'pr' && own.reason_code === 'review_requires_human';
+      if ((own.verb === 'DECIDE' && !openForDiscussion) || own.verb === 'STEER' || (own.verb === 'REVIEW' && (parkedIssue || reviewQuestion))) {
         if (ctx.labelDriven) after.push({ type: 'note', text: 'This repository is label-driven: accept or un-park it with the repository\'s triage labels; Hive refuses /hive approve and /hive decision here.' });
-        else after.push({ type: 'copy', text: '/hive approve' }, { type: 'copy', text: '/hive decision <text>' });
+        else {
+          after.push({ type: 'copy', text: '/hive approve' }, { type: 'copy', text: '/hive decision <text>' });
+          if (reviewQuestion) after.push({ type: 'note', text: '/hive approve or an approving review releases the review hold; /hive decision <text> answers it only on a pull request Hive opened.' });
+        }
       }
       if (ctx.kind === 'issue' && own.action === 'release' && own.release_tag && ctx.canToggleHold && !ctx.labelDriven) {
         actions.push({ type: 'action', id: 'release', label: 'Release ' + own.release_tag });
@@ -105,6 +116,12 @@
       if (own.verb === 'ADMIT' && own.reason_code === 'untrusted_reporter') {
         const labels = (ctx.admissionLabels || []).filter(Boolean);
         after.push({ type: 'note', text: labels.length ? 'Add the label ' + labels.join(' or ') + ' to admit it.' : 'Add an admission label to admit it.' });
+      }
+      // An untrusted reporter's design proposal still needs those labels
+      // once a maintainer has decided it.
+      if (openForDiscussion) {
+        const labels = (ctx.admissionLabels || []).filter(Boolean);
+        after.push({ type: 'note', text: labels.length ? 'Once decided, add the label ' + labels.join(' or ') + ' to admit it, or close it.' : 'Once decided, add an admission label to admit it, or close it.' });
       }
       if (own.verb === 'REVIEW' && ctx.kind === 'pr' && own.action === 'release_hold' && ctx.held && ctx.canToggleHold) {
         actions.push({ type: 'action', id: 'release_hold', label: 'Release hold' });

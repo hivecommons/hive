@@ -117,6 +117,10 @@ type unparkCommand struct {
 	Text string
 }
 
+// decisionApprovalWordPunct is the trailing punctuation an approving word
+// may carry ("approve:", "lgtm!") and still read as that word.
+const decisionApprovalWordPunct = ".:,;!"
+
 // Approval reports whether the decision explicitly approves the head: the
 // first word is `approve`, `approved` or `lgtm` (trailing punctuation
 // ignored) and the rest is retained as the approval rationale. A bare `yes`
@@ -128,7 +132,7 @@ func (c unparkCommand) Approval() bool {
 	if len(words) == 0 {
 		return false
 	}
-	switch strings.ToLower(strings.TrimRight(words[0], ".:,;!")) {
+	switch strings.ToLower(strings.TrimRight(words[0], decisionApprovalWordPunct)) {
 	case "approve", "approved", "lgtm":
 		return true
 	case "yes":

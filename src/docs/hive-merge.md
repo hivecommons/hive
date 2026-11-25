@@ -501,7 +501,16 @@ names the failing gate in the result the agent sees (for example
 merger, trusted)` or `contributor-lane:soaking, 27m0s remaining`), and is audited
 as `merge_request_refused`. An agent cannot use the relay to land a contributor
 PR the lane would not merge; the lane still merges it on its own tick once the
-gates clear. Hive-authored PRs keep the relay's existing checks.
+gates clear. Hive-authored PRs keep the relay's existing checks. A PR that
+passes every other merge gate but that the relay refuses for a reason no Hive
+lane will clear leaves `merge-eligible.json`, and its dashboard merge verdict
+is a hand merge (`hand_merge_required`, the Overview card's Merge by hand),
+whether or not the repo's auto-merge is on; the merge itself is still a
+person's. Those reasons are a trust or admission reason, which is also listed
+under `needs_maintainer_merge`, and the lane switched off
+(`contributor-lane:disabled`) or scoped to other repos
+(`contributor-lane:repo-not-allowed`), which is not. A soak, a head too new or
+a missing reviewer verdict clears by itself and is not a hand merge.
 
 **Actionable merge failures alert the operator.** Failures that require an
 operator configuration change raise one dashboard system alert per repo+reason,
@@ -1532,9 +1541,10 @@ A PR merges through this tier only when all of the following hold:
   asking the owner again. The other forms are a dashboard
   approval (`/hive decision approve`, which posts `/lgtm` + `/approve`
   attributed to the maintainer and bound to the head) or a trusted merger's
-  own `/hive decision approve` comment posted after the hive first observed
-  the head. An unmarked approval is bound to the PR `updated_at` pinned on
-  the hive's first sweep of the head, not to the push: an approval typed
+  own `/hive decision approve` comment (a reason may follow on the same
+  line) posted after the hive first observed the head. An unmarked
+  approval is bound to the PR `updated_at` pinned on the hive's first
+  sweep of the head, not to the push: an approval typed
   between the push and that sweep is judged stale and must be typed again
   (fail-closed by design,
   [#14754](https://github.com/hivecommons/hive/issues/14754)). Approval on an
@@ -1838,7 +1848,17 @@ reference or wording such as "#N stays open". Such a PR labels the issue
 `hive/partially-addressed` and leaves it open. An issue that carries
 `hive/verified-open` or `hive/partially-addressed` is closed only by a PR
 whose own text closes it, never by a branch name, claim or comment link
-alone. Every sweep compares references as `owner/repo`, whatever name the
+alone.
+
+A dependency bot's branch (a `renovate/` head ref, or a Renovate, Dependabot
+or mergeraptor author) is never a branch-name claim: its trailing number is
+the version it bumps (`renovate/…-fedora-43`), so the branch name alone never
+makes merging the bump close an issue. The other evidence still counts: a
+closing keyword in the bot PR's own text, an issue comment that links the PR
+(the close-on-merge backfill), and, on the default branch, any closing link
+GitHub already has for the PR, which GitHub acts on itself.
+
+Every sweep compares references as `owner/repo`, whatever name the
 repository is configured under: the backfill sweep passed the short name and
 closed projectbluefin/utah-packages#490 on a `Refs #490` PR.
 `GET /api/close-on-merge/wrong-closes?days=N` (owner only; at most 500 closed

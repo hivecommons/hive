@@ -36,20 +36,34 @@ var (
 // The Your turn group's bands say what the person has to do (inspect,
 // decide, ...); card_group "your-turn" returns all of them.
 var (
-	issueCardBandKeys = []string{"inspect", "decide", "review", "triage", "admit", "your-turn-other", "to-close", "unexplained", "covered-by-pr", "waiting-on-item", "human-hold", "reporter-confirm", "queued", "working", "held", "not-work"}
-	prCardBandKeys    = []string{"inspect", "decide", "approve", "merge-by-hand", "review", "triage", "admit", "your-turn-other", "to-close", "unexplained", "human-hold", "author-update", "bot-rebase", "working", "will-merge", "held", "draft"}
+	issueCardBandKeys = []string{"inspect", "decide", "review", "triage", "admit", "your-turn-other", "check-finished", "to-close", "unexplained", "covered-by-pr", "waiting-on-item", "human-hold", "reporter-confirm", "queued", "working", "held", "not-work"}
+	prCardBandKeys    = []string{"inspect", "decide", "approve", "merge-by-hand", "review", "triage", "admit", "your-turn-other", "to-close", "unexplained", "waiting-on-item", "human-hold", "author-update", "bot-rebase", "working", "will-merge", "held", "draft"}
 	cardGroupKeys     = []string{"your-turn", "waiting-elsewhere", "held", "blocked", "actionable-now", "outside"}
 )
 
 // cardBandYourTurnAlias is the single Your turn band of before the split. A
 // card_band filter still accepts it and returns the rows it held: every row
 // in the your-turn group but to-close and unexplained (cardTurnAction in
-// pkg/dashboard). card_group=your-turn returns the whole group.
+// pkg/dashboard). The issue churn rows it held are check-finished rows now,
+// so it still returns them. card_group=your-turn returns the whole group.
 const cardBandYourTurnAlias = "your-turn"
 
+// cardChurnReasonCode is an issue churn row's card_reason_code.
+const cardChurnReasonCode = "verdict:issue_churn"
+
 // cardTurnActionRow reports a row the your-turn card_band alias returns.
+// The to-close churn clause exists for older servers: this stdio MCP can be
+// newer than the hive it reads, and a server from before check-finished
+// still sends an issue churn row as card_band to-close with card_reason_code
+// verdict:issue_churn. The alias returned those rows then too.
 func cardTurnActionRow(m map[string]any) bool {
-	return m["card_group"] == "your-turn" && m["card_band"] != "to-close" && m["card_band"] != "unexplained"
+	if m["card_group"] != "your-turn" {
+		return false
+	}
+	if m["card_band"] == "to-close" {
+		return m["card_reason_code"] == cardChurnReasonCode
+	}
+	return m["card_band"] != "unexplained"
 }
 
 // validCardBandsFor returns the card band keys a band-read tool accepts:

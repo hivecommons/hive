@@ -29,12 +29,19 @@ import (
 // for one thing.
 const RelayMergeRefusalPrefix = "contributor-lane policy refuses the merge relay"
 
-// relayLaneReasonDisabled / relayLaneReasonRepo are the relay-only skip
-// reasons for a lane the operator turned off or scoped to other repos: the
-// sweep never evaluates such a PR, so it has no reason of its own.
+// RelayLaneReasonDisabled / RelayLaneReasonRepoNotAllowed are the relay-only
+// skip reasons for a lane the operator turned off or scoped to other repos:
+// the sweep never evaluates such a PR, so it has no reason of its own. They
+// are exported so the merge classifier can tell these permanent refusals
+// (no Hive lane merges the PR) from temporary ones.
 const (
-	relayLaneReasonDisabled = contributorLaneReasonPrefix + "disabled"
-	relayLaneReasonRepo     = contributorLaneReasonPrefix + "repo-not-allowed"
+	RelayLaneReasonDisabled       = contributorLaneReasonPrefix + "disabled"
+	RelayLaneReasonRepoNotAllowed = contributorLaneReasonPrefix + "repo-not-allowed"
+)
+
+const (
+	relayLaneReasonDisabled = RelayLaneReasonDisabled
+	relayLaneReasonRepo     = RelayLaneReasonRepoNotAllowed
 	relayLaneReasonHead     = "head-changed-since-request"
 )
 

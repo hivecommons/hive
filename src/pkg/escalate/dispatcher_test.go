@@ -173,8 +173,10 @@ func TestDispatcherRetriesThrottledDelivery(t *testing.T) {
 	d.Dispatch(Event{Severity: SeverityPage, Title: "sentinel"})
 
 	waitFor(t, func() bool {
+		// The sentinel's request is seen before its own delivered audit is
+		// recorded, so wait for both audits as well as the last request.
 		got := seen()
-		return len(got) > 0 && got[len(got)-1] == "sentinel"
+		return len(got) > 0 && got[len(got)-1] == "sentinel" && len(audits.snapshot()) >= 2
 	})
 	want := []string{"Governor budget exhausted", "Governor budget exhausted", "Governor budget exhausted", "sentinel"}
 	if got := seen(); strings.Join(got, "|") != strings.Join(want, "|") {

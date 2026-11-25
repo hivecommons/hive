@@ -28,8 +28,10 @@ func TestCardTurnBandFromTheStoredDecision(t *testing.T) {
 		OwnershipVerbClose:   cardBandToClose,
 	}
 	prOnly := map[string]string{
-		OwnershipReasonReviewDecision: cardBandApprove,
-		OwnershipReasonHandMerge:      cardBandHandMerge,
+		OwnershipReasonReviewDecision:      cardBandApprove,
+		OwnershipReasonHandMerge:           cardBandHandMerge,
+		OwnershipReasonReviewRequiresHuman: cardBandDecide,
+		OwnershipReasonBotPRReviewChanges:  cardBandTurnOther,
 	}
 	inOrder := func(order []string, key string) bool {
 		for _, k := range order {
@@ -76,7 +78,7 @@ func TestCardTurnBandFromTheStoredDecision(t *testing.T) {
 		OwnershipReasonReviewDecision:      cardBandApprove,
 		OwnershipReasonHandMerge:           cardBandHandMerge,
 		OwnershipReasonPersonPRNeedsHuman:  cardBandReview,
-		OwnershipReasonReviewRequiresHuman: cardBandReview,
+		OwnershipReasonReviewRequiresHuman: cardBandDecide,
 		OwnershipReasonReviewLoopCap:       cardBandReview,
 		OwnershipReasonPolicyHold:          cardBandReview,
 	} {
@@ -135,6 +137,19 @@ func cardTurnCases() []cardTurnCase {
 	botStage := cardStageStash(1, cardStageFacts{Stage: stagelabels.Fixing, EnteredAt: cardTestNow.Add(-time.Hour)})
 	own := cardTestOwnership
 	none := cardTestInputs(nil)
+	// A non-hive bot's PR the stored decision holds for needs-human: red,
+	// conflicting, and green and mergeable.
+	botNeedsHuman := func(mutate func(*github.PullRequest)) cardPRRow {
+		pr := cardPR(1, "some-app[bot]", "needs-human", "stage/070-fixing")
+		pr.HeadRef = "renovate/foo"
+		mutate(&pr)
+		return cardPRRow{pr: pr, ownership: own(OwnershipReasonPersonPRNeedsHuman)}
+	}
+	botRed := botNeedsHuman(func(pr *github.PullRequest) { pr.CIStatus, pr.FailingChecks = "failure", []string{"ci/test"} })
+	botConflict := botNeedsHuman(func(pr *github.PullRequest) { pr.Mergeable, pr.MergeableState = github.MergeableNo, "dirty" })
+	botGreen := botNeedsHuman(func(pr *github.PullRequest) { pr.Mergeable, pr.MergeableState = github.MergeableYes, "clean" })
+	personRed := cardPR(1, "alice", "needs-human")
+	personRed.CIStatus, personRed.FailingChecks = "failure", []string{"ci/test"}
 	return []cardTurnCase{
 		// Issues, card-only rules (no stored your-turn decision).
 		{"reporter triage", ownershipKindIssue, nil, issueRow(cardIssueRow{work: cardWork(1, repoWorkBucketReporterTriage, "Awaiting maintainer triage label"), nonActionable: true}, none), cardBandAdmit},
@@ -146,7 +161,7 @@ func cardTurnCases() []cardTurnCase {
 		{"parked needs-spec", ownershipKindIssue, nil, issueRow(filtered(config.DefaultNeedsSpecLabel), none), cardBandDecide},
 		{"issue filter, a person's issue", ownershipKindIssue, nil, issueRow(cardIssueRow{work: person, nonActionable: true}, none), cardBandAdmit},
 		{"verdict: needs a decision", ownershipKindIssue, nil, issueRow(cardIssueRow{issue: cardIssue(1)}, verdict(AdmissionWithheldItem{Reason: completionVerdictNeedsDecision})), cardBandDecide},
-		{"verdict: churn", ownershipKindIssue, nil, issueRow(cardIssueRow{issue: cardIssue(1)}, verdict(AdmissionWithheldItem{Reason: contributorAdmissionReasonIssueChurn, ChurnMerged: 3})), cardBandTriage},
+		{"verdict: churn", ownershipKindIssue, nil, issueRow(cardIssueRow{issue: cardIssue(1)}, verdict(AdmissionWithheldItem{Reason: contributorAdmissionReasonIssueChurn, ChurnMerged: 3})), cardBandCheckFinished},
 		{"verdict: triage label", ownershipKindIssue, nil, issueRow(cardIssueRow{issue: cardIssue(1)}, verdict(AdmissionWithheldItem{Reason: contributorAdmissionReasonLabelSkipped, SkippedLabel: "needs-triage"})), cardBandTriage},
 		{"verdict: decision label", ownershipKindIssue, nil, issueRow(cardIssueRow{issue: cardIssue(1)}, verdict(AdmissionWithheldItem{Reason: contributorAdmissionReasonLabelSkipped, SkippedLabel: config.DefaultNeedsDecisionLabel})), cardBandDecide},
 		// Issues, the stored decision.
@@ -167,7 +182,12 @@ func cardTurnCases() []cardTurnCase {
 		{"PR approval", ownershipKindPR, own(OwnershipReasonReviewDecision), nil, cardBandApprove},
 		{"PR hand merge", ownershipKindPR, own(OwnershipReasonHandMerge), nil, cardBandHandMerge},
 		{"PR person needs human", ownershipKindPR, own(OwnershipReasonPersonPRNeedsHuman), nil, cardBandReview},
+		{"PR person needs human, red", ownershipKindPR, own(OwnershipReasonPersonPRNeedsHuman), prRow(cardPRRow{pr: personRed, ownership: own(OwnershipReasonPersonPRNeedsHuman)}, none), cardBandReview},
+		{"bot PR needs human, red", ownershipKindPR, own(OwnershipReasonPersonPRNeedsHuman), prRow(botRed, none), cardBandTurnOther},
+		{"bot PR needs human, conflict", ownershipKindPR, own(OwnershipReasonPersonPRNeedsHuman), prRow(botConflict, none), cardBandTurnOther},
+		{"bot PR needs human, green", ownershipKindPR, own(OwnershipReasonPersonPRNeedsHuman), prRow(botGreen, none), cardBandReview},
 		{"PR parked for a decision", ownershipKindPR, own(OwnershipReasonParkedNeedsDecision), nil, cardBandDecide},
+		{"PR review needs a decision", ownershipKindPR, own(OwnershipReasonReviewRequiresHuman), nil, cardBandDecide},
 		{"PR superseded", ownershipKindPR, own(OwnershipReasonSupersededRecommendedClose), nil, cardBandToClose},
 		{"PR 085 not your turn", ownershipKindPR, nil, prRow(cardPRRow{pr: cardPR(1, "alice", "stage/085-needs-decision")}, none), cardBandUnexplained},
 	}
@@ -201,8 +221,13 @@ func TestCardYourTurnSplitKeepsTheTileCount(t *testing.T) {
 		}
 		tally.add(tc.kind, got, tc.o)
 		// The single band of before the split: every Your turn row but
-		// Yours to close and Unexplained.
+		// Yours to close and Unexplained. It held the issue churn row, which
+		// is Check if finished now, so the card_band=your-turn alias
+		// (cardTurnAction) must return exactly these rows.
 		old := tc.want != cardBandToClose && tc.want != cardBandUnexplained
+		if alias := cardTurnAction(got.Key); alias != old {
+			t.Errorf("%s: card_band=your-turn alias returns it = %v, want %v", tc.name, alias, old)
+		}
 		inbox := tc.o != nil && tc.o.YourTurn
 		if tc.kind == ownershipKindPR {
 			wantKinds.PRs++
@@ -311,8 +336,11 @@ func TestCardYourTurnSplitParkFollowsTheDecisionsLabelOrder(t *testing.T) {
 
 // card_band=your-turn, the single Your turn band of before the split, still
 // works: it returns the rows that band held (every Your turn band but Yours
-// to close and Unexplained), joins other card_band values as a union, and
-// card_group=your-turn returns the whole group.
+// to close and Unexplained, so the fixture's issue churn row, #13 on Check
+// if finished, and no Yours to close row; see also
+// TestIssueChurnRowIsCheckIfFinishedAndInTheYourTurnAlias), joins other
+// card_band values as a union, and card_group=your-turn returns the whole
+// group.
 func TestCardYourTurnSplitBandAlias(t *testing.T) {
 	s := cardPartitionServer()
 	status := cardPartitionStatus()
@@ -362,11 +390,18 @@ func TestCardYourTurnSplitBandAlias(t *testing.T) {
 		if len(alias) != action {
 			t.Errorf("%s card_band=your-turn: %d rows, want the %d action rows", kind, len(alias), action)
 		}
+		churn := 0
 		for _, m := range alias {
 			band, _ := m["card_band"].(string)
 			if !cardTurnAction(band) || m["card_group"] != cardGroupYourTurn {
 				t.Errorf("%s card_band=your-turn returned a %q row", kind, band)
 			}
+			if band == cardBandCheckFinished {
+				churn++
+			}
+		}
+		if kind == overviewKindIssues && churn != 1 {
+			t.Errorf("issues card_band=your-turn returned %d Check if finished rows, want the fixture's issue churn row", churn)
 		}
 		if got := len(rows(kind, "?card_band=your-turn&card_band=to-close")); got != action+toClose {
 			t.Errorf("%s card_band=your-turn plus to-close: %d rows, want %d", kind, got, action+toClose)
@@ -395,9 +430,39 @@ func TestCardYourTurnSplitBandsHaveColours(t *testing.T) {
 			t.Errorf("headed group %s has no colour class", group)
 		}
 	}
-	for _, token := range []string{"--card-band-inspect", "--card-band-decide", "--card-band-approve", "--card-band-merge-by-hand", "--card-band-review", "--card-band-triage", "--card-band-admit", "--card-band-your-turn-other"} {
+	for _, token := range []string{"--card-band-inspect", "--card-band-decide", "--card-band-approve", "--card-band-merge-by-hand", "--card-band-review", "--card-band-triage", "--card-band-admit", "--card-band-your-turn-other", "--card-band-check-finished"} {
 		if strings.Count(html, token+":") != 2 {
 			t.Errorf("%s is not defined once for dark and once for light mode", token)
 		}
+	}
+}
+
+// A non-hive bot's PR the stored decision holds for needs-human is Other
+// when its branch is red or conflicting, with text that says what clears
+// it, and Review when it is green; it keeps the ownership reason code and
+// the Your turn group either way. A person's PR is untouched.
+func TestCardBotNeedsHumanPR(t *testing.T) {
+	code := "ownership:" + OwnershipReasonPersonPRNeedsHuman
+	for _, tc := range cardTurnCases() {
+		if tc.kind != ownershipKindPR || tc.o == nil || tc.o.ReasonCode != OwnershipReasonPersonPRNeedsHuman || tc.band == nil {
+			continue
+		}
+		got := tc.band()
+		if got.Key != tc.want || got.Group != cardGroupYourTurn || got.ReasonCode != code {
+			t.Errorf("%s: band %q group %q code %q, want %q in your-turn with %q", tc.name, got.Key, got.Group, got.ReasonCode, tc.want, code)
+		}
+		wantReason := tc.o.Reason
+		if tc.want == cardBandTurnOther {
+			wantReason = cardBotNeedsHumanReason
+		}
+		if got.Reason != wantReason {
+			t.Errorf("%s: reason %q, want %q", tc.name, got.Reason, wantReason)
+		}
+		if strings.ContainsAny(got.Reason, "\u2014\u2013@") {
+			t.Errorf("%s: reason has a dash or an at sign: %q", tc.name, got.Reason)
+		}
+	}
+	if !strings.Contains(cardBotNeedsHumanReason, "needs-human") || !strings.Contains(cardBotNeedsHumanReason, "Ask the bot to rebase it (tick its rebase box), close it, or fix it by hand.") {
+		t.Errorf("reason %q does not say what clears it", cardBotNeedsHumanReason)
 	}
 }

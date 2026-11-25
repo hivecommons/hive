@@ -55,7 +55,7 @@ func cardPartitionStatus() *StatusPayload {
 			Name: "demo", Full: cardTestRepo,
 			Issues: 20, PRs: 17,
 			ActionableIssues: []any{
-				issue(1, "agent/strategist"), issue(2, ownershipLabelAlreadyDone), issue(3), assigned, issue(5), issue(13, "needs-triage"),
+				issue(1, "agent/strategist"), issue(2, ownershipLabelAlreadyDone), issue(3), assigned, issue(5), issue(13),
 			},
 			HeldIssues: []any{
 				github.HoldItem{Repo: cardTestRepo, Number: 6, Type: "issue", Labels: []string{"hold"}, HoldSources: []string{github.HoldSourceLevelGate}},
@@ -118,14 +118,14 @@ func cardPartitionStatus() *StatusPayload {
 }
 
 // cardPartitionServer is a server whose stash holds one card-only your-turn
-// verdict (#13, needs-triage) and whose dispatch loader reads no file.
+// verdict (#13, issue churn) and whose dispatch loader reads no file.
 func cardPartitionServer() *Server {
 	s := &Server{}
 	s.cardDispatch.load = func() (review.DispatchState, time.Time, error) { return review.DispatchState{}, time.Time{}, nil }
 	s.cardDispatch.stat = func() time.Time { return time.Time{} }
 	st := newCardStash(cardTestNow)
 	st.addAdmission(queueAdmissionSnapshot{withheld: []AdmissionWithheldItem{
-		{Repo: cardTestRepo, Number: 13, Key: cardTestRepo + "#13", Reason: contributorAdmissionReasonLabelSkipped, SkippedLabel: "needs-triage"},
+		{Repo: cardTestRepo, Number: 13, Key: cardTestRepo + "#13", Reason: contributorAdmissionReasonIssueChurn, ChurnMerged: 3},
 	}}, 1, cardTestNow)
 	s.storeCardStash(st)
 	return s
@@ -136,7 +136,7 @@ var cardPartitionWant = map[string]string{
 	"issue#1": cardBandTriage, "issue#2": cardBandToClose, "issue#3": cardBandQueued, "issue#4": cardBandWorking,
 	"issue#5": cardBandWaitingOnItem, "issue#6": cardBandHeld, "issue#7": cardBandHumanHold, "issue#8": cardBandNotWork,
 	"issue#9": cardBandWaitingOnItem, "issue#10": cardBandCoveredByPR, "issue#11": cardBandReporterConfirm,
-	"issue#12": cardBandReview, "issue#13": cardBandTriage, "issue#14": cardBandWorking,
+	"issue#12": cardBandReview, "issue#13": cardBandCheckFinished, "issue#14": cardBandWorking,
 	"issue#16": cardBandDecide, "issue#17": cardBandAdmit, "issue#18": cardBandUnexplained,
 	"pr#20": cardBandReview, "pr#21": cardBandWillMerge, "pr#22": cardBandAuthorUpdate, "pr#23": cardBandBotRebase,
 	"pr#24": cardBandDraft, "pr#25": cardBandWorking, "pr#26": cardBandUnexplained, "pr#27": cardBandHeld, "pr#28": cardBandDraft,
@@ -276,7 +276,7 @@ func TestOverviewCardTilesSumToTheDisplayedTotals(t *testing.T) {
 
 func TestOverviewCardNotInInboxCountsOnlyCardOnlyRows(t *testing.T) {
 	card := cardClassifyForTest(cardPartitionServer(), cardPartitionStatus()).card
-	// #13 (needs-triage), #16 (release step) and #17 (no decision yet) are
+	// #13 (issue churn), #16 (release step) and #17 (no decision yet) are
 	// the card-only Your turn rows; the two Unexplained rows are listed
 	// apart, not in the not-in-inbox count.
 	if card.YourTurnNotInInbox != (OverviewCardKinds{Issues: 3}) {
@@ -398,7 +398,7 @@ func TestOverviewCardLeavesTheRestOfStatusUnchanged(t *testing.T) {
 func stripCardKeys(v any) {
 	switch x := v.(type) {
 	case map[string]any:
-		for _, key := range []string{"card_band", "card_group", "card_reason_code", "card_reason", "overview_card"} {
+		for _, key := range []string{"card_band", "card_group", "card_reason_code", "card_reason", "card_churn_prs", "overview_card"} {
 			delete(x, key)
 		}
 		for _, child := range x {
@@ -550,7 +550,7 @@ func TestOverviewExportCardColumnsAndFilters(t *testing.T) {
 
 	legacyIssueColumns := []string{"band", "band_rule", "bucket", "slice", "repo", "number", "title", "url", "state_signals", "labels", "assignees", "agent_role", "acknowledged", "held", "hold_reason", "linked_prs", "updated_at", "stale", "your_turn", "verb", "reason_code", "reason", "inbox_rank", "waiting_elsewhere"}
 	legacyPRColumns := []string{"band", "band_rule", "slice", "repo", "number", "title", "url", "author", "draft", "merge_verdict", "mergeable", "failing_checks", "review_decision", "review_class", "held", "hold_reason", "labels", "updated_at", "stale", "signals", "your_turn", "verb", "reason_code", "reason", "inbox_rank", "waiting_elsewhere"}
-	if got := overviewCSVColumns(overviewKindIssues); !reflect.DeepEqual(got, append(append([]string{}, legacyIssueColumns...), overviewCardColumns...)) {
+	if got := overviewCSVColumns(overviewKindIssues); !reflect.DeepEqual(got, append(append(append([]string{}, legacyIssueColumns...), overviewCardColumns...), overviewCardChurnPRsColumn)) {
 		t.Errorf("issue columns = %v", got)
 	}
 	if got := overviewCSVColumns(overviewKindPRs); !reflect.DeepEqual(got, append(append([]string{}, legacyPRColumns...), overviewCardColumns...)) {
@@ -632,6 +632,67 @@ func TestOverviewExportCardColumnsAndFilters(t *testing.T) {
 	}
 }
 
+// The Overview legend's Status subtotal exports every group but Your turn
+// in one link, card_group=<the other groups, comma-joined>. That export
+// returns exactly the rows those groups count, which are the donut's rows
+// outside the Your turn bands, and none of the Your turn rows.
+func TestOverviewExportCardGroupStatusSection(t *testing.T) {
+	s := cardPartitionServer()
+	status := cardPartitionStatus()
+	s.statusMu.Lock()
+	s.status = status
+	s.statusMu.Unlock()
+	card := cardClassifyAt(s, status, time.Now().UTC()).card
+	for _, kind := range []string{overviewKindIssues, overviewKindPRs} {
+		specs := card.Issues
+		if kind == overviewKindPRs {
+			specs = card.PRs
+		}
+		var all overviewJSONResponse
+		if err := json.Unmarshal(cardExport(t, s, kind, "json", "").Body.Bytes(), &all); err != nil {
+			t.Fatal(err)
+		}
+		others := make([]string, 0, len(all.CardGroups))
+		want := 0
+		for _, group := range all.CardGroups {
+			if group.Key == cardGroupYourTurn {
+				continue
+			}
+			others = append(others, group.Key)
+			want += group.Count
+		}
+		donut := 0
+		for _, spec := range specs {
+			if spec.Group != cardGroupYourTurn {
+				donut += spec.Count
+			}
+		}
+		if want != donut {
+			t.Errorf("%s: the other groups count %d, the donut's other bands %d", kind, want, donut)
+		}
+		w := cardExport(t, s, kind, "json", "?card_group="+strings.Join(others, ","))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s card_group=%s: status %d %q", kind, strings.Join(others, ","), w.Code, w.Body.String())
+		}
+		var section overviewJSONResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &section); err != nil {
+			t.Fatal(err)
+		}
+		if want == 0 {
+			t.Fatalf("%s: the fixture has no rows outside Your turn", kind)
+		}
+		if len(section.Rows) != want {
+			t.Errorf("%s: Status export %d rows, the other groups count %d", kind, len(section.Rows), want)
+		}
+		for _, row := range section.Rows {
+			m, _ := row.(map[string]any)
+			if m["card_group"] == cardGroupYourTurn {
+				t.Errorf("%s: Status export has a Your turn row %v", kind, m)
+			}
+		}
+	}
+}
+
 // adminmcp cannot import this package, so issues_by_band and prs_by_band
 // carry their own copy of the card keys; it must match the card.
 func TestAdminMCPCardKeysMatchTheCard(t *testing.T) {
@@ -657,6 +718,27 @@ func TestAdminMCPCardKeysMatchTheCard(t *testing.T) {
 	}
 	for name := range want {
 		t.Errorf("tool %s not found", name)
+	}
+	// The your-turn alias keeps an issue churn row, which is Check if
+	// finished, and leaves a plain Yours to close row out, in adminmcp's
+	// copy of the rule as on the card (cardTurnAction).
+	churn := decideIssueCard(cardIssueRow{repoFull: cardTestRepo, issue: cardIssue(1)}, cardTestInputs(cardTestStash(1, churnItem(3, 0))))
+	if churn.Key != cardBandCheckFinished || churn.ReasonCode != cardChurnReasonCode || !cardTurnAction(churn.Key) {
+		t.Fatalf("churn row band %q code %q, want %q %q", churn.Key, churn.ReasonCode, cardBandCheckFinished, cardChurnReasonCode)
+	}
+	closeRow := cardBand(cardBandToClose, "ownership:"+OwnershipReasonVerifiedDone, "reason")
+	row := func(n int, b OverviewCardBand) any {
+		return map[string]any{"number": float64(n), "repo": cardTestRepo, "card_band": b.Key, "card_group": b.Group, "card_reason_code": b.ReasonCode}
+	}
+	data := map[string]any{"kind": "issues", "rows": []any{row(1, churn), row(2, closeRow)}}
+	out, err := adminmcp.BandReadResult(adminmcp.ToolIssuesByBand, data, map[string]any{"card_band": cardBandYourTurnAlias})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := out.(map[string]any)
+	kept, _ := body["rows"].([]any)
+	if len(kept) != 1 || kept[0].(map[string]any)["number"] != float64(1) {
+		t.Errorf("issues_by_band card_band=your-turn kept %v, want only the churn row", kept)
 	}
 }
 

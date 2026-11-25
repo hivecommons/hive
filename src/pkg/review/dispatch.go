@@ -422,6 +422,12 @@ type WithheldFix struct {
 	// onto this one without a review session. Nothing was published for
 	// this head; the review the author can read is the one on CarriedFrom.
 	CarriedFrom string `json:"carried_from,omitempty"`
+	// Excluded is the fix-dispatch exclusion code the refusal recorded
+	// (FixDispatchExcluded*), so a reader can tell the cases apart without
+	// parsing Reason: FixDispatchExcludedOtherBotAuthor means another bot
+	// owns the branch and the hive will not push a fix to this head. Empty
+	// on records written before the field existed.
+	Excluded string `json:"excluded,omitempty"`
 }
 
 // WithheldFixSetting names the config key an operator turns on to let the
@@ -1801,6 +1807,7 @@ func (p *DispatchPlan) withholdFix(pr PullRequest, agg Aggregate, opts DispatchO
 		SettingEnabled: enabled,
 		Reason:         reason,
 		Withheld:       now,
+		Excluded:       excluded,
 	}
 	if agg.Delta != nil && agg.Delta.Trivial && SameHeadSHA(agg.HeadSHA, pr.HeadSHA) {
 		w.CarriedFrom = strings.TrimSpace(agg.Delta.PreviousHead)

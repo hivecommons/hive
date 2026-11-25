@@ -352,6 +352,10 @@ assert.ok(lines.some(l => l.startsWith('Since T')), tip);
 const pr = { repo: 'hivecommons/hive', number: 15096, kind: 'pr', title: 'Fresh PR', stage: 0, stage_slug: '000-new', created_at: '2026-10-20T11:58:30Z',
   new: { next_mover: 'hive', next_mover_text: 'the stage-label pass (→ 050 review pending)', next_pass_at: '2026-10-20T11:59:00Z', gates: [{ name: 'review', state: 'next' }, { name: 'merge-gate', state: 'later' }], text: 'New · waiting for the stage-label pass (→ 050 review pending) (next pass due now)' } };
 assert.strictEqual(stageTrackerActorKind(pr), 'hive');
+// A new PR whose head the hive's review returned for changes: its author moves next, shown with the author's own icon.
+const returned = Object.assign({}, pr, { author_kind: 'clanker', new: Object.assign({}, pr.new, { next_mover: 'author', next_mover_text: "the PR's author: the hive's review asked for changes on this head" }) });
+assert.strictEqual(stageTrackerActorKind(returned), 'clanker');
+assert.strictEqual(stageTrackerActorKind(Object.assign({}, returned, { author_kind: '' })), 'human');
 assert.ok(stageTrackerNewLines(pr, now)[0].endsWith('next hive pass due now'), stageTrackerNewLines(pr, now));
 assert.strictEqual(stageTrackerNewLines({ stage: 0, new: { next_mover: 'hive', gates: [{ name: 'triage', state: 'done' }, { name: 'actionable', state: 'next' }] } }, now)[1], 'Gates ahead: triage ✓ → actionable (next)');
 

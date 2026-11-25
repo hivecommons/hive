@@ -240,8 +240,9 @@ type IssueClaim struct {
 	// scan (every claim before #7871). ClaimSourceVerdict marks a claim
 	// recovered from a `no_work_needed` verdict reason and verified against
 	// the API: the settling PR carried NO reference to the issue, so the scan
-	// cannot re-find it and Reconcile's authoritative path carries such
-	// claims forward instead of replacing them (see Reconcile).
+	// cannot re-find it. Reconcile carries a merged/commit one forward as
+	// settled evidence, and an open-PR one only while the scan's open
+	// listing still shows its PR (see Reconcile and openVerdictClaim).
 	Source string `json:"source,omitempty"`
 	// SourceReporter is the contributor whose verdict produced a
 	// ClaimSourceVerdict claim. Logged on suppression so an operator can see
@@ -314,14 +315,19 @@ const ClaimSourceVerdict = "verdict"
 
 // Settled reports whether the claim describes work that has already LANDED:
 // a strong (closing, hive-or-anyone) claim from a merged PR, or a verified
-// no_work_needed verdict. Settled claims are the ones Reconcile carries
-// forward past the scan window (#8003) — the settling PR cannot un-merge, so
-// the scan ceasing to list it is not evidence the issue reopened for work.
-// A merged WEAK claim is not settled: it never asserted it closed the issue,
-// and FilterClaimedIssues releases it with context instead.
+// no_work_needed verdict citing a merged PR or a commit on the default branch
+// (verifySettlingCommit records both as MergedPR). Settled claims are the ones
+// Reconcile carries forward past the scan window (#8003): the settling PR
+// cannot un-merge, so the scan ceasing to list it is not evidence the issue
+// reopened for work. A merged WEAK claim is not settled: it never asserted it
+// closed the issue, and FilterClaimedIssues releases it with context instead.
+// Nor is a verdict citing an OPEN PR: nothing has landed, and treating it as
+// settled kept the issue withheld (eventually as merged_claim_stale, "fixed by
+// merged PR") long after the PR closed unmerged. It is a weak external claim
+// that lives while the PR stays open (openVerdictClaim).
 func (c IssueClaim) Settled() bool {
 	if c.Source == ClaimSourceVerdict {
-		return true
+		return c.MergedPR
 	}
 	return c.MergedPR && !c.Reference && !c.ExternalAuthor
 }
@@ -736,10 +742,28 @@ func observedPRState(pr *gh.PullRequest) string {
 	return PRStateOpen
 }
 
+// issueFromPRBranch is the branch-name claim for one PR: issueFromBranchName
+// on its head ref, except that a dependency bot's branch (DependencyBotBranch:
+// a `renovate/` head ref or a dependency-bot author) names no issue. Renovate
+// and Dependabot name their branches after the package and version they bump,
+// so a trailing number there is a version, never an issue:
+// `renovate/registry.fedoraproject.org-fedora-43` claimed utah#43, and the
+// supersession sweep then called the digest bump superseded by the unrelated
+// PR that had closed utah#43 (projectbluefin/utah#1494). Only the branch guess is
+// dropped: a closing keyword or reference in a bot PR's own text still counts.
+func issueFromPRBranch(pr *gh.PullRequest) (int, bool) {
+	ref := headRef(pr)
+	if DependencyBotBranch(ref, safeGetLogin(pr.GetUser())) {
+		return 0, false
+	}
+	return issueFromBranchName(ref)
+}
+
 // issueFromBranchName recovers an issue number from a branch name. It is a
 // heuristic, not a guarantee: it is only consulted when a PR carries no
-// closing-keyword reference at all, and a false positive costs at most one
-// suppressed kick for one cycle.
+// closing-keyword reference at all, and PR callers go through
+// issueFromPRBranch so a dependency bot's version-numbered branch is never
+// read as an issue.
 func issueFromBranchName(branch string) (int, bool) {
 	if branch == "" {
 		return 0, false
@@ -877,9 +901,12 @@ func claimsFromPR(pr *gh.PullRequest, repo string, identity HiveIdentity, now ti
 	// is about common#1688, not this repo's #1688. The branch claim had
 	// pointed projectbluefin/testsuite#1262 at a testsuite issue that does
 	// not exist, and the supersession sweep stopped on the 404.
+	//
+	// A dependency bot's branch makes no branch-name claim at all
+	// (issueFromPRBranch): its trailing number is the version it bumps.
 	referencedRefs := ParseReferencedIssues(text, repo)
 	if len(refs) == 0 {
-		if n, ok := issueFromBranchName(headRef(pr)); ok && !referencesIssueNumber(referencedRefs, n) {
+		if n, ok := issueFromPRBranch(pr); ok && !referencesIssueNumber(referencedRefs, n) {
 			refs = []ClaimedRef{{Repo: repo, Issue: n}}
 			refsAreClosing = false
 		}
@@ -1070,6 +1097,7 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 	var claims []IssueClaim
 	var history []IssuePRRecord
 	var firstErr error
+	openPRs := &OpenPRListing{}
 
 	// Claims are what dispatch reads to decide who is already working what; a
 	// paused repo must contribute none (#6203).
@@ -1094,6 +1122,7 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 				if pr == nil {
 					continue
 				}
+				openPRs.addPR(owner, repoName, pr.GetNumber())
 				prClaims := claimsFromPR(pr, repo, identity, now)
 				c.canonicalizeClaimRepos(prClaims)
 				for i := range prClaims {
@@ -1103,6 +1132,10 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 				history = append(history, prHistoryFromClaims(prClaims, PRStateOpen, now)...)
 			}
 			if resp == nil || resp.NextPage == 0 {
+				// Only a listing that reached its last page can say a PR it
+				// did not return is not open; an error or the page cap
+				// leaves the repo unknown.
+				openPRs.markComplete(owner, repoName)
 				break
 			}
 			opts.Page = resp.NextPage
@@ -1213,7 +1246,7 @@ func (c *Client) FetchClaimScan(ctx context.Context, identity HiveIdentity) (Cla
 		}
 	}
 
-	return ClaimScan{Claims: claims, History: history, StartedAt: now}, firstErr
+	return ClaimScan{Claims: claims, History: history, StartedAt: now, OpenPRs: openPRs}, firstErr
 }
 
 func (c *Client) prTerminalMergedBy(ctx context.Context, owner, repo string, pr *gh.PullRequest) string {
@@ -1807,7 +1840,7 @@ func OpenIssuesOf(result *ActionableResult) OpenIssueSet {
 // set — is what starts the settledClaimRetention countdown, not the merge.
 // Unsettled claims ignore the set; their lifetime is the scan's and the TTL's.
 func (l *ClaimLedger) ReconcileOpen(live []IssueClaim, authoritative bool, open OpenIssueSet) {
-	l.reconcileOpen(live, authoritative, open, time.Time{})
+	l.reconcileOpen(live, authoritative, open, time.Time{}, nil)
 }
 
 // ReconcileScan is ReconcileOpen for a complete scan: it additionally carries
@@ -1818,11 +1851,17 @@ func (l *ClaimLedger) ReconcileOpen(live []IssueClaim, authoritative bool, open 
 // the claim re-offered the issue while its PR was open — the hive then opened
 // a second PR for it. The next scan lists the PR itself and confirms or drops
 // the carried claim, so the carry-forward is bounded by one scan interval.
+//
+// The scan's open-PR listing (scan.OpenPRs) also decides the open-PR verdict
+// claims: one whose PR the listing still shows open is kept, one whose repo
+// was listed completely without it is released (the PR closed or merged).
+// Reconcile and ReconcileOpen have no listing, so such a claim there lives
+// only on the ordinary TTL from its last confirmation.
 func (l *ClaimLedger) ReconcileScan(scan ClaimScan, authoritative bool, open OpenIssueSet) {
-	l.reconcileOpen(scan.Claims, authoritative, open, scan.StartedAt)
+	l.reconcileOpen(scan.Claims, authoritative, open, scan.StartedAt, scan.OpenPRs)
 }
 
-func (l *ClaimLedger) reconcileOpen(live []IssueClaim, authoritative bool, open OpenIssueSet, listedAt time.Time) {
+func (l *ClaimLedger) reconcileOpen(live []IssueClaim, authoritative bool, open OpenIssueSet, listedAt time.Time, openPRs *OpenPRListing) {
 	if l == nil {
 		return
 	}
@@ -1851,6 +1890,23 @@ func (l *ClaimLedger) reconcileOpen(live []IssueClaim, authoritative bool, open 
 				l.insertLocked(c)
 			}
 		}
+		// Open-PR verdict claims are not settled, and the scan never re-lists
+		// them (their PR does not reference the issue), so replacing the map
+		// alone would release the issue on the very next pass while the PR is
+		// still open. The open listing the scan just paged through says
+		// whether it is: keep the claim while it is, release it once it is
+		// not. Already-stored claims of this shape from before they stopped
+		// counting as settled take the same path, so one whose PR has since
+		// closed is dropped here with no migration step.
+		now := l.now()
+		for _, c := range prev {
+			if !c.openVerdictClaim() {
+				continue
+			}
+			if kept, ok := keepOpenVerdictClaim(c, openPRs, listedAt, now, l.ttl); ok {
+				l.insertLocked(kept)
+			}
+		}
 		// Settled claims are carried forward (#7871, #8003). A verdict-
 		// recovered claim describes a settling PR (or commit) that never
 		// referenced the issue, so the scan that just ran did not and will not
@@ -1865,7 +1921,6 @@ func (l *ClaimLedger) reconcileOpen(live []IssueClaim, authoritative bool, open 
 		// An issue the enumeration still lists as open restarts the retention
 		// clock first (#11580), so the carry-forward never lapses while the
 		// issue is open.
-		now := l.now()
 		for key, c := range prev {
 			if c.FirstObservedAt.IsZero() {
 				c.FirstObservedAt = c.ObservedAt
@@ -1896,7 +1951,21 @@ func (l *ClaimLedger) reconcileOpen(live []IssueClaim, authoritative bool, open 
 		c.Repo = l.repoLocked(c.Repo)
 		l.insertLocked(l.anchorFirstObservedLocked(l.claims, c))
 	}
-	l.markOpenLocked(open, l.now())
+	// A partial scan still listed some repos completely; what those listings
+	// say about an open-PR verdict claim's PR holds, so apply it before the
+	// TTL prune (a repo that failed to list leaves its claims on the TTL).
+	now := l.now()
+	for key, c := range l.claims {
+		if !c.openVerdictClaim() {
+			continue
+		}
+		if kept, ok := keepOpenVerdictClaim(c, openPRs, listedAt, now, l.ttl); ok {
+			l.claims[key] = kept
+		} else {
+			delete(l.claims, key)
+		}
+	}
+	l.markOpenLocked(open, now)
 	l.pruneLocked()
 }
 

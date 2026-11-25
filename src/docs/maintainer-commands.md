@@ -341,11 +341,12 @@ repo *and* be in the hive's trusted-merger set (the bar a human approval
 already meets). `/hive decision <text>` on a PR the hive did **not** open, or
 `/hive approve` / `/hive help` on any PR, gets one reply naming the review-side
 equivalents instead of silence; the hive never pushes to a PR it did not open.
-A bare `/hive decision approve` on such a PR is recorded as the approval for
-the current head, as the dashboard's approval is, and answers its
-`requires_human` question: on the owner's own PR GitHub refuses the Approve
-review, so this is the owner's command. On a PR that edits workflow files it
-also releases the workflow-path fence, which `/hive approve` never does. The
+A `/hive decision approve`, alone or with a reason after it, on such a PR is
+recorded as the approval for the current head, as the dashboard's approval
+is, and answers its `requires_human` question: on the owner's own PR GitHub
+refuses the Approve review, so this is the owner's command. On a PR that
+edits workflow files it also releases the workflow-path fence, which
+`/hive approve` never does. The
 contributor lane records it as the answer on every PR it evaluates — when it
 reads the comment for the fence, and on a PR no fence trips while the verdict
 still asks for a person — so it counts even where the PR carries no stage label

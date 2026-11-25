@@ -213,6 +213,36 @@ func prDecisionModeFor(cmd unparkCommand) prDecisionMode {
 	return prDecisionChangesRequested
 }
 
+// ParseTypedDecisionApproval reads body as a person's typed
+// `/hive decision approve` of a PR head by the rule this sweep records an
+// approval with: parseUnparkCommand reads a `/hive decision` on the
+// comment's first line (never a quoted or fenced one), prDecisionModeFor
+// classifies it as an approval, and the comment is not one the hive's
+// delegate wrote (isHiveSelfDecisionComment). A rationale may follow the
+// approval word on the same line or on later lines, as the PR reply options
+// teach (`/hive decision approve <why>`). The approval word must be
+// `approve` itself, trailing punctuation aside: the sweep's other approving
+// words (`approved`, `lgtm`, a bare `yes`) do not count here, so a merge
+// gate reading this never accepts a comment the sweep would not record as
+// an approval. It returns the decision text the sweep records for the
+// comment (unparkCommand.DecisionText), so a gate that records the same
+// comment writes the same body.
+func ParseTypedDecisionApproval(body string) (string, bool) {
+	if isHiveSelfDecisionComment(body) {
+		return "", false
+	}
+	cmd, ok := parseUnparkCommand(body)
+	if !ok || cmd.Kind != unparkCommandDecision || prDecisionModeFor(cmd) != prDecisionApprove {
+		return "", false
+	}
+	text := cmd.DecisionText()
+	words := strings.Fields(text)
+	if len(words) == 0 || !strings.EqualFold(strings.TrimRight(words[0], decisionApprovalWordPunct), string(prDecisionApprove)) {
+		return "", false
+	}
+	return text, true
+}
+
 // prDecisionHeadMarker tags the reply with the exact head the decision was
 // recorded for, so a restart that lost the store can rebuild the record
 // from the comment thread alone (reconcileAnsweredPRDecision).

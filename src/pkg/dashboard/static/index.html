@@ -114,6 +114,9 @@
       --card-band-triage: #ff46a9;
       --card-band-admit: #eb1f1b;
       --card-band-your-turn-other: #af7560;
+      /* Check if finished: an olive green next to Yours to close's lime,
+         at least 10 CIEDE2000 from every band on the issue donut. */
+      --card-band-check-finished: #9ca83a;
       --anim-chart-slow: 1200ms;
       --anim-band-grow: 900ms;
       --anim-kpi-count: 800ms;
@@ -238,6 +241,7 @@
       --card-band-triage: #8e1053;
       --card-band-admit: #8f261b;
       --card-band-your-turn-other: #9d6653;
+      --card-band-check-finished: #556b12;
       background: var(--bg); color: var(--text);
     }
     body.light-mode .connection { display: none; }
@@ -2953,7 +2957,10 @@
       .fleet-cost-rotor .fcr-phrase { transition: none; transform: none; }
     }
     .governor-subsection { margin: var(--sp-5) 0 0; }
-    .governor-subsection .section-body { overflow: hidden; }
+    /* .advisory-subsection .section-body sets overflow: visible later in the
+       manifest; the compound selector wins, so the collapse animation is
+       clipped instead of drawing over Reviewer accuracy below. */
+    .advisory-subsection.governor-subsection .section-body { overflow: hidden; }
     .gov-pr-models-subheader { width: 100%; display: grid !important; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: var(--sp-3); cursor: pointer; user-select: none; }
     .gov-pr-models-subtitle { display:block; margin-top:var(--sp-1); color:var(--muted); font-size:var(--fs-xs); line-height:1.3; letter-spacing:0; text-transform:none; font-weight:500; }
     .gov-pr-models-summary { color:var(--muted); font-size:var(--fs-xs); font-weight:700; text-transform:none; letter-spacing:0; white-space:nowrap; }
@@ -2989,6 +2996,15 @@
     .gov-pr-model-head { position:sticky; top:0; z-index:1; margin:0 0 var(--sp-1); padding-block:var(--sp-1); background:var(--surface-3); border-bottom:1px solid var(--border); color:var(--muted); font-size:var(--fs-2xs); text-transform:uppercase; letter-spacing:0.06em; font-weight:700; }
     .gov-pr-model-head .gov-pr-model-metric, .gov-pr-model-head .gov-pr-model-share { color:var(--muted); }
     .gov-pr-model-col { cursor:help; white-space:nowrap; }
+    /* Sortable column headers (header-row buttons styled as the header text). */
+    /* Header labels may wrap: the metric tracks are about 44px at the narrowest
+       width that still shows the header, less than MERGED plus its sort arrow
+       and ? mark; nowrap made them run into the next column. */
+    .gov-pr-model-head .gov-pr-model-col { white-space:normal; }
+    .gov-pr-model-sort { appearance:none; margin:0; padding:0; border:0; background:none; color:inherit; font:inherit; text-transform:inherit; letter-spacing:inherit; text-align:inherit; white-space:normal; cursor:pointer; }
+    .gov-pr-model-sort:hover, .gov-pr-model-sort.active { color:var(--text); }
+    .gov-pr-model-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .gov-pr-model-sort-arrow { display:inline-block; margin-left:var(--sp-1); }
     .gov-pr-model-help { display:inline-flex; align-items:center; justify-content:center; width:11px; height:11px; margin-left:3px; border:1px solid var(--border); border-radius:var(--r-pill); font-size:var(--fs-2xs); line-height:1; text-transform:none; letter-spacing:0; vertical-align:middle; }
     .gov-pr-model-row.unattributed { opacity:0.6; }
     .gov-pr-model-row.unattributed .gov-pr-model-name { color:var(--muted); font-weight:500; }
@@ -4082,6 +4098,23 @@
     .overview-chart-legend-group { font-weight: 700; background: color-mix(in srgb, var(--muted) 10%, transparent); }
     .overview-chart-legend-part { padding-left: calc(var(--sp-1) + var(--sp-7)); }
     .overview-chart-legend-zero { opacity: 0.55; }
+    /* The legend's two sections, Needs a person (the Your turn group) and Status
+       (every other group): a small muted heading over a thin rule, and a
+       bold subtotal row under a thin rule. The Status subtotal opens
+       nothing, so it has no pointer or hover, and no dot. */
+    .overview-chart-legend-section { display: flex; align-items: baseline; gap: var(--sp-3); color: var(--muted); font-size: var(--fs-2xs); font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; padding: var(--sp-1); border-bottom: 1px solid var(--border); }
+    .overview-chart-legend-section:not(:first-child) { margin-top: var(--sp-4); }
+    .overview-chart-legend-section-note { font-size: var(--fs-xs); font-weight: 500; letter-spacing: 0; text-transform: none; }
+    .overview-chart-legend-subtotal { font-weight: 800; border-top: 1px solid var(--border); border-radius: var(--sp-0); padding-top: var(--sp-3); }
+    .overview-chart-legend-subtotal .overview-chart-legend-count { color: var(--text); }
+    /* The unexplained band (No rule matched) after the Needs a person subtotal: a hive bug, marked as a warning. */
+    .overview-chart-legend-warning .overview-chart-legend-label { font-weight: 600; }
+    .overview-chart-legend-warning .overview-chart-legend-label::before { content: "\26A0\FE0E\00A0" / ""; color: var(--status-warn); }
+    .overview-chart-legend-note { color: var(--muted); font-size: var(--fs-xs); font-weight: 500; }
+    .overview-chart-legend-static { cursor: default; }
+    .overview-chart-legend-static:hover { background: transparent; }
+    .overview-chart-swatch-none { visibility: hidden; }
+    .overview-chart-legend-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     .overview-partition-tooltip .overview-partition-title { display: block; margin-bottom: var(--sp-1); font-weight: 700; }
     .overview-partition-tooltip .overview-partition-title + .overview-partition-summary { font-weight: 400; white-space: normal; }
     .overview-partition-tooltip .overview-partition-label .overview-chart-swatch { display: inline-block; vertical-align: middle; margin-right: var(--sp-2); }
@@ -4095,6 +4128,7 @@
     .overview-card-issue-triage, .overview-card-pr-triage { --slice-c: var(--card-band-triage); }
     .overview-card-issue-admit, .overview-card-pr-admit { --slice-c: var(--card-band-admit); }
     .overview-card-issue-your-turn-other, .overview-card-pr-your-turn-other { --slice-c: var(--card-band-your-turn-other); }
+    .overview-card-issue-check-finished { --slice-c: var(--card-band-check-finished); }
     .overview-card-issue-to-close, .overview-card-pr-to-close { --slice-c: var(--band-confirm-close); }
     .overview-card-issue-unexplained, .overview-card-pr-unexplained { --slice-c: var(--card-band-unexplained); }
     .overview-card-issue-covered-by-pr, .overview-card-pr-covered-by-pr { --slice-c: var(--card-band-covered-by-pr); }
@@ -20354,7 +20388,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerActorKind(item) {
       // Guarded: test harnesses lift this function by name without the 000-new helpers.
       const fresh = typeof stageTrackerNewState === 'function' ? stageTrackerNewState(item) : null;
-      if (fresh) return fresh.next_mover === 'maintainer' ? 'human' : 'hive';
+      if (fresh) {
+        if (fresh.next_mover === 'maintainer') return 'human';
+        // The PR's author pushes next (the hive's review returned the head).
+        if (fresh.next_mover === 'author') return item.author_kind || 'human';
+        return 'hive';
+      }
       const sa = stageTrackerStageActor(item);
       if (sa) return sa.kind === STAGE_TRACKER_ACTOR_NONE ? '' : String(sa.kind);
       const role = STAGE_TRACKER_ACTOR[Number(item.stage) || 0] || '';
@@ -35842,6 +35881,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     let govPRModelsWindow = '7d';
     let govPRModelsSort = 'effectiveness';
+    // Column sort from a PRs-by-model header click. An empty key means the
+    // rank / PR count pills decide the order; picking a pill clears it.
+    let govPRModelsColumnSort = { key: '', dir: 'desc' };
     let govPRModelsLoading = false;
     let govPRModelsData = null;
     let reviewerAccuracyLoading = false;
@@ -35862,16 +35904,44 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       renderGovernor(lastStatus.governor || {}, lastStatus.cadenceMatrix || [], lastStatus);
     }
 
+    // A window or sort pill clicked on the collapsed subsection is a request to
+    // see the ranking: expand it and save that choice like the header toggle.
+    function expandGovernorPRModelsSection() {
+      if (isSectionCollapsed('governor-pr-models-section')) toggleSection('governor-pr-models-section', { collapsed: false });
+    }
     function setGovernorPRModelsWindow(windowName) {
       govPRModelsWindow = normalizeGovernorPRModelsWindowName(windowName);
+      expandGovernorPRModelsSection();
+      // Re-render now so the expanded tile shows the new pill as active and
+      // "Loading" instead of the previous window's ranking until the fetch lands.
+      renderGovernorFromLastStatus();
       return loadGovernorPRModels(true, govPRModelsWindow);
     }
     window.setGovernorPRModelsWindow = setGovernorPRModelsWindow;
     function setGovernorPRModelsSort(sortName) {
       govPRModelsSort = sortName === 'count' ? 'count' : 'effectiveness';
+      govPRModelsColumnSort = { key: '', dir: 'desc' };
+      expandGovernorPRModelsSection();
       if (window._lastStatus?.governor) renderGovernor(window._lastStatus.governor, window._lastStatus.cadenceMatrix || [], window._lastStatus);
     }
     window.setGovernorPRModelsSort = setGovernorPRModelsSort;
+    // Header click: a new column sorts most to least first (Model sorts A to
+    // Z first); clicking the active column again flips the direction.
+    function setGovernorPRModelsColumnSort(key) {
+      if (!governorPRModelSortLabel(key)) return;
+      govPRModelsColumnSort = govPRModelsColumnSort.key === key
+        ? { key, dir: govPRModelsColumnSort.dir === 'desc' ? 'asc' : 'desc' }
+        : { key, dir: key === 'model' ? 'asc' : 'desc' };
+      expandGovernorPRModelsSection();
+      // The card re-renders from scratch; keep keyboard focus on the control
+      // that was used: the header button, or the active column-sort pill.
+      const focused = typeof document !== 'undefined' ? document.activeElement : null;
+      const refocus = focused?.classList?.contains('gov-pr-models-colsort') ? '.gov-pr-models-colsort'
+        : focused?.classList?.contains('gov-pr-model-sort') ? `.gov-pr-model-head .gov-pr-model-sort[data-arg0="${key}"]` : '';
+      renderGovernorFromLastStatus();
+      if (refocus) document.querySelector(refocus)?.focus();
+    }
+    window.setGovernorPRModelsColumnSort = setGovernorPRModelsColumnSort;
 
     function governorPRModelPRsKey(windowName, model) {
       return `${normalizeGovernorPRModelsWindowName(windowName)}\u0000${model}`;
@@ -35965,8 +36035,80 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       ['no_ship', 'No ship', 'Share of recorded task runs that completed but produced no pull request. Multiplies the rank score by (1 − no ship).'],
     ];
 
+    // Sortable PRs-by-model columns: Model, the metric columns above, and
+    // "PRs · share". Returns '' for anything else.
+    function governorPRModelSortLabel(key) {
+      if (key === 'model') return 'Model';
+      if (key === 'prs') return 'PRs · share';
+      const col = GOV_PR_MODEL_COLUMNS.find(([k]) => k === key);
+      return col ? col[1] : '';
+    }
+
+    // The number a column sorts on, not its rendered string. Rates compare
+    // as the whole percent the cell shows, so two rows showing the same
+    // percentage tie. The run columns of a row with no recorded runs render
+    // a dash (not a measured 0%) and return null here, so they sort last in
+    // both directions.
+    function governorPRModelColumnValue(b, key) {
+      const eff = b?.effectiveness || {};
+      const rw = b?.rework || {};
+      const num = v => Number(v) || 0;
+      const pct = v => Math.round(num(v) * 100);
+      const measured = Number(eff.runs || 0) > 0;
+      switch (key) {
+        case 'merged': return num(eff.merged_prs ?? b?.merged);
+        case 'first_pass': return pct(eff.first_pass_merge_rate ?? rw.first_pass_merge_rate);
+        case 'pr_runs': return measured ? pct(eff.verified_pr_run_rate) : null;
+        case 'fail': return measured ? pct(eff.failure_rate) : null;
+        case 'no_ship': return measured ? pct(eff.nothing_to_ship_rate) : null;
+        case 'prs': return num(b?.prs);
+        default: return null;
+      }
+    }
+
+    // Column-sort comparator. Unattributed rows go last in both directions,
+    // as under rank, after any rows with no value (no runs recorded) in a run
+    // column. Ties break by PR count (most first), then model, then backend,
+    // whichever way the column runs.
+    function governorPRModelColumnCompare(a, b, key, dir) {
+      const sign = dir === 'asc' ? 1 : -1;
+      const au = governorPRModelUnattributed(a), bu = governorPRModelUnattributed(b);
+      if (au !== bu) return au ? 1 : -1;
+      if (key === 'model') {
+        const byName = String(a.model || 'unknown').localeCompare(String(b.model || 'unknown'));
+        if (byName) return sign * byName;
+      } else {
+        const av = governorPRModelColumnValue(a, key), bv = governorPRModelColumnValue(b, key);
+        if ((av === null) !== (bv === null)) return av === null ? 1 : -1;
+        if (av !== null && av !== bv) return sign * (av - bv);
+      }
+      return (b.prs || 0) - (a.prs || 0) || String(a.model || '').localeCompare(String(b.model || '')) || String(a.backend || '').localeCompare(String(b.backend || ''));
+    }
+
+    // One header cell: the label is a real button (keyboard reachable) that
+    // sorts by the column, and its aria-label carries the sort state (the
+    // header is a div grid, so there is no columnheader for aria-sort). The
+    // "?" help mark and its title sit outside the button, so hovering the
+    // label or the mark still shows the help.
+    function governorPRModelSortHeadHtml(key, help, cls) {
+      const label = governorPRModelSortLabel(key);
+      const active = govPRModelsColumnSort.key === key;
+      const asc = govPRModelsColumnSort.dir === 'asc';
+      const order = key === 'model' ? (asc ? 'A to Z' : 'Z to A') : (asc ? 'least to most' : 'most to least');
+      const ariaLabel = active ? `${label}, sorted ${order}. Activate to reverse.` : `Sort by ${label}`;
+      const arrow = active ? `<span class="gov-pr-model-sort-arrow" aria-hidden="true">${asc ? '▴' : '▾'}</span>` : '';
+      const button = `<button type="button" class="gov-pr-model-sort${active ? ' active' : ''}" data-action="setGovernorPRModelsColumnSort" data-arg0="${key}" aria-label="${escapeHtml(ariaLabel)}">${escapeHtml(label)}${arrow}</button>`;
+      const helpMark = help ? '<span class="gov-pr-model-help" aria-hidden="true">?</span>' : '';
+      const title = help ? ` title="${escapeHtml(help)}"` : '';
+      return `<div${cls ? ` class="${cls}"` : ''}><span class="gov-pr-model-col"${title}>${button}${helpMark}</span></div>`;
+    }
+
     function governorPRModelRows(data) {
       const rows = [...(data?.buckets || [])];
+      if (govPRModelsColumnSort.key) {
+        const { key, dir } = govPRModelsColumnSort;
+        return rows.sort((a, b) => governorPRModelColumnCompare(a, b, key, dir));
+      }
       if (govPRModelsSort === 'count') {
         return rows.sort((a, b) => (b.prs || 0) - (a.prs || 0) || String(a.model || '').localeCompare(String(b.model || '')) || String(a.backend || '').localeCompare(String(b.backend || '')));
       }
@@ -36071,13 +36213,28 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const data = govPRModelsData && govPRModelsData.window === govPRModelsWindow ? govPRModelsData : null;
       const total = data?.total || 0;
       const buttons = ['7d', '30d', 'all'].map(w => `<button type="button" class="${govPRModelsWindow === w ? 'active' : ''}" data-action="setGovernorPRModelsWindow" data-arg0="${w}" title="Show PRs authored in ${w === 'all' ? 'all time' : 'the last ' + w}">${w}</button>`).join('');
-      const sortButtons = [['effectiveness', 'rank'], ['count', 'PR count']].map(([v, label]) => `<button type="button" class="${govPRModelsSort === v ? 'active' : ''}" data-action="setGovernorPRModelsSort" data-arg0="${v}" title="Sort PRs by model by ${label}">${label}</button>`).join('');
+      const colSort = govPRModelsColumnSort;
+      // An active column sort also shows as a pill, so it stays visible (and
+      // reversible) on narrow screens, where the header row is hidden.
+      const colSortLabel = colSort.key ? governorPRModelSortLabel(colSort.key) : '';
+      const colSortButton = colSortLabel ? `<button type="button" class="active gov-pr-models-colsort" data-action="setGovernorPRModelsColumnSort" data-arg0="${colSort.key}" title="Sorted by ${escapeHtml(colSortLabel)}. Click to reverse; choose rank or PR count to go back.">${escapeHtml(colSortLabel)} ${colSort.dir === 'asc' ? '▴' : '▾'}</button>` : '';
+      const sortButtons = [['effectiveness', 'rank'], ['count', 'PR count']].map(([v, label]) => `<button type="button" class="${!colSort.key && govPRModelsSort === v ? 'active' : ''}" data-action="setGovernorPRModelsSort" data-arg0="${v}" title="Sort PRs by model by ${label}">${label}</button>`).join('') + colSortButton;
       const modelRows = data ? governorPRModelRows(data) : [];
       const modelCount = data && Array.isArray(data.buckets) ? data.buckets.length : 0;
       const minMerged = data?.min_merged_prs || 5;
-      const topModel = modelRows[0] && (modelRows[0].model || 'unknown');
+      // Collapsed summary "#1": under rank or PR count, the first row shown (as
+      // before); under a column sort, the rank leader (rank 1), if any.
+      const topRow = colSort.key ? (data?.buckets || []).find(b => b?.effectiveness?.rank === 1) : modelRows[0];
+      const topModel = topRow && (topRow.model || 'unknown');
       const collapsedSummary = topModel ? `#1 ${escapeHtml(topModel)} · ${modelCount} model${modelCount === 1 ? '' : 's'}` : `${modelCount} model${modelCount === 1 ? '' : 's'}`;
       const subtitle = `${total} agent-authored PR${total === 1 ? '' : 's'} · rank requires ${minMerged} merged`;
+      // Emit the saved collapse state in the markup itself. renderGovernor
+      // replays sparklines (a layout read) before applySectionCollapse runs on
+      // this subsection, so a body emitted expanded and collapsed afterwards
+      // runs the .section-body max-height/opacity transition: the ranking
+      // flashed open on every re-render of a collapsed subsection.
+      const collapsed = isSectionCollapsed('governor-pr-models-section');
+      const collapsedCls = collapsed ? ' collapsed' : '';
       const rows = !data
         ? '<div class="gov-pr-models-empty">Loading PRs by model…</div>'
         : total === 0
@@ -36158,19 +36315,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const coverageNote = covParts.length ? `<div class="gov-pr-model-sub gov-pr-model-sub-spaced gov-pr-models-coverage">Partial history: ${covParts.join(' · ')}. Run columns come from the task-run log; — means no runs recorded, not a measured 0%.</div>` : '';
       const hiveCostNote = governorPRModelsHiveCostNote(data);
       const header = data && total > 0 ? `<div class="gov-pr-model-row gov-pr-model-head" aria-hidden="false">
-          <div>Model</div>
+          ${governorPRModelSortHeadHtml('model', '', '')}
           <div>Outcome</div>
-          <div class="gov-pr-model-metrics">${GOV_PR_MODEL_COLUMNS.map(([, label, help]) => `<div class="gov-pr-model-metric"><span class="gov-pr-model-col" title="${escapeHtml(help)}">${label}<span class="gov-pr-model-help" aria-hidden="true">?</span></span></div>`).join('')}</div>
-          <div class="gov-pr-model-share">PRs · share</div>
+          <div class="gov-pr-model-metrics">${GOV_PR_MODEL_COLUMNS.map(([key, , help]) => governorPRModelSortHeadHtml(key, help, 'gov-pr-model-metric')).join('')}</div>
+          ${governorPRModelSortHeadHtml('prs', '', 'gov-pr-model-share')}
         </div>` : '';
-      return `<div id="governor-pr-models-section" class="advisory-subsection governor-subsection">
-        <div class="section-label section-header-toggle gov-pr-models-subheader" role="button" tabindex="0" aria-expanded="true" aria-controls="governor-pr-models-section-body" data-action="toggleSection" data-keydown-action="sectionHeaderKey" data-arg-types="e,s" data-arg0="governor-pr-models-section" data-arg1="governor-pr-models-section" data-keys="*">
-          <span class="section-chevron" aria-hidden="true">▼</span>
+      return `<div id="governor-pr-models-section" class="advisory-subsection governor-subsection${collapsedCls}">
+        <div class="section-label section-header-toggle gov-pr-models-subheader" role="button" tabindex="0" aria-expanded="${collapsed ? 'false' : 'true'}" aria-controls="governor-pr-models-section-body" data-action="toggleSection" data-keydown-action="sectionHeaderKey" data-arg-types="e,s" data-arg0="governor-pr-models-section" data-arg1="governor-pr-models-section" data-keys="*">
+          <span class="section-chevron${collapsedCls}" aria-hidden="true">▼</span>
           <span>PRS BY MODEL${dashboardSectionHelpMark('governor-pr-models-section')}<span class="gov-pr-models-subtitle">${escapeHtml(subtitle)}</span></span>
           <span class="gov-pr-models-summary">${collapsedSummary}</span>
           <span class="gov-pr-models-toggle" data-stop="1">${buttons}${sortButtons}</span>
         </div>
-        <div class="section-body" id="governor-pr-models-section-body"><div class="gov-pr-models">
+        <div class="section-body${collapsedCls}" id="governor-pr-models-section-body"><div class="gov-pr-models">
           ${coverageNote}
           ${hiveCostNote}
           ${header}
@@ -37806,6 +37963,41 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<a class="repo-issue-plan pill-icon" href="${esc(covering.pr.url || '')}" target="_blank" rel="noopener" data-stop="1" title="${esc(covering.tip)}" aria-label="${esc(covering.tip)}">🔗${count}</a>`;
     }
 
+    // An issue the contributor queue withholds because several PRs have not
+    // settled it (the Overview card's issue churn row, Check if finished)
+    // carries card_churn_prs: those PRs, merged first, then closed unmerged,
+    // by repo, number and state only. They fold under the pill as links, so
+    // the maintainer checking whether it is finished does not have to hunt
+    // for them.
+    // The title, link and merge time are on the export and MCP rows.
+    // repoFull is the card's repository; forge its web paths; hiddenClass
+    // the pill row's filter class, so the fold hides with its row.
+    function issueChurnPRsHTML(issue, repoFull, forge, hiddenClass) {
+      const prs = Array.isArray(issue && issue.card_churn_prs) ? issue.card_churn_prs.filter(pr => pr && pr.number) : [];
+      if (!prs.length) return '';
+      const f = forge || {};
+      const base = String(f.base || window._githubBaseUrl || 'https://github.com').replace(/\/$/, '');
+      const changePath = f.changePath || '/pull';
+      const home = String(repoFull || '').toLowerCase();
+      const merged = prs.filter(pr => pr.state === 'merged').length;
+      const parts = [];
+      if (merged) parts.push(merged + ' merged');
+      if (prs.length > merged) parts.push((prs.length - merged) + ' closed unmerged');
+      const links = prs.map(pr => {
+        const repo = String(pr.repo || repoFull || '');
+        const ref = (repo && repo.toLowerCase() !== home ? repo : '') + '#' + pr.number;
+        const isMerged = pr.state === 'merged';
+        // A server link is used only when it is an http(s) URL.
+        const url = (pr.url && /^https?:\/\//i.test(String(pr.url))) ? String(pr.url) : (repo ? base + '/' + repo + changePath + '/' + pr.number : '');
+        const tip = ref + (isMerged ? ' merged' : ' closed unmerged');
+        const cls = isMerged ? 'cp-chip' : 'cp-chip soft';
+        return url
+          ? `<a class="${cls}" href="${esc(url)}" target="_blank" rel="noopener" title="${esc(tip)}">${esc(ref)}</a>`
+          : `<span class="${cls}" title="${esc(tip)}">${esc(ref)}</span>`;
+      }).join('');
+      return `<details class="cp-dependents${hiddenClass || ''}"><summary>${esc('PRs on this issue: ' + parts.join(', '))}</summary>${links}</details>`;
+    }
+
     // Issues GitHub reports the PR will close (closingIssuesReferences), as
     // carried on the snapshot — the PR-side mirror of the issue pill's
     // linked_prs badge.
@@ -38206,8 +38398,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
 
     function overviewProjectFilterSpec(key) {
       const spec = OVERVIEW_PROJECT_FILTERS[String(key || '')] || null;
-      // With the card the actionable tile is "Hive has it"; its filter chip says so.
+      // With the card the actionable tile is "Hive has it" and the your-turn
+      // tile "Needs a person"; their filter chips say so.
       if (spec && spec.term === 'actionable' && overviewCardMode()) return Object.assign({}, spec, { label: 'Hive has it' });
+      if (spec && spec.term === 'your_turn' && overviewCardMode()) return Object.assign({}, spec, { label: 'Needs a person' });
       return spec;
     }
 
@@ -38850,58 +39044,185 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return String(label || '') + ': ' + lead;
     }
 
-    // The card legend in plot order. A headed group (Your turn, Waiting on
-    // someone else, Blocked, Hive has it) is one bold subtotal row with its
-    // bands indented under it; the other bands are plain rows. The groups
+    // Whether every repo among a donut's items has the same owner; the
+    // legend then drops the owner from every row's Where line, so a repo
+    // reads the same in each row.
+    function overviewCardOneOwner(items) {
+      const owners = new Set();
+      (items || []).forEach(entry => {
+        const repo = String((entry && entry.repo) || '').trim();
+        if (repo) owners.add(repo.includes('/') ? repo.slice(0, repo.indexOf('/')) : '');
+      });
+      return owners.size <= 1;
+    }
+
+    // Where a legend row's items are: "Where: api 8, cli 2, docs 2, 3 other
+    // repos 3". Repos come largest first (ties by name), at most three, then
+    // the rest as one count; a single repo left over is named instead. The
+    // owner is dropped when oneOwner is set (overviewCardOneOwner over the
+    // whole donut; read from these items when it is not given). '' for a row
+    // with no items, so a zero row's hover text gains no line.
+    function overviewCardWhereLine(items, oneOwner) {
+      const shownRepos = 3;
+      const counts = new Map();
+      (items || []).forEach(entry => {
+        const repo = String((entry && entry.repo) || '').trim();
+        if (repo) counts.set(repo, (counts.get(repo) || 0) + 1);
+      });
+      if (!counts.size) return '';
+      const strip = oneOwner === undefined ? overviewCardOneOwner(items) : !!oneOwner;
+      const name = repo => strip && repo.includes('/') ? repo.slice(repo.indexOf('/') + 1) : repo;
+      const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || name(a[0]).localeCompare(name(b[0])));
+      const shown = ranked.length === shownRepos + 1 ? ranked : ranked.slice(0, shownRepos);
+      const parts = shown.map(([repo, n]) => name(repo) + ' ' + n);
+      const rest = ranked.slice(shown.length);
+      if (rest.length) parts.push(rest.length + ' other repos ' + rest.reduce((n, [, c]) => n + c, 0));
+      return 'Where: ' + parts.join(', ');
+    }
+
+    // What two or more of a legend row's items are stuck on, one line per
+    // kind, read only from structured row facts (never from reason text):
+    // the failing check most of them share (failing_checks), and the
+    // approval count most of them have while GitHub still requires a review
+    // (protection.review_decision REVIEW_REQUIRED, protection.approvals_given).
+    // A required review can be a code owner's, so the line does not say how
+    // many more approvals are needed. Only PR rows carry these facts, so an
+    // issue row gets no line. [] when nothing is shared.
+    function overviewCardSharedLines(items) {
+      const minShared = 2;
+      const rows = (items || []).map(entry => (entry && (entry.item || entry)) || {});
+      const lines = [];
+      const checks = new Map();
+      rows.forEach(pr => {
+        const names = new Set((Array.isArray(pr.failing_checks) ? pr.failing_checks : []).map(c => String(c || '').trim()).filter(Boolean));
+        names.forEach(c => checks.set(c, (checks.get(c) || 0) + 1));
+      });
+      const check = [...checks.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+      if (check && check[1] >= minShared) lines.push(check[1] + ' fail the same check: ' + check[0]);
+      const approvals = new Map();
+      rows.forEach(pr => {
+        const p = (pr && pr.protection) || {};
+        const given = Number(p.approvals_given || 0);
+        if (given > 0 && String(p.review_decision || '').toUpperCase() === 'REVIEW_REQUIRED') approvals.set(given, (approvals.get(given) || 0) + 1);
+      });
+      const approval = [...approvals.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+      if (approval && approval[1] >= minShared) lines.push(approval[1] + ' have ' + approval[0] + ' ' + (approval[0] === 1 ? 'approval' : 'approvals') + '; GitHub still requires a review');
+      return lines;
+    }
+
+    // A legend row's hover text as lines: its rule, then where its items
+    // are, then what they share; a line with nothing to say is left out. The
+    // caller escapes each line and joins them with &#10; (esc() turns a
+    // newline into a space).
+    function overviewCardRowTip(label, rule, items, oneOwner) {
+      const where = overviewCardWhereLine(items, oneOwner);
+      return [overviewCardRuleTip(label, rule)].concat(where ? [where] : [], overviewCardSharedLines(items));
+    }
+
+    // The card legend in plot order, except the unexplained row, which
+    // follows the Needs a person total. It has two sections. The first is the Your
+    // turn group (card_group your-turn), headed and totalled with the group's
+    // label, "Needs a person": that heading, its bands as plain rows, then a
+    // bold subtotal in the group's colour, which takes the place of the
+    // group row. The unexplained band (No rule matched) is a hive bug, not a
+    // to-do: it still counts in that subtotal, but its row comes after it
+    // with a "should be 0" note, marked as a warning only above 0. Only the legend moves
+    // it; the donut keeps the slice order. Status is every other group, drawn as
+    // before (a headed group such as Waiting on someone else, Blocked or Hive
+    // has it is one bold subtotal row with its bands indented under it; the
+    // other bands are plain rows), then a bold Status subtotal. The groups
     // come from overview_card.groups; a band whose group is not headed stays
-    // plain.
+    // plain. The split reads only card_group, so it is the same for any hive.
     function overviewCardLegendRows(slices) {
+      const todoGroup = 'your-turn';
       const groups = new Map(overviewCardGroups().map(g => [g.key, g]));
       const headed = key => {
         const g = groups.get(key);
         return g ? !!g.headed : ['your-turn', 'waiting-elsewhere', 'blocked', 'actionable-now'].includes(key);
       };
-      const rows = [];
+      const sum = list => list.reduce((n, p) => n + Number(p.count || 0), 0);
+      const todo = (slices || []).filter(s => s.group === todoGroup);
+      const status = (slices || []).filter(s => s.group !== todoGroup);
+      const todoLabel = (groups.get(todoGroup) || {}).label || 'Needs a person';
+      const bugBand = 'unexplained';
+      const rows = [{ type: 'section', label: todoLabel }];
+      todo.filter(s => s.key !== bugBand).forEach(s => rows.push({ type: 'plain', slice: s }));
+      const itemsOf = list => list.reduce((all, p) => all.concat(p.items || []), []);
+      rows.push({ type: 'subtotal', key: todoGroup, groups: [todoGroup], label: todoLabel, rule: (groups.get(todoGroup) || {}).rule || '', count: sum(todo), items: itemsOf(todo), className: 'overview-card-group-' + todoGroup });
+      todo.filter(s => s.key === bugBand).forEach(s => rows.push({ type: 'warning', slice: s, note: 'should be 0' }));
+      rows.push({ type: 'section', label: 'Status', note: 'nothing for a person to do' });
       const done = new Set();
-      (slices || []).forEach(s => {
+      status.forEach(s => {
         if (!headed(s.group)) { rows.push({ type: 'plain', slice: s }); return; }
         if (done.has(s.group)) return;
         done.add(s.group);
-        const parts = slices.filter(p => p.group === s.group);
+        const parts = status.filter(p => p.group === s.group);
         const g = groups.get(s.group) || {};
-        rows.push({ type: 'head', key: s.group, label: g.label || s.group, rule: g.rule || '', count: parts.reduce((n, p) => n + Number(p.count || 0), 0), className: 'overview-card-group-' + s.group });
+        rows.push({ type: 'head', key: s.group, label: g.label || s.group, rule: g.rule || '', count: sum(parts), items: itemsOf(parts), className: 'overview-card-group-' + s.group });
         parts.forEach(p => rows.push({ type: 'part', slice: p }));
       });
+      rows.push({ type: 'subtotal', key: '', groups: [...new Set(status.map(s => s.group).filter(Boolean))], label: 'Status', rule: 'Nothing for a person to do. Someone else or the hive has the next move, or the item is not work.', count: sum(status), items: itemsOf(status), className: '' });
       return rows;
     }
 
     // Every band and group row keeps its download button and its plain-words
-    // rule as the tooltip. Zero bands stay listed but dimmed, except the keep
-    // bands (Queued for agents, Unexplained), which stay at full strength, and
-    // Held, which is hidden at zero; a group row never dims. Clicks go through
-    // data-action (the dashboard CSP forbids inline handlers).
+    // rule as the tooltip; the tooltip then says where the row's items are
+    // and what several of them share (overviewCardRowTip; a group or
+    // subtotal row reads the items of its bands). Zero bands stay listed but
+    // dimmed, except the keep bands (Queued for agents, No rule matched), which
+    // stay at full strength, and Held, which is hidden at zero; a group or
+    // subtotal row never dims.
+    // Section headings are role=heading level 4 under the chart title (level
+    // 3). The Needs a person subtotal opens and exports the Your turn group,
+    // as its group row did; the Status subtotal exports card_group=<every
+    // other group> (the export reads a comma list) and opens nothing, since
+    // no tile counts exactly those rows. Clicks go through data-action (the
+    // dashboard CSP forbids inline handlers).
     function overviewCardLegendHTML(slices, kind, state) {
       const total = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
       if (!total) return '<div class="overview-empty">Nothing open here; the hive is caught up</div>';
       const format = ((state && state.exportFormat) || 'csv').toUpperCase();
+      // One owner test for the whole donut, so a repo reads the same in
+      // every row's Where line.
+      const oneOwner = overviewCardOneOwner((slices || []).reduce((all, s) => all.concat(s.items || []), []));
       return overviewCardLegendRows(slices).map(row => {
+        if (row.type === 'section') {
+          // The comma is for screen readers: "Status, nothing for a person to do".
+          const note = row.note ? `<span class="overview-chart-legend-sr">,</span> <span class="overview-chart-legend-section-note">${esc(row.note)}</span>` : '';
+          return `<div class="overview-chart-legend-section" role="heading" aria-level="4">${esc(row.label)}${note}</div>`;
+        }
         const head = row.type === 'head';
-        const s = head ? row : row.slice;
+        const subtotal = row.type === 'subtotal';
+        const s = head || subtotal ? row : row.slice;
         const count = Number(s.count || 0);
-        if (!head && !count && s.hideZero) return '';
+        if (!head && !subtotal && !count && s.hideZero) return '';
         const percent = (count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
         const classes = ['overview-chart-legend-row'];
         if (head) classes.push('overview-chart-legend-group');
+        if (subtotal) classes.push('overview-chart-legend-subtotal');
+        if (subtotal && !s.key) classes.push('overview-chart-legend-static');
         if (row.type === 'part') classes.push('overview-chart-legend-part');
-        if (!head && !count && !s.keep) classes.push('overview-chart-legend-zero');
-        const by = head ? 'card_group' : 'card_band';
-        const what = head ? s.label + ' (all)' : s.label;
-        const download = kind ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, s.key, by))}" title="Export ${esc(what)} as ${format}" aria-label="Export ${esc(what)} as ${format}">⬇</button>` : '';
-        return `<div class="${classes.join(' ')}" data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1" title="${esc(overviewCardRuleTip(s.label, s.rule))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${esc(overviewSliceLabel(count, percentLabel, state))}</span>${download}</div>`;
+        // The warning mark only above 0; at 0 the row and its note stay, muted.
+        if (row.type === 'warning' && count > 0) classes.push('overview-chart-legend-warning');
+        if (!head && !subtotal && !count && !s.keep) classes.push('overview-chart-legend-zero');
+        const by = head || subtotal ? 'card_group' : 'card_band';
+        const exportKey = subtotal ? s.groups.join(',') : s.key;
+        const what = head || subtotal ? s.label + ' (all)' : s.label;
+        const download = kind && exportKey ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, exportKey, by))}" title="Export ${esc(what)} as ${format}" aria-label="Export ${esc(what)} as ${format}">⬇</button>` : '';
+        const action = s.key ? ` data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1"` : '';
+        const swatch = s.className ? `<span class="overview-chart-swatch ${esc(s.className)}"></span>` : '<span class="overview-chart-swatch overview-chart-swatch-none" aria-hidden="true"></span>';
+        const spoken = subtotal ? '<span class="overview-chart-legend-sr"> total</span>' : '';
+        // The comma is for screen readers, as on a section note.
+        const note = row.note ? `<span class="overview-chart-legend-sr">,</span> <span class="overview-chart-legend-note">${esc(row.note)}</span>` : '';
+        const tip = overviewCardRowTip(s.label, s.rule, s.items, oneOwner).map(esc).join('&#10;');
+        return `<div class="${classes.join(' ')}"${action} title="${tip}">${swatch}<span class="overview-chart-legend-label">${esc(s.label)}${note}</span>${spoken}<span class="overview-chart-legend-count">${esc(overviewSliceLabel(count, percentLabel, state))}</span>${download}</div>`;
       }).join('');
     }
 
+    // Without the card (an older server) the legend below is today's chart
+    // slice list, unchanged: it has no card groups, so it is not split into
+    // To do and Status.
     function overviewLegendHTML(slices, kind, state) {
       if ((slices || []).some(s => s && s.card)) return overviewCardLegendHTML(slices, kind, state);
       const total = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
@@ -39066,7 +39387,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const format = (state.exportFormat || 'csv').toUpperCase();
       const csvTitle = total ? ('Export ' + (kind === 'pr' ? 'PRs' : 'issues') + ' as ' + format) : 'No matching items to export';
       const download = `<button type="button" class="hv-btn btn-icon btn-sm overview-export-csv overview-chart-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(csvKind))}" title="${esc(csvTitle)}" aria-label="${esc(csvTitle)}">⬇︎</button>`;
-      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind, state)}</div></div></div>`;
+      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title" role="heading" aria-level="3">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind, state)}</div></div></div>`;
     }
 
     function overviewMedianAgeLabel(slices, state) {
@@ -39417,12 +39738,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // With the Overview card (card = { kind, counts by term }) the total
-    // tiles read "54 your turn · 2 waiting · 7 blocked · 2 hive has it · 4
-    // outside": blocked on PRs only, held only above zero.
+    // tiles read "54 needs a person · 2 waiting · 7 blocked · 2 hive has it ·
+    // 4 outside": blocked on PRs only, held only above zero.
     function renderOverviewTotalPartitionSubline(equation, card) {
       if (card && card.counts) {
         const n = key => Number(card.counts[key] || 0);
-        const parts = [[n('your_turn'), 'your turn'], [n('waiting_elsewhere'), 'waiting']];
+        const parts = [[n('your_turn'), 'needs a person'], [n('waiting_elsewhere'), 'waiting']];
         if (n('held') > 0) parts.push([n('held'), 'held']);
         if (card.kind === 'prs') parts.push([n('blocked'), 'blocked']);
         parts.push([n('actionable'), 'hive has it'], [n('outside'), 'outside']);
@@ -39520,7 +39841,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // today's equation never draws into a card tile's sparkline.
     function overviewCardTileDefs() {
       return [
-        { key: 'your-turn', term: 'your_turn', label: 'Your turn', field: 'overviewCardYourTurn' },
+        { key: 'your-turn', term: 'your_turn', label: 'Needs a person', field: 'overviewCardYourTurn' },
         { key: 'waiting-elsewhere', term: 'waiting_elsewhere', label: 'Waiting on someone else', field: 'overviewCardWaiting' },
         { key: 'held', term: 'held', label: 'Held', field: 'overviewCardHeld' },
         { key: 'blocked', term: 'blocked', label: 'Blocked', field: 'overviewCardBlocked' },
@@ -39595,14 +39916,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
 
     // A tile's ⓘ: its bands with counts. Zero bands are left out except the
-    // keep bands (Queued for agents, Unexplained). A band on both donuts is one
+    // keep bands (Queued for agents, No rule matched). A band on both donuts is one
     // row, "Human placed on hold (2 issues, 2 PRs)" (a kept band at zero is
     // just its name). Outside adds the
     // remainder; Your turn says how many of its items the inbox does not show.
     function overviewCardTermInfo(tile, kpi) {
       const issueSpecs = new Map(overviewCardSpecs('issue').map(spec => [spec.key, spec]));
       const prSpecs = new Map(overviewCardSpecs('pr').map(spec => [spec.key, spec]));
-      // Unexplained is listed in Your turn only when it is above zero; the
+      // No rule matched (unexplained) is listed in Your turn only when it is above zero; the
       // legend keeps it at zero as a keep band.
       const shown = row => Number(row.count || 0) > 0 || (row.keep && row.key !== 'unexplained');
       const rows = (tile.breakdown || []).filter(shown).map(row => {
@@ -39645,12 +39966,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       (cards || []).forEach(card => {
         if (card.key === 'open-issues') {
           card.subline = renderOverviewTotalPartitionSubline(issueEq, { kind: 'issues', counts: perKind('issues') });
-          card.tip = 'All open GitHub issues (pull requests excluded) across the selected configured repos. Each one counts in exactly one tile: your turn, waiting on someone else, held, hive has it, or outside. Click to filter Projects to matching issues.';
+          card.tip = 'All open GitHub issues (pull requests excluded) across the selected configured repos. Each one counts in exactly one tile: needs a person, waiting on someone else, held, hive has it, or outside. Click to filter Projects to matching issues.';
           return;
         }
         if (card.key === 'open-prs') {
           card.subline = renderOverviewTotalPartitionSubline(prEq, { kind: 'prs', counts: perKind('prs') });
-          card.tip = 'All open GitHub pull requests across the selected configured repos, including drafts. Each one counts in exactly one tile: your turn, waiting on someone else, held, blocked, hive has it, or outside (drafts). Click to filter Projects to matching PRs.';
+          card.tip = 'All open GitHub pull requests across the selected configured repos, including drafts. Each one counts in exactly one tile: needs a person, waiting on someone else, held, blocked, hive has it, or outside (drafts). Click to filter Projects to matching PRs.';
           return;
         }
         const tile = byKey.get(card.key);
@@ -39719,7 +40040,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const snapshotComplete = !(repos || []).some(r => r && (r.countsIncomplete || r.countsStale)) && !(_overviewKPILocalScope === 'all' && window._lastStatus?.overviewKPIIncomplete);
       if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
       const ops = ['+', '=', '+', '+', '+', '+', '+'];
-      const equationLabel = `${openIssues} total open issues + ${openPRs} total open PRs = ${actionableNow} ${cardKPI ? 'hive has it' : 'actionable now'} + ${yourTurn} your turn + ${waiting} waiting on someone else + ${held} held + ${blocked} blocked + ${outside} outside`;
+      const equationLabel = `${openIssues} total open issues + ${openPRs} total open PRs = ${actionableNow} ${cardKPI ? 'hive has it' : 'actionable now'} + ${yourTurn} ${cardKPI ? 'needs a person' : 'your turn'} + ${waiting} waiting on someone else + ${held} held + ${blocked} blocked + ${outside} outside`;
       // Last-good figures after a refused enumeration (#13382) or a failed
       // forgestate reconcile (#13376) are current as of staleSince, not
       // zero; say so beside the KPIs.
@@ -40195,9 +40516,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const actions = [];
       const after = [];
       const parkedIssue = ctx.kind === 'issue' && String(own.reason_code || '').indexOf('parked_needs_') === 0;
-      if (own.verb === 'DECIDE' || own.verb === 'STEER' || (own.verb === 'REVIEW' && parkedIssue)) {
+      // An untrusted reporter's design proposal carries no parking label, and
+      // the un-park sweep skips an issue without one, so /hive approve and
+      // /hive decision would do nothing there.
+      const openForDiscussion = own.reason_code === 'open_for_discussion';
+      // A PR Hive's review holds for a human decision (the card's Decide
+      // band): /hive approve releases the hold on any PR, while a
+      // /hive decision <text> reply answers it only on a PR Hive opened.
+      const reviewQuestion = ctx.kind === 'pr' && own.reason_code === 'review_requires_human';
+      if ((own.verb === 'DECIDE' && !openForDiscussion) || own.verb === 'STEER' || (own.verb === 'REVIEW' && (parkedIssue || reviewQuestion))) {
         if (ctx.labelDriven) after.push({ type: 'note', text: 'This repository is label-driven: accept or un-park it with the repository\'s triage labels; Hive refuses /hive approve and /hive decision here.' });
-        else after.push({ type: 'copy', text: '/hive approve' }, { type: 'copy', text: '/hive decision <text>' });
+        else {
+          after.push({ type: 'copy', text: '/hive approve' }, { type: 'copy', text: '/hive decision <text>' });
+          if (reviewQuestion) after.push({ type: 'note', text: '/hive approve or an approving review releases the review hold; /hive decision <text> answers it only on a pull request Hive opened.' });
+        }
       }
       if (ctx.kind === 'issue' && own.action === 'release' && own.release_tag && ctx.canToggleHold && !ctx.labelDriven) {
         actions.push({ type: 'action', id: 'release', label: 'Release ' + own.release_tag });
@@ -40214,6 +40546,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (own.verb === 'ADMIT' && own.reason_code === 'untrusted_reporter') {
         const labels = (ctx.admissionLabels || []).filter(Boolean);
         after.push({ type: 'note', text: labels.length ? 'Add the label ' + labels.join(' or ') + ' to admit it.' : 'Add an admission label to admit it.' });
+      }
+      // An untrusted reporter's design proposal still needs those labels
+      // once a maintainer has decided it.
+      if (openForDiscussion) {
+        const labels = (ctx.admissionLabels || []).filter(Boolean);
+        after.push({ type: 'note', text: labels.length ? 'Once decided, add the label ' + labels.join(' or ') + ' to admit it, or close it.' : 'Once decided, add an admission label to admit it, or close it.' });
       }
       if (own.verb === 'REVIEW' && ctx.kind === 'pr' && own.action === 'release_hold' && ctx.held && ctx.canToggleHold) {
         actions.push({ type: 'action', id: 'release_hold', label: 'Release hold' });
@@ -41581,7 +41919,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const issueUrl = i.url || (repoUrl + cardForge.issuesPath + '/' + i.number);
           const rowKinds = repoIssueFilterKinds(i, info, isHeldIssue);
           const statusKind = isHeldIssue ? 'issue:held' : (info.chip ? repoIssueChipKind(info.chip) : ('issue:' + info.band));
-          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}>${yourTurnLead(yourTurnMarkerHTML(repoFull, 'issue', i), `<button type="button" class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass} repo-pill-filter-toggle" title="${esc(statusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(isHeldIssue ? 'held' : (info.chip || issueBandShortLabel(info.band)))}</button>`)}<a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}${cpChipsHTML(i)}</a>${repoPillActionCluster([prBadge + cpActionHTML(i), planBtn, designBtn, holdBtn])}</span>`;
+          return `<span class="repo-issue-pill-wrap repo-pill-row${repoPillFilterHiddenClass(rowKinds, pillFilter)}"${repoPillKindAttr(rowKinds)}>${yourTurnLead(yourTurnMarkerHTML(repoFull, 'issue', i), `<button type="button" class="repo-pill-status repo-issue-pill${bandClass}${heldClass}${staleClass} repo-pill-filter-toggle" title="${esc(statusTip)}"${repoPillFilterAttrs(statusKind)}>${esc(isHeldIssue ? 'held' : (info.chip || issueBandShortLabel(info.band)))}</button>`)}<a class="repo-issue-pill repo-pill-main${bandClass}${heldClass}${staleClass}" href="${esc(issueUrl)}" target="_blank" rel="noopener" title="${esc(issueTip(i, info) + (isHeldIssue ? ' — ' + heldTip : ''))}"><span class="pill-num">#${i.number}</span><span class="pill-title">${esc(title)}</span>${issueSignalHTML(info)}${cpChipsHTML(i)}</a>${repoPillActionCluster([prBadge + cpActionHTML(i), planBtn, designBtn, holdBtn])}</span>${issueChurnPRsHTML(i, repoFull, cardForge, repoPillFilterHiddenClass(rowKinds, pillFilter))}`;
         };
         // Critical path (#13646): within a band the rows that unblock the
         // most come first, and a row waiting on another row of the same

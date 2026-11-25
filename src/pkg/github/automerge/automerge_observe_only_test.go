@@ -505,3 +505,238 @@ func TestFoldObserveOnlyVerdictTrustedBotMatchesLane(t *testing.T) {
 		})
 	}
 }
+
+// TestFoldLaneNotedVerdictSurvivesSplitDrain: on a repo whose auto-merge is
+// on, a contributor's PR with a requires_human verdict flipped between 050
+// and 085 on one head all night (projectbluefin/utah#1502). The lane notes
+// the verdict, the other driver's drain takes the note, and the next drain
+// holds contributor-lane:no-verdict with no verdict, which classifies as
+// 050. foldLaneNotedVerdict gives such an observation the verdict the lane
+// noted for its head, for a reason the lane returns only after the note, so
+// the split drain and the whole drain reach the same stage.
+func TestFoldLaneNotedVerdictSurvivesSplitDrain(t *testing.T) {
+	const head, oldHead = "5a77f787c0ffee5a77f787c0ffee5a77f787c0ff", "beefbeefbeefbeefbeefbeefbeefbeefbeefbeef"
+	requiresHuman := ContributorLaneVerdict{Configured: true, Verdict: "requires_human"}
+	approve := ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}
+	changes := ContributorLaneVerdict{Configured: true, Verdict: "changes_requested"}
+	ciPending := "required-check-pending:build"
+	reviewGateAwaiting := autoMergeReasonReviewGatePrefix + ReviewGateOutcomeAwaiting
+
+	// newEngine serves verdict for head h only; every other head has
+	// nothing reviewed yet.
+	newEngine := func(h string, verdict ContributorLaneVerdict) *Engine {
+		return &Engine{
+			transport:        stubTransport{},
+			stageTracker:     NewStageTracker(),
+			stageLabelPolicy: func() StageLabelPolicy { return StageLabelPolicy{Enabled: true} },
+			contributorLaneVerdict: func(repo string, number int, sha string) ContributorLaneVerdict {
+				if repo == "acme/widget" && number == 1502 && sha == h {
+					return verdict
+				}
+				return ContributorLaneVerdict{Configured: true}
+			},
+		}
+	}
+	observe := func(lane, h, reason string) stageObservation {
+		return stageObservation{Lane: lane, Display: "acme/widget", Owner: "acme", Repo: "widget", Number: 1502, HeadSHA: h, Author: "castrojo", Reason: reason}
+	}
+	// laneNote is what the contributor and trusted-author lanes note for
+	// the head they evaluated, before they return.
+	laneNote := func(c *Engine, h string) {
+		c.noteStageVerdict("acme", "widget", 1502, c.contributorLaneVerdictFor("acme/widget", 1502, h))
+	}
+	drainOne := func(t *testing.T, c *Engine) []stageObservation {
+		t.Helper()
+		lists := c.stageTracker.drain()
+		if len(lists) != 1 || len(lists[0]) != 1 {
+			t.Fatalf("drain = %+v, want one observation", lists)
+		}
+		return lists[0]
+	}
+	// whole is the drain that kept the lane's note with its observation.
+	whole := func(t *testing.T, c *Engine, o stageObservation) []stageObservation {
+		t.Helper()
+		laneNote(c, o.HeadSHA)
+		c.stageTracker.record(o)
+		list := drainOne(t, c)
+		if !list[0].Detail.VerdictKnown {
+			t.Fatalf("the whole drain lost the lane's verdict: %+v", list[0].Detail)
+		}
+		return list
+	}
+	// split drives the race: the lane notes the verdict, the other
+	// driver's drain takes the note, then the lane records its observation.
+	split := func(t *testing.T, c *Engine, o stageObservation) []stageObservation {
+		t.Helper()
+		laneNote(c, o.HeadSHA)
+		if first := c.stageTracker.drain(); len(first) != 0 {
+			t.Fatalf("the first drain held an observation: %+v", first)
+		}
+		c.stageTracker.record(o)
+		list := drainOne(t, c)
+		if list[0].Detail.VerdictKnown {
+			t.Fatalf("the split drain kept the verdict; the race is not reproduced: %+v", list[0].Detail)
+		}
+		return list
+	}
+	// stagePass runs the folds in ApplyStageLabels' order.
+	stagePass := func(c *Engine, list []stageObservation) stageVerdict {
+		c.foldObserveOnlyVerdict(list)
+		c.foldLaneNotedVerdict(list)
+		c.foldRecordedDecision(context.Background(), list)
+		got, _, _ := resolveStage(list)
+		return got
+	}
+
+	cases := []struct {
+		name    string
+		lane    string
+		reason  string
+		verdict ContributorLaneVerdict
+		want    stagelabels.Stage // None: only require both drains to agree
+	}{
+		{name: "contributor no-verdict, requires_human", lane: stageLaneContributor, reason: contributorLaneReasonNoVerdict, verdict: requiresHuman, want: stagelabels.NeedsDecision},
+		{name: "contributor CI pending, approve", lane: stageLaneContributor, reason: ciPending, verdict: approve, want: stagelabels.Reviewed},
+		{name: "contributor CI pending, changes requested", lane: stageLaneContributor, reason: ciPending, verdict: changes},
+		{name: "trusted-author review gate, requires_human", lane: stageLaneTrusted, reason: reviewGateAwaiting, verdict: requiresHuman, want: stagelabels.NeedsDecision},
+		{name: "trusted-author CI pending, approve", lane: stageLaneTrusted, reason: ciPending, verdict: approve, want: stagelabels.Reviewed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newEngine(head, tc.verdict)
+			w := whole(t, c, observe(tc.lane, head, tc.reason))
+			wholeStage := stagePass(c, w)
+			if tc.want != stagelabels.None && wholeStage.Stage != tc.want {
+				t.Fatalf("whole drain stage %s, want %s", wholeStage.Stage, tc.want)
+			}
+
+			s := split(t, c, observe(tc.lane, head, tc.reason))
+			if got, _, _ := resolveStage(s); got.Stage != stagelabels.ReviewPending {
+				t.Fatalf("before the fold: stage %s, want 050 (the flap's other half)", got.Stage)
+			}
+			splitStage := stagePass(c, s)
+			if !s[0].Detail.VerdictKnown {
+				t.Fatalf("the fold left the observation without a verdict: %+v", s[0].Detail)
+			}
+			if splitStage.Stage == stagelabels.ReviewPending {
+				t.Fatalf("split drain regressed to 050; whole drain stage %s", wholeStage.Stage)
+			}
+			if splitStage.Stage != wholeStage.Stage || splitStage.Reason != wholeStage.Reason {
+				t.Fatalf("split drain stage %s (%s), whole drain stage %s (%s): the two drains disagree", splitStage.Stage, splitStage.Reason, wholeStage.Stage, wholeStage.Reason)
+			}
+			if !reflect.DeepEqual(s[0].Detail.Verdict, w[0].Detail.Verdict) {
+				t.Fatalf("folded verdict %+v, lane's noted verdict %+v", s[0].Detail.Verdict, w[0].Detail.Verdict)
+			}
+			if ds, dw := stageengine.DerivePR(factsFrom(s)), stageengine.DerivePR(factsFrom(w)); ds.Stage != dw.Stage {
+				t.Fatalf("reconciler derivation: split %s, whole %s", ds.Stage, dw.Stage)
+			}
+		})
+	}
+
+	t.Run("a verdict recorded only for an older head is not applied", func(t *testing.T) {
+		for _, tc := range []struct {
+			lane, reason string
+			verdict      ContributorLaneVerdict
+		}{
+			{stageLaneContributor, contributorLaneReasonNoVerdict, requiresHuman},
+			{stageLaneContributor, ciPending, approve},
+			{stageLaneTrusted, reviewGateAwaiting, requiresHuman},
+		} {
+			c := newEngine(oldHead, tc.verdict)
+			list := split(t, c, observe(tc.lane, head, tc.reason))
+			got := stagePass(c, list)
+			if v := list[0].Detail.Verdict; v.Approved || v.Verdict != "" {
+				t.Fatalf("%s %s: the older head's verdict carried onto %s: %+v", tc.lane, tc.reason, head, list[0].Detail)
+			}
+			if got.Stage != stagelabels.ReviewPending {
+				t.Fatalf("%s %s: stage %s, want 050", tc.lane, tc.reason, got.Stage)
+			}
+		}
+	})
+
+	t.Run("no verdict at all is still 050", func(t *testing.T) {
+		c := newEngine(head, ContributorLaneVerdict{Configured: true})
+		w := whole(t, c, observe(stageLaneContributor, head, contributorLaneReasonNoVerdict))
+		wholeStage := stagePass(c, w)
+		list := split(t, c, observe(stageLaneContributor, head, contributorLaneReasonNoVerdict))
+		got := stagePass(c, list)
+		if got.Stage != stagelabels.ReviewPending || wholeStage.Stage != stagelabels.ReviewPending {
+			t.Fatalf("split stage %s, whole stage %s, want 050 on both", got.Stage, wholeStage.Stage)
+		}
+		if d := stageengine.DerivePR(factsFrom(list)); d.Stage != stagelabels.ReviewPending {
+			t.Fatalf("reconciler derivation = %s, want 050", d.Stage)
+		}
+	})
+
+	// The lane reads a person's approval of a requires_human head before
+	// CI and notes it beside the verdict, and the split takes both. Folding
+	// the question without the answer would invent an 085 the whole drain
+	// does not derive, so a CI wait gets no verdict that routes to 085.
+	t.Run("a requires_human verdict is not folded into a CI wait", func(t *testing.T) {
+		c := newEngine(head, requiresHuman)
+		laneNote(c, head)
+		c.noteStageTrustedHumanApproval("acme", "widget", 1502, head, "danathar")
+		c.stageTracker.record(observe(stageLaneContributor, head, ciPending))
+		w := drainOne(t, c)
+		wholeStage := stagePass(c, w)
+		if wholeStage.Stage == stagelabels.NeedsDecision {
+			t.Fatalf("whole drain stage 085 with the approval noted: %+v", w[0].Detail)
+		}
+
+		c.noteStageTrustedHumanApproval("acme", "widget", 1502, head, "danathar")
+		list := split(t, c, observe(stageLaneContributor, head, ciPending))
+		got := stagePass(c, list)
+		if list[0].Detail.VerdictKnown {
+			t.Fatalf("requires_human folded into %s without its approval: %+v", ciPending, list[0].Detail)
+		}
+		if got.Stage != wholeStage.Stage {
+			t.Fatalf("split drain stage %s, whole drain stage %s", got.Stage, wholeStage.Stage)
+		}
+	})
+
+	t.Run("a verdict the drain carried is left alone", func(t *testing.T) {
+		c := newEngine(head, approve)
+		o := observe(stageLaneContributor, head, ciPending)
+		o.Detail = stageDetail{VerdictKnown: true, Verdict: changes}
+		list := []stageObservation{o}
+		c.foldLaneNotedVerdict(list)
+		if list[0].Detail.Verdict.Approved || list[0].Detail.Verdict.Verdict != "changes_requested" {
+			t.Fatalf("noted verdict overwritten: %+v", list[0].Detail)
+		}
+	})
+
+	// A reason the lane can return before it notes the verdict (or a lane
+	// this fold does not cover) never gets one: the drain cannot tell that
+	// the lane read a verdict on this pass.
+	t.Run("reasons from before the note are left alone", func(t *testing.T) {
+		for _, tc := range []struct {
+			name    string
+			lane    string
+			reason  string
+			err     bool
+			verdict ContributorLaneVerdict
+		}{
+			{name: "admission error", lane: stageLaneContributor, reason: contributorLaneReasonNoClaim, err: true, verdict: requiresHuman},
+			{name: "admission reason", lane: stageLaneContributor, reason: contributorLaneReasonNoClaim, verdict: requiresHuman},
+			{name: "adoption-intent gate", lane: stageLaneContributor, reason: contributorLaneReasonAdoptionIntentPending, verdict: approve},
+			{name: "sentinel park", lane: stageLaneContributor, reason: contributorLaneReasonSentinelBlocked, verdict: requiresHuman},
+			{name: "mergeable unknown", lane: stageLaneContributor, reason: prstage.StageReasonMergeableUnknown, verdict: requiresHuman},
+			{name: "merge-train position", lane: stageLaneContributor, reason: prstage.MergeTrainReasonPrefix + prstage.MergeTrainStateQueuedBehind + "#12", verdict: requiresHuman},
+			{name: "trusted-author role refused", lane: stageLaneTrusted, reason: "untrusted-author-role", verdict: requiresHuman},
+			{name: "excluded label that reads as CI", lane: stageLaneContributor, reason: "excluded-label:review-pending", verdict: approve},
+			{name: "do-not-merge label that reads as CI", lane: stageLaneTrusted, reason: "label:do-not-merge/ci-pending", verdict: approve},
+			{name: "CI read error", lane: stageLaneContributor, reason: ciPending, err: true, verdict: approve},
+			{name: "self-authored lane", lane: stageLaneSelf, reason: ciPending, verdict: approve},
+			{name: "no-verdict on the trusted-author lane", lane: stageLaneTrusted, reason: contributorLaneReasonNoVerdict, verdict: requiresHuman},
+		} {
+			c := newEngine(head, tc.verdict)
+			o := observe(tc.lane, head, tc.reason)
+			o.Err = tc.err
+			list := []stageObservation{o}
+			c.foldLaneNotedVerdict(list)
+			if list[0].Detail.VerdictKnown {
+				t.Fatalf("%s: verdict folded onto lane %s reason %q: %+v", tc.name, tc.lane, tc.reason, list[0].Detail)
+			}
+		}
+	})
+}

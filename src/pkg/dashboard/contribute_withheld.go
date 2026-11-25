@@ -539,14 +539,21 @@ func mergedClaimStaleDetail(claim ghpkg.IssueClaim, now time.Time) string {
 	if days == 1 {
 		unit = "day"
 	}
+	// "merged" is said only when the claim records a merge. Only a settled
+	// claim reaches this reason, and a verdict citing an open PR is not
+	// settled, but the prose must never assert a merge the ledger lacks.
+	pr := "PR"
+	if claim.MergedPR {
+		pr = "merged PR"
+	}
 	by := "a merged pull request"
 	if claim.PRNumber > 0 {
-		by = fmt.Sprintf("merged PR #%d", claim.PRNumber)
+		by = fmt.Sprintf("%s #%d", pr, claim.PRNumber)
 	}
 	if claim.Source == ghpkg.ClaimSourceVerdict {
 		by = "a verified no_work_needed verdict"
 		if claim.PRNumber > 0 {
-			by = fmt.Sprintf("a verified no_work_needed verdict citing merged PR #%d", claim.PRNumber)
+			by = fmt.Sprintf("a verified no_work_needed verdict citing %s #%d", pr, claim.PRNumber)
 		}
 	}
 	return fmt.Sprintf("Fixed by %s %d %s ago; the issue is still open — close it or say what remains", by, days, unit)

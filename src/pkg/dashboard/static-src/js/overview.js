@@ -224,8 +224,10 @@
 
     function overviewProjectFilterSpec(key) {
       const spec = OVERVIEW_PROJECT_FILTERS[String(key || '')] || null;
-      // With the card the actionable tile is "Hive has it"; its filter chip says so.
+      // With the card the actionable tile is "Hive has it" and the your-turn
+      // tile "Needs a person"; their filter chips say so.
       if (spec && spec.term === 'actionable' && overviewCardMode()) return Object.assign({}, spec, { label: 'Hive has it' });
+      if (spec && spec.term === 'your_turn' && overviewCardMode()) return Object.assign({}, spec, { label: 'Needs a person' });
       return spec;
     }
 
@@ -868,58 +870,185 @@
       return String(label || '') + ': ' + lead;
     }
 
-    // The card legend in plot order. A headed group (Your turn, Waiting on
-    // someone else, Blocked, Hive has it) is one bold subtotal row with its
-    // bands indented under it; the other bands are plain rows. The groups
+    // Whether every repo among a donut's items has the same owner; the
+    // legend then drops the owner from every row's Where line, so a repo
+    // reads the same in each row.
+    function overviewCardOneOwner(items) {
+      const owners = new Set();
+      (items || []).forEach(entry => {
+        const repo = String((entry && entry.repo) || '').trim();
+        if (repo) owners.add(repo.includes('/') ? repo.slice(0, repo.indexOf('/')) : '');
+      });
+      return owners.size <= 1;
+    }
+
+    // Where a legend row's items are: "Where: api 8, cli 2, docs 2, 3 other
+    // repos 3". Repos come largest first (ties by name), at most three, then
+    // the rest as one count; a single repo left over is named instead. The
+    // owner is dropped when oneOwner is set (overviewCardOneOwner over the
+    // whole donut; read from these items when it is not given). '' for a row
+    // with no items, so a zero row's hover text gains no line.
+    function overviewCardWhereLine(items, oneOwner) {
+      const shownRepos = 3;
+      const counts = new Map();
+      (items || []).forEach(entry => {
+        const repo = String((entry && entry.repo) || '').trim();
+        if (repo) counts.set(repo, (counts.get(repo) || 0) + 1);
+      });
+      if (!counts.size) return '';
+      const strip = oneOwner === undefined ? overviewCardOneOwner(items) : !!oneOwner;
+      const name = repo => strip && repo.includes('/') ? repo.slice(repo.indexOf('/') + 1) : repo;
+      const ranked = [...counts.entries()].sort((a, b) => b[1] - a[1] || name(a[0]).localeCompare(name(b[0])));
+      const shown = ranked.length === shownRepos + 1 ? ranked : ranked.slice(0, shownRepos);
+      const parts = shown.map(([repo, n]) => name(repo) + ' ' + n);
+      const rest = ranked.slice(shown.length);
+      if (rest.length) parts.push(rest.length + ' other repos ' + rest.reduce((n, [, c]) => n + c, 0));
+      return 'Where: ' + parts.join(', ');
+    }
+
+    // What two or more of a legend row's items are stuck on, one line per
+    // kind, read only from structured row facts (never from reason text):
+    // the failing check most of them share (failing_checks), and the
+    // approval count most of them have while GitHub still requires a review
+    // (protection.review_decision REVIEW_REQUIRED, protection.approvals_given).
+    // A required review can be a code owner's, so the line does not say how
+    // many more approvals are needed. Only PR rows carry these facts, so an
+    // issue row gets no line. [] when nothing is shared.
+    function overviewCardSharedLines(items) {
+      const minShared = 2;
+      const rows = (items || []).map(entry => (entry && (entry.item || entry)) || {});
+      const lines = [];
+      const checks = new Map();
+      rows.forEach(pr => {
+        const names = new Set((Array.isArray(pr.failing_checks) ? pr.failing_checks : []).map(c => String(c || '').trim()).filter(Boolean));
+        names.forEach(c => checks.set(c, (checks.get(c) || 0) + 1));
+      });
+      const check = [...checks.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+      if (check && check[1] >= minShared) lines.push(check[1] + ' fail the same check: ' + check[0]);
+      const approvals = new Map();
+      rows.forEach(pr => {
+        const p = (pr && pr.protection) || {};
+        const given = Number(p.approvals_given || 0);
+        if (given > 0 && String(p.review_decision || '').toUpperCase() === 'REVIEW_REQUIRED') approvals.set(given, (approvals.get(given) || 0) + 1);
+      });
+      const approval = [...approvals.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0];
+      if (approval && approval[1] >= minShared) lines.push(approval[1] + ' have ' + approval[0] + ' ' + (approval[0] === 1 ? 'approval' : 'approvals') + '; GitHub still requires a review');
+      return lines;
+    }
+
+    // A legend row's hover text as lines: its rule, then where its items
+    // are, then what they share; a line with nothing to say is left out. The
+    // caller escapes each line and joins them with &#10; (esc() turns a
+    // newline into a space).
+    function overviewCardRowTip(label, rule, items, oneOwner) {
+      const where = overviewCardWhereLine(items, oneOwner);
+      return [overviewCardRuleTip(label, rule)].concat(where ? [where] : [], overviewCardSharedLines(items));
+    }
+
+    // The card legend in plot order, except the unexplained row, which
+    // follows the Needs a person total. It has two sections. The first is the Your
+    // turn group (card_group your-turn), headed and totalled with the group's
+    // label, "Needs a person": that heading, its bands as plain rows, then a
+    // bold subtotal in the group's colour, which takes the place of the
+    // group row. The unexplained band (No rule matched) is a hive bug, not a
+    // to-do: it still counts in that subtotal, but its row comes after it
+    // with a "should be 0" note, marked as a warning only above 0. Only the legend moves
+    // it; the donut keeps the slice order. Status is every other group, drawn as
+    // before (a headed group such as Waiting on someone else, Blocked or Hive
+    // has it is one bold subtotal row with its bands indented under it; the
+    // other bands are plain rows), then a bold Status subtotal. The groups
     // come from overview_card.groups; a band whose group is not headed stays
-    // plain.
+    // plain. The split reads only card_group, so it is the same for any hive.
     function overviewCardLegendRows(slices) {
+      const todoGroup = 'your-turn';
       const groups = new Map(overviewCardGroups().map(g => [g.key, g]));
       const headed = key => {
         const g = groups.get(key);
         return g ? !!g.headed : ['your-turn', 'waiting-elsewhere', 'blocked', 'actionable-now'].includes(key);
       };
-      const rows = [];
+      const sum = list => list.reduce((n, p) => n + Number(p.count || 0), 0);
+      const todo = (slices || []).filter(s => s.group === todoGroup);
+      const status = (slices || []).filter(s => s.group !== todoGroup);
+      const todoLabel = (groups.get(todoGroup) || {}).label || 'Needs a person';
+      const bugBand = 'unexplained';
+      const rows = [{ type: 'section', label: todoLabel }];
+      todo.filter(s => s.key !== bugBand).forEach(s => rows.push({ type: 'plain', slice: s }));
+      const itemsOf = list => list.reduce((all, p) => all.concat(p.items || []), []);
+      rows.push({ type: 'subtotal', key: todoGroup, groups: [todoGroup], label: todoLabel, rule: (groups.get(todoGroup) || {}).rule || '', count: sum(todo), items: itemsOf(todo), className: 'overview-card-group-' + todoGroup });
+      todo.filter(s => s.key === bugBand).forEach(s => rows.push({ type: 'warning', slice: s, note: 'should be 0' }));
+      rows.push({ type: 'section', label: 'Status', note: 'nothing for a person to do' });
       const done = new Set();
-      (slices || []).forEach(s => {
+      status.forEach(s => {
         if (!headed(s.group)) { rows.push({ type: 'plain', slice: s }); return; }
         if (done.has(s.group)) return;
         done.add(s.group);
-        const parts = slices.filter(p => p.group === s.group);
+        const parts = status.filter(p => p.group === s.group);
         const g = groups.get(s.group) || {};
-        rows.push({ type: 'head', key: s.group, label: g.label || s.group, rule: g.rule || '', count: parts.reduce((n, p) => n + Number(p.count || 0), 0), className: 'overview-card-group-' + s.group });
+        rows.push({ type: 'head', key: s.group, label: g.label || s.group, rule: g.rule || '', count: sum(parts), items: itemsOf(parts), className: 'overview-card-group-' + s.group });
         parts.forEach(p => rows.push({ type: 'part', slice: p }));
       });
+      rows.push({ type: 'subtotal', key: '', groups: [...new Set(status.map(s => s.group).filter(Boolean))], label: 'Status', rule: 'Nothing for a person to do. Someone else or the hive has the next move, or the item is not work.', count: sum(status), items: itemsOf(status), className: '' });
       return rows;
     }
 
     // Every band and group row keeps its download button and its plain-words
-    // rule as the tooltip. Zero bands stay listed but dimmed, except the keep
-    // bands (Queued for agents, Unexplained), which stay at full strength, and
-    // Held, which is hidden at zero; a group row never dims. Clicks go through
-    // data-action (the dashboard CSP forbids inline handlers).
+    // rule as the tooltip; the tooltip then says where the row's items are
+    // and what several of them share (overviewCardRowTip; a group or
+    // subtotal row reads the items of its bands). Zero bands stay listed but
+    // dimmed, except the keep bands (Queued for agents, No rule matched), which
+    // stay at full strength, and Held, which is hidden at zero; a group or
+    // subtotal row never dims.
+    // Section headings are role=heading level 4 under the chart title (level
+    // 3). The Needs a person subtotal opens and exports the Your turn group,
+    // as its group row did; the Status subtotal exports card_group=<every
+    // other group> (the export reads a comma list) and opens nothing, since
+    // no tile counts exactly those rows. Clicks go through data-action (the
+    // dashboard CSP forbids inline handlers).
     function overviewCardLegendHTML(slices, kind, state) {
       const total = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
       if (!total) return '<div class="overview-empty">Nothing open here; the hive is caught up</div>';
       const format = ((state && state.exportFormat) || 'csv').toUpperCase();
+      // One owner test for the whole donut, so a repo reads the same in
+      // every row's Where line.
+      const oneOwner = overviewCardOneOwner((slices || []).reduce((all, s) => all.concat(s.items || []), []));
       return overviewCardLegendRows(slices).map(row => {
+        if (row.type === 'section') {
+          // The comma is for screen readers: "Status, nothing for a person to do".
+          const note = row.note ? `<span class="overview-chart-legend-sr">,</span> <span class="overview-chart-legend-section-note">${esc(row.note)}</span>` : '';
+          return `<div class="overview-chart-legend-section" role="heading" aria-level="4">${esc(row.label)}${note}</div>`;
+        }
         const head = row.type === 'head';
-        const s = head ? row : row.slice;
+        const subtotal = row.type === 'subtotal';
+        const s = head || subtotal ? row : row.slice;
         const count = Number(s.count || 0);
-        if (!head && !count && s.hideZero) return '';
+        if (!head && !subtotal && !count && s.hideZero) return '';
         const percent = (count / total) * OVERVIEW_CHART_PERCENT_SCALE;
         const percentLabel = percent.toFixed(OVERVIEW_CHART_DECIMAL_PLACES) + '%';
         const classes = ['overview-chart-legend-row'];
         if (head) classes.push('overview-chart-legend-group');
+        if (subtotal) classes.push('overview-chart-legend-subtotal');
+        if (subtotal && !s.key) classes.push('overview-chart-legend-static');
         if (row.type === 'part') classes.push('overview-chart-legend-part');
-        if (!head && !count && !s.keep) classes.push('overview-chart-legend-zero');
-        const by = head ? 'card_group' : 'card_band';
-        const what = head ? s.label + ' (all)' : s.label;
-        const download = kind ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, s.key, by))}" title="Export ${esc(what)} as ${format}" aria-label="Export ${esc(what)} as ${format}">⬇</button>` : '';
-        return `<div class="${classes.join(' ')}" data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1" title="${esc(overviewCardRuleTip(s.label, s.rule))}"><span class="overview-chart-swatch ${esc(s.className)}"></span><span class="overview-chart-legend-label">${esc(s.label)}</span><span class="overview-chart-legend-count">${esc(overviewSliceLabel(count, percentLabel, state))}</span>${download}</div>`;
+        // The warning mark only above 0; at 0 the row and its note stay, muted.
+        if (row.type === 'warning' && count > 0) classes.push('overview-chart-legend-warning');
+        if (!head && !subtotal && !count && !s.keep) classes.push('overview-chart-legend-zero');
+        const by = head || subtotal ? 'card_group' : 'card_band';
+        const exportKey = subtotal ? s.groups.join(',') : s.key;
+        const what = head || subtotal ? s.label + ' (all)' : s.label;
+        const download = kind && exportKey ? `<button type="button" class="overview-band-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(kind, exportKey, by))}" title="Export ${esc(what)} as ${format}" aria-label="Export ${esc(what)} as ${format}">⬇</button>` : '';
+        const action = s.key ? ` data-action="overviewNavigateBand" data-arg0="${esc(kind || '')}" data-arg1="${esc(s.key)}" data-stop="1"` : '';
+        const swatch = s.className ? `<span class="overview-chart-swatch ${esc(s.className)}"></span>` : '<span class="overview-chart-swatch overview-chart-swatch-none" aria-hidden="true"></span>';
+        const spoken = subtotal ? '<span class="overview-chart-legend-sr"> total</span>' : '';
+        // The comma is for screen readers, as on a section note.
+        const note = row.note ? `<span class="overview-chart-legend-sr">,</span> <span class="overview-chart-legend-note">${esc(row.note)}</span>` : '';
+        const tip = overviewCardRowTip(s.label, s.rule, s.items, oneOwner).map(esc).join('&#10;');
+        return `<div class="${classes.join(' ')}"${action} title="${tip}">${swatch}<span class="overview-chart-legend-label">${esc(s.label)}${note}</span>${spoken}<span class="overview-chart-legend-count">${esc(overviewSliceLabel(count, percentLabel, state))}</span>${download}</div>`;
       }).join('');
     }
 
+    // Without the card (an older server) the legend below is today's chart
+    // slice list, unchanged: it has no card groups, so it is not split into
+    // To do and Status.
     function overviewLegendHTML(slices, kind, state) {
       if ((slices || []).some(s => s && s.card)) return overviewCardLegendHTML(slices, kind, state);
       const total = (slices || []).reduce((n, s) => n + Number(s.count || 0), 0);
@@ -1084,7 +1213,7 @@
       const format = (state.exportFormat || 'csv').toUpperCase();
       const csvTitle = total ? ('Export ' + (kind === 'pr' ? 'PRs' : 'issues') + ' as ' + format) : 'No matching items to export';
       const download = `<button type="button" class="hv-btn btn-icon btn-sm overview-export-csv overview-chart-download" data-action="overviewOpenExport" data-prevent="1" data-stop="1" data-arg0="${esc(overviewExportURL(csvKind))}" title="${esc(csvTitle)}" aria-label="${esc(csvTitle)}">⬇︎</button>`;
-      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind, state)}</div></div></div>`;
+      return `<div class="overview-chart-card ${panelClass}" data-mouseover-action="overviewPanelHover" data-mouseout-action="overviewPanelUnhover" data-arg0="${kind}">${download}${body}<div class="overview-chart-meta"><div class="overview-chart-title" role="heading" aria-level="3">${esc(title)}</div><div class="overview-chart-subtitle">${esc(subtitle)}</div><div class="overview-chart-legend">${overviewLegendHTML(slices, csvKind, state)}</div></div></div>`;
     }
 
     function overviewMedianAgeLabel(slices, state) {
@@ -1435,12 +1564,12 @@
     }
 
     // With the Overview card (card = { kind, counts by term }) the total
-    // tiles read "54 your turn · 2 waiting · 7 blocked · 2 hive has it · 4
-    // outside": blocked on PRs only, held only above zero.
+    // tiles read "54 needs a person · 2 waiting · 7 blocked · 2 hive has it ·
+    // 4 outside": blocked on PRs only, held only above zero.
     function renderOverviewTotalPartitionSubline(equation, card) {
       if (card && card.counts) {
         const n = key => Number(card.counts[key] || 0);
-        const parts = [[n('your_turn'), 'your turn'], [n('waiting_elsewhere'), 'waiting']];
+        const parts = [[n('your_turn'), 'needs a person'], [n('waiting_elsewhere'), 'waiting']];
         if (n('held') > 0) parts.push([n('held'), 'held']);
         if (card.kind === 'prs') parts.push([n('blocked'), 'blocked']);
         parts.push([n('actionable'), 'hive has it'], [n('outside'), 'outside']);
@@ -1538,7 +1667,7 @@
     // today's equation never draws into a card tile's sparkline.
     function overviewCardTileDefs() {
       return [
-        { key: 'your-turn', term: 'your_turn', label: 'Your turn', field: 'overviewCardYourTurn' },
+        { key: 'your-turn', term: 'your_turn', label: 'Needs a person', field: 'overviewCardYourTurn' },
         { key: 'waiting-elsewhere', term: 'waiting_elsewhere', label: 'Waiting on someone else', field: 'overviewCardWaiting' },
         { key: 'held', term: 'held', label: 'Held', field: 'overviewCardHeld' },
         { key: 'blocked', term: 'blocked', label: 'Blocked', field: 'overviewCardBlocked' },
@@ -1613,14 +1742,14 @@
     }
 
     // A tile's ⓘ: its bands with counts. Zero bands are left out except the
-    // keep bands (Queued for agents, Unexplained). A band on both donuts is one
+    // keep bands (Queued for agents, No rule matched). A band on both donuts is one
     // row, "Human placed on hold (2 issues, 2 PRs)" (a kept band at zero is
     // just its name). Outside adds the
     // remainder; Your turn says how many of its items the inbox does not show.
     function overviewCardTermInfo(tile, kpi) {
       const issueSpecs = new Map(overviewCardSpecs('issue').map(spec => [spec.key, spec]));
       const prSpecs = new Map(overviewCardSpecs('pr').map(spec => [spec.key, spec]));
-      // Unexplained is listed in Your turn only when it is above zero; the
+      // No rule matched (unexplained) is listed in Your turn only when it is above zero; the
       // legend keeps it at zero as a keep band.
       const shown = row => Number(row.count || 0) > 0 || (row.keep && row.key !== 'unexplained');
       const rows = (tile.breakdown || []).filter(shown).map(row => {
@@ -1663,12 +1792,12 @@
       (cards || []).forEach(card => {
         if (card.key === 'open-issues') {
           card.subline = renderOverviewTotalPartitionSubline(issueEq, { kind: 'issues', counts: perKind('issues') });
-          card.tip = 'All open GitHub issues (pull requests excluded) across the selected configured repos. Each one counts in exactly one tile: your turn, waiting on someone else, held, hive has it, or outside. Click to filter Projects to matching issues.';
+          card.tip = 'All open GitHub issues (pull requests excluded) across the selected configured repos. Each one counts in exactly one tile: needs a person, waiting on someone else, held, hive has it, or outside. Click to filter Projects to matching issues.';
           return;
         }
         if (card.key === 'open-prs') {
           card.subline = renderOverviewTotalPartitionSubline(prEq, { kind: 'prs', counts: perKind('prs') });
-          card.tip = 'All open GitHub pull requests across the selected configured repos, including drafts. Each one counts in exactly one tile: your turn, waiting on someone else, held, blocked, hive has it, or outside (drafts). Click to filter Projects to matching PRs.';
+          card.tip = 'All open GitHub pull requests across the selected configured repos, including drafts. Each one counts in exactly one tile: needs a person, waiting on someone else, held, blocked, hive has it, or outside (drafts). Click to filter Projects to matching PRs.';
           return;
         }
         const tile = byKey.get(card.key);
@@ -1737,7 +1866,7 @@
       const snapshotComplete = !(repos || []).some(r => r && (r.countsIncomplete || r.countsStale)) && !(_overviewKPILocalScope === 'all' && window._lastStatus?.overviewKPIIncomplete);
       if (snapshotComplete) overviewKPIRecordLocal(overviewKPICurrentSample(coverageCard ? cards.concat([coverageCard]) : cards));
       const ops = ['+', '=', '+', '+', '+', '+', '+'];
-      const equationLabel = `${openIssues} total open issues + ${openPRs} total open PRs = ${actionableNow} ${cardKPI ? 'hive has it' : 'actionable now'} + ${yourTurn} your turn + ${waiting} waiting on someone else + ${held} held + ${blocked} blocked + ${outside} outside`;
+      const equationLabel = `${openIssues} total open issues + ${openPRs} total open PRs = ${actionableNow} ${cardKPI ? 'hive has it' : 'actionable now'} + ${yourTurn} ${cardKPI ? 'needs a person' : 'your turn'} + ${waiting} waiting on someone else + ${held} held + ${blocked} blocked + ${outside} outside`;
       // Last-good figures after a refused enumeration (#13382) or a failed
       // forgestate reconcile (#13376) are current as of staleSince, not
       // zero; say so beside the KPIs.

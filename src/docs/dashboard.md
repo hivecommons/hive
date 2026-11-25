@@ -210,7 +210,10 @@ The dashboard **Governor** card summarizes queue depth, operating mode, budget
 posture, and cadence controls for the hive. Its collapsible **PRs by model** nested
 sub-section reads `GET /api/governor/pr-models` with the selected `7d`, `30d`,
 or `all` window. The nested header keeps the window/sort toggles visible and its
-collapsed summary shows the current top-ranked model plus model count. Each
+collapsed summary shows the current top-ranked model plus model count. Clicking a
+column header in the table sorts by that column (highest first, Model A to
+Z; a second click reverses); the rank and PR count toggles clear a column
+sort. Each
 model row has a **▸ PRs** button that opens that model's pull requests in the
 selected window (outcome, review rounds, fix attempts, first pass, author agent
 and backend, each linked to GitHub). The list is fetched on demand with
@@ -540,7 +543,10 @@ strip is switched off.
 
 The equation is an exact partition: every open issue and pull request counts in
 the first term it matches, so the issue equation and the PR equation each sum to
-their open counts. The terms, in the order they are tried:
+their open counts. With the Overview card the term tiles count the card's
+groups instead, and the Your turn tile is named **Needs a person** (key
+`your-turn`); see [Overview](dashboard-sections/overview-and-metrics.md#overview).
+The terms, in the order they are tried:
 
 1. **Your turn** — every item the server decided is waiting on a person (the
    N plus M of the Projects inbox), including held, parked, outside and
@@ -548,9 +554,14 @@ their open counts. The terms, in the order they are tried:
    Outside.
 2. **Waiting on someone else** — the items the charts put in the slice of the
    same name: a hold whose sources include `person` or `dashboard_pause`, a hive
-   `needs-human` PR still within the adjudicator wait, an issue awaiting reporter
-   confirmation, an issue an open PR covers, and a `blocked` issue with an open
-   GitHub blocked-by link.
+   `needs-human` PR still within the adjudicator wait, a PR whose Hive review
+   asked one named person to decide (for three days, see the review-swarm row
+   below), a PR waiting on a fix after a person answered its review, an issue
+   awaiting reporter confirmation, an issue an open PR covers, and a `blocked`
+   issue with an open GitHub blocked-by link. The PR breakdown names each cause:
+   held by a person or paused, within the adjudicator wait, review asked a
+   named person, a person answered the review, and waiting for another reason
+   for any row no rule names.
 3. **Held** — any other item with a hold.
 4. **Blocked** — a PR with a blocked verdict, merge conflicts or failing CI.
 5. **Outside** — the remaining items the scanner filters out, and draft PRs.
@@ -576,8 +587,8 @@ hold-adjacent/other remainder rows. See [Outside buckets](#outside-buckets)
 for the bucket-by-bucket rules and [labels-and-control-signals.md](labels-and-control-signals.md)
 for the label semantics behind hold, exempt, and hard-suppress signals. Its
 `actionableNow.issues` and `actionableNow.prs` splits always sum to
-`actionableNow.total`. Clicking the **Your turn** tile filters Projects to the
-items it counts; no tile or filter on the Overview is labelled
+`actionableNow.total`. Clicking the **Your turn** tile (**Needs a person** with
+the Overview card) filters Projects to the items it counts; no tile or filter on the Overview is labelled
 blocked/needs-human any more.
 
 Operators can view each Issues or PRs panel as a donut, pie, horizontal bar,
@@ -644,9 +655,13 @@ its own is exported with band `outside` and its `bucket`. Every row of both
 exports carries its ownership decision as `your_turn`, `verb`, `reason_code`, `inbox_rank`,
 `reason` and `waiting_elsewhere`, plus its chart `slice`. The Overview card's
 place for the row comes last: `card_band`, `card_group`, `card_reason` and
-`card_reason_code` (see [Overview](dashboard-sections/overview-and-metrics.md#overview)).
+`card_reason_code` (see [Overview](dashboard-sections/overview-and-metrics.md#overview)),
+and on the issue export `card_churn_prs`, the pull requests behind an issue
+churn row (empty on every other row; in the CSV, `owner/repo#N state link`
+entries separated by `;`).
 The `card_band` and `card_group` query filters (repeatable) keep only the rows
-in those card bands or groups, and the `.json` exports add `card_bands[]`,
+in those card bands or groups (`card_group=your-turn` is the **Needs a person**
+tile), and the `.json` exports add `card_bands[]`,
 `card_groups[]` and `card_remainder`, counted over the rows returned (an item
 listed twice counts once; `card_remainder` is 0 when the export filters rows).
 Cookie sessions work directly; token-authenticated
@@ -787,7 +802,7 @@ First match wins for classification:
    auto-merge.
 3. **Blocked** — merge verdict `blocked`, conflicts (`mergeable: no`), or
    failing CI with failing check names.
-4. **In review** — merge verdict `outstanding`, a recorded Hive review link,
+4. **In review** — merge verdict `outstanding` (not a hand merge), a recorded Hive review link,
    or a GitHub review decision (see below).
 5. **Draft** — draft PRs.
 6. **Open** — everything else.
@@ -814,7 +829,13 @@ position in the inbox across all repositories (grouped by verb in that order,
 then least recently active first). A `release` action also carries the exact
 `release_tag` and immutable `release_target` from Hive's trusted owner-step
 marker. Consumers read these fields and never re-derive them from labels or bands.
-The decision makes no GitHub API calls; the only local
+The decision makes no GitHub API calls (the newest person comment it reads
+on an untrusted reporter's issue comes from the issue enumeration: from the
+comment list the reporter-trust wait notice scan already read that pass, or
+else one read of the last comments page, repeated only when the issue's
+`updated_at` or comment count moves and capped at 10 reads per repository
+per pass; an unreadable thread keeps the last comment read, or `ADMIT`
+when there is none); the only local
 write is the first time a refresh saw a hive PR with `needs-human`, kept in
 `/data/ownership-state.json` so the adjudicator's four-hour wait survives a
 restart.
@@ -838,7 +859,8 @@ review: a `needs-human` issue, an agent PR held by the level gate, a
 human-authored `needs-human` PR, an agent PR re-escalated after the
 adjudicator's pass, or an item the safety net surfaced), `TRIAGE` (an
 agent-filed proposal awaiting acknowledgment), `ADMIT` (an untrusted
-reporter's issue awaiting an admission label), `INSPECT` (a sentinel-flagged
+reporter's issue awaiting an admission label, unless a maintainer already
+replied or it is a design proposal; see the table below), `INSPECT` (a sentinel-flagged
 PR) and `CLOSE` (an issue Hive verified as done but could not close, an issue
 whose reporter confirmation has gone unanswered for the stale period, a PR
 the adjudicator recommended closing, or a contributor PR the supersession
@@ -856,6 +878,7 @@ so the reason text can change without breaking them.
 | `parked_needs_direction` | `STEER` |
 | `parked_needs_decision` | `DECIDE` |
 | `parked_needs_spec` | `SPEC` |
+| `open_for_discussion` | `DECIDE` |
 | `untrusted_reporter` | `ADMIT` |
 | `decided_not_admitted`, `agent_finding_not_admitted`, `person_issue_not_admitted` | `ADMIT` |
 | `reporter_confirmation_stale` | `CLOSE` |
@@ -873,6 +896,7 @@ so the reason text can change without breaking them.
 | `adjudicator_handed_off` | `REVIEW` |
 | `person_pr_needs_human` | `REVIEW` |
 | `review_requires_human`, `review_rejected`, `review_dispatch_hold`, `review_loop_cap` | `REVIEW` |
+| `bot_pr_review_changes` | `REVIEW` |
 | `stale_safety_net` | `REVIEW` |
 | `run_checkpoint`, `run_stale_plan`, `run_stage_exhausted` | `REVIEW` |
 | `approval_pending` | `REVIEW` |
@@ -893,6 +917,8 @@ means the situation cannot occur at that level.
 | Unclaimed issue filed by a person | Not yours — backlog | Not yours — backlog, or a lane will act | Not yours — a lane will act | same |
 | Issue filed by an agent, not yet acknowledged, while the self-authorization hold is active (by default below L6) | — (no agent files issues) | Yours — `TRIAGE` | Yours — `TRIAGE` | Not yours by default (agents self-authorize); Yours — `TRIAGE` when the hold is configured on |
 | Issue from an untrusted reporter awaiting an admission label | Yours — `ADMIT` | same | same | same |
+| Same, carrying `stage/018-open-for-discussion` (a design proposal) and not `approved-direction` | Yours — `DECIDE` (`open_for_discussion`: "Design proposal open for discussion: decide or close"; admitting it is still a separate step) | same | same | same |
+| Same, neither a design proposal nor carrying `approved-direction`, where the newest comment by a person is by an `OWNER`, `MEMBER` or `COLLABORATOR` who did not file the issue, and is younger than the stale period. Bots, Hive's own accounts, slash commands (a first line starting with `/`) and comments carrying a `<!-- hive:` marker do not count as a person's comment | Not yours — waiting on someone else. When the comment mentions exactly one login besides the reporter, the commenter and bots (mentions in code and quoted lines are ignored), the reason names it ("Waits on jeefy: maintainer castrojo asked on Nov 16"; the year is added when it is not this year); otherwise "Maintainer castrojo replied on Nov 16; waiting on a reply". A newer comment by anyone else, the reporter included, or the stale period passing makes it `ADMIT` again | same | same | same |
 | Issue the issue filter (`project.issue_filter.require_labels`) refuses that carries `approved-direction` (a `/hive decision` or `/hive approve` applies it, not the filter's label) | Yours — `ADMIT` (`decided_not_admitted`; the reason names the labels that admit it) | same | same | same |
 | Agent-filed issue the issue filter refuses, where the TRIAGE row above does not apply (agents self-authorize, by default at L6) | — (no agent files issues) | — (TRIAGE applies) | — (TRIAGE applies) | Yours — `ADMIT` (`agent_finding_not_admitted`: admit it, or close it if it no longer applies) |
 | Person-filed issue the issue filter refuses, undecided (only the missing `require_labels` keeps it out: holds, exempt, tracking, `blocked`, parks, reporter confirmation, reporter triage and standing dashboards are decided before the filter and keep their own rows; a bot's issue stays Not yours) | Yours — `ADMIT` (`person_issue_not_admitted`: admit it so the hive works it, or close it) | same | same | same |
@@ -908,7 +934,8 @@ means the situation cannot occur at that level.
 | Contributor PR flagged abandoned by the idle clock (`governor.labels.stage.abandon_after`: parked at 071 or at an `adoption-stalled:` 085 with no outside activity past the threshold), unheld | Yours — `CLOSE` (`abandoned_recommended_close`: "Stale: close or take over — abandoned Nd: <blocker>", ending "(trusted contributor timer)" when `abandon_after_trusted` flagged it; close it as stale or have a person take it over) | same | same | same |
 | Hive PR with `needs-human` the adjudicator handed to a maintainer (`reviewer-handoff`) | — | — | Yours — `REVIEW` (`adjudicator_handed_off`) | same |
 | Person's PR with `needs-human` | Yours — `REVIEW` | same | same | same |
-| PR of any author that `/api/review/pipeline` holds in `human_hold` for a review-swarm reason: a `requires_human` verdict (`review_requires_human`; one on an earlier head counts until a merge-eligible `approve` is recorded after it), a `reject` verdict (`review_rejected`) — either one released once a person's `APPROVED` review or `/hive approve` reply after the verdict has been recorded by the self-merge sweep, the release the sweep itself honours ([review-swarm.md](review-swarm.md)), a dispatch hold on the current head — reviews exhausted their retries, fix cap reached, no fixer agent (`review_dispatch_hold`; a hold on an older head does not count) — or the fix-cycle cap (`review_loop_cap`). `review.human_decision_label` does not change the decision. Once a person has answered the `requires_human` / `reject` verdict on the current head with an instruction (`/hive decision <instruction>` or a `CHANGES_REQUESTED` review, recorded after the verdict) the row is Not yours — "@who answered Hive's review on this head …; the hive is fixing it" — until a new head or a newer verdict, except on a PR the hive adopted whose branch it cannot push (fork-rehome-refused on the head, a fork without maintainer edits, an adoption escalated for a workflow-file diff, or a recorded capability blocker), which stays Yours — `DECIDE` (`adopted_push_refused`, naming why); a dispatch hold or the loop cap stays `REVIEW`, and a bare approval is left to the release rules above | Yours — `REVIEW` | same | Yours — `REVIEW`; a Hive PR that also carries `needs-human` waits for the adjudicator first, as in the row above | same |
+| PR of any author that `/api/review/pipeline` holds in `human_hold` for a review-swarm reason: a `requires_human` verdict (`review_requires_human`; one on an earlier head counts until a merge-eligible `approve` is recorded after it), a `reject` verdict (`review_rejected`) — either one released once a person's `APPROVED` review or `/hive approve` reply after the verdict has been recorded by the self-merge sweep, the release the sweep itself honours ([review-swarm.md](review-swarm.md)), a dispatch hold on the current head — reviews exhausted their retries, fix cap reached, no fixer agent (`review_dispatch_hold`; a hold on an older head does not count) — or the fix-cycle cap (`review_loop_cap`). `review.human_decision_label` does not change the decision. Once a person has answered the `requires_human` / `reject` verdict on the current head with an instruction (`/hive decision <instruction>` or a `CHANGES_REQUESTED` review, recorded after the verdict) the row is Not yours — "@who answered Hive's review on this head …; the hive is fixing it" — until a new head or a newer verdict, except on a PR the hive adopted whose branch it cannot push (fork-rehome-refused on the head, a fork without maintainer edits, an adoption escalated for a workflow-file diff, or a recorded capability blocker), which stays Yours — `DECIDE` (`adopted_push_refused`, naming why); a dispatch hold or the loop cap stays `REVIEW`, and a bare approval is left to the release rules above. A `requires_human` decision request on the current head whose question names one person with an at-mention (outside code spans) waits on that person: exactly one login other than the PR author, or only the author when the question does not ask a maintainer, owner or approver; bots, app accounts, the policy's `@maintainer` placeholder and the hive's own logins (App bot, additional bot logins, AI author) are not people, and a team, two or more logins or nobody names no one. The row is Not yours, for example `Waits on carol: Hive's review asked on Nov 16` (Waiting on another item on the card), for three days from the first verdict of the unbroken run that asked that person, so a new head asking again does not restart it; then it is Yours, `REVIEW` (`review_requires_human`, `Hive's review needs a human decision: carol has not answered since Nov 16`; the year is added when it is not the current one). A question naming a dashboard owner, a fix-cycle-cap verdict, a reject, a fix-cap or no-fixer dispatch hold and the loop cap keep the rules above; a person's recorded answer is read first. This is display only: the hold, the review and the merge are unchanged | Yours — `REVIEW` | same | Yours — `REVIEW`; a Hive PR that also carries `needs-human` waits for the adjudicator first, as in the row above | same |
+| Another bot's PR (not this hive's App, not hive-attributed, not adopted in place) whose current head the hive's review returned for changes (`changes_requested`) and whose fix the review dispatcher withheld because that bot owns the branch (the withheld-fix record for that head with the `other-bot-author` exclusion, set by `review.bot_authors`), with no fix for that head pending, unheld and not sentinel-flagged. A person's answer on the head or a hold release does not change it: the hive does not carry out an answer on another bot's branch, and a release applies only to a `requires_human` or reject hold | Yours: `REVIEW` (`bot_pr_review_changes`: "Hive's review asked for changes on a bot's PR, and the hive will not push fixes to it. The repo's maintainers decide: close it, or wait for the bot's next version."). The Overview card shows it under Your turn, on the Other row | same | same | same |
 | Sentinel-flagged PR | Yours — `INSPECT` | same | same | same |
 | Issue Hive verified as done but could not close | Yours — `CLOSE` | same | same | same |
 | Agent finding the issue filter refuses whose every cited permalink (`…/blob/<sha>/<path>#L<n>`, same repository) is gone from the default branch: none of the cited lines of 16 to 400 characters is still a line of the file. A file the default branch no longer has is not enough (a rename or move keeps the lines), nor is a citation with no such line or a path the pinned commit lacks. The enumeration checks it for up to 3 findings per repository per pass and trusts a result for 6 hours; the evidence lines read at a pinned SHA are kept (never the file), and a citation that settles as unknown costs no further reads | Yours — `CLOSE` (`cited_lines_gone`, naming the citation: close it, or admit it if the finding still holds) | same | same | same |
@@ -921,7 +948,7 @@ means the situation cannot occur at that level.
 | PR with a label that puts it in the Gated band (`needs-decision`, `2-discussing`, `needs-direction`, `needs-spec`, a renamed parking label, or a configured waiting label), no `needs-human`, unheld | Yours — `DECIDE` (`needs-decision`, `2-discussing`) / `STEER` / `SPEC` with the parking reason codes; any other gate label `REVIEW` (`pr_gate_label`) | same | same | same |
 | Non-draft, unheld PR whose GitHub review decision is `REVIEW_REQUIRED` or `CHANGES_REQUESTED` with a named branch-protection rule, or whose decision is null while GitHub reports it `blocked` with green required checks on a base branch that requires a code owner's review (`protection.code_owner_review_required`) — the merge classifier's skip | Yours — `REVIEW` (`review_decision_required`, with the rule as the reason; for the code-owner case "code-owner review required by `<rule source>`") | same | same | same |
 | Non-draft, unheld PR the merge classifier calls eligible whose author no Hive merge lane admits (self-authored, trusted bot, trusted author, contributor lane) | Yours — `REVIEW` (`hand_merge_required`) | same | same | same |
-| Non-draft, unheld PR that passes every merge gate but that no Hive sweep will merge: its repo's auto-merge is off, or a sweep's merge into its base branch was refused because the base only accepts merges through GitHub's merge queue (`merge-queue-required`; Hive merges over REST and cannot enqueue). In a repo whose auto-merge is off, a PR held only by a Hive-side gate (outstanding verdict: a contributor-lane refusal, a red check nobody declared required, a soak) is a hand merge too, and the reason names that gate and the switch; a PR GitHub itself blocks (a conflict, a failing required check) stays the author's. It is not in the Merge-eligible band | Yours — `REVIEW` (`hand_merge_required`, with the classifier's reason) | same | same | same |
+| Non-draft, unheld PR that passes every merge gate but that no Hive sweep will merge: its repo's auto-merge is off, or a sweep's merge into its base branch was refused because the base only accepts merges through GitHub's merge queue (`merge-queue-required`; Hive merges over REST and cannot enqueue). In a repo whose auto-merge is off, a PR held only by a Hive-side gate (outstanding verdict: a contributor-lane refusal, a red check nobody declared required, a soak) is a hand merge too, and the reason names that gate and the switch; a PR GitHub itself blocks (a conflict, a failing required check) stays the author's. In a repo whose auto-merge is on, a PR that passes every merge gate but whose merge relay the contributor lane refuses for a reason no Hive lane will clear is a hand merge too: a trust or admission reason such as `contributor-lane:no-linked-issue`, `contributor-lane:no-claim`, a claim tier outside `require_tiers` or the author's association, or the lane itself switched off (`contributor-lane:disabled`) or scoped to other repos (`contributor-lane:repo-not-allowed`). The reason names the refusal and ends `no Hive lane merges this PR, so a person merges it`, and on the Overview card a `stage/090-ready-for-human-merge` PR of that shape is Merge by hand instead of Unexplained. A temporary refusal (a soak, a head too new, no reviewer verdict yet) is not: the lane merges the PR itself once it clears. A PR still awaiting the hive's review of its head (`awaiting review approval`) is a hand merge too, and so is a `requires_human` or reject head (the review's own hold brings it to a person first; once a person releases that hold, the hand merge is the ask). A PR whose current head the review returned for changes (`changes_requested`, not also held for a person) is not offered as a merge, whoever opened it and whichever gate stopped it first: its verdict carries `review_changes_requested`, and when the review gate is the one that stopped it the reason says `the hive's review did not approve this head (changes requested)`. A person's or a contributor agent's such PR waits on its author; another bot's PR the hive will not push fixes to is `bot_pr_review_changes` (above). It is not in the Merge-eligible band | Yours — `REVIEW` (`hand_merge_required`, with the classifier's reason) | same | same | same |
 | `needs-reporter-confirmation` | Not yours — the reporter's turn; after the stale period with no activity, Yours — `CLOSE` | same | same | same |
 
 **Precedence.** When an item matches more than one row, the first matching rule
@@ -936,7 +963,11 @@ covered by an open PR → Not yours; (5) on an issue, a parking bucket, checked
 in the order `needs_human`, `needs_direction`, `needs_decision`, `needs_spec`
 → `REVIEW`, `STEER`, `DECIDE`, `SPEC`, except that a `needs_decision` park an
 open hive-authored PR closes is Not yours; (6) untrusted reporter awaiting
-admission → `ADMIT`; (7) awaiting reporter confirmation → Not yours until it
+admission → `ADMIT`, except a design proposal (`stage/018-open-for-discussion`
+without `approved-direction`) → `DECIDE` (`open_for_discussion`), and an issue
+without `approved-direction` whose newest comment by a person is a
+maintainer's (not the reporter's), younger than the stale period → Not yours,
+waiting on whoever that comment asked; (7) awaiting reporter confirmation → Not yours until it
 has had no activity for the stale period, then `CLOSE`
 (`reporter_confirmation_stale`); (8) verified done but not closed → `CLOSE`;
 (8b) an agent finding whose cited lines are gone from the default branch →
