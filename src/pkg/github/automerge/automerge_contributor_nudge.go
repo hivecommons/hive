@@ -116,6 +116,10 @@ type ContributorNudge struct {
 	// that lane merges the head anyway once green (its review gate does not
 	// enforce, hivecommons/hive#19421). "" on every other note.
 	TrustedAuthorMerges string
+	// NoAdoption is set for a head the hive will not adopt (the narrow
+	// agent fork-workflow-update case, authorUpdateOwedNow): the stalled
+	// reminder names the maintainer hand-off instead of an adoption.
+	NoAdoption bool
 }
 
 // ContributorNudgeOutcome is what the sink did with a nudge.
@@ -201,6 +205,40 @@ func nudgeDiagnosis(reason string, d stageDetail) (checks, asks []string, human 
 		asks = append(asks, dcoAsk(d))
 	}
 	return checks, asks, human
+}
+
+// forkWorkflowUpdateAsk is the review ask for an agent author's approved,
+// green fork-workflow-update head the stage pass sent back for the branch
+// update (authorUpdateOwedNow). GitHub refused the App's update-branch
+// because the base changed workflow files and the App is not installed on
+// the fork; the author's own push is not refused. A merge keeps the
+// commits (and any per-commit approvals a repository relies on), so it
+// never says rebase, and "allow edits by maintainers" does not help here,
+// so it never says that either. Any other head keeps nudgeDiagnosis's
+// output unchanged.
+const forkWorkflowUpdateAsk = "the base branch changed `.github/workflows/` files, which GitHub does not let the Hive App push to a fork, so the hive cannot bring this branch up to date; merge the base branch into your branch and push (or run `gh pr update-branch` on this PR)"
+
+// authorUpdateOwedNow reports whether obs is the narrow agent case: the
+// stage pass sent this head back at 072 for the fork-workflow-update branch
+// update and the owed clock is set for it (stageengine.AuthorUpdateOwed).
+// The hive never adopts such a head: the base sync carries a workflow file
+// it cannot push to the fork, and fork code is never moved into the base
+// repository.
+func authorUpdateOwedNow(rec stagelabels.Record, obs stageObservation) bool {
+	return obs.Reason == autoMergeReasonForkWorkflowUpdate && !rec.AuthorUpdateOwedSince(obs.HeadSHA).IsZero()
+}
+
+// withForkWorkflowUpdateAsk replaces the bare lane reason nudgeDiagnosis
+// lists for a fork-workflow-update head with forkWorkflowUpdateAsk.
+func withForkWorkflowUpdateAsk(asks []string) []string {
+	out := make([]string, 0, len(asks))
+	for _, a := range asks {
+		if a == autoMergeReasonForkWorkflowUpdate {
+			a = forkWorkflowUpdateAsk
+		}
+		out = append(out, a)
+	}
+	return out
 }
 
 // swarmChangesAskLead is the review ask for a review-swarm changes_requested.
@@ -364,7 +402,9 @@ func ContributorNudgeComment(n ContributorNudge, out ContributorNudgeOutcome) st
 		}
 		fmt.Fprintf(&b, "\n_Queued in your relay fix queue (%d waiting): fixes are handed out before new work as soon as you have capacity._\n", out.QueueDepth)
 	}
-	if n.Stalled {
+	if n.Stalled && n.NoAdoption {
+		b.WriteString("\n_This is the last automatic reminder for this head. The hive cannot update a fork's branch for this change, so if the head does not change a maintainer is asked to bring it up to date._\n")
+	} else if n.Stalled {
 		b.WriteString("\n_This is the last automatic reminder for this head. If you are unavailable the hive may adopt the PR to finish it (your commits are preserved)._\n")
 	}
 	return b.String()
@@ -491,6 +531,12 @@ func adoptionBound(rec stagelabels.Record, obs stageObservation, policy StageLab
 	if policy.maintainerPolicy() != config.AdoptionMaintainerPolicyAdopt || personAuthored(obs, policy) {
 		return false
 	}
+	if authorUpdateOwedNow(rec, obs) {
+		// The narrow agent case: the branch update is the author's to
+		// push and the hive never adopts the head, so no adoption note
+		// would ever speak for it and the nudge comment posts.
+		return false
+	}
 	return !strings.Contains(nonEmpty(obs.Reason, obs.LaneReason), contributorLaneReasonWorkflowPath)
 }
 
@@ -505,6 +551,10 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 		return 0, nil
 	}
 	checks, asks, human := nudgeDiagnosisRouted(obs.Reason, obs.Detail, obs.Route)
+	noAdoption := authorUpdateOwedNow(rec, obs)
+	if noAdoption {
+		asks = withForkWorkflowUpdateAsk(asks)
+	}
 	// Name the checks first, so a fork guard among them is dropped below.
 	checks = c.nameBareCIChecks(ctx, obs, checks)
 	// A fork guard is a maintainer's to clear (hivecommons/hive#14273): the
@@ -555,7 +605,7 @@ func (c *Engine) nudgeContributor(ctx context.Context, store *stagelabels.Store,
 		Owner: obs.Owner, Repo: obs.Repo, Display: obs.Display, Number: obs.Number,
 		HeadSHA: obs.HeadSHA, Title: obs.Title, URL: obs.URL, Author: obs.Author, OpenedAt: obs.OpenedAt,
 		Reason: obs.Reason, FailingChecks: checks, ReviewAsks: asks, HumanChangesRequested: human,
-		Nudge: shown, Stalled: ordinal > 1, Attempt: attempt,
+		Nudge: shown, Stalled: ordinal > 1, Attempt: attempt, NoAdoption: noAdoption,
 	}
 	// Another check going red on the head the relay already has as a
 	// fix-pr task is folded into the comment, not dispatched again
