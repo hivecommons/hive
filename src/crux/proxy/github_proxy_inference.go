@@ -506,6 +506,7 @@ func (p *GitHubProxy) inferenceTranslatorHandlerFor(identify func(*http.Request)
 			usage, err := stream.relayOpenAISSE(resp.Body)
 			if err != nil {
 				p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
+				setTranslatorOutcome(r.Context(), outcomeUpstreamError)
 			}
 			p.recordGatewayUsage(agentName, route.Model, usage)
 			return

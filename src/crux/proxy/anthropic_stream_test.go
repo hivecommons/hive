@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -13,6 +14,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 const streamTestRequest = `{"model":"claude-cli-alias","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"hi"}]}`
@@ -113,18 +117,16 @@ func TestRelayOpenAISSE_FlushesEveryEvent(t *testing.T) {
 	}
 }
 
-// The CLI must see headers and pings while the upstream has not answered yet:
-// its byte-level watchdog counts the wait for response headers.
-func TestInferenceTranslator_StreamPingsBeforeUpstreamAnswers(t *testing.T) {
-	setStreamPingIntervalForTest(t, 10*time.Millisecond)
-	release := make(chan struct{})
-	var releaseOnce sync.Once
-	releaseUpstream := func() { releaseOnce.Do(func() { close(release) }) }
-	t.Cleanup(releaseUpstream)
-
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// newHeldStreamUpstream is an upstream that answers with a streamed "hello"
+// only after release is called.
+func newHeldStreamUpstream(t *testing.T) (up *httptest.Server, release func()) {
+	t.Helper()
+	held := make(chan struct{})
+	var once sync.Once
+	release = func() { once.Do(func() { close(held) }) }
+	up = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
-		case <-release:
+		case <-held:
 		case <-r.Context().Done():
 			return
 		}
@@ -133,7 +135,41 @@ func TestInferenceTranslator_StreamPingsBeforeUpstreamAnswers(t *testing.T) {
 		_, _ = io.WriteString(w, `data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`+"\n\n")
 		_, _ = io.WriteString(w, "data: [DONE]\n\n")
 	}))
+	// Cleanups run last-in first-out: release the held handler before Close
+	// waits for it.
 	t.Cleanup(up.Close)
+	t.Cleanup(release)
+	return up, release
+}
+
+// expectPingThenAnswer reads br until a ping, releases the upstream, and
+// expects the upstream's text and message_stop to follow.
+func expectPingThenAnswer(t *testing.T, br *bufio.Reader, release func()) {
+	t.Helper()
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("stream ended before a ping: %v", err)
+		}
+		if line == "event: ping\n" {
+			break
+		}
+	}
+	release()
+	rest, err := io.ReadAll(br)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rest), `"text":"hello"`) || !strings.Contains(string(rest), "event: message_stop\n") {
+		t.Fatalf("the upstream answer did not follow the pings:\n%s", rest)
+	}
+}
+
+// The CLI must see headers and pings while the upstream has not answered yet:
+// its byte-level watchdog counts the wait for response headers.
+func TestInferenceTranslator_StreamPingsBeforeUpstreamAnswers(t *testing.T) {
+	setStreamPingIntervalForTest(t, 10*time.Millisecond)
+	up, release := newHeldStreamUpstream(t)
 
 	var logs bytes.Buffer
 	p := newKeyResolverTestProxy(&logs)
@@ -155,26 +191,60 @@ func TestInferenceTranslator_StreamPingsBeforeUpstreamAnswers(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 		t.Fatalf("status %d, content type %q", resp.StatusCode, resp.Header.Get("Content-Type"))
 	}
+	expectPingThenAnswer(t, bufio.NewReader(resp.Body), release)
+}
 
-	br := bufio.NewReader(resp.Body)
-	for {
-		line, err := br.ReadString('\n')
-		if err != nil {
-			t.Fatalf("stream ended before a ping: %v", err)
-		}
-		if line == "event: ping\n" {
-			break
-		}
-	}
+// The MITM reroute writes on the raw connection; it too must send headers and
+// pings before the upstream answers.
+func TestInferenceReroute_StreamPingsBeforeUpstreamAnswers(t *testing.T) {
+	setStreamPingIntervalForTest(t, 10*time.Millisecond)
+	up, release := newHeldStreamUpstream(t)
 
-	releaseUpstream()
-	rest, err := io.ReadAll(br)
+	var logs bytes.Buffer
+	p := newKeyResolverTestProxy(&logs)
+	route := &InferenceRoute{Backend: "litellm", Endpoint: up.URL, Model: "m", APIKey: "k"}
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close() })
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer server.Close()
+		req, _ := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", strings.NewReader(streamTestRequest))
+		p.handleInferenceRequest(server, req, "scanner", route)
+	}()
+	_ = client.SetDeadline(time.Now().Add(10 * time.Second))
+
+	resp, err := http.ReadResponse(bufio.NewReader(client), nil)
 	if err != nil {
+		t.Fatalf("no response headers before the upstream answered: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || !strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("status %d, content type %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+	expectPingThenAnswer(t, bufio.NewReader(resp.Body), release)
+	<-done
+}
+
+// lastSSEError returns the error type and message of body's last event, which
+// must be an Anthropic error event.
+func lastSSEError(t *testing.T, body string) (errType, message string) {
+	t.Helper()
+	events := parseGatewayCanarySSE(t, body)
+	last := events[len(events)-1]
+	var payload struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(last.Data), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(rest), `"text":"hello"`) || !strings.Contains(string(rest), "event: message_stop\n") {
-		t.Fatalf("the upstream answer did not follow the pings:\n%s", rest)
+	if last.Event != "error" || payload.Type != "error" {
+		t.Fatalf("last event %s %s, want an error event:\n%s", last.Event, last.Data, body)
 	}
+	return payload.Error.Type, payload.Error.Message
 }
 
 // Once the 200 is out, an upstream error status reaches the CLI as an SSE
@@ -199,24 +269,74 @@ func TestInferenceTranslator_StreamUpstreamErrorIsErrorEvent(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d; the stream had started, so the error must be an event", w.Code)
 	}
-	events := parseGatewayCanarySSE(t, w.Body.String())
-	last := events[len(events)-1]
-	var payload struct {
-		Type  string `json:"type"`
-		Error struct {
-			Type    string `json:"type"`
-			Message string `json:"message"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(last.Data), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if last.Event != "error" || payload.Type != "error" || payload.Error.Type != "rate_limit_error" ||
-		!strings.Contains(payload.Error.Message, "inference backend returned 429") {
-		t.Fatalf("last event %s %s, want a rate_limit_error event:\n%s", last.Event, last.Data, w.Body.String())
+	errType, msg := lastSSEError(t, w.Body.String())
+	if errType != "rate_limit_error" || !strings.Contains(msg, "inference backend returned 429") {
+		t.Fatalf("error %s %q, want a rate_limit_error for the 429:\n%s", errType, msg, w.Body.String())
 	}
 	if strings.Contains(w.Body.String(), "message_stop") {
 		t.Fatalf("a failed stream must not end with message_stop:\n%s", w.Body.String())
+	}
+}
+
+// An upstream stream cut mid-response ends in an error event, not
+// message_stop, and counts as an upstream error in the translator metric.
+func TestInferenceTranslator_BrokenStreamIsErrorEvent(t *testing.T) {
+	setStreamPingIntervalForTest(t, time.Hour)
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	m := newTranslatorMetrics(mp.Meter(instrumentationName))
+	prev := globalTranslatorMetrics
+	globalTranslatorMetrics = func() translatorMetrics { return m }
+	t.Cleanup(func() {
+		globalTranslatorMetrics = prev
+		_ = mp.Shutdown(context.Background())
+	})
+
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, sseChunk("partial"))
+		w.(http.Flusher).Flush()
+		// Drop the connection without the chunked terminator.
+		panic(http.ErrAbortHandler)
+	}))
+	t.Cleanup(up.Close)
+
+	var logs bytes.Buffer
+	p := newKeyResolverTestProxy(&logs)
+	p.inference.Set("scanner", &InferenceRoute{Backend: "litellm", Endpoint: up.URL, Model: "m", APIKey: "k"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(streamTestRequest))
+	req.Header.Set("x-api-key", "sk-hive-scanner")
+	w := httptest.NewRecorder()
+	p.inferenceTranslatorHandler().ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(body, `"text":"partial"`) {
+		t.Fatalf("status %d; want the partial text relayed on a 200 stream:\n%s", w.Code, body)
+	}
+	if errType, msg := lastSSEError(t, body); errType != "api_error" || !strings.Contains(msg, "inference upstream stream failed") {
+		t.Fatalf("error %s %q, want an api_error for the cut stream:\n%s", errType, msg, body)
+	}
+	if strings.Contains(body, "message_stop") {
+		t.Fatalf("a cut stream must not end with message_stop:\n%s", body)
+	}
+
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	var outcomes []string
+	for _, sm := range rm.ScopeMetrics {
+		for _, mt := range sm.Metrics {
+			if sum, ok := mt.Data.(metricdata.Sum[int64]); ok {
+				for _, dp := range sum.DataPoints {
+					v, _ := dp.Attributes.Value(attrOutcome)
+					outcomes = append(outcomes, v.AsString())
+				}
+			}
+		}
+	}
+	if len(outcomes) != 1 || outcomes[0] != outcomeUpstreamError {
+		t.Fatalf("translator outcomes %v, want [%s]", outcomes, outcomeUpstreamError)
 	}
 }
 
