@@ -1753,8 +1753,11 @@ func TestDependencyBotRedIssueParkedHeadLabelReadEachAttempt(t *testing.T) {
 // over, and the last attempt judges the head.
 func TestDependencyBotRedHeadPendingAttempts(t *testing.T) {
 	s := loadDepBotConflictStore("")
-	if s.markRedHeadPending("k", "a", false) || s.markRedHeadPending("k", "a", false) {
-		t.Fatal("budget deferrals used up the head")
+	// Two budget deferrals in a row: neither may use up the head.
+	for range 2 {
+		if s.markRedHeadPending("k", "a", false) {
+			t.Fatal("budget deferrals used up the head")
+		}
 	}
 	for i := 1; i < depBotRedIssueMaxAttempts; i++ {
 		if s.markRedHeadPending("k", "a", true) {
