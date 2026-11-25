@@ -67,7 +67,7 @@ func TestStageTrackerTriagePRNamesContributorPR(t *testing.T) {
 	if three := byNum[3]; three.TriagePR != nil || three.Caption != "Covered by PR #9" {
 		t.Fatalf("an accepted issue keeps its row: %+v / %q", three.TriagePR, three.Caption)
 	}
-	if four := byNum[4]; four.TriagePR != nil || four.Caption != stageTrackerTriageNeededCaption {
+	if four := byNum[4]; four.TriagePR != nil || four.Caption != "Covered by PR #10" {
 		t.Fatalf("a hive PR is not a contributor PR: %+v / %q", four.TriagePR, four.Caption)
 	}
 	if five := byNum[5]; five.TriagePR != nil || five.Caption != stageTrackerTriageNeededCaption {
