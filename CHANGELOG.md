@@ -11,6 +11,21 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.367.0)
+
+### Added
+
+- Per-repo **open PRs** setting (`project.repo_policies[].open_prs`: `on`, `off` or `workflow_only`), the sibling of the per-repo auto-merge switch, at every ACMM level. `off` lets agents analyse, comment and file issues in a repo but open no PR there. `workflow_only` lets only workflow hand-off PRs (`workflow.dispatch`) open, so an agent's own cadence work, such as test hardening, files issues instead of PRs and reviews. It is enforced where agent PRs open: the `hive-open-pr` relay, the forge relay, the sandbox PR path and the sidecar callback. Each refusal is audited as `agent_write_refused` with `gate=open-prs`. A workflow PR is recognised from the hive's own record of the hand-off kicks it planned and delivered, never from PR text: a `hive-open-pr` request must name the handed-off issue, and a sandboxed kick must be the planned hand-off kick. Kicks name each limited repo, and the setting survives a reload through the dashboard overlay. Set it on **Settings → Repos** or on the repo card next to auto-merge (`POST /api/repos/open-prs`). `project.open_prs: false` still wins. **Behavior change:** `project.open_prs: false` used to stop only sandbox PRs; it now also stops PRs through the `hive-open-pr` and forge relays, and workflow profiles that open PRs resolve to no agent on such a hive. (#19870)
+- **Hub affiliation from hivecommons/colony.** The hub admin Users table's daily affiliation refresh now matches each user's public github.com login against the public cncf/gitdm files on the hub (on by default, `HIVE_HUB_AFFILIATION_COLONY_GITDM`; nothing about anyone is sent, emails are never used) and can ask CNCF DevStats for the user's CNCF contribution count (off by default, `HIVE_HUB_AFFILIATION_COLONY_DEVSTATS`, hourly cap). A colony value is labelled `colony:gitdm` or `colony:devstats` with colony's confidence, never replaces an organization the user or an admin set on the hub or the company on the person's own profile, and is not sent to any hive. Phase 1 of the Colony customer-data backend design ([#19851](https://github.com/hivecommons/hive/issues/19851)); see [telemetry.md](src/docs/telemetry.md#hub-affiliation-from-colony).
+
+### Fixed
+
+- ACMM criteria detection: Test suite now matches nested test directories (monorepos; vendored trees excluded), Coverage gate also accepts `.github/codecov.yml`, `dev/codecov.yml` and `.github/workflows/coverage.yml`, Code style config accepts more documented config names (such as `.prettierrc.yml`), and the four L2 agent instruction file criteria are merged into one `acmm:agent-instructions` criterion so any single file (such as `AGENTS.md`) passes. Waivers on the old `acmm:claude-md`, `acmm:copilot-instructions`, `acmm:agents-md`, and `acmm:cursor-rules` IDs are no longer recognized.
+
+### Security
+
+- **Customers hub import: the hub answers only its own trust domain.** `POST /api/customers/match` now answers only hives listed in the new hub setting `HIVE_HUB_CUSTOMERS_TRUSTED_HIVES` (the project's own hives; empty by default). Every other hive gets an empty match list, whatever its `customers.hub_import.enabled` says and whatever consent a person recorded for it, so the hub's knowledge about a person no longer reaches third-party spokes. Operators who use the hub import for their own hive must add its ID to the list. Part of [#19851](https://github.com/hivecommons/hive/issues/19851).
+
 ## 2026-11-25 (v5.366.7)
 
 ### Changed
