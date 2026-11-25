@@ -328,7 +328,8 @@ func TestStaleHoldNotifierSend(t *testing.T) {
 }
 
 func TestGetStaleHoldStore(t *testing.T) {
-	if getStaleHoldStore() == nil || getStaleHoldStore() != getStaleHoldStore() {
+	first := getStaleHoldStore()
+	if first == nil || getStaleHoldStore() != first {
 		t.Fatal("stale-hold store must be a non-nil singleton")
 	}
 }
