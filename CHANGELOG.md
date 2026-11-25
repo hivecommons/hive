@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.369.1)
+
+### Changed
+
+- Activity monitor rows now show the maintainer's real decision. An untriaged issue whose reporter already opened a PR reads **Triage needed · contributor PR #N open**, with the PR named in the caption and an **Open contributor PR #N** entry under **Accept triage** (the tracker payload's new `triage_pr`). The row only displays this; the reporter-trust and triage gates are unchanged. A reviewer's `requires_human` / needs-decision verdict on a PR a person pushed themselves now parks at `stage/085-needs-decision` with the reviewer's question, so the row no longer says it is waiting on the author to push. Only `changes_requested`, a conflict, red checks or a missing DCO send the PR back to its author (`stage/071-needs-author`). **Behavior change:** since #15202 that verdict had routed a person's PR to 071. (#19843)
+
+### Fixed
+
+- The inference translator no longer leaves the Claude CLI on a silent stream while a model waits in a gateway queue or reasons, which made the CLI abort and resend the request after 300 seconds and threw away five minutes of generation each time ([#19793](https://github.com/hivecommons/hive/issues/19793)). For a streaming request it now sends the 200 and `message_start` before it calls the gateway, writes an Anthropic `ping` event after every 10 seconds of silence (`HIVE_INFERENCE_STREAM_PING_INTERVAL` changes the interval), forwards `delta.reasoning_content` as a `thinking` block, and flushes every event. Because the 200 is already out, a gateway failure on a streamed request (unreachable, a non-2xx status, or a stream that breaks) now reaches the CLI as an SSE `error` event with the same `inference backend ...` message and an Anthropic error type that follows the status. Non-streaming requests and `governor.inference_resilience` are unchanged. The operator docs also note the CLI's own `CLAUDE_STREAM_IDLE_TIMEOUT_MS` and `API_FORCE_IDLE_TIMEOUT` limits.
+
 ## 2026-11-25 (v5.369.0)
 
 ### Added
