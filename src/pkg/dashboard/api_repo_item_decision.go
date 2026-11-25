@@ -679,6 +679,7 @@ func (s *Server) handlePullRequestMergeDecision(ctx context.Context, w http.Resp
 		released := append(repoItemApprovalReleased(event), "admitted")
 		label := gh.AutoMergeLabel()
 		s.audit.LogRecord(user, auditRepoItemDecisionQueue, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", state.HeadSHA, "author", author, "label", label, "admitted_by", admitted, "review_submitted", strconv.FormatBool(queued.ReviewSubmitted)), "", repoFull, number)
+		s.noteApprovalReleased(ctx, repoFull, number, user, released)
 		s.invalidateStageTrackerForWebhook()
 		status := "queued-for-merge"
 		result := repoItemDecisionResult(repoFull, number, "pr", decision, comment, "", label, nil)
@@ -841,6 +842,9 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 		}
 	}
 	s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", head, "decision", comment, "released", strings.Join(released, ","), "stage", stage, "admitted_by", admitted, "commands_skipped", commandsSkipped, "to_contributor", toContributor), "", repoFull, number)
+	if decision == repoItemDecisionApprove {
+		s.noteApprovalReleased(ctx, repoFull, number, user, released)
+	}
 	result := repoItemDecisionResultWith(repoFull, number, "pr", decision, comment, "", "", repoItemApproveFacts{
 		User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow, CommandsSkipped: commandsSkipped != "", ProwRejected: prowRejected, ToContributor: toContributor,
 	})
