@@ -332,6 +332,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/repos/pause", s.handleRepoPause)
 	s.mux.HandleFunc("POST /api/repos/resume", s.handleRepoResume)
 	s.mux.HandleFunc("POST /api/repos/auto-merge", s.handleRepoAutoMerge)
+	s.mux.HandleFunc("POST /api/repos/open-prs", s.handleRepoOpenPRs)
 	s.mux.HandleFunc("GET /api/repos/pauses", s.handleRepoPauses)
 	s.mux.HandleFunc("GET /api/repos/{owner}/{repo}/hold-permission", s.handleRepoHoldPermission)
 	// Owner row actions are wrapped so the ledger behind the activity

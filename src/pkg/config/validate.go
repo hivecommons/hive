@@ -172,6 +172,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateRepoForges(); err != nil {
 		return err
 	}
+	if err := c.validateRepoOpenPRs(); err != nil {
+		return err
+	}
 	if err := c.Forgejo.Integration.Validate(); err != nil {
 		return err
 	}
