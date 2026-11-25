@@ -175,29 +175,48 @@ function evidenceForHead(runs, head, checks) {
   });
 }
 
+// The workflow run id an Actions check run's details_url points at, or null
+// when it is not a github.com Actions run URL of this repository.
+function actionsRunID(repo, run) {
+  let url;
+  try {
+    url = new URL(run.details_url);
+  } catch {
+    return null;
+  }
+  const prefix = `/${repo.owner}/${repo.repo}/actions/runs/`;
+  const id = url.pathname.startsWith(prefix) && url.pathname.slice(prefix.length).split('/')[0];
+  return url.hostname === 'github.com' && /^[0-9]+$/.test(id) ? Number(id) : null;
+}
+
+// One workflow-run read per run id per evaluation. Jobs are read only when a
+// run is bound (assertActionsProvenance), never for one that is passed over.
+async function workflowRunFor(github, repo, runID, workflows) {
+  if (!workflows.has(runID)) {
+    const { data: workflow } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: runID });
+    workflows.set(runID, { workflow });
+  }
+  return workflows.get(runID);
+}
+
 // Every Actions workflow shares one App id, so a same-named check run proves
 // nothing: bind it to the expected workflow file, event, head, suite and job.
 async function assertActionsProvenance(github, repo, number, head, run, source, workflows) {
-  const url = new URL(run.details_url);
-  const prefix = `/${repo.owner}/${repo.repo}/actions/runs/`;
-  const id = url.pathname.startsWith(prefix) && url.pathname.slice(prefix.length).split('/')[0];
-  if (url.hostname !== 'github.com' || !/^[0-9]+$/.test(id)) {
-    throw new Error(`Invalid Actions provenance for ${run.name}`);
-  }
-  const runID = Number(id);
-  if (!workflows.has(runID)) {
-    const { data: workflow } = await github.rest.actions.getWorkflowRun({ ...repo, run_id: runID });
-    const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-      ...repo, run_id: runID, per_page: 100, filter: 'latest',
-    });
-    workflows.set(runID, { workflow, jobs });
-  }
-  const { workflow, jobs } = workflows.get(runID);
+  const runID = actionsRunID(repo, run);
+  if (runID === null) throw new Error(`Invalid Actions provenance for ${run.name}`);
+  const cached = await workflowRunFor(github, repo, runID, workflows);
+  const { workflow } = cached;
   const [file, events] = source;
   if (workflow.path !== `.github/workflows/${file}` || !events.includes(workflow.event) ||
       workflow.head_sha !== head || workflow.id !== runID) {
     throw new Error(`Unexpected workflow/event/head for ${run.name} on #${number}`);
   }
+  if (!cached.jobs) {
+    cached.jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+      ...repo, run_id: runID, per_page: 100, filter: 'latest',
+    });
+  }
+  const { jobs } = cached;
   // details_url is only a locator. The API-owned suite and job identities
   // must independently bind this exact check run to the expected workflow.
   const checkURL = `https://api.github.com/repos/${repo.owner}/${repo.repo}/check-runs/${run.id}`;
@@ -208,6 +227,45 @@ async function assertActionsProvenance(github, repo, number, head, run, source, 
         job.status === 'completed' && job.conclusion === run.conclusion)) {
     throw new Error(`Check suite/job identity mismatch for ${run.name} on #${number}`);
   }
+}
+
+// All Actions workflows share one App id, so the newest run of a check name
+// can come from another workflow: feedback.yml's `gate` job is skipped when a
+// PR closes unmerged, and a same-head adoption (copy opened, original closed)
+// leaves that skip newer than docker.yml's `gate`. Pass over, newest first,
+// only runs that are completed as skipped AND whose suite-bound
+// workflow run is another workflow file. The scan stops at the first run that
+// is still running (no API call, so the pending poll costs what it did), did
+// not conclude skipped (a foreign failure or success still blocks), is not an
+// Actions run of this repository, or is not bound to its workflow run's
+// suite; that run, and everything older, is left for
+// evidenceForHead and assertActionsProvenance exactly as before. If every run
+// of the name is passed over, the newest is bound here, so the result is its
+// provenance failure, never its conclusion read as this PR's verdict.
+async function sourceWorkflowRuns(github, repo, number, head, runs, checks, workflows) {
+  const foreign = new Set();
+  for (const [name, source] of Object.entries(checks)) {
+    if (!source) continue; // Probot DCO is not an Actions workflow.
+    const candidates = runs.filter(r => r.name === name).sort((a, b) => b.id - a.id);
+    const passed = [];
+    for (const run of candidates) {
+      if (run.status !== 'completed' || run.conclusion !== 'skipped' || run.app?.id !== ACTIONS_APP_ID) break;
+      const runID = actionsRunID(repo, run);
+      if (runID === null) break;
+      const { workflow } = await workflowRunFor(github, repo, runID, workflows);
+      if (workflow.id !== runID || !Number.isSafeInteger(run.check_suite?.id) ||
+          run.check_suite.id !== workflow.check_suite_id ||
+          workflow.path === `.github/workflows/${source[0]}`) {
+        break;
+      }
+      passed.push(run);
+    }
+    if (passed.length && passed.length === candidates.length) {
+      await assertActionsProvenance(github, repo, number, head, passed[0], source, workflows);
+    }
+    for (const run of passed) foreign.add(run);
+  }
+  return foreign.size ? runs.filter(r => !foreign.has(r)) : runs;
 }
 
 async function reachableFrom(github, repo, branch, commit) {
@@ -302,7 +360,8 @@ async function assertHiveStatus(github, repo, head, name, creatorLogin = hiveCre
 async function assertEitherProvider(github, repo, number, head, name, source, runs, workflows, creatorLogin) {
   let legacy;
   try {
-    for (const { run, source: src } of evidenceForHead(runs, head, { [name]: source })) {
+    const chosen = await sourceWorkflowRuns(github, repo, number, head, runs, { [name]: source }, workflows);
+    for (const { run, source: src } of evidenceForHead(chosen, head, { [name]: source })) {
       await assertActionsProvenance(github, repo, number, head, run, src, workflows);
     }
     return 'actions';
@@ -333,7 +392,8 @@ async function assertEvidence(github, repo, number, head, checks, pr) {
   });
   const workflows = new Map();
   try {
-    for (const { run, source } of evidenceForHead(runs, head, required)) {
+    const chosen = await sourceWorkflowRuns(github, repo, number, head, runs, required, workflows);
+    for (const { run, source } of evidenceForHead(chosen, head, required)) {
       if (!source) continue; // Probot DCO is deliberately not impersonated.
       await assertActionsProvenance(github, repo, number, head, run, source, workflows);
     }
