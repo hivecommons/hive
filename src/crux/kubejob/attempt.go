@@ -79,7 +79,7 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 	manifest := l.jobManifest(ns, name, subPath, spec, relays)
 	pullFrom := relays
 	if l.copyPlan != nil {
-		if err := l.copyPlan.apply(manifest); err != nil {
+		if err := l.copyPlan.apply(manifest, name); err != nil {
 			return res, err
 		}
 		pullFrom = l.copyPlan.image
@@ -95,27 +95,48 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 	}
 	jobsPath := fmt.Sprintf("/apis/batch/v1/namespaces/%s/jobs", ns)
 	policyPath := ""
+	secretPath := ""
+	policiesPath := fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies", ns)
+	var policyBody map[string]any
 	if l.Options.network() == NetworkNone {
 		// The policy exists before any pod can: a Job created first could
 		// start its pod in the window before the policy lands.
-		policiesPath := fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies", ns)
-		deny := denyAllPolicy(ns, name)
+		policyBody = denyAllPolicy(ns, name)
 		if l.copyPlan != nil {
-			l.copyPlan.allowBridgeIngress(deny)
+			l.copyPlan.allowBridgeIngress(policyBody)
 		}
-		policy, err := json.Marshal(deny)
+	} else if l.copyPlan != nil {
+		policyBody = l.copyPlan.ingressOnlyPolicy(ns, name)
+	}
+	cleanup := func(c context.Context) {
+		l.deletePolicy(c, policyPath)
+		l.deletePolicy(c, secretPath)
+	}
+	if l.copyPlan != nil {
+		secret, err := json.Marshal(l.copyPlan.tokenSecret(ns, name))
 		if err != nil {
 			return res, err
 		}
+		secretsPath := fmt.Sprintf("/api/v1/namespaces/%s/secrets", ns)
+		if _, err := l.do(ctx, http.MethodPost, secretsPath, secret); err != nil {
+			return res, fmt.Errorf("kubejob: creating the bridge token Secret for %s: %w", name, err)
+		}
+		secretPath = secretsPath + "/" + name
+	}
+	if policyBody != nil {
+		policy, err := json.Marshal(policyBody)
+		if err != nil {
+			cleanup(ctx)
+			return res, err
+		}
 		if _, err := l.do(ctx, http.MethodPost, policiesPath, policy); err != nil {
-			return res, fmt.Errorf("kubejob: network %q: creating the deny-all NetworkPolicy for %s: %w", NetworkNone, name, err)
+			cleanup(ctx)
+			return res, fmt.Errorf("kubejob: creating the NetworkPolicy for %s: %w", name, err)
 		}
 		policyPath = policiesPath + "/" + name
 	}
 	if _, err := l.do(ctx, http.MethodPost, jobsPath, body); err != nil {
-		if policyPath != "" {
-			_ = l.delete(ctx, policyPath)
-		}
+		cleanup(ctx)
 		return res, fmt.Errorf("kubejob: creating job %s: %w", name, err)
 	}
 	jobPath := jobsPath + "/" + name
@@ -157,7 +178,7 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 		// No node took the pod in time: there is no log to read and nothing
 		// to inspect, so the Job goes and the agent's slot is released.
 		_ = l.delete(live(), jobPath)
-		l.deletePolicy(live(), policyPath)
+		cleanup(live())
 		res.ExitCode = exitCodeUnknown
 		res.FailReason = done.failReason
 		res.Stderr = done.reason
@@ -179,13 +200,13 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 		// Context ended (kick timeout or cancel). The Job would otherwise
 		// keep running the workload on the accelerator node; stop it.
 		_ = l.delete(live(), jobPath)
-		l.deletePolicy(live(), policyPath)
+		cleanup(live())
 		return res, waitErr
 	}
 	if !done.succeeded {
 		// The Job stays for inspection; its pods are finished, so the
 		// policy has nothing left to isolate and goes.
-		l.deletePolicy(live(), policyPath)
+		cleanup(live())
 		res.Stderr = done.reason
 		if msg, bad := l.Options.preflightFailure(res); bad {
 			res.FailReason = sandbox.FailReasonNodeUnhealthy
@@ -201,7 +222,7 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 	if copyErr != nil {
 		// The kick finished but its workspace never came back.
 		_ = l.delete(live(), jobPath)
-		l.deletePolicy(live(), policyPath)
+		cleanup(live())
 		return res, copyErr
 	}
 	// When the Job reports Complete but the pod could not be read back
@@ -212,6 +233,6 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 	// Collection may have expired the context even on success; the fresh
 	// context ensures the finished Job is still removed immediately.
 	_ = l.delete(live(), jobPath)
-	l.deletePolicy(live(), policyPath)
+	cleanup(live())
 	return res, nil
 }

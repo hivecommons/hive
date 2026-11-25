@@ -37,10 +37,12 @@ import (
 //     answered 409 while the command runs) and swaps it in on its own claim;
 //  3. tells the bridge it is done (POST /done), and the container exits.
 //
-// Every request but /healthz carries a per-run bearer token from the pod's
-// environment; the bridge removes it from the kick command's. On network:
-// none the deny-all NetworkPolicy also admits ingress from hive's own pod
-// labels to the bridge port, and nothing else. No GitHub credential enters
+// Every request but /healthz carries a per-run bearer token, held in a
+// per-Job Secret and read by the pod through secretKeyRef (never a literal
+// in the Job spec); the bridge removes it from the kick command's. A NetworkPolicy
+// admits ingress to the bridge port from hive's own pod labels only: on
+// network: none it is the deny-all policy plus that rule, on other networks
+// an ingress-only policy. No GitHub credential enters
 // the Job: hive pushes and opens the PR from the pulled workspace as before.
 //
 // The relay spool lives in the workspace and needs a directory hive and the
@@ -59,6 +61,7 @@ const (
 	bridgeBinary   = "/usr/local/bin/crux"
 	workspaceName  = "workspace"
 	bridgeTokenLen = 32
+	bridgeTokenKey = "token"
 )
 
 // copiesWorkspace reports whether the Job uses the copy transport.
@@ -91,7 +94,7 @@ type copyPlan struct {
 }
 
 // resolveCopy builds the copy plan: the image that supplies crux, a fresh
-// token and, on network: none, the labels that select hive's own pod.
+// token and the labels that select hive's own pod.
 func (l *Launcher) resolveCopy(ctx context.Context, ns string, spec sandbox.LaunchSpec) (*copyPlan, error) {
 	if len(spec.Command) == 0 {
 		return nil, errors.New("kubejob: workspace_transport: copy needs an explicit command to run behind the job bridge; this launch has none")
@@ -111,21 +114,21 @@ func (l *Launcher) resolveCopy(ctx context.Context, ns string, spec sandbox.Laun
 		}
 		plan.token = hex.EncodeToString(raw)
 	}
-	if l.Options.network() == NetworkNone {
-		pod, err := l.selfPod(ctx, ns)
-		if err != nil {
-			return nil, fmt.Errorf("kubejob: workspace_transport: copy with network: none reads hive's own pod labels to admit it to the job bridge: %w", err)
-		}
-		if len(pod.Metadata.Labels) == 0 {
-			return nil, errors.New("kubejob: workspace_transport: copy with network: none needs hive's own pod to carry labels the NetworkPolicy can admit; it has none")
-		}
-		plan.hiveLabels = pod.Metadata.Labels
+	// Hive's own pod labels select the only ingress the bridge port admits,
+	// whatever the network mode: the token alone must not be the only gate.
+	pod, err := l.selfPod(ctx, ns)
+	if err != nil {
+		return nil, fmt.Errorf("kubejob: workspace_transport: copy reads hive's own pod labels to admit it to the job bridge: %w", err)
 	}
+	if len(pod.Metadata.Labels) == 0 {
+		return nil, errors.New("kubejob: workspace_transport: copy needs hive's own pod to carry labels the NetworkPolicy can admit; it has none")
+	}
+	plan.hiveLabels = pod.Metadata.Labels
 	return plan, nil
 }
 
 // apply turns a claim-transport manifest into a copy-transport one.
-func (p *copyPlan) apply(manifest map[string]any) error {
+func (p *copyPlan) apply(manifest map[string]any, secretName string) error {
 	jobSpec, _ := manifest["spec"].(map[string]any)
 	tmpl, _ := jobSpec["template"].(map[string]any)
 	pod, _ := tmpl["spec"].(map[string]any)
@@ -157,7 +160,12 @@ func (p *copyPlan) apply(manifest map[string]any) error {
 	}
 	c["volumeMounts"] = append(mounts, map[string]any{"name": bridgeVolumeName, "mountPath": DefaultBridgeMount, "readOnly": true})
 	env, _ := c["env"].([]map[string]string)
-	c["env"] = append(env, map[string]string{"name": BridgeTokenEnv, "value": p.token})
+	envAny := make([]any, 0, len(env)+1)
+	for _, e := range env {
+		envAny = append(envAny, e)
+	}
+	env2 := envAny
+	c["env"] = append(env2, map[string]any{"name": BridgeTokenEnv, "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": secretName, "key": bridgeTokenKey}}})
 	c["ports"] = []map[string]any{{"name": bridgePortName, "containerPort": substratebridge.DefaultPort, "protocol": "TCP"}}
 	bridge := []string{
 		path.Join(DefaultBridgeMount, path.Base(bridgeBinary)), "job-bridge",
@@ -194,6 +202,31 @@ func (p *copyPlan) allowBridgeIngress(policy map[string]any) {
 		"from":  []map[string]any{{"podSelector": map[string]any{"matchLabels": p.hiveLabels}}},
 		"ports": []map[string]any{{"protocol": "TCP", "port": substratebridge.DefaultPort}},
 	}}
+}
+
+// tokenSecret is the per-Job Secret that holds the bridge token.
+func (p *copyPlan) tokenSecret(ns, name string) map[string]any {
+	return map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"type":       "Opaque",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": ns,
+			"labels":    map[string]string{managedByLabel: managedByValue, jobLabel: name},
+		},
+		"stringData": map[string]string{bridgeTokenKey: p.token},
+	}
+}
+
+// ingressOnlyPolicy limits ingress to the Job's pods to the bridge port from
+// hive's own pod, leaving egress as the chosen network mode has it.
+func (p *copyPlan) ingressOnlyPolicy(ns, job string) map[string]any {
+	policy := denyAllPolicy(ns, job)
+	spec, _ := policy["spec"].(map[string]any)
+	spec["policyTypes"] = []string{"Ingress"}
+	p.allowBridgeIngress(policy)
+	return policy
 }
 
 // copyRun is one Job's workspace copy, running beside waitJob.

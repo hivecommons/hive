@@ -53,6 +53,7 @@ func TestCopyTransportPushesRunsAndPullsTheWorkspace(t *testing.T) {
 	api.statuses = []string{statusPending}
 	srv := httptest.NewServer(api.handler(t))
 	defer srv.Close()
+	api.selfPod = labelledSelfPod
 	l := newLauncher(srv, copyOptions())
 	l.Options.WorkspaceClaim = ""
 	if err := l.Options.Validate(); err != nil {
@@ -104,8 +105,16 @@ func TestCopyTransportPushesRunsAndPullsTheWorkspace(t *testing.T) {
 	if cmd := asJSON(c["command"]); !strings.HasPrefix(cmd, `["/opt/hive-bridge/crux","job-bridge",`) || !strings.Contains(cmd, `"--","claude","-p"`) {
 		t.Errorf("container command = %s, want the kick behind crux job-bridge", cmd)
 	}
-	if env := asJSON(c["env"]); !strings.Contains(env, `{"name":"`+BridgeTokenEnv+`","value":"`+token+`"}`) {
-		t.Errorf("container env = %s, want the bridge token", env)
+	env := asJSON(c["env"])
+	if strings.Contains(env, token) || !strings.Contains(env, `"name":"`+BridgeTokenEnv+`","valueFrom":{"secretKeyRef":`) {
+		t.Errorf("container env = %s, want the bridge token by secretKeyRef, never a literal", env)
+	}
+	if !strings.Contains(asJSON(api.secret), `"token":"`+token+`"`) || !api.secretDeleted {
+		t.Errorf("token Secret = %s deleted=%v, want it created with the token and removed with the Job", asJSON(api.secret), api.secretDeleted)
+	}
+	// Outside network: none the bridge port is still limited to hive's pod.
+	if got := asJSON(api.policy); !strings.Contains(got, `"policyTypes":["Ingress"]`) || !strings.Contains(got, `"matchLabels":{"app":"hive"}`) || strings.Contains(got, "egress") {
+		t.Errorf("policy = %s, want an ingress-only policy admitting hive's pod", got)
 	}
 }
 

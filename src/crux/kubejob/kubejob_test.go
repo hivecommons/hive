@@ -44,6 +44,8 @@ type fakeAPI struct {
 	policy                map[string]any // the NetworkPolicy manifest, when one was created
 	policyErr             int            // when >0, the NetworkPolicy POST fails with this status
 	policyDeleted         bool
+	secret                map[string]any // the bridge token Secret, when one was created
+	secretDeleted         bool
 	order                 []string // "policy", "job" in creation order
 	selfPod               string   // JSON body of hive's own pod (testSelfPod), "" = 404
 	selfPodGets           int
@@ -104,6 +106,18 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 			f.order = append(f.order, "policy")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write(body)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/secrets"):
+			body, _ := io.ReadAll(r.Body)
+			var m map[string]any
+			if err := json.Unmarshal(body, &m); err != nil {
+				t.Errorf("secret is not JSON: %v", err)
+			}
+			f.secret = m
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write(body)
+		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/secrets/"):
+			f.secretDeleted = true
+			_, _ = w.Write([]byte(`{"kind":"Status","status":"Success"}`))
 		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/networkpolicies/"):
 			f.policyDeleted = true
 			_, _ = w.Write([]byte(`{"kind":"Status","status":"Success"}`))
