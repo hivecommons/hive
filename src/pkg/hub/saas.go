@@ -311,6 +311,12 @@ type SaaSUser struct {
 	// render as an em dash until a refresh succeeds or determines no data.
 	Affiliation       string `json:"affiliation,omitempty"`
 	AffiliationSource string `json:"affiliation_source,omitempty"`
+	// AffiliationConfidence is set only for a colony:<provider> source:
+	// colony's "high", "medium" or "low" (affiliation_colony.go).
+	AffiliationConfidence string `json:"affiliation_confidence,omitempty"`
+	// CNCFContributions is the CNCF-wide all-time contribution count from
+	// colony devstats, cached only while that provider is switched on.
+	CNCFContributions int    `json:"cncf_contributions,omitempty"`
 	ProfileBio        string `json:"profile_bio,omitempty"`
 	ProfileLocation   string `json:"profile_location,omitempty"`
 	PublicActivity    string `json:"public_activity,omitempty"`
