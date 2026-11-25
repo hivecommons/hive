@@ -47896,12 +47896,14 @@
         "description": "Replaces the PAT without a restart. The new token is verified against the configured api_url first (GET /user, read access to every project repo, and the boot scope check for the current ACMM level); a failure is refused with 422 and nothing changes. A verified token is saved through the normal (keystore-sealed) config save path, then a new PAT client is adopted and running agents get fresh credentials. Audited as github_token_rotated / github_token_rejected by fingerprint. The response never carries the token. Refused with 409 when github.app_id is set. Owner only.",
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["token"], "properties": {"token": {"type": "string", "writeOnly": true}}}}}},
         "responses": {
-          "200": {"description": "Token rotated", "content": {"application/json": {"schema": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["pat", "app"]}, "rotatable": {"type": "boolean"}, "configured": {"type": "boolean"}, "fingerprint": {"type": "string"}, "login": {"type": "string"}, "verified_at": {"type": "string", "format": "date-time"}}}}}},
+          "200": {"description": "Token rotated", "content": {"application/json": {"schema": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["pat", "app"]}, "rotatable": {"type": "boolean"}, "configured": {"type": "boolean"}, "fingerprint": {"type": "string"}, "login": {"type": "string"}, "verified_at": {"type": "string", "format": "date-time"}, "sealed": {"type": "boolean", "description": "True when the saved token is a keystore envelope; false when written as plaintext (the config file is then kept 0600)."}}}}}},
           "400": {"description": "Missing or empty token"},
-          "403": {"description": "Owner role required"},
-          "409": {"description": "This hive authenticates as a GitHub App"},
+          "403": {"description": "Owner role required, or a cross-site request (Sec-Fetch-Site: cross-site)"},
+          "409": {"description": "This hive authenticates as a GitHub App (checked again under the GitHub config lock)"},
+          "415": {"description": "Content-Type must be application/json"},
           "422": {"description": "The token failed verification; the current token is unchanged"},
-          "500": {"description": "Config save failed; the current token is unchanged"},
+          "429": {"description": "A token was rejected recently; Retry-After says how long to wait"},
+          "500": {"description": "Config has no source path, the config file could not be made owner-only, or the save failed; the current token is unchanged"},
           "503": {"description": "Rotation is not wired on this hive"}
         }
       }

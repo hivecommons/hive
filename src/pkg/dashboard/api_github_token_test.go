@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // hivecommons/hive#19633: write-only PAT rotation for PAT-mode hives.
@@ -200,5 +201,203 @@ func TestGitHubToken_RefusedOnAppHiveAndForNonOwners(t *testing.T) {
 	s.deps.VerifyGitHubToken = nil
 	if rec := doGitHubTokenPut(s, map[string]any{"token": "ghp_new_token"}, true); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("unwired PUT: expected 503, got %d", rec.Code)
+	}
+}
+
+func TestGitHubToken_RefusedWithoutSourcePath(t *testing.T) {
+	s, f := githubTokenServer(t)
+	s.deps.Config.SourcePath = ""
+
+	rec := doGitHubTokenPut(s, map[string]any{"token": "ghp_new_token"}, true)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "no source path") {
+		t.Fatalf("PUT without a source path: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(f.verified) != 0 || len(f.applied) != 0 || s.deps.Config.GitHub.Token != "ghp_old_token" {
+		t.Fatalf("an in-memory-only rotation went ahead: verified=%q applied=%q token=%q", f.verified, f.applied, s.deps.Config.GitHub.Token)
+	}
+	if len(githubTokenAudits(s, "github_token_rotated")) != 0 {
+		t.Fatal("a token that would be lost on restart was audited as rotated")
+	}
+}
+
+func TestGitHubToken_AppSetWhileWaitingForLockGets409(t *testing.T) {
+	s, f := githubTokenServer(t)
+
+	// Hold the GitHub config lock the way an App setup does, let the PUT
+	// queue behind it, then finish the App setup before releasing.
+	s.githubConfigMu.Lock()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- doGitHubTokenPut(s, map[string]any{"token": "ghp_new_token"}, true) }()
+	time.Sleep(50 * time.Millisecond)
+	s.deps.Config.GitHub.AppID = 123456
+	s.githubConfigMu.Unlock()
+
+	rec := <-done
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("PUT after app_id was set under the lock: expected 409, got %d %s", rec.Code, rec.Body.String())
+	}
+	if len(f.verified) != 0 || len(f.applied) != 0 || s.deps.Config.GitHub.Token != "ghp_old_token" {
+		t.Fatalf("a PAT write raced an App setup: verified=%q applied=%q token=%q", f.verified, f.applied, s.deps.Config.GitHub.Token)
+	}
+}
+
+func TestGitHubToken_CSRFGuard(t *testing.T) {
+	s, f := githubTokenServer(t)
+	put := func(mutate func(*http.Request)) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, githubTokenPath, strings.NewReader(`{"token":"ghp_new_token"}`))
+		req.Header.Set("Content-Type", "application/json")
+		markOwnerRequest(req)
+		req.Header.Set("X-Hive-User", "owner-login")
+		mutate(req)
+		s.mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := put(func(r *http.Request) { r.Header.Set("Sec-Fetch-Site", "cross-site") }); rec.Code != http.StatusForbidden {
+		t.Fatalf("cross-site PUT: expected 403, got %d %s", rec.Code, rec.Body.String())
+	}
+	for _, ct := range []string{"text/plain", "application/x-www-form-urlencoded", ""} {
+		if rec := put(func(r *http.Request) { r.Header.Set("Content-Type", ct) }); rec.Code != http.StatusUnsupportedMediaType {
+			t.Fatalf("Content-Type %q: expected 415, got %d %s", ct, rec.Code, rec.Body.String())
+		}
+	}
+	if len(f.verified) != 0 || len(f.applied) != 0 {
+		t.Fatalf("a refused request reached the verifier or applier: verified=%q applied=%q", f.verified, f.applied)
+	}
+	// Same-origin and a charset parameter are fine.
+	rec := put(func(r *http.Request) {
+		r.Header.Set("Sec-Fetch-Site", "same-origin")
+		r.Header.Set("Content-Type", "application/json; charset=utf-8")
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("same-origin JSON PUT: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGitHubToken_UnsealedTokenKeepsConfigFileOwnerOnly(t *testing.T) {
+	prev := githubTokenSealable
+	t.Cleanup(func() { githubTokenSealable = prev })
+
+	t.Run("unsealed tightens a readable file", func(t *testing.T) {
+		githubTokenSealable = func(string) bool { return false }
+		s, _ := githubTokenServer(t)
+		if err := os.WriteFile(s.deps.Config.SourcePath, []byte("project:\n  org: x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rec := doGitHubTokenPut(s, map[string]any{"token": "ghp_new_token"}, true)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
+		}
+		if m := decodeMap(t, rec); m["sealed"] != false {
+			t.Fatalf("response sealed = %v, want false: %v", m["sealed"], m)
+		}
+		fi, err := os.Stat(s.deps.Config.SourcePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("config file mode = %v, want no group or world access", fi.Mode().Perm())
+		}
+		if a := githubTokenAudits(s, "github_token_rotated"); len(a) != 1 || !strings.Contains(a[0], "sealed=false") {
+			t.Fatalf("audit = %v, want sealed=false", a)
+		}
+	})
+
+	t.Run("unsealed creates a missing file owner-only", func(t *testing.T) {
+		githubTokenSealable = func(string) bool { return false }
+		s, _ := githubTokenServer(t)
+		if rec := doGitHubTokenPut(s, map[string]any{"token": "ghp_new_token"}, true); rec.Code != http.StatusOK {
+			t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
+		}
+		fi, err := os.Stat(s.deps.Config.SourcePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm()&0o077 != 0 {
+			t.Fatalf("new config file mode = %v, want 0600", fi.Mode().Perm())
+		}
+	})
+
+	t.Run("sealed leaves the file mode alone", func(t *testing.T) {
+		githubTokenSealable = func(string) bool { return true }
+		s, _ := githubTokenServer(t)
+		if err := os.WriteFile(s.deps.Config.SourcePath, []byte("project:\n  org: x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rec := doGitHubTokenPut(s, map[string]any{"token": "ghp_new_token"}, true)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
+		}
+		if m := decodeMap(t, rec); m["sealed"] != true {
+			t.Fatalf("response sealed = %v, want true: %v", m["sealed"], m)
+		}
+		fi, _ := os.Stat(s.deps.Config.SourcePath)
+		if fi.Mode().Perm() != 0o644 {
+			t.Fatalf("config file mode = %v, want it untouched (0644)", fi.Mode().Perm())
+		}
+	})
+
+	t.Run("a file that cannot be protected refuses the rotation", func(t *testing.T) {
+		githubTokenSealable = func(string) bool { return false }
+		s, f := githubTokenServer(t)
+		// A source path under a regular file: stat fails with ENOTDIR, which
+		// is neither "missing" nor "readable", so nothing may be written.
+		blocker := filepath.Join(t.TempDir(), "file")
+		if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		s.deps.Config.SourcePath = filepath.Join(blocker, "hive.yaml")
+		rec := doGitHubTokenPut(s, map[string]any{"token": "ghp_new_token"}, true)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("PUT: %d %s", rec.Code, rec.Body.String())
+		}
+		if len(f.applied) != 0 || s.deps.Config.GitHub.Token != "ghp_old_token" {
+			t.Fatalf("an unprotectable rotation went ahead: applied=%q token=%q", f.applied, s.deps.Config.GitHub.Token)
+		}
+	})
+}
+
+func TestGitHubToken_RejectedAttemptsAreRateLimited(t *testing.T) {
+	t.Setenv(githubTokenRejectCooldownEnv, "")
+	s, f := githubTokenServer(t)
+	now := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	s.githubTokenNow = func() time.Time { return now }
+	f.verifyFn = func(string) (string, error) { return "", errors.New("GitHub rejected the token at GET /user") }
+
+	if rec := doGitHubTokenPut(s, map[string]any{"token": "ghp_bad_token"}, true); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("first bad PUT: %d %s", rec.Code, rec.Body.String())
+	}
+	now = now.Add(5 * time.Second)
+	rec := doGitHubTokenPut(s, map[string]any{"token": "ghp_other_token"}, true)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("PUT inside the cooldown: expected 429, got %d %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Retry-After"); got != "10" {
+		t.Fatalf("Retry-After = %q, want 10", got)
+	}
+	if !strings.Contains(rec.Body.String(), "retry in 10 seconds") {
+		t.Fatalf("429 body has no retry hint: %s", rec.Body.String())
+	}
+	if len(f.verified) != 1 {
+		t.Fatalf("a throttled attempt reached GitHub: verified=%q", f.verified)
+	}
+
+	// After the window a good token goes through.
+	now = now.Add(defaultGitHubTokenRejectCooldown)
+	f.verifyFn = func(string) (string, error) { return "rotator", nil }
+	if rec := doGitHubTokenPut(s, map[string]any{"token": "ghp_new_token"}, true); rec.Code != http.StatusOK {
+		t.Fatalf("PUT after the cooldown: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGitHubToken_CooldownIsConfigurable(t *testing.T) {
+	t.Setenv(githubTokenRejectCooldownEnv, "0")
+	s, f := githubTokenServer(t)
+	f.verifyFn = func(string) (string, error) { return "", errors.New("GitHub rejected the token at GET /user") }
+	for i := 0; i < 2; i++ {
+		if rec := doGitHubTokenPut(s, map[string]any{"token": "ghp_bad_token"}, true); rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("attempt %d with the cooldown off: %d %s", i, rec.Code, rec.Body.String())
+		}
 	}
 }

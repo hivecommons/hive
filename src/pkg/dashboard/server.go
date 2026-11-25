@@ -418,12 +418,17 @@ type Server struct {
 	ownerIdentityFlowMu sync.Mutex
 	ownerIdentityFlow   *ownerIdentityFlow
 
-	// githubTokenMu serializes PAT rotations (hivecommons/hive#19633,
-	// api_github_token.go) and guards githubTokenVerified, the last token
-	// this process verified: its fingerprint, login and when. Never the
-	// token itself.
-	githubTokenMu       sync.Mutex
-	githubTokenVerified *githubTokenVerification
+	// PAT rotation (hivecommons/hive#19633, api_github_token.go) runs under
+	// githubConfigMu, the same lock PUT /api/config/github and installation
+	// discovery take, so it cannot interleave with an App setup. These two
+	// fields are guarded by it: githubTokenVerified is the last token this
+	// process verified (fingerprint, login, when; never the token) and
+	// githubTokenRejectedAt is when a candidate token last failed
+	// verification, which starts the cooldown on further attempts.
+	// githubTokenNow is a test clock; nil means time.Now.
+	githubTokenVerified   *githubTokenVerification
+	githubTokenRejectedAt time.Time
+	githubTokenNow        func() time.Time
 
 	// userSessions maps a random opaque session id (stored in the client's
 	// hive_session cookie on direct-route spokes) to the authenticated user.
