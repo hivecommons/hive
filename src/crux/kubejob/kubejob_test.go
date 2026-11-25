@@ -46,6 +46,10 @@ type fakeAPI struct {
 	policyDeleted         bool
 	secret                map[string]any // the bridge token Secret, when one was created
 	secretDeleted         bool
+	secretErr             int      // when >0, the Secret POST fails with this status
+	patchErr              int      // when >0, the Job PATCH (resume) fails with this status
+	patches               []string // Job PATCH bodies
+	deletes               []string // every DELETE path
 	order                 []string // "policy", "job" in creation order
 	selfPod               string   // JSON body of hive's own pod (testSelfPod), "" = 404
 	selfPodGets           int
@@ -106,7 +110,22 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 			f.order = append(f.order, "policy")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write(body)
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/jobs/"):
+			body, _ := io.ReadAll(r.Body)
+			if f.patchErr > 0 {
+				w.WriteHeader(f.patchErr)
+				_, _ = w.Write([]byte(`{"kind":"Status","message":"jobs.batch is forbidden: cannot patch resource \"jobs\""}`))
+				return
+			}
+			f.patches = append(f.patches, string(body))
+			_, _ = w.Write([]byte(`{}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/secrets"):
+			if f.secretErr > 0 {
+				w.WriteHeader(f.secretErr)
+				_, _ = w.Write([]byte(`{"kind":"Status","message":"secrets is forbidden: cannot create resource \"secrets\""}`))
+				return
+			}
+			f.order = append(f.order, "secret")
 			body, _ := io.ReadAll(r.Body)
 			var m map[string]any
 			if err := json.Unmarshal(body, &m); err != nil {
@@ -116,9 +135,11 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write(body)
 		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/secrets/"):
+			f.deletes = append(f.deletes, r.URL.Path)
 			f.secretDeleted = true
 			_, _ = w.Write([]byte(`{"kind":"Status","status":"Success"}`))
 		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/networkpolicies/"):
+			f.deletes = append(f.deletes, r.URL.Path)
 			f.policyDeleted = true
 			_, _ = w.Write([]byte(`{"kind":"Status","status":"Success"}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/jobs"):
@@ -136,6 +157,11 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 			f.createdAll = append(f.createdAll, m)
 			f.jobCreations++
 			f.order = append(f.order, "job")
+			// The API server assigns the UID that owned objects name.
+			if md, ok := m["metadata"].(map[string]any); ok {
+				withUID := map[string]any{"metadata": map[string]any{"name": md["name"], "uid": "job-uid-1"}}
+				body, _ = json.Marshal(withUID)
+			}
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write(body)
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/jobs/"):
@@ -153,6 +179,7 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 			}
 			_, _ = w.Write([]byte(statusBody))
 		case r.Method == http.MethodDelete:
+			f.deletes = append(f.deletes, r.URL.Path)
 			f.deleted = true
 			_, _ = w.Write([]byte(`{"kind":"Status","status":"Success"}`))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pods"):

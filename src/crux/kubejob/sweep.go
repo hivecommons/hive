@@ -142,7 +142,9 @@ func (l *Launcher) SweepOrphans(ctx context.Context, opts SweepOptions) ([]Swept
 		// best effort, as a Job on the default network has none.
 		l.deleteQuiet(ctx, fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies/%s", ns, md.Name))
 		// A workspace_transport: copy Job had a bridge token Secret of the
-		// same name (no ownerReference); best effort, as other Jobs have none.
+		// same name; best effort, as other Jobs have none. Both objects are
+		// owned by the Job, so the garbage collector removes them anyway,
+		// including for a Job that finished while hive was down.
 		l.deleteQuiet(ctx, fmt.Sprintf("/api/v1/namespaces/%s/secrets/%s", ns, md.Name))
 		swept = append(swept, SweptJob{Name: md.Name, Agent: agent, Age: age, Reason: reason})
 	}

@@ -1,6 +1,10 @@
 package config
 
-import "strings"
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
 
 // Sandbox runtimes. SandboxRuntimePodman is the default when nothing is set.
 const (
@@ -21,7 +25,10 @@ var ValidSandboxRuntimes = map[string]bool{SandboxRuntimePodman: true, SandboxRu
 // WorkspaceClaimMount is where hive sees it (default /data, where the
 // standalone and hub-provisioned deployments mount hive-data). The sandbox
 // workspace root must live under that mount. When the Job lands on a
-// different node than hive, the claim has to be ReadWriteMany.
+// different node than hive, the claim has to be ReadWriteMany. With
+// WorkspaceTransport "copy" the Job mounts no claim: its workspace is a
+// pod-local emptyDir that hive fills and pulls back (docs/sandbox-isolation.md),
+// and WorkspaceClaim is not needed.
 //
 // EnvFromSecrets is the ONLY credential path into the Job. Hive's brokered
 // GitHub token never enters it; hive pushes and opens the PR from the
@@ -64,6 +71,11 @@ type SandboxJobConfig struct {
 	// workspace into a pod-local emptyDir and back, so WorkspaceClaim is not
 	// needed and the Job never mounts hive's data volume.
 	WorkspaceTransport string `yaml:"workspace_transport,omitempty" json:"workspace_transport,omitempty"`
+	// WorkspaceSizeLimit is the sizeLimit of the copy transport's workspace
+	// emptyDir, a Kubernetes quantity such as "20Gi" (default 10Gi). The node
+	// counts emptyDir data as ephemeral storage; pair it with an
+	// ephemeral-storage request and limit in resources.
+	WorkspaceSizeLimit string `yaml:"workspace_size_limit,omitempty" json:"workspace_size_limit,omitempty"`
 }
 
 // Job workspace transports, SandboxJobConfig.WorkspaceTransport.
@@ -71,6 +83,27 @@ const (
 	SandboxJobWorkspaceClaim = "claim"
 	SandboxJobWorkspaceCopy  = "copy"
 )
+
+var sizeQuantity = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|G|T|P|E)?$`)
+
+// ValidateSandboxJobTransport rejects a workspace_transport other than
+// "claim" or "copy" (a typo such as "Copy" would otherwise read as the claim
+// transport and fail only when a kick runs) and a workspace_size_limit that
+// is not a quantity.
+func ValidateSandboxJobTransport(job *SandboxJobConfig) error {
+	if job == nil {
+		return nil
+	}
+	switch strings.TrimSpace(job.WorkspaceTransport) {
+	case "", SandboxJobWorkspaceClaim, SandboxJobWorkspaceCopy:
+	default:
+		return fmt.Errorf("job.workspace_transport must be %q or %q, got %q", SandboxJobWorkspaceClaim, SandboxJobWorkspaceCopy, job.WorkspaceTransport)
+	}
+	if l := strings.TrimSpace(job.WorkspaceSizeLimit); l != "" && !sizeQuantity.MatchString(l) {
+		return fmt.Errorf("job.workspace_size_limit must be a quantity such as 20Gi, got %q", job.WorkspaceSizeLimit)
+	}
+	return nil
+}
 
 // CopiesWorkspace reports whether the Job uses the copy transport, which
 // needs no workspace_claim.
@@ -116,6 +149,9 @@ func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 	}
 	if strings.TrimSpace(out.WorkspaceTransport) == "" {
 		out.WorkspaceTransport = g.WorkspaceTransport
+	}
+	if strings.TrimSpace(out.WorkspaceSizeLimit) == "" {
+		out.WorkspaceSizeLimit = g.WorkspaceSizeLimit
 	}
 	if out.TTLSeconds == 0 {
 		out.TTLSeconds = g.TTLSeconds

@@ -192,7 +192,8 @@ attempt to restart it before the kick did not work.
 Applies to agents that run each kick in a sandbox (podman, Kubernetes Job,
 OpenShell or Substrate). Error text names the setting, for example `sandbox
 image is not configured`, `sandbox execution requires a primary repo`,
-`sandbox job runtime requires job.workspace_claim`, or `agent has a live
+`sandbox job runtime requires job.workspace_claim` (not needed with
+`workspace_transport: copy`), or `agent has a live
 interactive session; sandbox kicks are blocked until it stops`.
 
 - **What to do:** set the named field in the agent's sandbox configuration

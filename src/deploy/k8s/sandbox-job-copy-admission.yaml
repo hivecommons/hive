@@ -1,0 +1,52 @@
+# SAMPLE. A ValidatingAdmissionPolicy (GA in Kubernetes 1.30) that limits what
+# hive's service account may do with the grants in sandbox-job-copy-rbac.yaml:
+#  - Secrets and NetworkPolicies it creates, updates or deletes must be named
+#    hive-kick-* and carry app.kubernetes.io/managed-by=hive-kubejob;
+#  - a NetworkPolicy must select pods by the hive.kubestellar.io/job label, so
+#    it cannot be a namespace-wide podSelector: {}.
+# Not in kustomization.yaml. Adjust the service account name (hub-provisioned
+# spokes may run as "default" or "hive-sa"), start with validationActions
+# [Audit, Warn] and read the audit annotations before you switch to Deny. It
+# has been written to the API's schema; it has not been run against a cluster
+# in this PR.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: hive-sandbox-copy-objects
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["secrets"]
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["networkpolicies"]
+  matchConditions:
+    - name: from-the-hive-service-account
+      expression: "request.userInfo.username == 'system:serviceaccount:hive:hive'"
+  variables:
+    - name: target
+      expression: "request.operation == 'DELETE' ? oldObject : object"
+  validations:
+    - expression: "variables.target.metadata.name.startsWith('hive-kick-')"
+      message: "the hive service account may only touch objects named hive-kick-*"
+    - expression: "has(variables.target.metadata.labels) && 'app.kubernetes.io/managed-by' in variables.target.metadata.labels && variables.target.metadata.labels['app.kubernetes.io/managed-by'] == 'hive-kubejob'"
+      message: "the hive service account may only touch objects labelled app.kubernetes.io/managed-by=hive-kubejob"
+    - expression: "request.kind.kind != 'NetworkPolicy' || request.operation == 'DELETE' || (has(object.spec.podSelector.matchLabels) && 'hive.kubestellar.io/job' in object.spec.podSelector.matchLabels)"
+      message: "a NetworkPolicy from hive must select pods by the hive.kubestellar.io/job label"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: hive-sandbox-copy-objects
+spec:
+  policyName: hive-sandbox-copy-objects
+  validationActions: ["Audit", "Warn"]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: hive

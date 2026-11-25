@@ -2947,13 +2947,19 @@ subjects:
 # hive-sandbox-jobs lets a spoke run a sandboxed agent kick as a Kubernetes
 # Job in its OWN namespace (sandbox.runtime: job, #6311; pkg/kubejob). The
 # spoke creates the Job, polls it, reads the pod's log and exit code, and
-# deletes it. Namespace-scoped and nothing more: no exec, no secrets read —
-# the Job's own secrets are referenced by name in the pod template and
-# resolved by Kubernetes, never read by hive. The one secret grant is
-# write-only (create, delete; no get/list): workspace_transport: copy creates
-# a per-Job bridge token Secret and deletes it with the Job. Per-Job
-# NetworkPolicies are likewise create/delete only. Unconditional like
-# hive-self-upgrade: the Job runtime is a spoke feature on every cluster.
+# deletes it. Namespace-scoped: no exec, no secrets, no NetworkPolicies — the
+# Job's own secrets are referenced by name in the pod template and resolved
+# by Kubernetes, never read by hive. Unconditional like hive-self-upgrade:
+# the Job runtime is a spoke feature on every cluster. Note that "jobs"
+# create is a strong grant where Pod Security is "privileged".
+#
+# workspace_transport: copy needs more, in the SEPARATE Role
+# hive-sandbox-jobs-copy below. The hub does not know a spoke's sandbox
+# config, so it cannot grant it only to spokes that use the copy transport;
+# it emits the Role and binds nothing, and the operator binds it on a spoke
+# that does (kubectl create rolebinding). Its secrets and networkpolicies
+# rules cover every Secret and NetworkPolicy in the namespace: see
+# docs/sandbox-isolation.md.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -2969,6 +2975,16 @@ rules:
 - apiGroups: [""]
   resources: ["serviceaccounts"]
   verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-sandbox-jobs-copy
+  namespace: {{.Namespace}}
+rules:
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["patch"]
 - apiGroups: [""]
   resources: ["secrets"]
   verbs: ["create", "delete"]

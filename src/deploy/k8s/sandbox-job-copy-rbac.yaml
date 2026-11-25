@@ -1,0 +1,59 @@
+# Extra grants for workspace_transport: copy (#19621), kept apart from
+# sandbox-job-rbac.yaml and NOT in kustomization.yaml: apply it, and bind it,
+# only on a spoke that uses the copy transport. Without it a copy-transport
+# kick fails at its first create, and the error names the Secret:
+#   kubejob: creating the bridge token Secret for hive-kick-<agent>-<unix>:
+#   POST /api/v1/namespaces/<ns>/secrets: HTTP 403: secrets is forbidden: ...
+#
+# What each rule is for:
+#  - secrets create, delete: the per-Job bridge token Secret.
+#  - networkpolicies create, delete: the per-Job NetworkPolicy.
+#  - jobs patch: the Job is created suspended so the Secret and the policy can
+#    name it as their owner, then resumed with a patch.
+#
+# Read what they allow before you bind them. RBAC cannot scope `create` by
+# name and `delete` takes no resourceNames, so these apply to EVERY Secret and
+# EVERY NetworkPolicy in the namespace:
+#  - NetworkPolicies are additive. `create` lets the holder add a policy with
+#    podSelector: {} that opens ingress and egress for every pod, which
+#    overrides default-deny. `delete` lets it remove the operator's own
+#    policies by name.
+#  - `delete` on Secrets removes any Secret by name (hive-secrets, a GitHub
+#    App key, an env_from_secrets Secret), and with `create` it can recreate it
+#    with other contents.
+# Argo CD self-heal restores a deleted object it manages, but does not prune
+# one it does not track. sandbox-job-copy-admission.yaml limits the hive
+# service account to the objects hive itself creates.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-sandbox-jobs-copy
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-sandbox-jobs-copy
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+subjects:
+  - kind: ServiceAccount
+    name: hive
+    namespace: hive
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hive-sandbox-jobs-copy

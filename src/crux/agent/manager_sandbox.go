@@ -613,6 +613,7 @@ func JobOptionsFromConfig(job config.SandboxJobConfig) kubejob.Options {
 		WorkspaceClaim:      job.WorkspaceClaim,
 		WorkspaceClaimMount: job.WorkspaceClaimMount,
 		WorkspaceTransport:  job.WorkspaceTransport,
+		WorkspaceSizeLimit:  job.WorkspaceSizeLimit,
 		NodeSelector:        job.NodeSelector,
 		Affinity:            job.Affinity,
 		ServiceAccount:      job.ServiceAccount,

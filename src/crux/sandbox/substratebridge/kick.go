@@ -27,6 +27,9 @@ import (
 const (
 	// PathDone ends a KickServer once hive has the workspace back.
 	PathDone = "/done"
+	// PathStop stops a running kick command, so hive can pull the workspace
+	// after a kick timeout or cancel. It answers 204 whatever the phase.
+	PathStop = "/stop"
 	// DefaultKickWait bounds each wait for hive: for the workspace before
 	// the command runs and for the pull after it exits.
 	DefaultKickWait = 10 * time.Minute
@@ -60,10 +63,12 @@ type KickServer struct {
 	// Stdout and Stderr receive the command's output.
 	Stdout, Stderr io.Writer
 
-	mu     sync.Mutex
-	phase  int
-	pushed chan struct{}
-	done   chan struct{}
+	mu      sync.Mutex
+	stop    context.CancelFunc // ends the running command, set while it runs
+	stopped bool               // /stop arrived before the command started
+	phase   int
+	pushed  chan struct{}
+	done    chan struct{}
 }
 
 // Serve runs the kick on ln and returns the exit code the container should
@@ -85,7 +90,15 @@ func (k *KickServer) Serve(ctx context.Context, ln net.Listener) int {
 		fmt.Fprintf(k.stderr(), "job bridge: hive did not push the workspace within %s\n", k.wait())
 		return ExitNoWorkspace
 	}
-	code := k.run(ctx)
+	runCtx, stop := context.WithCancel(ctx)
+	k.mu.Lock()
+	k.stop = stop
+	if k.stopped {
+		stop()
+	}
+	k.mu.Unlock()
+	code := k.run(runCtx)
+	stop()
 	k.setPhase(phaseExited)
 	if !k.await(ctx, k.done) {
 		fmt.Fprintf(k.stderr(), "job bridge: hive did not collect the workspace within %s\n", k.wait())
@@ -191,7 +204,7 @@ func (k *KickServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("job bridge: clearing %s: %v", dir, err), http.StatusInternalServerError)
 			return
 		}
-		if err := Unpack(r.Body, dir); err != nil {
+		if err := Unpack(http.MaxBytesReader(w, r.Body, maxTarTotal), dir); err != nil {
 			http.Error(w, fmt.Sprintf("job bridge: unpacking workspace: %v", err), http.StatusBadRequest)
 			return
 		}
@@ -211,6 +224,14 @@ func (k *KickServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", contentTypeTar)
 		_, _ = io.Copy(w, &buf)
+	case r.URL.Path == PathStop && r.Method == http.MethodPost:
+		if k.phase == phaseRunning {
+			k.stopped = true
+			if k.stop != nil {
+				k.stop()
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case r.URL.Path == PathDone && r.Method == http.MethodPost:
 		if k.phase != phaseExited {
 			http.Error(w, "job bridge: the kick is still running", http.StatusConflict)

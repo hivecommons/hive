@@ -126,6 +126,9 @@ type Options struct {
 	// copies the workspace into a pod-local volume and back (#19621; see
 	// copy.go).
 	WorkspaceTransport string
+	// WorkspaceSizeLimit is the sizeLimit of the copy transport's workspace
+	// emptyDir (default DefaultWorkspaceSizeLimit).
+	WorkspaceSizeLimit string
 	// NodeSelector, Affinity, Tolerations, Resources, ServiceAccount are passed
 	// through to the pod template verbatim.
 	NodeSelector   map[string]string

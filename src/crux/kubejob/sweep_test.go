@@ -19,6 +19,9 @@ type sweepAPI struct {
 	selector string
 	deleted  []string
 	delErr   map[string]bool
+	// secrets and policies are the names whose Secret and NetworkPolicy
+	// delete the sweep sent.
+	secrets, policies []string
 }
 
 func (f *sweepAPI) handler(t *testing.T) http.HandlerFunc {
@@ -43,9 +46,11 @@ func (f *sweepAPI) handler(t *testing.T) http.HandlerFunc {
 			f.deleted = append(f.deleted, name)
 			_, _ = w.Write([]byte(`{"kind":"Status","status":"Success"}`))
 		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/networkpolicies/"):
-			w.WriteHeader(http.StatusNotFound)
+			f.policies = append(f.policies, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
+			_, _ = w.Write([]byte(`{"kind":"Status","status":"Success"}`))
 		case r.Method == http.MethodDelete && strings.Contains(r.URL.Path, "/secrets/"):
-			w.WriteHeader(http.StatusNotFound)
+			f.secrets = append(f.secrets, r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:])
+			_, _ = w.Write([]byte(`{"kind":"Status","status":"Success"}`))
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL)
 			w.WriteHeader(http.StatusNotFound)
@@ -141,6 +146,18 @@ func TestSweepOrphansDeletesOrphansOnly(t *testing.T) {
 	}
 	if api.selector != managedByLabel+"="+managedByValue {
 		t.Fatalf("labelSelector = %q", api.selector)
+	}
+	// The Secret and NetworkPolicy of every swept Job are deleted by name as
+	// well (they are owned by the Job, so the garbage collector is the
+	// backstop), and of no Job the sweep left alone. The finished Job's own
+	// objects go with it when its TTL removes it: that is the owner reference
+	// (TestCopyTransportOwnsItsSecretAndPolicy), not a sweep.
+	const swept3 = "hive-kick-reviewer-1,hive-kick-deps-2,hive-kick-deps-3"
+	if got := strings.Join(api.secrets, ","); got != swept3 {
+		t.Errorf("Secret deletes = %q, want %q", got, swept3)
+	}
+	if got := strings.Join(api.policies, ","); got != swept3 {
+		t.Errorf("NetworkPolicy deletes = %q, want %q", got, swept3)
 	}
 }
 

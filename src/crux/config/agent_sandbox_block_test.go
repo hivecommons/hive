@@ -91,3 +91,30 @@ func TestCopiedSandboxBlockDropsPublish(t *testing.T) {
 		t.Fatal("clone(nil) = nil, want empty block")
 	}
 }
+
+// TestValidateSandboxJobTransport (#19694 review): a typo such as "Copy" is
+// refused where the config loads, not read as the claim transport and failed
+// only when a kick runs.
+func TestValidateSandboxJobTransport(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		job  *SandboxJobConfig
+		want string
+	}{
+		{"nil", nil, ""},
+		{"empty", &SandboxJobConfig{}, ""},
+		{"claim", &SandboxJobConfig{WorkspaceTransport: "claim"}, ""},
+		{"copy with a limit", &SandboxJobConfig{WorkspaceTransport: "copy", WorkspaceSizeLimit: "20Gi"}, ""},
+		{"capitalised copy", &SandboxJobConfig{WorkspaceTransport: "Copy"}, "workspace_transport"},
+		{"unknown", &SandboxJobConfig{WorkspaceTransport: "rsync"}, "workspace_transport"},
+		{"bad limit", &SandboxJobConfig{WorkspaceTransport: "copy", WorkspaceSizeLimit: "lots"}, "workspace_size_limit"},
+	} {
+		err := ValidateSandboxJobTransport(tc.job)
+		switch {
+		case tc.want == "" && err != nil:
+			t.Errorf("%s: unexpected error %v", tc.name, err)
+		case tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)):
+			t.Errorf("%s: err = %v, want it to name %q", tc.name, err, tc.want)
+		}
+	}
+}

@@ -1,12 +1,27 @@
 # Lets the spoke run a sandboxed agent kick as a Kubernetes Job in its own
 # namespace (sandbox.runtime: job, #6311; pkg/kubejob). The spoke creates the
 # Job, polls it, reads the pod's log and exit code, and deletes it.
-# Namespace-scoped and nothing more: no exec, no secrets read. The Job's own
+# Namespace-scoped: no exec, no secrets, no NetworkPolicies. The Job's own
 # secrets are referenced by name in the pod template and resolved by
-# Kubernetes; hive never reads them. The one secret grant is write-only
-# (create, delete; no get/list): workspace_transport: copy creates a per-Job
-# bridge token Secret and deletes it with the Job. Per-Job NetworkPolicies
-# (network none, copy mode) are likewise create/delete only.
+# Kubernetes; hive never reads them.
+#
+# What this Role still grants, so you can weigh it:
+#  - `jobs` create is a strong grant. In a namespace that enforces Pod
+#    Security `privileged`, whoever can create a Job can start a privileged
+#    pod with a hostPath mount, which is root on the node. Hive's own Jobs do
+#    not ask for that, but the service account can. If you cannot run Jobs in
+#    a namespace that enforces `baseline`, limit the pod spec this service
+#    account may create with an admission policy.
+#  - Using it means the spoke pod mounts a service-account token, and every
+#    process in that pod can read it, agents that run outside a sandbox
+#    included. If your spoke sets automountServiceAccountToken: false, mount
+#    a projected token (a serviceAccountToken volume with a short
+#    expirationSeconds) into the hive container only.
+#
+# workspace_transport: copy needs more (a per-Job Secret and NetworkPolicy,
+# and patch on jobs). That is NOT here: it is the separate Role in
+# sandbox-job-copy-rbac.yaml, which you bind on purpose, and
+# sandbox-job-copy-admission.yaml is a sample policy that limits it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -26,14 +41,6 @@ rules:
   - apiGroups: [""]
     resources: ["serviceaccounts"]
     verbs: ["get"]
-  # Per-Job bridge token Secret for workspace_transport: copy. Write-only.
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["create", "delete"]
-  # Per-Job deny-all NetworkPolicy, created and deleted with the Job.
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies"]
-    verbs: ["create", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

@@ -1,7 +1,6 @@
 package kubejob
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -9,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"path"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hivecommons/hive/crux/config"
@@ -60,6 +61,33 @@ const (
 	workspaceName  = "workspace"
 	bridgeTokenLen = 32
 	bridgeTokenKey = "token"
+
+	// DefaultWorkspaceSizeLimit bounds the workspace emptyDir when
+	// Options.WorkspaceSizeLimit is empty. The Kubernetes scheduler counts
+	// emptyDir data as ephemeral storage, so an unbounded one lets an agent
+	// push a node into DiskPressure.
+	DefaultWorkspaceSizeLimit = "10Gi"
+	// bridgeVolumeSizeLimit bounds the emptyDir that holds the crux binary.
+	bridgeVolumeSizeLimit = "1Gi"
+
+	// bridgeRequestTimeout bounds one push or pull request end to end. It
+	// matches the bridge's own wait for hive, so a half-open connection
+	// cannot outlive the bridge.
+	bridgeRequestTimeout = 10 * time.Minute
+	// bridgeLogEvery is how often a repeating transport failure is logged,
+	// after the first one.
+	bridgeLogEvery = 15
+	// bridgeMaxTimeouts is how many consecutive connect timeouts fail the
+	// push. A pod that is still starting refuses connections; one behind a
+	// default-deny NetworkPolicy drops them, which looks like a timeout.
+	bridgeMaxTimeouts = 6
+	// bridgeMaxReplaceTries is how many times a pull whose unpack failed is
+	// asked for again. GET /workspace is idempotent and ReplaceWorkspace
+	// removes its staging directory on failure.
+	bridgeMaxReplaceTries = 3
+	// bridgeRescueTimeout bounds the stop-and-pull that runs after a kick
+	// timeout or cancel, on a fresh context.
+	bridgeRescueTimeout = 2 * time.Minute
 )
 
 // copiesWorkspace reports whether the Job uses the copy transport.
@@ -78,6 +106,11 @@ func (o Options) validateTransport() error {
 		if strings.TrimSpace(o.RelayImage) == RelayImageNone {
 			return fmt.Errorf("kubejob: workspace_transport: copy runs hive's crux binary from relay_image, so relay_image cannot be %q", RelayImageNone)
 		}
+		if o.network() == NetworkHost {
+			// The bridge would listen on the node's address, and most CNIs
+			// do not apply NetworkPolicy to host-network pods.
+			return fmt.Errorf("kubejob: workspace_transport: copy cannot run with network: %s; the job bridge would listen on the node's address outside NetworkPolicy", NetworkHost)
+		}
 	default:
 		return fmt.Errorf("kubejob: workspace_transport must be %q or %q, got %q", config.SandboxJobWorkspaceClaim, config.SandboxJobWorkspaceCopy, o.WorkspaceTransport)
 	}
@@ -86,9 +119,10 @@ func (o Options) validateTransport() error {
 
 // copyPlan is what one copy-transport run adds to its Jobs.
 type copyPlan struct {
-	image      *relayPlan
-	token      string
-	hiveLabels map[string]string
+	image              *relayPlan
+	token              string
+	hiveLabels         map[string]string
+	workspaceSizeLimit string
 }
 
 // resolveCopy builds the copy plan: the image that supplies crux, a fresh
@@ -104,7 +138,10 @@ func (l *Launcher) resolveCopy(ctx context.Context, ns string, spec sandbox.Laun
 	if image == nil {
 		return nil, fmt.Errorf("kubejob: workspace_transport: copy needs relay_image to supply crux; it cannot be %q", RelayImageNone)
 	}
-	plan := &copyPlan{image: image, token: l.bridgeToken}
+	plan := &copyPlan{image: image, token: l.bridgeToken, workspaceSizeLimit: strings.TrimSpace(l.Options.WorkspaceSizeLimit)}
+	if plan.workspaceSizeLimit == "" {
+		plan.workspaceSizeLimit = DefaultWorkspaceSizeLimit
+	}
 	if plan.token == "" {
 		raw := make([]byte, bridgeTokenLen)
 		if _, err := rand.Read(raw); err != nil {
@@ -128,6 +165,13 @@ func (l *Launcher) resolveCopy(ctx context.Context, ns string, spec sandbox.Laun
 // apply turns a claim-transport manifest into a copy-transport one.
 func (p *copyPlan) apply(manifest map[string]any, secretName string) error {
 	jobSpec, _ := manifest["spec"].(map[string]any)
+	if jobSpec == nil {
+		return errors.New("kubejob: copy transport: manifest has no spec")
+	}
+	// The Job starts suspended: its Secret and NetworkPolicy carry an
+	// ownerReference to it, which needs its UID, so it is created first and
+	// resumed once they exist. No pod runs before the policy does.
+	jobSpec["suspend"] = true
 	tmpl, _ := jobSpec["template"].(map[string]any)
 	pod, _ := tmpl["spec"].(map[string]any)
 	containers, _ := pod["containers"].([]map[string]any)
@@ -147,14 +191,14 @@ func (p *copyPlan) apply(manifest map[string]any, secretName string) error {
 	swapped := false
 	for i, v := range volumes {
 		if v["name"] == workspaceName {
-			volumes[i] = map[string]any{"name": workspaceName, "emptyDir": map[string]any{}}
+			volumes[i] = map[string]any{"name": workspaceName, "emptyDir": map[string]any{"sizeLimit": p.workspaceSizeLimit}}
 			swapped = true
 		}
 	}
 	if !swapped {
 		return errors.New("kubejob: copy transport: manifest has no workspace volume to replace")
 	}
-	pod["volumes"] = append(volumes, map[string]any{"name": bridgeVolumeName, "emptyDir": map[string]any{}})
+	pod["volumes"] = append(volumes, map[string]any{"name": bridgeVolumeName, "emptyDir": map[string]any{"sizeLimit": bridgeVolumeSizeLimit}})
 	mounts, _ := c["volumeMounts"].([]map[string]any)
 	workspace := sandbox.DefaultWorkspaceMount
 	for _, m := range mounts {
@@ -210,6 +254,36 @@ func (p *copyPlan) allowBridgeIngress(policy map[string]any) {
 	}}
 }
 
+// ownedBy adds an ownerReference to the Job to obj's metadata, so the
+// garbage collector removes obj with the Job even when hive is not running
+// to do it (a restart, a crash, a Job removed by its TTL).
+func ownedBy(obj map[string]any, job, uid string) {
+	md, _ := obj["metadata"].(map[string]any)
+	if md == nil {
+		return
+	}
+	md["ownerReferences"] = []map[string]any{{
+		"apiVersion":         "batch/v1",
+		"kind":               "Job",
+		"name":               job,
+		"uid":                uid,
+		"blockOwnerDeletion": true,
+	}}
+}
+
+// jobUID reads metadata.uid from the API server's answer to the Job create.
+func jobUID(raw []byte) string {
+	var got struct {
+		Metadata struct {
+			UID string `json:"uid"`
+		} `json:"metadata"`
+	}
+	if json.Unmarshal(raw, &got) != nil {
+		return ""
+	}
+	return strings.TrimSpace(got.Metadata.UID)
+}
+
 // tokenSecret is the per-Job Secret that holds the bridge token.
 func (p *copyPlan) tokenSecret(ns, name string) map[string]any {
 	return map[string]any{
@@ -239,7 +313,24 @@ func (p *copyPlan) ingressOnlyPolicy(ns, job string) map[string]any {
 type copyRun struct {
 	cancel context.CancelFunc
 	result chan error
+	// base is the bridge's URL once known, and pushed whether the workspace
+	// reached the Job; both are read after finish, to rescue a timed-out kick.
+	base   atomic.Value
+	pushed atomic.Bool
 }
+
+// pullError marks a failure after the workspace was in the Job: the agent's
+// work exists only in the Job's emptyDir, so the Job is kept, not deleted.
+type pullError struct{ err error }
+
+func (e *pullError) Error() string { return e.err.Error() }
+func (e *pullError) Unwrap() error { return e.err }
+
+// transientError is a step failure bridgePoll logs and retries.
+type transientError struct{ err error }
+
+func (e *transientError) Error() string { return e.err.Error() }
+func (e *transientError) Unwrap() error { return e.err }
 
 // startCopy pushes the workspace into the Job and pulls it back once the
 // kick command exits. A copy that fails calls abort, which ends waitJob.
@@ -247,7 +338,7 @@ func (l *Launcher) startCopy(ctx context.Context, abort context.CancelFunc, ns, 
 	cctx, cancel := context.WithCancel(ctx)
 	run := &copyRun{cancel: cancel, result: make(chan error, 1)}
 	go func() {
-		err := l.copyWorkspace(cctx, ns, job, workspace)
+		err := l.copyWorkspace(cctx, run, ns, job, workspace)
 		if err != nil && cctx.Err() == nil {
 			abort()
 		}
@@ -265,24 +356,56 @@ func (r *copyRun) finish() error {
 	return <-r.result
 }
 
-func (l *Launcher) copyWorkspace(ctx context.Context, ns, job, workspace string) error {
-	token := ""
+func (l *Launcher) copyToken() string {
 	if l.copyPlan != nil {
-		token = l.copyPlan.token
+		return l.copyPlan.token
 	}
-	var packed bytes.Buffer
-	if err := substratebridge.Pack(workspace, &packed); err != nil {
-		return fmt.Errorf("kubejob: packing workspace %s: %w", workspace, err)
+	return ""
+}
+
+// packRequestBody streams the packed workspace through a pipe, so hive never
+// holds the archive in memory. packErr reports a Pack failure after the
+// request returns, which must not be mistaken for a transport error.
+func packRequestBody(workspace string) (body io.ReadCloser, packErr func() error) {
+	pr, pw := io.Pipe()
+	var perr atomic.Value
+	go func() {
+		skipped, err := substratebridge.PackSkipped(workspace, pw)
+		if len(skipped) > 0 {
+			slog.Warn("kubejob: left entries out of the workspace push (sockets, FIFOs, devices, oversized or vanished files)", "workspace", workspace, "skipped", skipped)
+		}
+		// A closed pipe means the request ended first (the bridge answered
+		// without reading the whole body); the request's own result decides.
+		if err != nil && !errors.Is(err, io.ErrClosedPipe) {
+			perr.Store(err)
+		}
+		_ = pw.CloseWithError(err)
+	}()
+	return pr, func() error {
+		if v, ok := perr.Load().(error); ok {
+			return v
+		}
+		return nil
 	}
+}
+
+func (l *Launcher) copyWorkspace(ctx context.Context, run *copyRun, ns, job, workspace string) error {
+	token := l.copyToken()
 	base, err := l.bridgeURL(ctx, ns, job)
 	if err != nil {
 		return err
 	}
+	run.base.Store(base)
 	// Push. A 409 means an earlier attempt landed and its answer was lost.
-	if err := l.bridgePoll(ctx, func() (bool, error) {
-		code, err := l.bridgeDo(ctx, http.MethodPut, base+substratebridge.PathWorkspace, token, packed.Bytes(), nil)
+	if err := l.bridgePoll(ctx, job, "push", func() (bool, error) {
+		body, packErr := packRequestBody(workspace)
+		code, err := l.bridgeDo(ctx, http.MethodPut, base+substratebridge.PathWorkspace, token, body, nil)
+		_ = body.Close()
+		if perr := packErr(); perr != nil {
+			return false, fmt.Errorf("kubejob: packing workspace %s: %w", workspace, perr)
+		}
 		if err != nil {
-			return false, nil
+			return false, &transientError{err}
 		}
 		if code == http.StatusNoContent || code == http.StatusConflict {
 			return true, nil
@@ -291,62 +414,136 @@ func (l *Launcher) copyWorkspace(ctx context.Context, ns, job, workspace string)
 	}); err != nil {
 		return err
 	}
-	// Pull, once the kick command has exited.
-	if err := l.bridgePoll(ctx, func() (bool, error) {
-		var replaceErr error
-		code, err := l.bridgeDo(ctx, http.MethodGet, base+substratebridge.PathWorkspace, token, nil, func(r io.Reader) {
-			replaceErr = sandbox.ReplaceWorkspace(r, workspace)
-		})
-		switch {
-		case err != nil || code == http.StatusConflict:
-			return false, nil
-		case code != http.StatusOK:
-			return false, fmt.Errorf("kubejob: pulling the workspace from %s: HTTP %d", job, code)
-		case replaceErr != nil:
-			return false, fmt.Errorf("kubejob: replacing workspace %s from %s: %w", workspace, job, replaceErr)
-		}
-		return true, nil
-	}); err != nil {
-		return err
+	run.pushed.Store(true)
+	// From here the agent's work lives only in the Job: a failure is a
+	// pullError, and the Job is kept.
+	if err := l.pullWorkspace(ctx, base, token, job, workspace); err != nil {
+		return &pullError{err}
 	}
 	// The workspace is home, so this cannot fail the kick: a lost /done
 	// only makes the bridge wait out its own timeout before it exits, and
 	// finish ends the retries once the Job has finished.
-	_ = l.bridgePoll(ctx, func() (bool, error) {
+	_ = l.bridgePoll(ctx, job, "done", func() (bool, error) {
 		code, err := l.bridgeDo(ctx, http.MethodPost, base+substratebridge.PathDone, token, nil, nil)
 		return err == nil && code == http.StatusNoContent, nil
 	})
 	return nil
 }
 
+// pullWorkspace pulls the workspace back once the kick command has exited,
+// retrying a transport failure until ctx ends and an unpack failure a few
+// times.
+func (l *Launcher) pullWorkspace(ctx context.Context, base, token, job, workspace string) error {
+	replaceTries := 0
+	return l.bridgePoll(ctx, job, "pull", func() (bool, error) {
+		var replaceErr error
+		code, err := l.bridgeDo(ctx, http.MethodGet, base+substratebridge.PathWorkspace, token, nil, func(r io.Reader) {
+			replaceErr = sandbox.ReplaceWorkspace(r, workspace)
+		})
+		switch {
+		case code == http.StatusConflict:
+			return false, nil // the command is still running
+		case err != nil:
+			return false, &transientError{err}
+		case code != http.StatusOK:
+			return false, fmt.Errorf("kubejob: pulling the workspace from %s: HTTP %d", job, code)
+		case replaceErr != nil:
+			replaceTries++
+			if replaceTries >= bridgeMaxReplaceTries {
+				return false, fmt.Errorf("kubejob: replacing workspace %s from %s after %d tries: %w", workspace, job, replaceTries, replaceErr)
+			}
+			return false, &transientError{fmt.Errorf("replacing workspace %s from %s: %w", workspace, job, replaceErr)}
+		}
+		return true, nil
+	})
+}
+
+// rescueWorkspace runs after a kick timeout or cancel, when ctx is dead: it
+// stops the kick command, then pulls the workspace on a fresh bounded
+// context, as the pod log is collected, so the agent's partial work is kept
+// as it is on the claim transport. A copy that never pushed has nothing to
+// pull.
+func (l *Launcher) rescueWorkspace(run *copyRun, job, workspace string) error {
+	if run == nil || !run.pushed.Load() {
+		return nil
+	}
+	base, _ := run.base.Load().(string)
+	if base == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bridgeRescueTimeout)
+	defer cancel()
+	token := l.copyToken()
+	// Best effort: a command that already exited answers 204 as well.
+	_, _ = l.bridgeDo(ctx, http.MethodPost, base+substratebridge.PathStop, token, nil, nil)
+	if err := l.pullWorkspace(ctx, base, token, job, workspace); err != nil {
+		return &pullError{err}
+	}
+	_, _ = l.bridgeDo(ctx, http.MethodPost, base+substratebridge.PathDone, token, nil, nil)
+	return nil
+}
+
+// isTimeout reports whether err is a connect or request timeout, the way a
+// NetworkPolicy drop looks from the client.
+func isTimeout(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
 // bridgePoll calls step every poll interval until it reports done, fails, or
-// ctx ends.
-func (l *Launcher) bridgePoll(ctx context.Context, step func() (bool, error)) error {
+// ctx ends. A *transientError from step is logged (the first, then every
+// bridgeLogEvery-th), kept for the final error, and retried; for the push,
+// bridgeMaxTimeouts consecutive timeouts fail early with the NetworkPolicy
+// requirement spelled out.
+func (l *Launcher) bridgePoll(ctx context.Context, job, phase string, step func() (bool, error)) error {
 	interval := l.Options.PollInterval
 	if interval <= 0 {
 		interval = DefaultPollInterval
 	}
+	var last error
+	failures, timeouts := 0, 0
 	for {
 		done, err := step()
+		var te *transientError
+		if errors.As(err, &te) {
+			last = te.err
+			failures++
+			if isTimeout(te.err) {
+				timeouts++
+			} else {
+				timeouts = 0
+			}
+			if failures == 1 || failures%bridgeLogEvery == 0 {
+				slog.Warn("kubejob: the job bridge is not answering; retrying", "job", job, "phase", phase, "failures", failures, "port", substratebridge.DefaultPort, "err", te.err)
+			}
+			if phase == "push" && timeouts >= bridgeMaxTimeouts {
+				return fmt.Errorf("kubejob: the job bridge of %s did not answer %d connection attempts in a row on TCP %d (last error: %v); with default-deny NetworkPolicies, allow egress from hive's pod to the Job pods (label app.kubernetes.io/managed-by=%s) on that port", job, timeouts, substratebridge.DefaultPort, last, managedByValue)
+			}
+			err = nil
+		}
 		if err != nil || done {
 			return err
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("kubejob: copying the workspace: %w", ctx.Err())
+			if last != nil {
+				return fmt.Errorf("kubejob: copying the workspace (%s): %w (last bridge error: %v)", phase, ctx.Err(), last)
+			}
+			return fmt.Errorf("kubejob: copying the workspace (%s): %w", phase, ctx.Err())
 		case <-time.After(interval):
 		}
 	}
 }
 
 // bridgeURL waits for the Job's pod to have an IP and returns the bridge's
-// base URL there; Launcher.BridgeURL overrides it.
+// base URL there; Launcher.BridgeURL overrides it. A pod that never gets an
+// IP is ended by waitJob's schedule timeout, which cancels ctx.
 func (l *Launcher) bridgeURL(ctx context.Context, ns, job string) (string, error) {
 	if l.BridgeURL != "" {
 		return strings.TrimRight(l.BridgeURL, "/"), nil
 	}
 	var ip string
-	err := l.bridgePoll(ctx, func() (bool, error) {
+	err := l.bridgePoll(ctx, job, "pod-ip", func() (bool, error) {
 		got, err := l.podIP(ctx, ns, job)
 		ip = got
 		return err == nil && got != "", nil
@@ -382,12 +579,10 @@ func (l *Launcher) podIP(ctx context.Context, ns, job string) (string, error) {
 
 // bridgeDo makes one bridge request and returns its status. A 200 body is
 // streamed to onOK when it is set; any other body is discarded.
-func (l *Launcher) bridgeDo(ctx context.Context, method, url, token string, body []byte, onOK func(io.Reader)) (int, error) {
-	var rdr io.Reader
-	if body != nil {
-		rdr = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, url, rdr)
+func (l *Launcher) bridgeDo(ctx context.Context, method, url, token string, body io.Reader, onOK func(io.Reader)) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, bridgeRequestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return 0, err
 	}
