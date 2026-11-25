@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-25 (v5.369.0)
+
+### Added
+
+- **GitHub now shows who made a dashboard label change** ([#19852](https://github.com/hivecommons/hive/issues/19852)): the dashboard writes labels with the Hive App's token, so GitHub showed the App as the one who released or added a hold, which read as automation overriding a person's hold. Adding or releasing a hold, accepting triage, and an approval that lifts `needs-human` or the sentinel label now leave one comment on the issue or PR naming the signed-in dashboard user and the labels changed. Each item and kind keeps one comment under a hidden `<!-- hive:dashboard-actor kind=… -->` marker, edited in place on the next action instead of posted again. The setting is `dashboard.attribute_label_actions` (on by default), and the audit-log entry is written as before.
+
+### Fixed
+
+- Keep the same agent selected and visible in the TUI when the fleet list refreshes and the agent is still present.
+
 ## 2026-11-25 (v5.368.0)
 
 ### Added

@@ -1,1 +1,0 @@
-- Keep the same agent selected and visible in the TUI when the fleet list refreshes and the agent is still present.
