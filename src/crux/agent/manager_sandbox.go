@@ -342,6 +342,17 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 			}
 		}
 	}
+	// Per-repo open-PRs mode: a kick that would open a NEW PR in a repo the
+	// host refuses runs without push or PR client, so no branch is pushed
+	// that cannot become a PR. A push to an existing PR opens nothing and
+	// is left alone.
+	if pushEnabled && spec.TargetPR == 0 && m.project.RepoPRRefusal != nil {
+		if reason := m.project.RepoPRRefusal(agent.Name, m.project.Org+"/"+repo); reason != "" {
+			pushMinter, prClient, pushEnabled = nil, nil, false
+			m.logger.Info("sandbox kick runs without push: the repo's open-PRs mode refuses a new PR", "name", agent.Name, "repo", repo, "reason", reason)
+			m.auditSandbox(agent.Name, "sandbox_pr_refused", "repo="+m.project.Org+"/"+repo+", gate=open-prs, reason="+reason)
+		}
+	}
 	go m.runSandboxKick(runCtx, agent.Name, runtime, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, prReader, targetReader, mutationBoundary)
 	return nil
 }

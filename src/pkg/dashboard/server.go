@@ -1392,6 +1392,12 @@ type FrontendRepo struct {
 	PausedAt    string `json:"pausedAt,omitempty"`
 	PauseReason string `json:"pauseReason,omitempty"`
 	AutoMerge   bool   `json:"autoMerge"`
+	// OpenPRs is the repo's own open-PRs mode (on, off, workflow_only;
+	// repo_policies[].open_prs) and OpenPRsEffective the mode in force after
+	// the hive-wide project.open_prs switch. The repo card's select shows
+	// the first and says so when the second differs.
+	OpenPRs          string `json:"openPrs,omitempty"`
+	OpenPRsEffective string `json:"openPrsEffective,omitempty"`
 	// RequireCurrentBase is the effective current-base gate for this repo
 	// (auto_merge.require_current_base / skip_current_base over the hive-wide
 	// default, hivecommons/hive#15335); the repo card shows a "current-base"

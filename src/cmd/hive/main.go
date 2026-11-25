@@ -1906,6 +1906,7 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		PrimaryRepoName:    b.cfg.Project.PrimaryRepo,
 		ACMMLevel:          b.acmmLevel,
 		PRsAllowed:         b.cfg.Project.PRsAllowed(),
+		RepoPRRefusal:      b.sandboxRepoPRRefusal,
 		PolicyDir:          b.policyDirPath,
 		SharedUIDReadToken: b.cfg.GitHub.SharedUIDReadToken,
 		AppAuthoredPRs:     b.cfg.GitHub.AppAuthoredPRsEnabled(),

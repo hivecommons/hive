@@ -55,6 +55,32 @@ a *new* hosted hive instead, use
 
 The same tab has a **Parent auto-close** card (owner only, `repos.<key>.parent_autoclose`): per monitored repo, choose "Close finished parents (default)", "Also close epics and holds", "Also close trackers whose work is done" or "Never auto-close parents". It shows the effective value for each repo, applies on save without a restart, and is audited. A parent a person reopened is never re-closed, and issues marked as tracking issues are never auto-closed. See [stage-labels](labels-and-control-signals/stage-labels.md#decomposed-parents--closed-by-their-children-never-stalled).
 
+### Open PRs per repo
+
+Each repo row has an **open PRs** select (`project.repo_policies[].open_prs`). The repo card on **Projects** has the same select next to its **auto-merge** switch. It works at every ACMM level, and a change saves at once, without **Save & close**.
+
+| Mode | YAML | What agents may do in the repo |
+|---|---|---|
+| **On** (default) | unset, or `on` | Open pull requests as usual. |
+| **Workflow only** | `workflow_only` | Open a pull request only for a workflow hand-off (`workflow.dispatch`) the hive delivered to that agent. The agent's own cadence work, such as coverage gaps and test hardening, may analyse and file issues but opens no PR. |
+| **Off** | `off` | Analyse, comment and file issues. No agent opens a pull request. |
+
+```yaml
+project:
+  repo_policies:
+    - repo: docs
+      open_prs: workflow_only
+```
+
+- `project.open_prs: false` (env `PROJECT_OPEN_PRS`) still wins: every repo is then off, whatever its own mode.
+- The mode is enforced where agent PRs open, not only in the prompt: the `hive-open-pr` relay, the forge relay for non-GitHub repos, and the sandbox PR path all refuse a PR the mode forbids. The request result says why, and the refusal is audited as `agent_write_refused` with `gate=open-prs`.
+- For **Workflow only**, the hive decides whether a PR comes from a workflow hand-off by its own hand-off record: the hand-off it delivered to that agent for an item in that repo within the last 8 hours, not marked as not started. When the PR request names issues (`hive-open-pr --issues`), one of them must be the handed-off item. The PR's title, body and branch name are never read for this.
+- A runtime outside the hive process (the sidecar callback) cannot read that record, so a sandboxed kick there opens no PR in a **Workflow only** repo.
+- Each kick tells the agent about a limited repo: "PRs are off for `<repo>`" or "only workflow hand-off PRs".
+- A workflow profile that opens a PR resolves to no agent in an **Off** repo.
+- Narrowing the mode needs repo write or the owner role. Widening it needs the owner role, as for switching auto-merge back on.
+- Pushing more commits to a PR that is already open is not opening a PR, and the mode does not stop it.
+
 ## Budget
 
 The token budget and its rolling period, optional dollar and coin caps, the percentage at which the governor enters budget-critical mode, per-agent exemptions, and the model lock that stops automatic model downgrades. See [Governor cadence and budget](operator-reference.md#governor-cadence-and-budget) and [Token collection and usage tracking](token-tracking.md).

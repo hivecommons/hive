@@ -116,6 +116,15 @@ func validateDefinitionName(name string) error {
 	return defs.ValidateName(name)
 }
 
+// runtimeRepoPRRefusal is the per-repo open-PRs gate for a runtime outside
+// the hive process. Such a runtime cannot read the hive's workflow hand-off
+// record, so a workflow_only repo refuses every new sandbox PR here (fail
+// closed), and an off repo refuses them as in the hive. The hive's callback
+// (cruxhost CreatePR) applies the same rule.
+func runtimeRepoPRRefusal(cfg *config.Config) func(agent, repo string) string {
+	return func(_, repo string) string { return cfg.RepoOpenPRsRefusal(repo, false) }
+}
+
 // projectContextFromConfig builds the ProjectContext cmd/hive builds in
 // bootAgentsWith, minus the fields that need a GitHub client (App bot
 // identity). Nil cfg yields the zero context, which is what a definition-file
@@ -133,6 +142,7 @@ func projectContextFromConfig(cfg *config.Config) crux.ProjectContext {
 		PrimaryRepoName:    cfg.Project.PrimaryRepo,
 		ACMMLevel:          cfg.ACMMLevelOrZero(),
 		PRsAllowed:         cfg.Project.PRsAllowed(),
+		RepoPRRefusal:      runtimeRepoPRRefusal(cfg),
 		PolicyDir:          policyDir(cfg.Policies),
 		SharedUIDReadToken: cfg.GitHub.SharedUIDReadToken,
 		AppAuthoredPRs:     cfg.GitHub.AppAuthoredPRsEnabled(),

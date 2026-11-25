@@ -1097,6 +1097,11 @@
         const cbInherit = cbHasOverride
           ? '<button class="remove-item" data-action="clearRepoCurrentBaseOverride" data-arg0="' + esc(r) + '" data-arg-types="s" title="Clear this repo override and inherit the Features default">inherit</button>'
           : '<span class="rt-inherit">inherits</span>';
+        // Per-repo open-PRs mode (repo_policies[].open_prs), saved at once
+        // like the repo card's auto-merge switch (POST /api/repos/open-prs).
+        const opPolicy = (_configState.data.repoOpenPRs || {})[r] || {};
+        const opSetting = opPolicy.value || 'on';
+        const opRow = repoOpenPRsSelectHtml(r, opSetting, _configState.data.openPRsHiveWide === false, dashboardRoleAtLeast(window._hiveRole || 'read', 'write'), 'rt-check');
         const cbRow = '<label title="' + cbTitle + '" class="rt-check"><input type="checkbox" ' + (cbEffective ? 'checked' : '') + ' data-change-action="toggleRepoCurrentBase" data-arg0="' + esc(r) + '" data-arg-types="s,c"> Merge only on current base</label>' + cbInherit;
         // #11313 label-driven approvals (Prow-style): opt-in per repo, with the
         // sub-row (approval labels + help) only while the toggle is on.
@@ -1109,7 +1114,7 @@
           </div>`;
         // Fully forge-qualified so the row is unambiguous: github.ibm.com/org/repo.
         const displayName = ghHost + '/' + r;
-        return `<div class="config-list-item config-repo-row" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span class="config-repo-name" title="${esc(displayName)}">${esc(displayName)}</span><label class="rt-check" title="${holdTitle}"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}${cbRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>` + ldSub + renderRepoWorkflowRow(r);
+        return `<div class="config-list-item config-repo-row" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span class="config-repo-name" title="${esc(displayName)}">${esc(displayName)}</span><label class="rt-check" title="${holdTitle}"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}${cbRow}${opRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>` + ldSub + renderRepoWorkflowRow(r);
       }).join('');
       const hostNote = isGHE
         ? ` on <strong style="color:var(--indigo)">${esc(ghHost)}</strong> (GitHub Enterprise)`

@@ -70,6 +70,13 @@ type ProjectContext struct {
 	// ProjectContext literal still gets.
 	AgentRepos       func(agent string) []string
 	AgentPrimaryRepo func(agent string) string
+	// RepoPRRefusal says why agent may not open a new pull request in repo
+	// ("owner/name") under the host's per-repo open-PRs mode, or "" when it
+	// may. A sandboxed kick that would open a new PR the host refuses is run
+	// without the push broker and PR client, so it does not push a branch
+	// that cannot become a PR. Live, like RepoPaused. Nil means every repo
+	// may receive PRs (PRsAllowed still applies).
+	RepoPRRefusal func(agent, repo string) string
 }
 
 func (p ProjectContext) PrimaryRepo() string {

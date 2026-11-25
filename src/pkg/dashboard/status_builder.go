@@ -2546,6 +2546,8 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 			NonActionableIssues: nonActionableIssuesByRepo[repoName],
 			NonActionablePrs:    nonActionablePrsByRepo[repoName],
 			AutoMerge:           cfg.RepoAutoMergeEnabled(repoName),
+			OpenPRs:             string(cfg.RepoOpenPRsSetting(repoName)),
+			OpenPRsEffective:    string(cfg.RepoOpenPRsMode(repoName)),
 			RequireCurrentBase:  cfg.AutoMerge.RequireCurrentBaseFor(full),
 			Forge:               forgeKind,
 			ForgeURL:            forgeURL,
