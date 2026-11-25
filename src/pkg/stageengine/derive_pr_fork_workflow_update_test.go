@@ -1,6 +1,7 @@
 package stageengine
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/authorkind"
@@ -245,10 +246,13 @@ func TestDerivePRForkWorkflowUpdateRoutesByAuthorKind(t *testing.T) {
 	}
 }
 
-// The new pass flags are not flap evidence: stageWriteEvidence is byte for
-// byte the same for a PR with or without the sentinel label, whatever the
-// flags say (writer.go suppressStageFlap compares it).
-func TestStageWriteEvidenceIgnoresForkWorkflowUpdateFlags(t *testing.T) {
+// Three of the new pass flags are not flap evidence: stageWriteEvidence is
+// byte for byte the same for a PR with or without the sentinel label,
+// whatever they say (writer.go suppressStageFlap compares it). The lapse
+// flag is evidence, but only when set, so a PR that never lapses
+// serialises exactly as before; a set flag changes it, so the move off 072
+// is not read as the reversal of the write that started the clock.
+func TestStageWriteEvidenceForkWorkflowUpdateFlags(t *testing.T) {
 	facts := func(labels []string, pass PRPassFacts) Facts {
 		pass.AuthorKind = authorkind.Clanker
 		return Facts{
@@ -257,15 +261,22 @@ func TestStageWriteEvidenceIgnoresForkWorkflowUpdateFlags(t *testing.T) {
 		}
 	}
 	want := stageWriteEvidence(facts(nil, PRPassFacts{}))
+	for _, name := range []string{"SentinelAlert", "AuthorKindByRegistry", "HeadChecksGreen", "AuthorUpdateLapsed"} {
+		if strings.Contains(want, name) {
+			t.Fatalf("evidence names %s with the flag unset:\n%s", name, want)
+		}
+	}
 	for name, f := range map[string]Facts{
 		"sentinel label":        facts([]string{"sentinel-alert"}, PRPassFacts{SentinelAlert: true}),
 		"registry kind":         facts(nil, PRPassFacts{AuthorKindByRegistry: true}),
 		"green head":            facts(nil, PRPassFacts{HeadChecksGreen: true}),
-		"lapsed update":         facts(nil, PRPassFacts{AuthorUpdateLapsed: true}),
-		"all flags with labels": facts([]string{"sentinel-alert"}, PRPassFacts{SentinelAlert: true, AuthorKindByRegistry: true, HeadChecksGreen: true, AuthorUpdateLapsed: true}),
+		"all three with labels": facts([]string{"sentinel-alert"}, PRPassFacts{SentinelAlert: true, AuthorKindByRegistry: true, HeadChecksGreen: true}),
 	} {
 		if got := stageWriteEvidence(f); got != want {
 			t.Fatalf("%s: evidence changed:\n got  %s\n want %s", name, got, want)
 		}
+	}
+	if got := stageWriteEvidence(facts(nil, PRPassFacts{AuthorUpdateLapsed: true})); got == want {
+		t.Fatal("a lapsed update must change the flap evidence")
 	}
 }

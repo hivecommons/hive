@@ -242,7 +242,7 @@ func TestRequiresHumanReconcilesToFixedPoint(t *testing.T) {
 }
 
 func TestReconcilerSuppressesSameHeadStageReversal(t *testing.T) {
-	for _, release := range []string{"timeout", "head", "terminal", "checks", "conflict", "review", "adoption", "escalation", "optional-check"} {
+	for _, release := range []string{"timeout", "head", "terminal", "checks", "conflict", "review", "adoption", "escalation", "optional-check", "author-update-lapsed"} {
 		t.Run(release, func(t *testing.T) {
 			now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
 			store := stagelabels.NewStore("", nil)
@@ -307,6 +307,10 @@ func TestReconcilerSuppressesSameHeadStageReversal(t *testing.T) {
 			case "optional-check":
 				f.PR.Lanes[0].RedChecks = []string{"unit"}
 				f.PR.Lanes[0].RedChecksHead = "head"
+			case "author-update-lapsed":
+				// The owed branch update ran out its 072 dwell: new
+				// evidence on the same head, not a reversal.
+				f.PR.Pass.AuthorUpdateLapsed = true
 			}
 			tr, err := r.Reconcile(context.Background(), f)
 			if err != nil || tr.Outcome.Suppressed || writer.Writes != 2 {

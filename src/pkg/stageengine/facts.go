@@ -312,13 +312,19 @@ type PRPassFacts struct {
 	// unpushed for the 072 dwell spent at 072 on this head, so the PR goes
 	// back to the 085 hand-off (AuthorUpdateLapsedStage).
 	//
-	// These four are left out of JSON, and so of stageWriteEvidence: the
-	// flap guard's evidence stays what it was for every PR, and a sentinel
-	// label or a check digest is not evidence there today.
+	// The first three are left out of JSON, and so of stageWriteEvidence:
+	// a sentinel label or a check digest is not flap evidence today.
+	// AuthorUpdateLapsed is evidence, but only when set (omitempty), so the
+	// serialised evidence of every other PR is byte for byte what it was.
+	// It must count: the lapse moves a head off 072 on the same head with
+	// the same verdict and checks, which is new evidence (the dwell ran
+	// out), not a flap. Left out, suppressStageFlap read it as the reversal
+	// of the 085 to 072 write that started the clock whenever that write
+	// was inside stageFlapWindow, and held the PR at 072.
 	SentinelAlert        bool `json:"-"`
 	AuthorKindByRegistry bool `json:"-"`
 	HeadChecksGreen      bool `json:"-"`
-	AuthorUpdateLapsed   bool `json:"-"`
+	AuthorUpdateLapsed   bool `json:",omitempty"`
 	// Route is the human-route evidence (stagelabels.RouteHuman's input)
 	// when the resolved opinion was a hand-off (085/090); nil otherwise.
 	Route *stagelabels.Evidence
