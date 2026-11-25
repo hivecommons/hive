@@ -1906,6 +1906,7 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		PrimaryRepoName:    b.cfg.Project.PrimaryRepo,
 		ACMMLevel:          b.acmmLevel,
 		PRsAllowed:         b.cfg.Project.PRsAllowed(),
+		RepoPRRefusal:      b.sandboxRepoPRRefusal,
 		PolicyDir:          b.policyDirPath,
 		SharedUIDReadToken: b.cfg.GitHub.SharedUIDReadToken,
 		AppAuthoredPRs:     b.cfg.GitHub.AppAuthoredPRsEnabled(),
@@ -2719,6 +2720,12 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 		}
 	})
 	installIoscanClassifier(b.sched, b.ioscanAlerts(), b.cfg, b.logger, time.Now)
+	// Open-PRs refusals on paths without a GitHub client audit sink (the
+	// forge relay, the sidecar callback) land in the same audit log.
+	openPRsAudit := func(agent, repo, mode, via, reason string) {
+		b.dashSrv.AuditLog(agent, github.AuditActionAgentWriteRefused, openPRsRefusalDetail(repo, mode, via, reason), agent)
+	}
+	openPRsRefusalAudit.Store(&openPRsAudit)
 	b.agentMgr.SetSandboxAuditCallback(func(agentName, action, detail string) {
 		b.dashSrv.AuditLog(agentName, action, detail, agentName)
 		if action == "sandbox_broker_rejected" {

@@ -3458,6 +3458,10 @@
     .repo-name .repo-automerge-toggle { margin: 0 0 0 auto; }
     .repo-automerge-toggle .config-toggle-label { font-size: var(--fs-2xs); }
     .repo-automerge-switch { flex: 0 0 auto; }
+    /* Per-repo open-PRs mode select, beside the auto-merge switch. */
+    .repo-open-prs { display: inline-flex; align-items: center; flex: 0 0 auto; white-space: nowrap; gap: var(--sp-2); margin: 0; font-size: var(--fs-2xs); color: var(--muted); }
+    .repo-open-prs .config-toggle-label { font-size: var(--fs-2xs); }
+    .repo-open-prs-select { font-size: var(--fs-2xs); padding: var(--sp-0) var(--sp-2); }
     .repo-swarm-btn { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--border)); background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber); opacity: 0.85; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-swarm-btn:hover { opacity: 1; border-color: var(--amber); }
     .repo-swarm-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
@@ -35415,6 +35419,64 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
     }
 
+    // Per-repo open-PRs mode (repo_policies[].open_prs): the sibling of the
+    // auto-merge switch, at every level. Shared by the repo card and the
+    // Settings → Repos row.
+    const REPO_OPEN_PRS_MODES = [
+      { value: 'on', label: 'On', tip: 'Agents may open pull requests in this repo' },
+      { value: 'workflow_only', label: 'Workflow only', tip: 'Only workflow hand-off pull requests; cadence work (coverage, test hardening) files issues instead' },
+      { value: 'off', label: 'Off', tip: 'Agents open no pull requests here; they analyse, comment and file issues' },
+    ];
+    const REPO_OPEN_PRS_RANK = { off: 0, workflow_only: 1, on: 2 };
+
+    // repoOpenPRsSelectHtml renders the select. Narrowing needs the repo
+    // pause tier (canNarrow); widening needs the owner role, mirroring the
+    // server's asymmetric gate. hiveOff says project.open_prs is false, so
+    // every repo is off whatever its own mode.
+    function repoOpenPRsSelectHtml(repo, setting, hiveOff, canNarrow, extraClass) {
+      const current = REPO_OPEN_PRS_RANK[setting] !== undefined ? setting : 'on';
+      const isOwner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const editable = canNarrow || isOwner;
+      const tip = hiveOff
+        ? 'project.open_prs is false: agents open no pull requests in any repo, whatever this repo\'s own mode'
+        : (editable ? 'Open PRs: whether agents may open pull requests in this repo' : 'Requires repo write or owner role to change');
+      const opts = REPO_OPEN_PRS_MODES.map(m => {
+        const widens = REPO_OPEN_PRS_RANK[m.value] > REPO_OPEN_PRS_RANK[current];
+        const disabled = widens ? !isOwner : !canNarrow && m.value !== current && !isOwner;
+        return `<option value="${m.value}" title="${esc(m.tip)}" ${m.value === current ? 'selected' : ''} ${disabled ? 'disabled' : ''}>${esc(m.label)}</option>`;
+      }).join('');
+      return `<label class="repo-open-prs ${extraClass || ''}" title="${esc(tip)}"><span class="config-toggle-label">open PRs${hiveOff ? ' (hive off)' : ''}</span><select class="repo-open-prs-select" aria-label="${esc('open PRs for ' + repo)}" data-prev="${esc(current)}" ${editable ? '' : 'disabled'} data-change-action="setRepoOpenPRs" data-arg0="${esc(repo)}" data-arg-types="s,v,t">${opts}</select></label>`;
+    }
+
+    async function setRepoOpenPRs(repo, mode, el) {
+      const prev = (el && el.dataset.prev) || 'on';
+      if (!mode || mode === prev) return;
+      if (el) el.disabled = true;
+      try {
+        const resp = await fetch('/api/repos/open-prs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repo: repo, mode: mode })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        if (el) { el.dataset.prev = data.mode || mode; el.disabled = false; }
+        if (typeof _configState !== 'undefined' && _configState && _configState.data) {
+          if (!_configState.data.repoOpenPRs) _configState.data.repoOpenPRs = {};
+          _configState.data.repoOpenPRs[data.repo || repo] = { value: data.mode || mode, effective: data.effective || mode };
+        }
+        const label = (REPO_OPEN_PRS_MODES.find(m => m.value === (data.mode || mode)) || {}).label || mode;
+        showToast('Open PRs for ' + repo + ': ' + label + (data.persisted === false ? ' (not saved to disk)' : ''), data.persisted === false ? 'warning' : 'success');
+        // Same #11020 floor as the auto-merge switch, so the refetch cannot
+        // repaint the old mode.
+        noteStatusMutation(data.minStatusSeq);
+        fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+      } catch (e) {
+        showToast('Open PRs change failed: ' + (e && e.message ? e.message : 'network error'), 'error');
+        if (el) { el.value = prev; el.disabled = false; }
+      }
+    }
+
     async function startSwarm(repo, btn, force) {
       if (btn && btn.dataset.busy === '1') return;
       if (btn) { btn.dataset.busy = '1'; btn.textContent = 'Calling…'; }
@@ -39172,6 +39234,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
               ? (autoMergeOn ? 'Disable Hive auto-merge for this repo' : 'Enable Hive auto-merge for this repo')
               : (autoMergeOn ? 'Requires repo write or owner role to disable Hive auto-merge' : 'Requires owner role to enable Hive auto-merge'));
         const autoMergeBtn = `<label class="config-toggle repo-automerge-toggle" title="${esc(autoMergeTip)}"><span class="config-toggle-label">auto-merge</span><span class="config-toggle-switch repo-automerge-switch ${autoMergeOn ? 'on' : ''} ${canSetAutoMerge ? '' : 'disabled'}" role="switch" tabindex="0" aria-checked="${autoMergeOn ? 'true' : 'false'}" aria-label="${esc('auto-merge for ' + cardRepo)}" data-disabled="${canSetAutoMerge ? 'false' : 'true'}" ${canSetAutoMerge ? `data-action="toggleRepoAutoMerge" data-keydown-action="toggleRepoAutoMerge" data-keys="Enter, " data-arg0="${esc(cardRepo)}" data-arg1="${autoMergeOn ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1"` : ''}></span></label>`;
+        // Per-repo open-PRs mode (repo_policies[].open_prs), next to the
+        // auto-merge switch and shown at every level.
+        const openPrsSetting = r.openPrsMode || 'on';
+        const openPrsCtl = repoOpenPRsSelectHtml(cardRepo, openPrsSetting, r.openPrsModeEffective === 'off' && openPrsSetting !== 'off', canPauseRepo, 'repo-open-prs-card');
         const writebackCtl = repoWritebackControlHtml(cardRepo, status);
         const pauseBtn = canPauseRepo
           ? `<button class="repo-pause-btn" data-action="toggleRepoPause" data-arg0="${esc(cardRepo)}" data-arg1="${r.paused ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${r.paused ? 'Resume agent activity on this repo' : 'Quiet this repo — agents stop writing to it and stop being handed work on it — without stopping the rest of the hive'}">${r.paused ? '▶ resume' : '⏸ pause'}</button>`
@@ -39200,7 +39266,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${cardForge.kind === 'github'
             ? `<div class="repo-provider-label" style="color:${isPublic ? 'var(--muted)' : 'var(--indigo)'}" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>`
             : `<div class="repo-provider-label" data-forge="${esc(cardForge.kind)}" style="color:var(--indigo)" title="This repo lives on ${esc(cardForge.name)} at ${esc(cardForge.host)}">${cardForge.icon} ${esc(cardForge.name)} · ${esc(cardForge.host)}</div>`}
-          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${currentBasePill}${forkPill}${pausedPill}</span>${autoMergeBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${writebackCtl}${swarmBtn}${pauseBtn}</span></div>
+          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${currentBasePill}${forkPill}${pausedPill}</span>${autoMergeBtn}${openPrsCtl}<span class="repo-header-spacer"></span><span class="repo-header-actions">${writebackCtl}${swarmBtn}${pauseBtn}</span></div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.issuesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.changesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
@@ -73373,6 +73439,11 @@ function burnAreaChart() {
         const cbInherit = cbHasOverride
           ? '<button class="remove-item" data-action="clearRepoCurrentBaseOverride" data-arg0="' + esc(r) + '" data-arg-types="s" title="Clear this repo override and inherit the Features default">inherit</button>'
           : '<span class="rt-inherit">inherits</span>';
+        // Per-repo open-PRs mode (repo_policies[].open_prs), saved at once
+        // like the repo card's auto-merge switch (POST /api/repos/open-prs).
+        const opPolicy = (_configState.data.repoOpenPRs || {})[r] || {};
+        const opSetting = opPolicy.value || 'on';
+        const opRow = repoOpenPRsSelectHtml(r, opSetting, _configState.data.openPRsHiveWide === false, dashboardRoleAtLeast(window._hiveRole || 'read', 'read-write'), 'rt-check');
         const cbRow = '<label title="' + cbTitle + '" class="rt-check"><input type="checkbox" ' + (cbEffective ? 'checked' : '') + ' data-change-action="toggleRepoCurrentBase" data-arg0="' + esc(r) + '" data-arg-types="s,c"> Merge only on current base</label>' + cbInherit;
         // #11313 label-driven approvals (Prow-style): opt-in per repo, with the
         // sub-row (approval labels + help) only while the toggle is on.
@@ -73385,7 +73456,7 @@ function burnAreaChart() {
           </div>`;
         // Fully forge-qualified so the row is unambiguous: github.ibm.com/org/repo.
         const displayName = ghHost + '/' + r;
-        return `<div class="config-list-item config-repo-row" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span class="config-repo-name" title="${esc(displayName)}">${esc(displayName)}</span><label class="rt-check" title="${holdTitle}"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}${cbRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>` + ldSub + renderRepoWorkflowRow(r);
+        return `<div class="config-list-item config-repo-row" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span class="config-repo-name" title="${esc(displayName)}">${esc(displayName)}</span><label class="rt-check" title="${holdTitle}"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}${cbRow}${opRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>` + ldSub + renderRepoWorkflowRow(r);
       }).join('');
       const hostNote = isGHE
         ? ` on <strong style="color:var(--indigo)">${esc(ghHost)}</strong> (GitHub Enterprise)`

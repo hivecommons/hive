@@ -37,6 +37,12 @@ func (c *Client) CreateAgentPR(ctx context.Context, agent, repo, head, base, tit
 
 func (c *Client) createAgentPR(ctx context.Context, agent, repo, head, base, title, body string, create createPRFunc) (CreatePRResult, error) {
 	agent = strings.TrimSpace(agent)
+	// The per-repo open-PRs mode (pr_open_mode_gate.go). The sandbox
+	// manager checks it before the kick may push; this is the backstop at
+	// the create call itself.
+	if reason, refused := c.refuseOpenPRs(agent, repo, nil, SandboxPRVia); refused {
+		return CreatePRResult{}, fmt.Errorf("pull request refused: %s", reason)
+	}
 	if agent == "" {
 		return create(ctx, repo, head, base, title, body)
 	}
