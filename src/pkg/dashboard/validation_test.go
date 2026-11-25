@@ -420,7 +420,8 @@ func TestValidateGovernorLabels(t *testing.T) {
 // ---------- integration tests via HTTP handlers ----------
 
 func TestAgentConfigGeneralValidation(t *testing.T) {
-	s, _ := apiServer(t)
+	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 
 	tests := []struct {
 		name       string

@@ -1,0 +1,1 @@
+- Exclude closed GitHub issues from GitHub Projects work queues even when they still have a matching board status.

@@ -167,6 +167,12 @@ func TestGitHubProjectsStateFiltering(t *testing.T) {
 			itemJSON("ISSUE", 1, "Keep", "Todo", "", "my-org/repo"),
 			itemJSON("ISSUE", 2, "Skip", "Done", "", "my-org/repo"),
 			itemJSON("ISSUE", 3, "Also keep", "Todo", "", "my-org/repo"),
+			`{
+				"id": "item-4",
+				"type": "ISSUE",
+				"fieldValues": {"nodes": [{"name": "Todo", "field": {"name": "Status"}}]},
+				"content": {"number": 4, "title": "Closed", "state": "CLOSED", "repository": {"nameWithOwner": "my-org/repo"}}
+			}`,
 		),
 	})
 	defer srv.Close()

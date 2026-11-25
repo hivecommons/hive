@@ -16,6 +16,7 @@ import (
 // override path, then corrected to "auto" through the config endpoint.
 func TestHandleAgentConfigModels_AppliesOverStaleOverride(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	if err := deps.AgentMgr.SetModelOverride("scanner", "gpt-4o-mini-2024-07-18"); err != nil {
 		t.Fatal(err)
 	}
@@ -56,6 +57,7 @@ func TestHandleAgentConfigModels_AppliesOverStaleOverride(t *testing.T) {
 // override for the same reason.
 func TestHandleAgentConfigModels_BackendAppliesOverStaleOverride(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	if err := deps.AgentMgr.SetBackendOverride("scanner", "copilot"); err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +79,7 @@ func TestHandleAgentConfigModels_BackendAppliesOverStaleOverride(t *testing.T) {
 // endpoint is also how the dialog re-saves an unchanged form.
 func TestHandleAgentConfigModels_NoChangeNoRestart(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	if err := deps.AgentMgr.SetModelOverride("scanner", "sonnet"); err != nil {
 		t.Fatal(err)
 	}

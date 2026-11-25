@@ -20,6 +20,7 @@ func agentConfigLaunchCmdServer(t *testing.T, cfg *config.Config) *Server {
 	s := NewServer(0, logger)
 	gov := governor.New(cfg.Governor, cfg.Agents, logger)
 	mgr := cruxtest.NewRuntime(cfg.Agents, logger, crux.ProjectContext{})
+	writableConfig(t, cfg)
 	s.RegisterAPI(&Dependencies{
 		Config:      cfg,
 		AgentMgr:    mgr,

@@ -16,6 +16,7 @@ const spyreResource = "ibm.com/spyre_pf"
 
 func TestAgentSandboxJobSchedulingEditable(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	rec := doPut(s, "/api/config/agent/scanner/general", map[string]any{
 		"sandboxJob": map[string]any{
 			"nodeSelector": map[string]any{"accelerator": "spyre", "topology.kubernetes.io/zone": "z1"},
@@ -95,6 +96,7 @@ func TestAgentSandboxJobSchedulingEditable(t *testing.T) {
 
 func TestAgentSandboxPreflightEmptyListTurnsItOff(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	deps.Config.AgentSandbox.Preflight = &config.SandboxPreflightConfig{Commands: []string{"true"}}
 	rec := doPut(s, "/api/config/agent/scanner/general", map[string]any{"sandboxPreflight": map[string]any{"commands": []any{}}})
 	if rec.Code != http.StatusOK {
