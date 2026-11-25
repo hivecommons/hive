@@ -530,13 +530,10 @@ func (p *GitHubProxy) inferenceTranslatorHandlerFor(identify func(*http.Request)
 		if stream != nil {
 			// The upstream answered the streaming request with one JSON
 			// body: send it as the rest of the stream.
-			msg, err := openAIResponseToAnthropic(respBody, route.Model)
-			if err != nil {
+			if err := stream.relayOpenAIResponse(respBody, route.Model); err != nil {
 				p.logger.Error("inference translate response failed", "agent", agentName, "error", err)
-				failStream(http.StatusBadGateway, "response translation error")
-				return
+				setTranslatorOutcome(r.Context(), outcomeUpstreamError)
 			}
-			stream.relayMessage(msg)
 			return
 		}
 
@@ -762,13 +759,9 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	if stream != nil {
 		// The upstream answered the streaming request with one JSON body:
 		// send it as the rest of the stream.
-		msg, err := openAIResponseToAnthropic(respBody, route.Model)
-		if err != nil {
+		if err := stream.relayOpenAIResponse(respBody, route.Model); err != nil {
 			p.logger.Error("inference translate response failed", "agent", agentName, "error", err)
-			stream.fail(http.StatusBadGateway, "response translation error")
-			return
 		}
-		stream.relayMessage(msg)
 		return
 	}
 

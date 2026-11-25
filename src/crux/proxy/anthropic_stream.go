@@ -355,6 +355,19 @@ func (s *anthropicStream) relayOpenAISSE(r io.Reader) (gatewayUsage, error) {
 	return usage, nil
 }
 
+// relayOpenAIResponse translates a complete OpenAI JSON body and writes it as
+// the rest of the stream; on a translation error it ends the stream with an
+// error event and returns the error.
+func (s *anthropicStream) relayOpenAIResponse(body []byte, model string) error {
+	msg, err := openAIResponseToAnthropic(body, model)
+	if err != nil {
+		s.fail(http.StatusBadGateway, "response translation error")
+		return err
+	}
+	s.relayMessage(msg)
+	return nil
+}
+
 // relayMessage writes a complete Anthropic message as the rest of the stream,
 // for an upstream that answered a streaming request with one JSON body.
 func (s *anthropicStream) relayMessage(msg anthropicResponse) {
