@@ -963,20 +963,31 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 		err = errors.New("codex app-server: no rateLimits response")
 	}
 	if err != nil {
-		if codexAPIKeyLogin() {
+		err = classifyCodexProbeError(err)
+		// Only the app-server's "authentication required" refusal says the
+		// account has no ChatGPT login. A timeout, transport error or missing
+		// CLI says nothing about the auth mode and keeps holding.
+		if probeErrorCause(err) == ProbeCauseNoCredentials && codexAPIKeyLogin() {
 			return codexAPIKeyHeadroom(p.Provider())
 		}
-		return failOpen(p.Provider(), classifyCodexProbeError(err))
+		return failOpen(p.Provider(), err)
 	}
 	h, err := codexHeadroomForModel(p.Provider(), p.ThresholdPct, result, p.Model)
 	if err != nil {
-		if codexAPIKeyLogin() {
+		// A reply that parsed but carried no window at all is what an
+		// API-key account returns. A reply that did not parse is a schema
+		// problem and keeps holding.
+		if errors.Is(err, errCodexNoRateLimitWindows) && codexAPIKeyLogin() {
 			return codexAPIKeyHeadroom(p.Provider())
 		}
 		return failOpen(p.Provider(), err)
 	}
 	return h
 }
+
+// errCodexNoRateLimitWindows reports an account/rateLimits/read reply that
+// parsed but carried no window of any kind.
+var errCodexNoRateLimitWindows = errors.New("codex rateLimits: no primary, secondary, or rateLimitsByLimitId window (unrecognized schema)")
 
 // codexAPIKeyHeadroom is the reading for a Codex API-key login
 // (hivecommons/hive#19932). account/rateLimits/read reports ChatGPT
@@ -1177,7 +1188,7 @@ func codexHeadroomForModel(provider string, thresholdPct int, result json.RawMes
 		return Headroom{}, withCause(ProbeCauseUnrecognizedSchema, err)
 	}
 	if res.RateLimits.Primary == nil && res.RateLimits.Secondary == nil && len(res.RateLimits.RateLimitsByLimitID) == 0 && len(res.RateLimitsByLimitID) == 0 {
-		return Headroom{}, errors.New("codex rateLimits: no primary, secondary, or rateLimitsByLimitId window (unrecognized schema)")
+		return Headroom{}, errCodexNoRateLimitWindows
 	}
 
 	h := Headroom{Provider: provider, PlanType: res.RateLimits.PlanType, OrdinaryUsageAllowed: res.OrdinaryUsageAllowed}

@@ -198,3 +198,33 @@ func TestHeadroomJSONCarriesAuthMode(t *testing.T) {
 		t.Fatalf("headroom JSON %s lacks auth_mode or its cause", b)
 	}
 }
+
+// A probe failure that says nothing about the auth mode keeps holding even
+// with an API key exported: a ChatGPT login the probe cannot see (keyring
+// storage, another home) must not fail open on a timeout or transport error.
+func TestCodexProberUnrelatedFailureWithAPIKeyStillHolds(t *testing.T) {
+	isolateCodexAuth(t)
+	t.Setenv("OPENAI_API_KEY", "test-api-key-value")
+	fakeCLI(t, "codex", "", 3)
+	h := CodexProber{ThresholdPct: 80}.Probe(context.Background())
+	if h.ProbeErr == nil {
+		t.Fatal("ProbeErr = nil, want a failed probe")
+	}
+	assertHeldReading(t, h)
+
+	// A reply that does not parse is a schema problem, not an API-key login.
+	fakeCodexReply(t, `"not an object"`)
+	assertHeldReading(t, CodexProber{ThresholdPct: 80}.Probe(context.Background()))
+}
+
+// A missing codex CLI stays not_installed with a key exported, so the
+// publish-only manager still skips the pool and removes its marker.
+func TestCodexProberNotInstalledWithAPIKeyStaysNotInstalled(t *testing.T) {
+	isolateCodexAuth(t)
+	t.Setenv("OPENAI_API_KEY", "test-api-key-value")
+	t.Setenv("PATH", t.TempDir())
+	h := CodexProber{ThresholdPct: 80}.Probe(context.Background())
+	if h.ProbeErrCause != ProbeCauseNotInstalled || h.AuthMode != "" {
+		t.Fatalf("cause = %q auth_mode = %q, want %q and no auth_mode", h.ProbeErrCause, h.AuthMode, ProbeCauseNotInstalled)
+	}
+}
