@@ -7598,6 +7598,9 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		return true, runAuditVerify(args[1:], stdout, stderr)
 	case forgeSubcommand:
 		return true, runForge(args[1:], stdout, stderr)
+	case colonySubcommand:
+		// Offline colony store tools (#19972); see colony_cmd.go.
+		return true, runColony(args[1:], stdout, stderr)
 	case memoryDrainSubcommand:
 		// Run as the agent by the Claude Code memory hooks Hive seeds; see
 		// memory_drain_cmd.go. Always exits 0.

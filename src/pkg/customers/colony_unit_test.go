@@ -12,7 +12,7 @@ import (
 
 func TestColonyParseStoreModeAndNil(t *testing.T) {
 	for raw, want := range map[string]StoreMode{"": StoreJSON, "json": StoreJSON, " Shadow ": StoreShadow,
-		"COLONY": StoreColony, "colony-only": StoreJSON} {
+		"COLONY": StoreColony, "colony-only": StoreColonyOnly, "colony_only": StoreJSON} {
 		if got := ParseStoreMode(raw); got != want {
 			t.Fatalf("ParseStoreMode(%q) = %q, want %q", raw, got, want)
 		}

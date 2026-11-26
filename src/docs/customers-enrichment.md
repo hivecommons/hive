@@ -91,8 +91,14 @@ deleted at any time; it is rebuilt from the sources. With `customers.store`
 `shadow` (the default) or `colony` they are also written to `/data/customers/colony.db` as
 suggested enrichment facts: the current gitdm affiliation (source
 `colony:gitdm`, with its confidence and the identity it matched) and one
-`activity:<project>` count per devstats project (source `colony:devstats`). See
-[the colony store](design/colony-customer-data-backend.md#spoke-implementation-p3).
+`activity:<project>` count per devstats project (source `colony:devstats`).
+Each source's full answer (every affiliation with its dates, every project
+with its name, period and link, and when the source answered) is kept in
+colony's answer slot too. With `colony-only` (opt-in) `colony.db` is the only
+copy: `enrichment.json` is renamed `enrichment.json.migrated` once a verified
+full write has succeeded, and is not written again. See
+[the colony store](design/colony-customer-data-backend.md#spoke-implementation-p3)
+and [colony-only](design/colony-customer-data-backend.md#colony-only-p5).
 
 ## Settings
 
@@ -110,7 +116,7 @@ the one above it on, and the whole block needs Customers on.
 | `customers.enrichment.crowddev.enabled` | `false` | `HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_ENABLED` | crowd.dev source |
 | `customers.enrichment.auto_accept` | `off` | `HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT` | Auto-accept policy: `off` or `gitdm_high`. Off whenever gitdm is off; an unknown value means `off` (Settings refuses one). Settings shows it as **Auto-accept gitdm affiliations** under Enrichment sources |
 | `customers.enrichment.crowddev.token_file` | `/data/secrets/customers_crowddev_token` | `HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN_FILE` | Keystore-sealed crowd.dev API token. `HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN` supplies the token directly and wins over the file |
-| `customers.store` | `shadow` | `HIVE_CUSTOMERS_STORE` | Where person records and enrichment results live: `shadow` (the default since [#19972](https://github.com/hivecommons/hive/issues/19972): the JSON stays authoritative and colony is written alongside it), `colony` or `json`, the rollback (see [the colony store](design/colony-customer-data-backend.md#migration)). The default moves to `colony` once parity is confirmed on the project's own hive. An unknown `HIVE_CUSTOMERS_STORE` falls back to `customers.store`; an unknown value with nothing valid saved means `json`. Read at startup. Settings shows it as **Customer record store**, below Enrichment sources, and refuses an unknown value |
+| `customers.store` | `shadow` | `HIVE_CUSTOMERS_STORE` | Where person records and enrichment results live: `shadow` (the default since [#19972](https://github.com/hivecommons/hive/issues/19972): the JSON stays authoritative and colony is written alongside it), `colony`, `json` (the rollback) or `colony-only` (opt-in, never the default: `colony.db` only, the JSON files renamed `*.migrated`; setting another mode writes them back on the next start) (see [the colony store](design/colony-customer-data-backend.md#migration)). The default moves to `colony` once parity is confirmed on the project's own hive. An unknown `HIVE_CUSTOMERS_STORE` falls back to `customers.store`; an unknown value with nothing valid saved means `json`. Read at startup. Settings shows it as **Customer record store**, below Enrichment sources, and refuses an unknown value |
 
 The crowd.dev token is never stored in hive.yaml. Settings saves it through the
 owner-only `POST /api/customers/enrichment/settings`, which seals it into the
