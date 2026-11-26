@@ -5,10 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
@@ -90,10 +93,12 @@ func TestGovernorForgeSelectsAdapters(t *testing.T) {
 	})
 
 	t.Run("forgejo uses the configured instance", func(t *testing.T) {
+		t.Setenv(forgejoTestTokenEnv, forgejoTestToken)
 		cfg := &config.Config{}
 		cfg.Project.Org = "acme"
 		cfg.Project.Forge = config.ForgeForgejo
 		cfg.Forgejo.URL = "https://forgejo.example.com"
+		cfg.Forgejo.TokenEnv = forgejoTestTokenEnv
 
 		if got := forgeKindOf(t, governorForge(cfg, gh, discardLogger())); got != forge.KindForgejo {
 			t.Fatalf("want the Forgejo adapter, got kind %q", got)
@@ -261,6 +266,112 @@ func TestForgeTokenGoesOnlyToItsBlocksHost(t *testing.T) {
 				}
 				if len(auths) != 0 {
 					t.Fatalf("other host received %d requests, want 0", len(auths))
+				}
+			})
+		}
+	}
+}
+
+// TestForgeTokenSourceSelectsTheSentToken pins which token reaches the forge
+// for each way a block can name it, and that a bad token_file builds no writer,
+// does not fall back to the GitHub client, and sends no request. The env-only row is the existing-config case.
+func TestForgeTokenSourceSelectsTheSentToken(t *testing.T) {
+	root := t.TempDir()
+	defer cruxconfig.AllowSecretFileRoot(root)()
+	good := filepath.Join(root, "token")
+	if err := os.WriteFile(good, []byte("file-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(outside, []byte("outside-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HIVE_TEST_SRC_TOKEN", "env-token")
+	gh := github.NewClient("t", "acme", nil, discardLogger(), "")
+
+	cases := []struct {
+		name      string
+		tokenEnv  string
+		tokenFile string
+		wantAuth  string // "" means no request may be made
+		wantErr   string
+	}{
+		{"env only", "HIVE_TEST_SRC_TOKEN", "", "env-token", ""},
+		{"file only", "", good, "file-token", ""},
+		{"both prefers the file", "HIVE_TEST_SRC_TOKEN", good, "file-token", ""},
+		{"neither sends an empty token", "", "", "", ""},
+		{"disallowed file path", "HIVE_TEST_SRC_TOKEN", outside, "", "outside the allowed secret dirs"},
+		{"unreadable file", "HIVE_TEST_SRC_TOKEN", filepath.Join(root, "missing"), "", "is unreadable"},
+	}
+	for _, kind := range []string{config.ForgeGitea, config.ForgeForgejo} {
+		for _, tc := range cases {
+			t.Run(kind+"/"+tc.name, func(t *testing.T) {
+				var mu sync.Mutex
+				var auths []string
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					mu.Lock()
+					auths = append(auths, r.Header.Get("Authorization"))
+					mu.Unlock()
+					w.WriteHeader(http.StatusCreated)
+					_, _ = w.Write([]byte(`{}`))
+				}))
+				defer srv.Close()
+
+				cfg := &config.Config{}
+				cfg.Project.Org = "acme"
+				cfg.Project.Forge = kind
+				if kind == config.ForgeGitea {
+					cfg.Gitea.URL, cfg.Gitea.TokenEnv, cfg.Gitea.TokenFile = srv.URL, tc.tokenEnv, tc.tokenFile
+				} else {
+					cfg.Forgejo.URL, cfg.Forgejo.TokenEnv, cfg.Forgejo.TokenFile = srv.URL, tc.tokenEnv, tc.tokenFile
+				}
+
+				var commentErr error
+				w := governorForge(cfg, gh, discardLogger())
+				if tc.wantErr != "" && w != nil {
+					t.Fatalf("a bad token_file built writer %T, want none and no GitHub fallback", w)
+				}
+				if w == nil {
+					commentErr = errors.New("no writer")
+				} else {
+					commentErr = w.CreateIssueComment(context.Background(), "acme/app", 1, "hi")
+				}
+				_, mergeErr := forgeMergerForRepo(cfg, "acme/app")
+
+				mu.Lock()
+				defer mu.Unlock()
+				// Forgejo answers a private repo with no token with a 404, so an
+				// empty Forgejo token builds neither writer nor merger (#19919).
+				if kind == config.ForgeForgejo && tc.tokenEnv == "" && tc.tokenFile == "" && os.Getenv(config.DefaultForgejoTokenEnv) == "" {
+					if w != nil || !errors.Is(mergeErr, errForgeTokenEmpty) || len(auths) != 0 {
+						t.Fatalf("empty Forgejo token: writer %T, merger err %v, %d requests; want none, errForgeTokenEmpty, 0", w, mergeErr, len(auths))
+					}
+					return
+				}
+				if tc.wantErr != "" {
+					if commentErr == nil {
+						t.Fatal("a bad token_file must not build a writer")
+					}
+					if mergeErr == nil || !strings.Contains(mergeErr.Error(), tc.wantErr) {
+						t.Fatalf("merger err = %v, want it to contain %q", mergeErr, tc.wantErr)
+					}
+					if len(auths) != 0 {
+						t.Fatalf("a bad token_file sent %d requests, want 0", len(auths))
+					}
+					return
+				}
+				if commentErr != nil || mergeErr != nil {
+					t.Fatalf("comment err %v, merger err %v", commentErr, mergeErr)
+				}
+				if len(auths) != 1 {
+					t.Fatalf("got %d requests, want 1", len(auths))
+				}
+				if tc.wantAuth == "" {
+					if strings.Contains(auths[0], "env-token") || strings.Contains(auths[0], "file-token") {
+						t.Fatalf("Authorization %q carries a token, want none", auths[0])
+					}
+				} else if !strings.Contains(auths[0], tc.wantAuth) {
+					t.Fatalf("Authorization %q does not carry %q", auths[0], tc.wantAuth)
 				}
 			})
 		}

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -300,6 +302,41 @@ func TestWorkflowIngestSpecTextDeterministic(t *testing.T) {
 	rec = wfReq(s, http.MethodPost, "/api/workflows/ingest/spec", map[string]any{"text": strings.Repeat("x", workflowSpecMaxTextChars+1)}, true)
 	if rec.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("%d", rec.Code)
+	}
+}
+
+func TestWorkflowSpecIngestPreservesUnindexedDraft(t *testing.T) {
+	s := workflowTestServer(t, true)
+	configureSpecLLM(s, false)
+	root := t.TempDir()
+	s.deps.WorkflowStore = wfstore.Open(root)
+	draft := techdocsModel(t)
+	draft.Spec.Meta.Description = "existing unindexed draft"
+	if rec := wfReq(s, http.MethodPost, "/api/workflows", draft, true); rec.Code != http.StatusCreated {
+		t.Fatalf("seed: %d %s", rec.Code, rec.Body)
+	}
+	if err := os.Remove(filepath.Join(root, wfstore.Subdir, wfstore.IndexFile)); err != nil {
+		t.Fatal(err)
+	}
+	rec := wfReq(s, http.MethodPost, "/api/workflows/ingest/spec", map[string]any{
+		"name": draft.Metadata.Name, "text": specSample, "useLLM": false, "save": true,
+	}, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("ingest: %d %s", rec.Code, rec.Body)
+	}
+	var resp specResponse
+	wfDecode(t, rec, &resp)
+	if resp.Entry == nil || resp.Entry.Version != "2" || resp.Model.Spec.Meta.Version != "2" {
+		t.Fatalf("expected version 2: %s", rec.Body)
+	}
+	rec = wfReq(s, http.MethodGet, "/api/workflows/"+draft.Metadata.Name+"/1", nil, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get original: %d %s", rec.Code, rec.Body)
+	}
+	var original struct{ Model *workflowmodel.Model }
+	wfDecode(t, rec, &original)
+	if original.Model == nil || original.Model.Hash() != draft.Hash() {
+		t.Fatalf("original draft was changed: %s", rec.Body)
 	}
 }
 

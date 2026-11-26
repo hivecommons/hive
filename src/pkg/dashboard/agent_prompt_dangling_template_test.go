@@ -32,6 +32,7 @@ func promptServer(t *testing.T) (*Server, *Dependencies) {
 	t.Helper()
 	t.Cleanup(scheduler.SetPolicyDirsForTest(t.TempDir(), t.TempDir()))
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	deps.Config.Agents["review"] = config.AgentConfig{Backend: "claude", Enabled: true, KickTemplate: "review.md"}
 	deps.Config.Agents["scanner"] = config.AgentConfig{Backend: "claude", Model: "sonnet", Enabled: true, KickTemplate: "scanner-holdgated.md"}
 	deps.Scheduler = scheduler.New(deps.Config, slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})))

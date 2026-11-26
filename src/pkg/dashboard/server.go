@@ -247,6 +247,12 @@ type Server struct {
 	gatewayHealthOnce sync.Once
 	gatewayHealth     *serverGatewayHealthStore
 
+	// agentConfigMu serialises the agent config section writers. Each holds it
+	// from its first read of the current values through mutation and save,
+	// so two writes cannot interleave. Lock order: agentConfigMu, then the
+	// config's saveMu (#19788).
+	agentConfigMu sync.Mutex
+
 	acmmEvalMu       sync.RWMutex
 	acmmEvalCache    *ACMMEvaluation
 	acmmEvalCachedAt time.Time
@@ -417,6 +423,18 @@ type Server struct {
 	// and persists a token, which login never does.
 	ownerIdentityFlowMu sync.Mutex
 	ownerIdentityFlow   *ownerIdentityFlow
+
+	// PAT rotation (hivecommons/hive#19633, api_github_token.go) runs under
+	// githubConfigMu, the same lock PUT /api/config/github and installation
+	// discovery take, so it cannot interleave with an App setup. These two
+	// fields are guarded by it: githubTokenVerified is the last token this
+	// process verified (fingerprint, login, when; never the token) and
+	// githubTokenRejectedAt is when a candidate token last failed
+	// verification, which starts the cooldown on further attempts.
+	// githubTokenNow is a test clock; nil means time.Now.
+	githubTokenVerified   *githubTokenVerification
+	githubTokenRejectedAt time.Time
+	githubTokenNow        func() time.Time
 
 	// userSessions maps a random opaque session id (stored in the client's
 	// hive_session cookie on direct-route spokes) to the authenticated user.
@@ -1392,6 +1410,13 @@ type FrontendRepo struct {
 	PausedAt    string `json:"pausedAt,omitempty"`
 	PauseReason string `json:"pauseReason,omitempty"`
 	AutoMerge   bool   `json:"autoMerge"`
+	// OpenPRsMode is the repo's own open-PRs mode (on, off, workflow_only;
+	// repo_policies[].open_prs) and OpenPRsModeEffective the mode in force after
+	// the hive-wide project.open_prs switch. The repo card's select shows
+	// the first and says so when the second differs.
+	// (OpenPrs above is the list of open PRs; these are not.)
+	OpenPRsMode          string `json:"openPrsMode,omitempty"`
+	OpenPRsModeEffective string `json:"openPrsModeEffective,omitempty"`
 	// RequireCurrentBase is the effective current-base gate for this repo
 	// (auto_merge.require_current_base / skip_current_base over the hive-wide
 	// default, hivecommons/hive#15335); the repo card shows a "current-base"
@@ -3248,10 +3273,19 @@ func (s *Server) handleBannerDismissed(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]bool{"ok": true})
 }
 
+// systemAlertDismissible reports whether an owner may acknowledge the alert:
+// plan-stall banners, and the model-id rewrite notice, which reports a fix the
+// hive has already applied and so has nothing left for the operator to do
+// (#19747).
+func systemAlertDismissible(id string) bool {
+	return strings.HasPrefix(id, planning.ReplanAlertPrefix) || strings.HasPrefix(id, modelIDNormalizedAlertPrefix)
+}
+
 // handleSystemAlertDismiss lets an owner acknowledge a plan-stall/needs-human
-// banner after they have reviewed it. The replan lane remains level-triggered:
-// if the plan is still truly stalled on a later reconciliation pass, it can
-// reassert the alert; if the source issue disappeared, the pass clears it.
+// or model-id rewrite banner after they have reviewed it. The replan lane
+// remains level-triggered: if the plan is still truly stalled on a later
+// reconciliation pass, it can reassert the alert; if the source issue
+// disappeared, the pass clears it.
 func (s *Server) handleSystemAlertDismiss(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -3263,8 +3297,8 @@ func (s *Server) handleSystemAlertDismiss(w http.ResponseWriter, r *http.Request
 		jsonError(w, "missing alert id", http.StatusBadRequest)
 		return
 	}
-	if !strings.HasPrefix(body.ID, planning.ReplanAlertPrefix) {
-		jsonError(w, "only plan-stall alerts are dismissible", http.StatusBadRequest)
+	if !systemAlertDismissible(body.ID) {
+		jsonError(w, "only plan-stall and model-id rewrite alerts are dismissible", http.StatusBadRequest)
 		return
 	}
 	s.ClearSystemAlert(body.ID)

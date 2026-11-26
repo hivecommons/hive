@@ -1089,6 +1089,7 @@ dashboard:
   # authorized_users: [owner, reviewer:read, maintainer:read-write]
   # hub_proxied: false                    # True when trusted hub nginx injects identity headers
   # agent_poll_interval_s: 5
+  # attribute_label_actions: true       # comment naming the dashboard user when a hold/triage/approval label change is made for them (GitHub shows the Hive App as actor)
   # sessions:                           # Inception (spek): interactive named CLI terminals in the dashboard (default on)
   #   enabled: true                     # set false to hide Inception (spek); env HIVE_SESSIONS_ENABLED overrides; owner/read-write only, no bypass-permissions flags
   #   max_sessions: 12                  # live sessions per spoke (env HIVE_SESSIONS_MAX)
@@ -1435,6 +1436,9 @@ data:
 #   profile_fill:
 #     enabled: false         # true (or env HIVE_CUSTOMERS_PROFILE_FILL_ENABLED=true) fills empty real name, organization, location and country from each confirmed customer's public GitHub, GitHub Enterprise, GitLab or Gitea/Forgejo profile (and Linear member name); default off
 #     max_requests_per_hour: 60  # forge requests the fill may spend per hour across backfill, refresh, accepts and "Refresh from profiles" (default 60, at most 300)
+#   store: json              # json (default) | shadow | colony (or env HIVE_CUSTOMERS_STORE): shadow imports people.json and enrichment.json into /data/customers/colony.db and writes both; colony reads colony.db and still writes the JSON; json again is the rollback
+#   enrichment:
+#     auto_accept: off       # off (default) | gitdm_high (or env HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT): gitdm_high fills an empty or automatic organization from a current gitdm match by GitHub login; never a hand-set or hub value
 
 
 # Sandbox Job GitHub read relay (docs/sandbox-isolation.md): lets sandbox Jobs
@@ -1450,3 +1454,15 @@ data:
 #       listen_addr: ":8443"                       # required when enabled; no default
 #       endpoint: https://hive.hive-system.svc:8443  # how Job pods reach hive; required when enabled
 #       no_proxy: []                               # optional extra hosts Jobs reach directly
+
+# Sandbox Job inference listener (docs/sandbox-isolation.md, #19619): lets
+# Job kicks on a model gateway backend reach hive's inference translator with
+# a per-kick key, so the gateway key never enters the Job. Default off; the
+# same rules as github_read_proxy (no default bind, https endpoint only,
+# hive-wide only). Pair it with a Service and a NetworkPolicy.
+# agent_sandbox:
+#   job:
+#     inference_proxy:
+#       enabled: false
+#       listen_addr: ":18446"                                   # required when enabled; no default
+#       endpoint: https://hive-inference.hive-system.svc:18446  # how Job pods reach hive; required when enabled

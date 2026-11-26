@@ -399,9 +399,20 @@
       el.addEventListener('scroll', sync, { passive: true });
       // Content arrives async (release notes fetch) and hidden modals have no
       // layout until opened: re-check whenever size or children change.
-      if (typeof ResizeObserver === 'function') new ResizeObserver(sync).observe(el);
-      if (typeof MutationObserver === 'function') new MutationObserver(sync).observe(el, { childList: true, subtree: true, characterData: true });
-      if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('resize', sync, { passive: true });
+      const size = typeof ResizeObserver === 'function' ? new ResizeObserver(sync) : null;
+      const content = typeof MutationObserver === 'function' ? new MutationObserver(sync) : null;
+      const viewport = typeof window === 'undefined' ? null : window;
+      size?.observe(el);
+      content?.observe(el, { childList: true, subtree: true, characterData: true });
+      viewport?.addEventListener?.('resize', sync, { passive: true });
+      el.hiveModalScrollCleanup = () => {
+        size?.disconnect();
+        content?.disconnect();
+        viewport?.removeEventListener?.('resize', sync);
+        el.removeEventListener('scroll', sync);
+        if (el.dataset) delete el.dataset.modalScrollWired;
+        delete el.hiveModalScrollCleanup;
+      };
       sync();
       return el;
     }
@@ -425,20 +436,21 @@
       x.addEventListener('click', () => { if (typeof onClose === 'function') onClose(); });
       dlg.insertBefore(x, dlg.firstChild);
     }
-    function hiveWireDialog(overlay, resolve, cancelValue, okSelector, cancelSelector, submit) {
+    function hiveWireDialog(overlay, resolve, cancelValue, okSelector, cancelSelector, submit, submitOnEnter = true) {
       let done = false;
       const focusableSelector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
       const close = (val) => {
         if (done) return;
         done = true;
         document.removeEventListener('keydown', onKey, true);
+        for (const el of overlay.querySelectorAll('.modal-scroll')) el.hiveModalScrollCleanup?.();
         overlay.remove();
         resolve(val);
       };
       overlay.hiveDialogClose = () => close(cancelValue);
       const onKey = (e) => {
         if (e.key === 'Escape') { e.preventDefault(); close(cancelValue); return; }
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' && submitOnEnter) {
           const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
           if (tag !== 'textarea') { e.preventDefault(); submit(close); }
           return;
@@ -465,6 +477,7 @@
     // cfg.check = { label } adds a checkbox under the body (a "don't show this
     // again" opt-out); the promise then resolves { checked } instead of true
     // so the caller can persist the choice. Without cfg.check it is true/false.
+    // cfg.scrollBody keeps the heading and actions in view above and below long content.
     function hiveConfirm(opts, title) {
       const cfg = hiveNormalizeDialogOptions(opts, title);
       return new Promise(resolve => {
@@ -477,17 +490,18 @@
         const body = cfg.title ? message : (parts.length > 1 ? parts.slice(1).join('\n\n') : message);
         const confirmLabel = cfg.confirmLabel || cfg.ok || 'OK';
         const check = cfg.check && typeof cfg.check === 'object' ? cfg.check : null;
-        overlay.innerHTML = `<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">
+        const scrollBody = cfg.scrollBody === true;
+        overlay.innerHTML = `<div class="hive-dialog${scrollBody ? ' hive-confirm-scroll' : ''}" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">
           <div id="hive-dialog-title" class="hive-dialog-title">${hiveDialogEscape(heading)}</div>
-          <div class="hive-dialog-body">${hiveDialogEscape(body)}</div>
+          <div class="hive-dialog-body${scrollBody ? ' long modal-scroll' : ''}"${scrollBody ? ' tabindex="0" data-initial-focus' : ''}>${hiveDialogEscape(body)}</div>
           ${check ? `<label class="hive-dialog-check"><input type="checkbox" class="hive-dialog-check-input"${check.checked ? ' checked' : ''}>${hiveDialogEscape(check.label || 'Don\'t show this again')}</label>` : ''}
           <div class="hive-dialog-buttons">
             <button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">${hiveDialogEscape(cfg.cancelLabel || 'Cancel')}</button>
-            <button type="button" class="hv-btn ${hiveConfirmIsDanger(cfg, message) ? 'btn-danger' : 'btn-primary'} hive-dialog-btn primary" data-initial-focus>${hiveDialogEscape(confirmLabel)}</button>
+            <button type="button" class="hv-btn ${hiveConfirmIsDanger(cfg, message) ? 'btn-danger' : 'btn-primary'} hive-dialog-btn primary">${hiveDialogEscape(confirmLabel)}</button>
           </div></div>`;
         document.body.appendChild(overlay);
         const box = check ? overlay.querySelector('.hive-dialog-check-input') : null;
-        hiveWireDialog(overlay, resolve, false, '.primary', '.cancel', close => close(check ? { checked: !!(box && box.checked) } : true));
+        hiveWireDialog(overlay, resolve, false, '.primary', '.cancel', close => close(check ? { checked: !!(box && box.checked) } : true), !scrollBody);
       });
     }
     // cfg.check = { label } adds the same opt-out box as hiveConfirm; the

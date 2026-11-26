@@ -287,6 +287,13 @@ func RunAgyTurn(args []string, stdout, stderr io.Writer) int {
 	return agent.RunAgyTurn(args, stdout, stderr)
 }
 
+// RunClaudeTurn implements the `hive claude-turn` subprocess: one headless
+// Claude Code turn for a headless_turns agent, exit code returned. It is
+// agent.RunClaudeTurn.
+func RunClaudeTurn(args []string, stdout, stderr io.Writer) int {
+	return agent.RunClaudeTurn(args, stdout, stderr)
+}
+
 // StartPermissionsWatcher runs the agent home-directory permissions watcher
 // for the life of the process. It is agent.StartPermissionsWatcher; the
 // host starts it as a goroutine.

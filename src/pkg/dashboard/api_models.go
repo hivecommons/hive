@@ -29,6 +29,7 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 	codexCLI := s.queryCLIModelsForBoot("codex")
 	agyCLI := s.queryCLIModelsForBoot(agyBackendID)
 	ompCLI := s.queryCLIModelsForBoot(ompBackendID)
+	opencodeCLI := s.queryCLIModelsForBoot(opencodeBackendID)
 	// bob has no discovery source and no usable --model flag: it selects its
 	// own model. Served explicitly so the client never falls through to the
 	// copilot catalog and offers models bob cannot honor (see bobStaticModels).
@@ -90,6 +91,7 @@ func (s *Server) handleBackends(w http.ResponseWriter, r *http.Request) {
 		cliBackendEntry("cline", "Cline (provider/model)", cliModelResult{fallback: true, discoveryErr: "Cline has no CLI model-catalog command; enter an authenticated provider/model explicitly"}),
 		cliBackendEntry(agyBackendID, "Google Antigravity (agy)", agyCLI),
 		cliBackendEntry(ompBackendID, "Oh My Pi (omp)", ompCLI),
+		cliBackendEntry(opencodeBackendID, "OpenCode", opencodeCLI),
 		{"id": "vllm", "name": "vLLM (self-hosted)", "models": vllmModels, "inference": true},
 		{"id": "llm-d", "name": "llm-d (self-hosted)", "models": llmdModels, "inference": true},
 		{"id": "litellm", "name": "LiteLLM (proxy)", "models": litellmModels, "inference": true},

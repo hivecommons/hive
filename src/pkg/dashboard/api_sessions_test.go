@@ -425,7 +425,23 @@ func (e *sessionTestEnv) createWith(t *testing.T, c sessionCaller, name string, 
 	if got := e.waitSettled(t, id); got.Status != sessionStatusRunning {
 		t.Fatalf("session %s settled as %s (%s), want running", id, got.Status, got.Error)
 	}
+	e.waitStartWorkerDone(t, id)
 	return id
+}
+
+// waitStartWorkerDone waits until the background start of id has returned.
+// The record says running while that worker still holds sessionsMu and reads
+// the shared config (beginSessionAutostart), so a test that mutates
+// e.s.deps.Config afterwards raced it under -race (#19748). The worker clears
+// its in-flight mark and returns under one hold of sessionsMu, so observing
+// the mark gone under that lock orders the caller after the worker's reads.
+func (e *sessionTestEnv) waitStartWorkerDone(t *testing.T, id string) {
+	t.Helper()
+	waitSessionsFor(t, "session "+id+" start worker to return", func() bool {
+		e.s.sessionsMu.Lock()
+		defer e.s.sessionsMu.Unlock()
+		return !e.s.sessionsPreparing[id]
+	})
 }
 
 // sessionTestSettleTimeout bounds the wait for a background start in tests.
@@ -1157,6 +1173,36 @@ func TestSessionsResume(t *testing.T) {
 	}
 	if rec := e.do(t, callerRW, "POST", "/api/sessions/"+id2+"/resume", nil); rec.Code != http.StatusConflict {
 		t.Errorf("unsupported vendor resume = %d, want 409", rec.Code)
+	}
+}
+
+func TestSessionsResumeSaveFailureLeavesSessionEnded(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	st := e.s.sessionStoreOrNil()
+	before := sessionRecord{ID: "abcdef012345", Vendor: "claude", Creator: callerRW.user,
+		Status: sessionStatusEnded, UIDSlot: 1, ResumeCommand: "claude --resume abc"}
+	if err := st.put(before); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/sessions/" + before.ID + "/resume"
+	storePath := st.path
+	st.path = t.TempDir() // rename over a directory fails even with elevated privileges
+	res := e.do(t, callerRW, "POST", path, nil)
+	st.path = storePath
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("resume with an unwritable store = %d: %s", res.Code, res.Body.String())
+	}
+	if got, ok := st.get(before.ID); !ok || got != before {
+		t.Fatalf("record after failed save = %+v (exists: %v), want %+v", got, ok, before)
+	}
+	if e.s.sessionStartInFlight(before.ID) || len(e.rt.startedSpecs()) != 0 {
+		t.Fatal("resume launched without a saved start")
+	}
+	if res := e.do(t, callerRW, "POST", path, nil); res.Code != http.StatusAccepted {
+		t.Fatalf("resume retry = %d: %s", res.Code, res.Body.String())
+	}
+	if got := e.waitSettled(t, before.ID); got.Status != sessionStatusRunning {
+		t.Fatalf("record after retry = %+v, want running", got)
 	}
 }
 

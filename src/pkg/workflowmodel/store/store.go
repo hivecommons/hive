@@ -16,11 +16,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -43,16 +43,18 @@ const (
 
 // Errors.
 var (
-	ErrNotFound    = errors.New("workflow model not found")
-	ErrReadOnly    = errors.New("workflow model is read-only")
-	ErrBadName     = errors.New("workflow model name must be lower-case letters, digits and hyphens")
-	ErrBadVersion  = errors.New("workflow model version must be letters, digits, dots and hyphens")
-	ErrNotCompiled = errors.New("workflow model does not compile")
+	ErrNotFound         = errors.New("workflow model not found")
+	ErrReadOnly         = errors.New("workflow model is read-only")
+	ErrBadName          = errors.New("workflow model name must be lower-case letters, digits and hyphens")
+	ErrBadVersion       = errors.New("workflow model version must be letters, digits, dots and hyphens")
+	ErrNotCompiled      = errors.New("workflow model does not compile")
+	ErrVersionExhausted = errors.New("no higher integer workflow version is available")
 )
 
 var (
-	nameRe    = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
-	versionRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,31}$`)
+	nameRe           = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
+	versionRe        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]{0,31}$`)
+	decimalVersionRe = regexp.MustCompile(`^[0-9]{1,32}$`)
 )
 
 // Entry is one catalogue line.
@@ -232,13 +234,69 @@ func summarize(diags []workflowmodel.Diagnostic) string {
 // on the entry, not refused: drafts live in the library, never in a
 // binding.
 func (s *Store) Save(m *workflowmodel.Model, by string, now time.Time) (Entry, error) {
+	return s.save(m, by, now, replaceVersion)
+}
+
+// SaveNextVersion assigns and saves the next integer version under the same
+// lock. The supplied model is left unchanged.
+func (s *Store) SaveNextVersion(m *workflowmodel.Model, by string, now time.Time) (Entry, error) {
+	return s.save(m, by, now, nextVersion)
+}
+
+// SaveImportedVersion keeps a free requested version, or assigns the next
+// integer version when the requested slot is occupied or empty.
+func (s *Store) SaveImportedVersion(m *workflowmodel.Model, by string, now time.Time) (Entry, error) {
+	return s.save(m, by, now, preferVersion)
+}
+
+type versionMode uint8
+
+const (
+	replaceVersion versionMode = iota
+	nextVersion
+	preferVersion
+)
+
+func (s *Store) save(m *workflowmodel.Model, by string, now time.Time, mode versionMode) (Entry, error) {
 	if m == nil {
 		return Entry{}, errors.New("nil model")
 	}
-	name, version := m.Metadata.Name, m.Spec.Meta.Version
+	name := m.Metadata.Name
 	if IsBuiltin(name) {
 		return Entry{}, fmt.Errorf("%w: %s", ErrReadOnly, name)
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var idx []Entry
+	if mode != replaceVersion {
+		if !nameRe.MatchString(name) {
+			return Entry{}, fmt.Errorf("%w: %q", ErrBadName, name)
+		}
+		var err error
+		idx, err = s.readIndex()
+		if err != nil {
+			return Entry{}, err
+		}
+		preferred := m.Spec.Meta.Version
+		allocate := mode == nextVersion || preferred == ""
+		if !allocate {
+			occupied, err := s.versionOccupied(name, preferred, idx)
+			if err != nil {
+				return Entry{}, err
+			}
+			allocate = occupied
+		}
+		if allocate {
+			version, err := s.nextVersion(name, idx)
+			if err != nil {
+				return Entry{}, err
+			}
+			versioned := *m
+			versioned.Spec.Meta.Version = version
+			m = &versioned
+		}
+	}
+	version := m.Spec.Meta.Version
 	if err := checkKey(name, version); err != nil {
 		return Entry{}, err
 	}
@@ -249,17 +307,11 @@ func (s *Store) Save(m *workflowmodel.Model, by string, now time.Time) (Entry, e
 	if err != nil {
 		return Entry{}, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(s.modelPath(name, version)), 0o755); err != nil {
-		return Entry{}, err
-	}
-	if err := writeAtomic(s.modelPath(name, version), b); err != nil {
-		return Entry{}, err
-	}
-	idx, err := s.readIndex()
-	if err != nil {
-		return Entry{}, err
+	if mode == replaceVersion {
+		idx, err = s.readIndex()
+		if err != nil {
+			return Entry{}, err
+		}
 	}
 	e := entryFor(m, by, now)
 	replaced := false
@@ -273,7 +325,126 @@ func (s *Store) Save(m *workflowmodel.Model, by string, now time.Time) (Entry, e
 	if !replaced {
 		idx = append(idx, e)
 	}
-	return e, s.writeIndex(idx)
+	if err := s.saveModelAndIndex(s.modelPath(name, version), b, idx); err != nil {
+		return Entry{}, err
+	}
+	return e, nil
+}
+
+// versionOccupied requires s.mu.
+func (s *Store) versionOccupied(name, version string, idx []Entry) (bool, error) {
+	if err := checkKey(name, version); err != nil {
+		return false, err
+	}
+	for _, e := range idx {
+		if e.Name == name && e.Version == version {
+			return true, nil
+		}
+	}
+	_, err := os.Lstat(s.modelPath(name, version))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// The staged catalogue catches write failures before publishing the model.
+// Roll back the model if the catalogue rename fails. An interruption between
+// the two renames can still require Rebuild.
+func (s *Store) saveModelAndIndex(path string, model []byte, idx []Entry) error {
+	index, err := marshalIndex(idx)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	indexPath := filepath.Join(s.dir(), IndexFile)
+	indexTmp, err := stageWrite(indexPath, index)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(indexTmp)
+
+	backup, err := backupModel(path)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if backup != "" {
+			os.Remove(backup)
+			os.Remove(filepath.Dir(backup))
+		}
+	}()
+	if err := writeAtomic(path, model); err != nil {
+		return err
+	}
+	if err := os.Rename(indexTmp, indexPath); err != nil {
+		var rollbackErr error
+		if backup != "" {
+			rollbackErr = os.Rename(backup, path)
+		} else {
+			rollbackErr = os.Remove(path)
+		}
+		if rollbackErr != nil {
+			if backup != "" {
+				rollbackErr = fmt.Errorf("restore workflow model from %s: %w", backup, rollbackErr)
+				backup = ""
+			} else {
+				rollbackErr = fmt.Errorf("remove unpublished workflow model: %w", rollbackErr)
+			}
+			return errors.Join(err, rollbackErr)
+		}
+		return err
+	}
+	return nil
+}
+
+const modelBackupFile = "model"
+
+// backupModel preserves the original inode when hard links are available.
+func backupModel(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("workflow model path is a directory: %s", path)
+	}
+	dir, err := os.MkdirTemp(filepath.Dir(path), ".rollback-")
+	if err != nil {
+		return "", err
+	}
+	backup := filepath.Join(dir, modelBackupFile)
+	if err := os.Link(path, backup); err == nil {
+		return backup, nil
+	}
+	// Some filesystems lack hard links. Keep a copy with the original mode.
+	if err := copyModelBackup(path, dir, info.Mode()); err != nil {
+		os.Remove(backup)
+		os.Remove(dir)
+		return "", err
+	}
+	return backup, nil
+}
+
+func copyModelBackup(path, dir string, mode os.FileMode) error {
+	backupDir, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer backupDir.Close()
+	previous, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err := backupDir.WriteFile(modelBackupFile, previous, 0o600); err != nil {
+		return err
+	}
+	return backupDir.Chmod(modelBackupFile, mode)
 }
 
 // Delete removes one version. Whether a repository is bound to it is the
@@ -392,12 +563,16 @@ func (s *Store) readIndex() ([]Entry, error) {
 	return idx, nil
 }
 
-func (s *Store) writeIndex(idx []Entry) error {
+func marshalIndex(idx []Entry) ([]byte, error) {
 	sortIndex(idx)
 	if idx == nil {
 		idx = []Entry{}
 	}
-	b, err := json.MarshalIndent(idx, "", "  ")
+	return json.MarshalIndent(idx, "", "  ")
+}
+
+func (s *Store) writeIndex(idx []Entry) error {
+	b, err := marshalIndex(idx)
 	if err != nil {
 		return err
 	}
@@ -407,40 +582,102 @@ func (s *Store) writeIndex(idx []Entry) error {
 	return writeAtomic(filepath.Join(s.dir(), IndexFile), b)
 }
 
-func writeAtomic(path string, b []byte) error {
+func stageWrite(path string, b []byte) (string, error) {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	file, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return "", err
+	}
+	if err := writeStagedFile(file, b); err != nil {
+		return "", err
+	}
+	return tmp, nil
+}
+
+func writeStagedFile(file *os.File, b []byte) error {
+	_, writeErr := file.Write(b)
+	closeErr := file.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		if cleanupErr := os.Remove(file.Name()); cleanupErr != nil && !errors.Is(cleanupErr, os.ErrNotExist) {
+			err = errors.Join(err, fmt.Errorf("remove incomplete staging file: %w", cleanupErr))
+		}
 		return err
 	}
+	return nil
+}
+
+func writeAtomic(path string, b []byte) error {
+	tmp, err := stageWrite(path, b)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
 	return os.Rename(tmp, path)
 }
 
 // NextVersion returns the next free integer version of name: one more
 // than the largest integer version saved so far, or "1" for a name with no
-// integer versions. Non-integer versions (semver, tags) are ignored for
-// the count but can never be returned, so the result is always unused.
+// integer versions. Non-integer versions (semver, tags) are ignored.
+// ErrVersionExhausted means the next integer would exceed the version limit.
 func (s *Store) NextVersion(name string) (string, error) {
 	if !nameRe.MatchString(name) {
 		return "", fmt.Errorf("%w: %q", ErrBadName, name)
 	}
-	all, err := s.List()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	all, err := s.readIndex()
 	if err != nil {
 		return "", err
 	}
-	max := 0
-	taken := map[string]bool{}
-	for _, e := range all {
-		if e.Name != name {
-			continue
+	if IsBuiltin(name) {
+		all = append(all, builtinEntry())
+	}
+	return s.nextVersion(name, all)
+}
+
+// nextVersion requires s.mu.
+func (s *Store) nextVersion(name string, all []Entry) (string, error) {
+	var max big.Int
+	consider := func(version string) {
+		if !decimalVersionRe.MatchString(version) {
+			return
 		}
-		taken[e.Version] = true
-		if n, err := strconv.Atoi(e.Version); err == nil && n > max {
-			max = n
+		var n big.Int
+		n.SetString(version, 10)
+		if n.Cmp(&max) > 0 {
+			max.Set(&n)
 		}
 	}
-	for v := max + 1; ; v++ {
-		if s := strconv.Itoa(v); !taken[s] {
-			return s, nil
+	for _, e := range all {
+		if e.Name == name {
+			consider(e.Version)
+		}
+	}
+	files, err := os.ReadDir(filepath.Join(s.dir(), name))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	// A partial save can leave a model file outside the index. Directories
+	// only occupy their exact filename and don't affect the maximum version.
+	occupied := map[string]bool{}
+	for _, file := range files {
+		version, ok := strings.CutSuffix(file.Name(), ".json")
+		if !ok {
+			continue
+		}
+		occupied[version] = true
+		if !file.IsDir() {
+			consider(version)
+		}
+	}
+	one := big.NewInt(1)
+	for {
+		next := max.Add(&max, one).String()
+		if !decimalVersionRe.MatchString(next) {
+			return "", fmt.Errorf("%w for %s", ErrVersionExhausted, name)
+		}
+		if !occupied[next] {
+			return next, nil
 		}
 	}
 }

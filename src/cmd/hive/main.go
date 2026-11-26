@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1369,6 +1370,8 @@ func (b *boot) wireBootClosures() {
 			RemergeDerivedReferenceRepos: b.remergeLastDerivedReferenceRepos,
 			OwnerIdentity:                b.ownerIdentityStore(),
 			OwnerIdentityChanged:         b.ownerIdentityChanged,
+			VerifyGitHubToken:            b.verifyRotatedGitHubToken,
+			ApplyGitHubToken:             b.applyRotatedGitHubToken,
 			RepoAgents:                   b.repoAgents,
 			CheckRemoteWriteIdentity:     b.checkRemoteWriteIdentity,
 			RemoteWriteIdentityChanged:   b.remoteWriteIdentityChanged,
@@ -1906,6 +1909,7 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		PrimaryRepoName:    b.cfg.Project.PrimaryRepo,
 		ACMMLevel:          b.acmmLevel,
 		PRsAllowed:         b.cfg.Project.PRsAllowed(),
+		RepoPRRefusal:      b.sandboxRepoPRRefusal,
 		PolicyDir:          b.policyDirPath,
 		SharedUIDReadToken: b.cfg.GitHub.SharedUIDReadToken,
 		AppAuthoredPRs:     b.cfg.GitHub.AppAuthoredPRsEnabled(),
@@ -2130,6 +2134,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 		b.agentMgr.SetSandboxPRClient(b.ghClient)
 		b.agentMgr.SetSandboxMutationBoundary(b.mutationBoundary)
 	}
+	b.wireForgeRemotes()
 
 	// PR-open-as-the-App-bot: agents push their branch (App-token credential
 	// helper) then drop a request file; the hive opens the PR here with the App
@@ -2369,6 +2374,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// a reload of auto_merge.human_merge_paths applies without a restart.
 	autoMergeOpts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(b.cfg, repo) }
 	autoMergeOpts.HumanMergePinOnly = func(repo string) (config.PinOnlyException, bool) { return humanMergePinOnlyFor(b.cfg, repo) }
+	// Decision gate: credential, keystore, auth and secret paths, and
+	// sentinel-flagged PRs, wait for a person's decision on the head in
+	// every lane (auto_merge.decision_gate, default on).
+	autoMergeOpts.DecisionGate = func(repo string) automerge.DecisionGatePolicy { return decisionGateFor(b.cfg, repo) }
 	autoMergeOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(b.cfg) }
 	autoMergeOpts.RequireCurrentBase = func(repo string) bool { return b.cfg != nil && b.cfg.AutoMerge.RequireCurrentBaseFor(repo) }
 	autoMergeOpts.RequireCurrentBaseStrict = func(repo string) bool {
@@ -2449,20 +2458,23 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// (hivecommons/hive#19670), with the same manager authorizers. The relay
 	// idles on each scan unless every repo is off GitHub, so a reload either
 	// way hands the queues to the right relays. It stops with b.ctx, which
-	// is all shutdown needs, so its done channel is not joined.
+	// is all shutdown needs, so its done channel is not joined. It also
+	// serves push-branch requests with the manager's push authorizer, and
+	// answers review and merge requests with a reason (#19916).
 	if deps.startForgeRequestRelay != nil {
 		_ = deps.startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
-			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger))
+			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger).withPushRelay(b.agentMgr.AuthorizePushBranch).withPushAudit(b.recordWriteAudit))
 	}
-	// Forgejo repos (#19671): the GitHub sweeps above skip them
-	// (RepoOnGitHub), so they get their own automerge and close-on-merge
-	// sweeps. These need no GitHub client, so a Forgejo-only hive runs them.
+	// Forgejo repos (#19671): the GitHub sweeps above skip them (RepoOnGitHub),
+	// so they get their own sweeps, which need no GitHub client. A gitea config
+	// pointed at a Forgejo instance gets a one-time hint to switch (#19832).
 	if b.ctx != nil {
 		startForgejoSweeps(b.ctx, func() *config.Config { return b.cfg }, forgejoSweepDeps{
 			Mutation: b.mutationBoundary,
 			Gate:     b.writebackGate(),
 			Logger:   b.logger,
 		}, forgejoSweepInterval)
+		startGiteaForgejoHint(b.ctx, func() *config.Config { return b.cfg }, b.logger, giteaForgejoHintInterval)
 	}
 	b.integrationEligibility = func(ctx context.Context, repo, base string, number int, head string) (*gh.PullRequest, string, error) {
 		client := b.currentGitHubClient()
@@ -2714,6 +2726,12 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 		}
 	})
 	installIoscanClassifier(b.sched, b.ioscanAlerts(), b.cfg, b.logger, time.Now)
+	// Open-PRs refusals on paths without a GitHub client audit sink (the
+	// forge relay, the sidecar callback) land in the same audit log.
+	openPRsAudit := func(agent, repo, mode, via, reason string) {
+		b.dashSrv.AuditLog(agent, github.AuditActionAgentWriteRefused, openPRsRefusalDetail(repo, mode, via, reason), agent)
+	}
+	openPRsRefusalAudit.Store(&openPRsAudit)
 	b.agentMgr.SetSandboxAuditCallback(func(agentName, action, detail string) {
 		b.dashSrv.AuditLog(agentName, action, detail, agentName)
 		if action == "sandbox_broker_rejected" {
@@ -3987,7 +4005,11 @@ func (b *boot) bootPoliciesWith(deps bootPoliciesDeps) {
 func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 
 func syncForgeCredentialEnv(cfg *config.Config) {
-	cruxconfig.AddExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName(), cfg.Forgejo.TokenEnvName())
+	cruxconfig.AddExtraCredentialEnvVars(slices.Concat(
+		cfg.GitLab.Credentials().EnvNames(),
+		cfg.Gitea.Credentials().EnvNames(),
+		cfg.Forgejo.Credentials().EnvNames(),
+	)...)
 }
 
 // bootWatchersWith is bootWatchers with its long-lived effects injected; see
@@ -4650,9 +4672,13 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 				deps.clearInferenceRoute(b.githubProxy, agentName)
 			},
 		)
+		if deps.installContextWindowLookup != nil {
+			deps.installContextWindowLookup(b.agentMgr, b.githubProxy)
+		}
 
 		deps.startProxy(b.githubProxy, b.logger)
 		b.wireSandboxGitHubReadRelay()
+		b.wireSandboxInferenceRelay()
 		// Jev decision endpoint (hivecommons/hive#8939). Always bound so a
 		// jev_mode toggle in the dashboard takes effect on the agent's next
 		// call; every predicate reads the LIVE config, and an agent whose
@@ -7563,6 +7589,10 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Run from inside a headless agy agent's pane, one per kick; see
 		// pkg/agent/agy_turn.go.
 		return true, cruxruntime.RunAgyTurn(args[1:], stdout, stderr)
+	case "claude-turn":
+		// Run from inside a headless_turns agent's pane, one per kick; see
+		// crux/agent/claude_turn.go.
+		return true, cruxruntime.RunClaudeTurn(args[1:], stdout, stderr)
 	case "cline-turn":
 		return true, cruxruntime.RunClineTurn(args[1:], stdout, stderr)
 	case jev.Subcommand:
@@ -7576,6 +7606,8 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 	case auditVerifySubcommand:
 		// Checks the audit log's hash chain; see audit_verify_cmd.go.
 		return true, runAuditVerify(args[1:], stdout, stderr)
+	case forgeSubcommand:
+		return true, runForge(args[1:], stdout, stderr)
 	case memoryDrainSubcommand:
 		// Run as the agent by the Claude Code memory hooks Hive seeds; see
 		// memory_drain_cmd.go. Always exits 0.

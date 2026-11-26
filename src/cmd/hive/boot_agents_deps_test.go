@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	cruxconfig "github.com/hivecommons/hive/crux/config"
 	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 
@@ -280,8 +281,8 @@ func TestBootAgentsWith_MintSuccessAttachesIssuer(t *testing.T) {
 
 type fakeMintIssuer struct{}
 
-func (fakeMintIssuer) Enabled() bool                                 { return true }
-func (fakeMintIssuer) MintAgentToken(string, string) (string, error) { return "tok", nil }
+func (fakeMintIssuer) Enabled() bool                                              { return true }
+func (fakeMintIssuer) MintAgentToken(string, agentmode.TokenTier) (string, error) { return "tok", nil }
 
 func TestDefaultBootAgentsDeps_IsFullyWired(t *testing.T) {
 	d := defaultBootAgentsDeps()
@@ -345,10 +346,16 @@ func TestBootAgentsWith_ArmsForgeRequestRelayWithManagerGates(t *testing.T) {
 	if got == nil {
 		t.Fatal("forge request relay not started")
 	}
-	if got.prAuthz == nil || got.issueAuthz == nil {
+	if got.prAuthz == nil || got.issueAuthz == nil || got.pushAuthz == nil {
 		t.Fatal("forge request relay started without the manager's authorizers")
+	}
+	if got.pushRemote == nil || got.pushDir != github.PushBranchRequestDir || got.reviewDir != github.ReviewRequestDir || got.mergeDir != github.MergeRequestDir {
+		t.Fatal("forge request relay does not serve the push, review and merge queues (#19916)")
 	}
 	if got.cfg() != b.cfg {
 		t.Fatal("forge request relay does not read the live config")
+	}
+	if got.pushAudit == nil {
+		t.Fatal("forge request relay does not audit pushed branches (#19960)")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/agentaudit"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // auditRelay records one relay lifecycle row in the existing audit log
@@ -340,9 +341,9 @@ func (h *ContributeWSHub) mintScopedToken(tier, repo string) (string, error) {
 		// empty repo (synthetic/pr-review tasks with no single repo) falls back to the
 		// tier-scoped installation token — still permission-scoped, unchanged behavior.
 		if name := repoNameOnly(repo); name != "" {
-			return h.server.deps.GHAppAuth.ScopedTokenForRepos(ctx, tier, []string{name})
+			return h.server.deps.GHAppAuth.ScopedTokenForRepos(ctx, ghpkg.TokenTier(tier), []string{name})
 		}
-		return h.server.deps.GHAppAuth.ScopedToken(ctx, tier)
+		return h.server.deps.GHAppAuth.ScopedToken(ctx, ghpkg.TokenTier(tier))
 	}
 	// No App auth: mint nothing rather than leak a full credential (see the note
 	// above — the cache fallback is deliberately gone).

@@ -211,8 +211,9 @@ type Config struct {
 	// on). Nothing it stores leaves the hive.
 	Customers CustomersConfig `yaml:"customers,omitempty" json:"customers,omitempty"`
 	// Ask is the optional Ask AI help panel (#19177): docs questions answered
-	// server side by Kapa.ai, directly or through the hub relay. Default off
-	// and inert when unconfigured. See src/docs/design/dashboard-ask-ai-help.md.
+	// server side by Kapa.ai, directly or through the hub relay. Default on in
+	// hub mode for a hosted hive with a hub link and a hive id; default off and
+	// inert everywhere else. See src/docs/design/dashboard-ask-ai-help.md.
 	Ask AskConfig `yaml:"ask,omitempty" json:"ask,omitempty"`
 	// DuplicateSweep gates the cross-PR duplicate suggestion pass
 	// (hivecommons/hive#7469 capability B). Default off → zero behaviour
@@ -299,6 +300,11 @@ type Config struct {
 	// from or last saved to; Save refuses to overwrite a file whose content
 	// changed since (hivecommons/hive#19561). See disk_state.go.
 	disk *diskLayers
+	// overlayCarry holds the dashboard overlay content this config could
+	// not load (unknown or unparseable blocks, or an unparseable file) so
+	// saving the overlay keeps it instead of erasing it
+	// (hivecommons/hive#19740). See overlay_carry.go.
+	overlayCarry *overlayCarryState
 	// LaunchCmdDegradations lists the base-config agents whose launch_cmd the
 	// loader dropped because it contradicted the agent's backend, so the
 	// dashboard can raise a banner for each. Runtime-only; see
@@ -1718,7 +1724,7 @@ func AgentSandboxGateReport(cfg *Config) SandboxGateReport {
 		switch rt := a.SandboxRuntime(cfg.AgentSandbox); {
 		case !ValidSandboxRuntimes[rt]:
 			badRuntime = append(badRuntime, name+"="+rt)
-		case rt == SandboxRuntimeJob && strings.TrimSpace(a.SandboxJob(cfg.AgentSandbox).WorkspaceClaim) == "":
+		case rt == SandboxRuntimeJob && !a.SandboxJob(cfg.AgentSandbox).CopiesWorkspace() && strings.TrimSpace(a.SandboxJob(cfg.AgentSandbox).WorkspaceClaim) == "":
 			noClaim = append(noClaim, name)
 		case rt == SandboxRuntimeOpenShell:
 			os := a.SandboxOpenShell(cfg.AgentSandbox)
@@ -4243,10 +4249,11 @@ type GitLabConfig struct {
 	// self-managed instance "https://gitlab.example.com". The "/api/v4" path is
 	// appended by the client.
 	URL string `yaml:"gitlab_url,omitempty"`
-	// TokenEnv is the environment variable holding the GitLab access token.
-	// Defaults to DefaultGitLabTokenEnv. The token value is resolved via
-	// os.Getenv at runtime and never persisted in config.
-	TokenEnv string `yaml:"token_env,omitempty"`
+	// ForgeTokens names where the GitLab access token is read from: the env
+	// var token_env (default DefaultGitLabTokenEnv) or the file
+	// token_file, which must sit under an allowed secret dir. The token value
+	// is never persisted in config.
+	cruxconfig.ForgeTokens `yaml:",inline"`
 }
 
 const (
@@ -4265,13 +4272,9 @@ func (g GitLabConfig) InstanceURL() string {
 	return g.URL
 }
 
-// TokenEnvName returns the env var name to read the GitLab token from,
-// defaulting to DefaultGitLabTokenEnv when unset.
-func (g GitLabConfig) TokenEnvName() string {
-	if g.TokenEnv == "" {
-		return DefaultGitLabTokenEnv
-	}
-	return g.TokenEnv
+// Credentials returns the GitLab block's token sources.
+func (g GitLabConfig) Credentials() cruxconfig.ForgeCredentials {
+	return cruxconfig.ForgeCredentials{DefaultEnv: DefaultGitLabTokenEnv, Tokens: g.ForgeTokens}
 }
 
 // GiteaConfig configures the Gitea forge (used when project.forge ==
@@ -4286,10 +4289,11 @@ type GiteaConfig struct {
 	// URL is the Gitea instance root, e.g. "https://gitea.example.com". The "/api/v1" path is appended by
 	// the client. There is no default; it must be supplied for the Gitea forge.
 	URL string `yaml:"gitea_url,omitempty"`
-	// TokenEnv is the environment variable holding the Gitea access token.
-	// Defaults to DefaultGiteaTokenEnv. The token value is resolved via
-	// os.Getenv at runtime and never persisted in config.
-	TokenEnv string `yaml:"token_env,omitempty"`
+	// ForgeTokens names where the Gitea access token is read from: the env
+	// var token_env (default DefaultGiteaTokenEnv) or the file
+	// token_file, which must sit under an allowed secret dir. The token value
+	// is never persisted in config.
+	cruxconfig.ForgeTokens `yaml:",inline"`
 }
 
 const (
@@ -4305,13 +4309,9 @@ func (g GiteaConfig) InstanceURL() string {
 	return g.URL
 }
 
-// TokenEnvName returns the env var name to read the Gitea token from, defaulting
-// to DefaultGiteaTokenEnv when unset.
-func (g GiteaConfig) TokenEnvName() string {
-	if g.TokenEnv == "" {
-		return DefaultGiteaTokenEnv
-	}
-	return g.TokenEnv
+// Credentials returns the Gitea block's token sources.
+func (g GiteaConfig) Credentials() cruxconfig.ForgeCredentials {
+	return cruxconfig.ForgeCredentials{DefaultEnv: DefaultGiteaTokenEnv, Tokens: g.ForgeTokens}
 }
 
 // ForgejoConfig configures the Forgejo forge (used when project.forge ==
@@ -4322,9 +4322,21 @@ type ForgejoConfig struct {
 	// URL is the Forgejo instance root, e.g. "https://codeberg.org". The
 	// "/api/v1" path is appended by the client. There is no default.
 	URL string `yaml:"forgejo_url,omitempty"`
-	// TokenEnv is the environment variable holding the Forgejo access token.
-	// Defaults to DefaultForgejoTokenEnv.
-	TokenEnv string `yaml:"token_env,omitempty"`
+	// ForgeTokens names where the Forgejo access token is read from: the env
+	// var token_env (default DefaultForgejoTokenEnv) or the file
+	// token_file, which must sit under an allowed secret dir. The token value
+	// is never persisted in config.
+	cruxconfig.ForgeTokens `yaml:",inline"`
+	// Integration, when set, makes git clone and push on Forgejo repos use a
+	// short-lived JWT per token tier, signed by an operator-held key, instead
+	// of the access token. See ForgejoIntegrationConfig.
+	Integration *ForgejoIntegrationConfig `yaml:"integration,omitempty" json:"Integration,omitempty"`
+	// Login is the hive's own Forgejo username. Optional and not a secret: set
+	// it when the access token is limited to specific repositories, because
+	// such a token cannot read the token's own user through GET /user
+	// (#19994). The sweeps then use this login to recognize the hive's own
+	// pull requests and issues without that lookup.
+	Login string `yaml:"login,omitempty" json:"Login,omitempty"`
 }
 
 const (
@@ -4337,13 +4349,9 @@ func (g ForgejoConfig) InstanceURL() string {
 	return g.URL
 }
 
-// TokenEnvName returns the env var name to read the Forgejo token from,
-// defaulting to DefaultForgejoTokenEnv when unset.
-func (g ForgejoConfig) TokenEnvName() string {
-	if g.TokenEnv == "" {
-		return DefaultForgejoTokenEnv
-	}
-	return g.TokenEnv
+// Credentials returns the Forgejo block's token sources.
+func (g ForgejoConfig) Credentials() cruxconfig.ForgeCredentials {
+	return cruxconfig.ForgeCredentials{DefaultEnv: DefaultForgejoTokenEnv, Tokens: g.ForgeTokens}
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -5645,6 +5653,14 @@ type DashboardConfig struct {
 	StageTracker DashboardStageTrackerConfig `yaml:"stage_tracker,omitempty" json:"stage_tracker,omitempty"`
 	// Sessions configures the interactive Sessions terminals (default off).
 	Sessions DashboardSessionsConfig `yaml:"sessions,omitempty" json:"sessions,omitempty"`
+	// AttributeLabelActions posts one comment, kept up to date under a
+	// hidden marker, on an issue or PR whose labels the dashboard changed
+	// for a person (hold added/released, triage accepted, needs-human or
+	// sentinel label lifted by an approval), naming the signed-in user.
+	// GitHub records the Hive App as the actor of those label writes, so
+	// without it the history reads as automation overriding a person
+	// (hivecommons/hive#19852). Default true.
+	AttributeLabelActions *bool `yaml:"attribute_label_actions,omitempty" json:"attribute_label_actions,omitempty"`
 }
 
 // DashboardStageTrackerConfig is dashboard.stage_tracker.
@@ -6207,9 +6223,21 @@ func (d DashboardConfig) GitHubSignInEnabled() bool {
 	return d.GitHubSignIn == nil || *d.GitHubSignIn
 }
 
+// LabelActionAttributionEnabled reports whether a dashboard label action
+// leaves its attribution comment. An unset
+// dashboard.attribute_label_actions means yes.
+func (d DashboardConfig) LabelActionAttributionEnabled() bool {
+	return d.AttributeLabelActions == nil || *d.AttributeLabelActions
+}
+
+// HubURLEnvVar overrides hub.url at runtime. Hosted spokes are provisioned
+// with it (the hub's public URL) and often leave hub.url empty in hive.yaml.
+const HubURLEnvVar = "HIVE_HUB_URL"
+
 // HubSignInLink returns the browser URL that signs a person in to this hive
 // through its hub: <hub>/api/saas/hives/<hive_id>/open, where <hub> is
-// dashboard.hub_sign_in_url, else hub.url. It returns "" when either part is
+// dashboard.hub_sign_in_url, else HIVE_HUB_URL, else hub.url (the same
+// precedence the hub heartbeat uses). It returns "" when either part is
 // missing or the hub origin is not an http(s) URL.
 func (c *Config) HubSignInLink() string {
 	if c == nil {
@@ -6217,6 +6245,9 @@ func (c *Config) HubSignInLink() string {
 	}
 	hiveID := strings.TrimSpace(c.HiveID)
 	base := strings.TrimSpace(c.Dashboard.HubSignInURL)
+	if base == "" {
+		base = strings.TrimSpace(os.Getenv(HubURLEnvVar))
+	}
 	if base == "" {
 		base = strings.TrimSpace(c.Hub.URL)
 	}
@@ -6390,11 +6421,28 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// The overlay's agents and blocks win over the config file below, so a
 	// hand edit to it must be protected from the next save the same way as
 	// an edit to the config file (hivecommons/hive#19561).
-	cfg.recordLayerSum(DashboardOverlayFile, sumBytes(data))
-	var overlay Config
-	if err := yaml.Unmarshal([]byte(expandEnvVars(string(data))), &overlay); err != nil {
+	overlayFileSum := sumBytes(data)
+	cfg.recordLayerSum(DashboardOverlayFile, overlayFileSum)
+	// Decoded key by key (#19740): a block that is unknown or does not parse
+	// is logged and kept for the next save instead of costing the whole
+	// overlay. A file that is not YAML at all falls back to the seed, as
+	// before, but is no longer overwritten by the next save.
+	// The config file as loadWithOverrides read it: the overlay is expanded
+	// with its resolver policy and compared against it. A read failure here
+	// (the file vanished since) leaves nothing to compare, so nothing is
+	// carried generically on this load.
+	primaryData, perr := os.ReadFile(path)
+	if perr != nil {
+		primaryData = nil
+	}
+	decoded, derr := decodeDashboardOverlay(data, primaryData)
+	if derr != nil {
+		logOverlayOnce("file", data, "[config] WARNING: dashboard overlay %s is not valid YAML (%v); none of it is loaded, and saves leave the file as it is until it is fixed", DashboardOverlayFile, derr)
+		cfg.overlayCarry = &overlayCarryState{keepWhole: &overlayFileSum}
 		return cfg, nil // malformed overlay: fall back to seed, don't fail the reload
 	}
+	cfg.overlayCarry = decoded.carry
+	overlay := decoded.cfg
 	// Tombstones live in the dashboard overlay because that is the only agent
 	// source the dashboard can write. Adopt them BEFORE the fullness guard below
 	// so a short/empty overlay (one that has no agents yet, or only carries the
@@ -6446,6 +6494,27 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	}
 	if !reflect.DeepEqual(overlay.AgentSandbox, cruxconfig.AgentSandboxConfig{}) {
 		cfg.AgentSandbox = overlay.AgentSandbox
+	}
+	// Per-repo open-PRs modes: Settings → Repos saves them into the
+	// overlay, so a reload from the seed must carry them (same shape as
+	// #18804 and #19740). Only the open_prs field of each repo policy is
+	// adopted; BEFORE the fullness guard so a short overlay still wins.
+	adoptOverlayRepoOpenPRs(cfg, &overlay)
+	// Every other block (ask, chat, customers, …): carried generically so a
+	// hand edit or a dashboard save to any block survives the reload and the
+	// next persist (#19740). BEFORE the fullness guard, like the blocks
+	// above. Env and config.env overrides are re-applied afterwards so they
+	// still win over an adopted block, as they win over the config file.
+	if primaryData != nil && adoptOverlayBlocksGeneric(cfg, path, primaryData, decoded, validateOpts) {
+		// Adopted blocks replace the loaded ones whole; fill their defaults
+		// the way the load filled the config file's.
+		cfg.applyDefaults()
+		if envPath := findConfigEnv(path); envPath != "" {
+			if err := cfg.applyConfigEnv(envPath); err != nil {
+				return nil, fmt.Errorf("applying config.env %s: %w", envPath, err)
+			}
+		}
+		cfg.applyBootstrapEnv()
 	}
 	if len(overlay.RemovedAgents) > 0 {
 		cfg.RemovedAgents = overlay.RemovedAgents
@@ -8436,6 +8505,17 @@ func (c *Config) saveDashboardOverlay() error {
 	if guardLivePVCPathUnderTest(DashboardOverlayFile, defaultDashboardOverlayFile, "DashboardOverlayFile") {
 		return errLivePVCPathGuarded
 	}
+	// #19740: an overlay that was not valid YAML when this config loaded it
+	// is an operator's edit in progress. Overwriting it would erase that edit
+	// silently, so leave it until it is fixed (the fix changes its content,
+	// the #19561 guard then reloads it). The runtime config still carries
+	// this save, and it is the boot input whenever it exists.
+	if c.overlayKeptWhole() {
+		if data, rerr := os.ReadFile(DashboardOverlayFile); rerr == nil {
+			logOverlayOnce("file-save", data, "[config] WARNING: dashboard overlay %s is not valid YAML; this save leaves it as it is (fix or remove the file to let saves update it)", DashboardOverlayFile)
+		}
+		return nil
+	}
 	data, err := c.dashboardOverlayBytes()
 	if err != nil {
 		log.Printf("[config] warning: failed to marshal dashboard overlay: %v", err)
@@ -8505,7 +8585,13 @@ func (c *Config) dashboardOverlayBytes() ([]byte, error) {
 		}
 	}
 	cp = *cp.redactedForPersist()
-	return yaml.Marshal(&cp)
+	data, err := yaml.Marshal(&cp)
+	if err != nil || c.overlayCarry == nil {
+		return data, err
+	}
+	// #19740: blocks the overlay carried that this config could not load
+	// (unknown keys, values that do not parse) go back in as written.
+	return spliceOverlayBlocks(data, c.overlayCarry.preserved)
 }
 
 func (c *Config) redactedForPersist() *Config {
@@ -8551,6 +8637,19 @@ func (c *Config) redactedForPersist() *Config {
 		log.Printf("[config] warning: github.token could not be sealed for persistence; it is written as it was: %v", err)
 	}
 	return &cp
+}
+
+// GitHubTokenSealable reports whether Save would persist token as a
+// keystore envelope rather than plaintext: a provider is active and sealing
+// succeeds. False means the value would be written as it is (legacy mode, or
+// a seal failure), so the caller can protect the file that carries it
+// (hivecommons/hive#19633).
+func GitHubTokenSealable(token string) bool {
+	if token == "" {
+		return false
+	}
+	sealed, err := keystore.SealActive(context.Background(), token, githubTokenAAD)
+	return err == nil && sealed != token
 }
 
 // githubTokenAAD binds the persisted github.token envelope to its slot, so an
@@ -8725,6 +8824,23 @@ type EscalationConfig struct {
 	// Threshold is the distinct-red-attempt count that triggers escalation.
 	// Zero means DefaultEscalationThreshold.
 	Threshold int `yaml:"threshold,omitempty" json:"threshold,omitempty"`
+	// StaleHoldAfter is how long an open PR may sit behind a hold label
+	// (StaleHoldLabels) with every check green before the hive raises it to
+	// a person, once per head: a notification plus a blocked lifecycle
+	// event. A Go duration ("2h", "90m"); empty means DefaultStaleHoldAfter;
+	// "off" or "0" disables it. The HIVE_STALE_HOLD_AFTER environment
+	// variable overrides it.
+	StaleHoldAfter string `yaml:"stale_hold_after,omitempty" json:"stale_hold_after,omitempty"`
+	// StaleHoldLabels are the hold labels the stale-hold signal and the
+	// release-when-green label act on, matched exactly and
+	// case-insensitively. Empty means DefaultStaleHoldLabels.
+	StaleHoldLabels []string `yaml:"stale_hold_labels,omitempty" json:"stale_hold_labels,omitempty"`
+	// ReleaseWhenGreenLabel is the opt-in label that asks the hive to remove
+	// a PR's StaleHoldLabels, and then this label, once every check on the
+	// head is green. A hold without it is never removed by the hive, and
+	// nothing else (no lgtm, no approval) is added. Empty means
+	// DefaultReleaseWhenGreenLabel; "off" disables releases.
+	ReleaseWhenGreenLabel string `yaml:"release_when_green_label,omitempty" json:"release_when_green_label,omitempty"`
 }
 
 // ReviewConfig gates the optional structured review-swarm merge gate. The zero
@@ -9326,6 +9442,10 @@ type AutoMergeConfig struct {
 	// means no such paths. This key only declares the paths; enforcement
 	// lives in the merge sweeps.
 	HumanMergePaths map[string][]string `yaml:"human_merge_paths,omitempty" json:"human_merge_paths,omitempty"`
+	// DecisionGate holds credential, keystore, auth and secret paths (and
+	// sentinel-flagged PRs) for a person's decision on the head before any
+	// automerge lane merges them. Default on; see DecisionGateConfig.
+	DecisionGate DecisionGateConfig `yaml:"decision_gate,omitempty" json:"decision_gate,omitempty"`
 
 	// HumanMergePinOnly holds the opt-in pin-only exception, enforced by the
 	// automerge sweep and /approve gates (#16266), and the hive-merge relay
@@ -10297,6 +10417,76 @@ func (e EscalationConfig) EffectiveThreshold() int {
 		return e.Threshold
 	}
 	return DefaultEscalationThreshold
+}
+
+// DefaultStaleHoldAfter is how long a held PR may stay all green before the
+// hive raises it, when escalation.stale_hold_after is unset.
+const DefaultStaleHoldAfter = 2 * time.Hour
+
+// StaleHoldAfterEnv overrides escalation.stale_hold_after.
+const StaleHoldAfterEnv = "HIVE_STALE_HOLD_AFTER"
+
+// staleHoldOff is the spelling that disables the stale-hold signal or the
+// release-when-green label.
+const staleHoldOff = "off"
+
+// DefaultStaleHoldLabels are the hold labels the stale-hold signal watches
+// when escalation.stale_hold_labels is unset.
+var DefaultStaleHoldLabels = []string{"hold", "do-not-merge/hold"}
+
+// DefaultReleaseWhenGreenLabel is the opt-in release label when
+// escalation.release_when_green_label is unset.
+const DefaultReleaseWhenGreenLabel = "hold/until-green"
+
+// EffectiveStaleHoldAfter resolves the stale-hold threshold: the
+// HIVE_STALE_HOLD_AFTER value read through getenv (nil means os.Getenv)
+// wins over the config value, which wins over DefaultStaleHoldAfter. Zero
+// means disabled. An unparsable or negative value falls back to the next
+// source rather than disabling the signal by accident.
+func (e EscalationConfig) EffectiveStaleHoldAfter(getenv func(string) string) time.Duration {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	for _, raw := range []string{getenv(StaleHoldAfterEnv), e.StaleHoldAfter} {
+		v := strings.TrimSpace(raw)
+		if v == "" {
+			continue
+		}
+		if strings.EqualFold(v, staleHoldOff) || v == "0" {
+			return 0
+		}
+		if d, err := time.ParseDuration(v); err == nil && d >= 0 {
+			return d
+		}
+	}
+	return DefaultStaleHoldAfter
+}
+
+// EffectiveStaleHoldLabels resolves the watched hold labels.
+func (e EscalationConfig) EffectiveStaleHoldLabels() []string {
+	var out []string
+	for _, l := range e.StaleHoldLabels {
+		if l = strings.TrimSpace(l); l != "" {
+			out = append(out, l)
+		}
+	}
+	if len(out) == 0 {
+		return append([]string(nil), DefaultStaleHoldLabels...)
+	}
+	return out
+}
+
+// EffectiveReleaseWhenGreenLabel resolves the opt-in release label; "" means
+// releases are disabled.
+func (e EscalationConfig) EffectiveReleaseWhenGreenLabel() string {
+	v := strings.TrimSpace(e.ReleaseWhenGreenLabel)
+	switch {
+	case v == "":
+		return DefaultReleaseWhenGreenLabel
+	case strings.EqualFold(v, staleHoldOff):
+		return ""
+	}
+	return v
 }
 
 // RecommendationsConfig controls the hive's "what should I merge next?" issue.

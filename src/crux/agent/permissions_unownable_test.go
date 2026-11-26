@@ -106,9 +106,10 @@ func TestFixEntryForeignOwnerSkippedWithoutPerPathWarn(t *testing.T) {
 }
 
 // TestUnownableTallyOneSummaryPerTickAtMost pins the summary cadence: WARN
-// when the condition appears, DEBUG while it holds unchanged, WARN again only
-// when it grows, nothing when the tick saw none, and WARN once more when the
-// condition clears and then reappears.
+// when the condition appears, DEBUG while it holds or grows short of double,
+// WARN again only when it doubles, nothing when the tick saw none, and WARN
+// once more only when the condition stays clear for unownableClearTicks ticks
+// and then reappears.
 func TestUnownableTallyOneSummaryPerTickAtMost(t *testing.T) {
 	u := &unownableTally{}
 	h := &recordingHandler{}
@@ -133,21 +134,32 @@ func TestUnownableTallyOneSummaryPerTickAtMost(t *testing.T) {
 	if tick(10) {
 		t.Error("a smaller count must not warn")
 	}
-	if !tick(5000) {
-		t.Error("a count above the high-water mark is new information and must warn")
+	if tick(5000) {
+		t.Error("growth short of doubling the high-water mark must stay at debug")
+	}
+	if !tick(8174) {
+		t.Error("a count that doubles the high-water mark is new information and must warn")
 	}
 	if tick(0) {
 		t.Error("a clear tick must not warn")
 	}
+	if tick(9000) {
+		t.Error("one clear tick between waves is flicker, not recovery: must not re-arm the WARN")
+	}
+	for range unownableClearTicks {
+		if tick(0) {
+			t.Error("a clear tick must not warn")
+		}
+	}
 	if !tick(1) {
-		t.Error("reappearance after the condition cleared must warn again")
+		t.Error("reappearance after the condition stayed clear must warn again")
 	}
 
 	if got := h.count(slog.LevelWarn, unownableSummaryMsg, ""); got != 3 {
-		t.Errorf("summary WARN logged %d times across 7 ticks, want 3", got)
+		t.Errorf("summary WARN logged %d times, want 3", got)
 	}
-	if got := h.count(slog.LevelDebug, "permissions watcher: entries owned by another uid skipped (unchanged)", ""); got != 2 {
-		t.Errorf("summary DEBUG logged %d times, want 2", got)
+	if got := h.count(slog.LevelDebug, "permissions watcher: entries owned by another uid skipped (unchanged)", ""); got != 4 {
+		t.Errorf("summary DEBUG logged %d times, want 4", got)
 	}
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -156,6 +168,25 @@ func TestUnownableTallyOneSummaryPerTickAtMost(t *testing.T) {
 	}
 	if u.highWater != 1 {
 		t.Errorf("highWater = %d after the final tick of 1, want 1", u.highWater)
+	}
+}
+
+// TestUnownableTallySurgeGrowthWarnsLogarithmically is the #19791 regression:
+// a surge that grows the unfixable tree by a few hundred entries every tick
+// warned on every tick (10 in ten minutes). Doubling bounds it to log2.
+func TestUnownableTallySurgeGrowthWarnsLogarithmically(t *testing.T) {
+	u := &unownableTally{}
+	h := &recordingHandler{}
+	logger := slog.New(h)
+	for n := 1000; n <= 9447; n += 300 {
+		for i := range n {
+			u.skipped("/data/agents/adjudicator/" + strconv.Itoa(i))
+		}
+		u.flush(logger)
+	}
+	// 1000 → WARN, 2200 (≥2000) → WARN, 4600 (≥4400) → WARN, 9400 (≥9200) → WARN.
+	if got := h.count(slog.LevelWarn, unownableSummaryMsg, ""); got != 4 {
+		t.Errorf("summary WARN logged %d times across a 29-tick surge, want 4", got)
 	}
 }
 

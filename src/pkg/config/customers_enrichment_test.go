@@ -29,8 +29,8 @@ func clearEnrichmentEnv(t *testing.T) {
 	}
 }
 
-// With nothing configured every enrichment switch is off and the knobs hold
-// their defaults: enrichment changes nothing until an owner turns it on.
+// With nothing configured enrichment is inactive and the knobs hold their
+// defaults: enrichment changes nothing until an owner turns it on.
 func TestCustomersEnrichmentDefaultsOff(t *testing.T) {
 	clearEnrichmentEnv(t)
 	for _, cfg := range []*Config{nil, {}} {
@@ -44,6 +44,34 @@ func TestCustomersEnrichmentDefaultsOff(t *testing.T) {
 		if got := cfg.CustomersEnrichmentDevstatsHourlyLimit(); got != DefaultCustomersEnrichmentDevstatsHourlyLimit {
 			t.Fatalf("hourly limit = %d, want default", got)
 		}
+	}
+}
+
+func TestCustomersEnrichmentGitdmDefault(t *testing.T) {
+	clearEnrichmentEnv(t)
+	on, off := true, false
+	cfg := &Config{Customers: CustomersConfig{Enrichment: CustomersEnrichmentConfig{Enabled: &on}}}
+	if !cfg.CustomersEnrichmentGitdmEnabled() || cfg.CustomersEnrichmentDevstatsEnabled() {
+		t.Fatal("enrichment must enable gitdm, but not devstats, by default")
+	}
+	cfg.Customers.Enrichment.Gitdm.Enabled = &off
+	if cfg.CustomersEnrichmentGitdmEnabled() {
+		t.Fatal("explicit gitdm false must win")
+	}
+	t.Setenv(EnvCustomersEnrichmentGitdmEnabled, "true")
+	if !cfg.CustomersEnrichmentGitdmEnabled() {
+		t.Fatal("environment must override explicit false")
+	}
+	t.Setenv(EnvCustomersEnrichmentGitdmEnabled, "false")
+	cfg.Customers.Enrichment.Gitdm.Enabled = &on
+	if cfg.CustomersEnrichmentGitdmEnabled() {
+		t.Fatal("environment false must override explicit true")
+	}
+	t.Setenv(EnvCustomersEnrichmentGitdmEnabled, "")
+	t.Setenv(EnvCustomersEnrichmentEnabled, "true")
+	var nilConfig *Config
+	if !nilConfig.CustomersEnrichmentGitdmEnabled() {
+		t.Fatal("environment-enabled enrichment must use the gitdm default with nil config")
 	}
 }
 

@@ -26,6 +26,7 @@ type fakeAPI struct {
 	pulls     map[int]forge.PullFacts
 	pullErr   map[int]error
 	labeler   map[int]string
+	pushed    map[int]bool // a push followed the label
 	labelErr  error
 	perms     map[string]string
 	permErr   error
@@ -59,9 +60,9 @@ func (f *fakeAPI) PullFacts(_ context.Context, _ string, n int) (forge.PullFacts
 	}
 	return f.pulls[n], nil
 }
-func (f *fakeAPI) LabelLastAddedBy(_ context.Context, _ string, n int, _ string) (string, bool, error) {
+func (f *fakeAPI) LabelLastAdded(_ context.Context, _ string, n int, _ string) (forge.LabelAdd, bool, error) {
 	l, ok := f.labeler[n]
-	return l, ok, f.labelErr
+	return forge.LabelAdd{Login: l, PushedAfter: f.pushed[n]}, ok, f.labelErr
 }
 func (f *fakeAPI) Permission(_ context.Context, _, login string) (string, error) {
 	return f.perms[login], f.permErr
@@ -159,6 +160,18 @@ func TestAutoMergeMergesAtPinnedHeadThroughBoundary(t *testing.T) {
 	}
 }
 
+// TestAutoMergeAcceptsAssignableLabeller is #19914: with a write-access (not
+// admin) hive user, Forgejo refuses the permission API and the labeller's
+// access reads as forge.PermissionAssignable. That still releases the merge.
+func TestAutoMergeAcceptsAssignableLabeller(t *testing.T) {
+	api := readyAPI()
+	api.perms["maintainer"] = forge.PermissionAssignable
+	got := sweeperFor(api).AutoMerge(context.Background())
+	if len(got) != 1 || !got[0].Merged {
+		t.Fatalf("AutoMerge = %+v, want the merge an assignable labeller released", got)
+	}
+}
+
 func TestAutoMergeGates(t *testing.T) {
 	for _, c := range []struct {
 		name   string
@@ -181,8 +194,10 @@ func TestAutoMergeGates(t *testing.T) {
 		{"timeline error", func(a *fakeAPI, _ *Sweeper) { a.labelErr = errBoom }, "timeline-read-failed"},
 		{"labeler unknown", func(a *fakeAPI, _ *Sweeper) { a.labeler = nil }, "label-adder-unknown"},
 		{"self approved", func(a *fakeAPI, _ *Sweeper) { a.labeler[7] = "HIVE-BOT" }, "self-approved"},
+		{"pushed after label", func(a *fakeAPI, _ *Sweeper) { a.pushed = map[int]bool{7: true} }, "pushed-after-label"},
 		{"permission error", func(a *fakeAPI, _ *Sweeper) { a.permErr = errBoom }, "permission-read-failed"},
 		{"labeler read only", func(a *fakeAPI, _ *Sweeper) { a.perms["maintainer"] = "read" }, "labeler-lacks-write"},
+		{"labeler none", func(a *fakeAPI, _ *Sweeper) { a.perms["maintainer"] = "none" }, "labeler-lacks-write"},
 		{"status error", func(a *fakeAPI, _ *Sweeper) { a.statusErr = errBoom }, "status-read-failed"},
 		{"no ci", func(a *fakeAPI, _ *Sweeper) { a.status["abc"] = [2]any{"", 0} }, "no-ci"},
 		{"ci pending", func(a *fakeAPI, _ *Sweeper) { a.status["abc"] = [2]any{"pending", 2} }, "ci-pending"},
@@ -322,6 +337,12 @@ func TestCloseOnMergeSkips(t *testing.T) {
 		{"no author", func(a *fakeAPI) { a.merged[0].Author = "" }, ""},
 		{"untrusted author", func(a *fakeAPI) { a.merged[0].Author = "drive-by"; a.perms = map[string]string{"drive-by": "read"} }, ""},
 		{"author permission error", func(a *fakeAPI) { a.merged[0].Author = "drive-by"; a.permErr = errBoom }, ""},
+		// Only on the assignee list (#19914): not enough to honour an
+		// author's closing keywords.
+		{"author only assignable", func(a *fakeAPI) {
+			a.merged[0].Author = "drive-by"
+			a.perms = map[string]string{"drive-by": forge.PermissionAssignable}
+		}, ""},
 		{"issue read error", func(a *fakeAPI) { a.issueErr = errBoom }, "issue-read-failed"},
 		{"is a pull", func(a *fakeAPI) { a.issues[5] = "pull" }, "is-pull-request"},
 		{"already closed", func(a *fakeAPI) { a.issues[5] = "closed" }, "already-closed"},

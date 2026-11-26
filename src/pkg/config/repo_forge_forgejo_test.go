@@ -52,11 +52,11 @@ func TestGiteaFamilyKindsAcceptedEverywhere(t *testing.T) {
 
 func TestForgejoConfigDefaults(t *testing.T) {
 	var g ForgejoConfig
-	if g.TokenEnvName() != "FORGEJO_TOKEN" {
-		t.Errorf("TokenEnvName() = %q, want FORGEJO_TOKEN", g.TokenEnvName())
+	if g.Credentials().Governor().TokenEnv != "FORGEJO_TOKEN" {
+		t.Errorf("Governor().TokenEnv = %q, want FORGEJO_TOKEN", g.Credentials().Governor().TokenEnv)
 	}
 	g.TokenEnv = "MY_TOKEN"
-	if g.TokenEnvName() != "MY_TOKEN" {
-		t.Errorf("TokenEnvName() = %q, want MY_TOKEN", g.TokenEnvName())
+	if g.Credentials().Governor().TokenEnv != "MY_TOKEN" {
+		t.Errorf("Governor().TokenEnv = %q, want MY_TOKEN", g.Credentials().Governor().TokenEnv)
 	}
 }

@@ -17,6 +17,13 @@
       // token. Without this, every one of those failures would open its own
       // the in-app dialog. All concurrent callers now share one dialog.
       let _ensureAuthTokenFlight = null;
+      const _authPromptEvents = new EventTarget();
+      let _authPromptOpen = false;
+      function _setAuthPromptOpen(open) {
+        _authPromptOpen = open;
+        _authPromptEvents.dispatchEvent(new Event('change'));
+      }
+
       function _ensureAuthToken() {
         if (!_ensureAuthTokenFlight) {
           _ensureAuthTokenFlight = _ensureAuthTokenInner().finally(() => { _ensureAuthTokenFlight = null; });
@@ -45,12 +52,14 @@
           } catch {}
           // Self-hosted hive with a token configured but none stored locally:
           // ask the operator to paste it once. It persists in localStorage.
-          const entered = await hivePrompt({
+          const prompt = hivePrompt({
             title: 'Dashboard token required',
             label: _authRejected
               ? 'The stored dashboard token was rejected — it is probably stale (rotated since this browser saved it). Paste the current HIVE_DASHBOARD_TOKEN:'
               : 'This hive requires its dashboard token to make changes. Paste HIVE_DASHBOARD_TOKEN:'
           });
+          _setAuthPromptOpen(true);
+          const entered = await prompt.finally(() => _setAuthPromptOpen(false));
           if (entered && entered.trim()) {
             _authToken = entered.trim();
             try { localStorage.setItem('hive-token', _authToken); } catch {}
@@ -174,9 +183,16 @@
             _authToken = null;
             _authRejected = true;
           }
+          const onPromptChange = opts.__hiveOnAuthPromptChange;
+          const notifyPrompt = onPromptChange && (() => onPromptChange(_authPromptOpen));
+          if (notifyPrompt) {
+            _authPromptEvents.addEventListener('change', notifyPrompt, { signal: opts.signal });
+            if (_authPromptOpen) notifyPrompt();
+          }
           try {
             await _ensureAuthToken();
           } finally {
+            if (notifyPrompt) _authPromptEvents.removeEventListener('change', notifyPrompt);
             _authRejected = false;
           }
           if (_authToken) {

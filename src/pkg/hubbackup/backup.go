@@ -28,11 +28,13 @@ package hubbackup
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -116,6 +118,12 @@ const (
 	// registryFile is the fleet registry filename, relative to the data dir.
 	registryFile = "hub-registry.json"
 
+	clustersFile             = "clusters.json"
+	credentialKeyFile        = "hmac.key"
+	heartbeatMasterFile      = "hub-secret.key"
+	heartbeatGenerations     = "hub-generations.json"
+	recoveryQuarantineSuffix = ".corrupt"
+
 	// manifestName is the integrity manifest stored inside every archive.
 	manifestName = "MANIFEST.json"
 )
@@ -171,8 +179,13 @@ type Manifest struct {
 	HubDataDir    string      `json:"hub_data_dir"`
 	Files         []FileEntry `json:"files"`
 
+	// HubErrors records archive-relative paths of missing or unreadable hub state.
+	HubErrors map[string]string `json:"hub_errors,omitempty"`
+
 	// SpokeIDs lists every hive whose config was captured.
 	SpokeIDs []string `json:"spoke_ids"`
+
+	SpokesSkipped bool `json:"spokes_skipped,omitempty"`
 
 	// SpokeErrors records hives that could NOT be captured, so a restore
 	// operator learns about gaps from the archive itself rather than by
@@ -294,7 +307,7 @@ func Retention() int {
 
 // ArchiveName returns the object name for a backup taken at t.
 func ArchiveName(t time.Time) string {
-	return fmt.Sprintf("hive-hub-backup-%s.tar.gz.enc", t.UTC().Format("20060102T150405Z"))
+	return legacyArchivePrefix + t.UTC().Format("20060102T150405Z") + archiveSuffix
 }
 
 // builder accumulates files into a gzipped tar and records their digests.
@@ -328,48 +341,189 @@ func (b *builder) addBytes(name string, mode int64, content []byte) error {
 	return nil
 }
 
-// addTree recursively copies srcDir into the archive under dstPrefix,
-// skipping excluded directories and unreadable files.
-func (b *builder) addTree(srcDir, dstPrefix string, skipExcluded bool, logger *slog.Logger) error {
-	return filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			// A single unreadable path must not abort the whole backup.
-			logger.Warn("backup: skipping unreadable path", "path", path, "err", err)
-			return nil
-		}
+type archivedSaaS struct {
+	gaps            map[string]string
+	clusters        []byte
+	hostedClusters  map[string]string
+	heartbeatMaster bool
+}
+
+// addTree copies the SaaS tree and retains the captured cluster map for spoke selection.
+func (b *builder) addTree(srcDir, dstPrefix string, skipExcluded bool) (archivedSaaS, error) {
+	saas := archivedSaaS{gaps: make(map[string]string), hostedClusters: make(map[string]string)}
+	gaps := saas.gaps
+	var needsKey, capturedKey bool
+	var capturedGenerations, quarantinedGenerations, quarantinedClusters bool
+	err := filepath.WalkDir(srcDir, func(path string, d os.DirEntry, err error) error {
 		rel, relErr := filepath.Rel(srcDir, path)
 		if relErr != nil {
+			return relErr
+		}
+		if (d == nil || !d.IsDir()) && isSaaSWriteTemp(rel) {
+			return nil
+		}
+		name := filepath.Join(dstPrefix, rel)
+		switch rel {
+		case heartbeatGenerations + recoveryQuarantineSuffix:
+			quarantinedGenerations = true
+		case clustersFile + recoveryQuarantineSuffix:
+			quarantinedClusters = true
+		}
+		if err != nil {
+			gaps[name] = hubReadError(err)
 			return nil
 		}
 		if rel == "." {
+			if !d.IsDir() {
+				gaps[name] = "expected a directory"
+			}
 			return nil
 		}
 		if d.IsDir() {
+			switch rel {
+			case clustersFile, credentialKeyFile, heartbeatMasterFile, heartbeatGenerations:
+				gaps[name] = "not a regular file"
+				return filepath.SkipDir
+			}
 			if skipExcluded && excludedDirs[rel] {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 		if !d.Type().IsRegular() {
+			gaps[name] = "not a regular file"
 			return nil
 		}
 		content, readErr := os.ReadFile(path)
 		if readErr != nil {
-			logger.Warn("backup: skipping unreadable file", "path", path, "err", readErr)
+			gaps[name] = hubReadError(readErr)
 			return nil
+		}
+		switch rel {
+		case clustersFile:
+			saas.clusters = content
+		case credentialKeyFile:
+			capturedKey = true
+			if len(content) != aesKeySize {
+				gaps[name] = "credential key has the wrong length"
+			}
+		case heartbeatMasterFile:
+			saas.heartbeatMaster = saas.heartbeatMaster || len(bytes.TrimSpace(content)) > 0
+		case heartbeatGenerations:
+			capturedGenerations = true
+			if !hasCurrentMasterGeneration(content) {
+				gaps[name] = "no usable current heartbeat master generation"
+			}
+		default:
+			dir := filepath.Dir(rel)
+			if filepath.Dir(dir) == "hives" && filepath.Base(rel) == "meta.json" {
+				var hive struct {
+					ClusterID string `json:"cluster_id"`
+				}
+				if err := json.Unmarshal(content, &hive); err != nil {
+					gaps[name] = "invalid hosted hive metadata"
+				} else {
+					saas.hostedClusters[filepath.Base(dir)] = hive.ClusterID
+				}
+			}
+			if !needsKey && dir == "users" && filepath.Ext(rel) == ".json" {
+				// Hubs that have never stored a GitHub token may have no key yet.
+				var user struct {
+					EncryptedToken string `json:"encrypted_token"`
+				}
+				needsKey = json.Unmarshal(content, &user) != nil || user.EncryptedToken != ""
+			}
 		}
 		info, infoErr := d.Info()
 		mode := int64(0o600)
 		if infoErr == nil {
 			mode = int64(info.Mode().Perm())
 		}
-		return b.addBytes(filepath.Join(dstPrefix, rel), mode, content)
+		return b.addBytes(name, mode, content)
 	})
+	keyPath := filepath.Join(dstPrefix, credentialKeyFile)
+	if needsKey && !capturedKey && gaps[keyPath] == "" {
+		gaps[keyPath] = "credential key is missing from the archive"
+	}
+	generationsPath := filepath.Join(dstPrefix, heartbeatGenerations)
+	if quarantinedGenerations && !capturedGenerations && gaps[generationsPath] == "" {
+		gaps[generationsPath] = "rotation state was quarantined and has no replacement"
+	}
+	clustersPath := filepath.Join(dstPrefix, clustersFile)
+	if quarantinedClusters && saas.clusters == nil && gaps[clustersPath] == "" {
+		gaps[clustersPath] = "cluster registry was quarantined and has no replacement"
+	}
+	return saas, err
 }
 
-// Build assembles the complete encrypted archive and returns the sealed bytes
-// along with the manifest describing its contents.
+// hasCurrentMasterGeneration mirrors the hub loader's requirement that a
+// persisted rotation has a current generation with a nonblank master.
+func hasCurrentMasterGeneration(data []byte) bool {
+	var state struct {
+		Current     int       `json:"current"`
+		RotatedAt   time.Time `json:"rotated_at"`
+		Generations []struct {
+			ID          int       `json:"id"`
+			Secret      string    `json:"secret"`
+			Created     time.Time `json:"created"`
+			VerifyUntil time.Time `json:"verify_until"`
+		} `json:"generations"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		return false
+	}
+	for _, gen := range state.Generations {
+		if gen.ID == state.Current && strings.TrimSpace(gen.Secret) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasArchivedHubSecret(item SecretItem) bool {
+	if item.Name != "hive-hub-secrets" {
+		return false
+	}
+	var secret struct {
+		Kind string            `json:"kind"`
+		Data map[string]string `json:"data"`
+	}
+	if err := json.Unmarshal(item.JSON, &secret); err != nil || secret.Kind != "Secret" {
+		return false
+	}
+	master, err := base64.StdEncoding.DecodeString(secret.Data["HIVE_HUB_SECRET"])
+	return err == nil && len(bytes.TrimSpace(master)) > 0
+}
+
+// isSaaSWriteTemp recognizes files left in place only until an atomic rename.
+func isSaaSWriteTemp(rel string) bool {
+	name := filepath.Base(rel)
+	if strings.HasSuffix(name, ".tmp") {
+		return true
+	}
+	switch filepath.Dir(rel) {
+	case "app-keys":
+		return strings.HasPrefix(name, ".") && strings.Contains(name, ".pem.tmp") && filepath.Ext(name) != ".pem"
+	case "consents":
+		return strings.HasPrefix(name, ".consent-") && filepath.Ext(name) != ".json"
+	default:
+		return false
+	}
+}
+
+func hubReadError(err error) string {
+	if pathErr, ok := err.(*os.PathError); ok {
+		return pathErr.Err.Error()
+	}
+	return err.Error()
+}
+
+// Build seals the captured recovery files and returns the archive and its manifest.
 func Build(key []byte, collector SpokeCollector, secrets SecretCollector, logger *slog.Logger) ([]byte, *Manifest, error) {
+	return build(key, collector, secrets, useSpokeCollector, nil, logger)
+}
+
+func build(key []byte, collector SpokeCollector, secrets SecretCollector, capture spokeCapture, validateRegistry func([]byte) error, logger *slog.Logger) ([]byte, *Manifest, error) {
 	dataDir := DataDir()
 
 	var raw strings.Builder
@@ -382,26 +536,43 @@ func Build(key []byte, collector SpokeCollector, secrets SecretCollector, logger
 		CreatedAt:     time.Now().UTC(),
 		HubDataDir:    dataDir,
 		SpokeErrors:   map[string]string{},
+		SpokesSkipped: capture == skipSpokeCapture,
 	}
 
 	// 1. Hub SaaS state — users, hives, hmac.key, hub-secret.key, app-keys.
 	saasDir := filepath.Join(dataDir, saasSubdir)
-	if _, err := os.Stat(saasDir); err == nil {
-		if err := b.addTree(saasDir, filepath.Join(hubPrefix, saasSubdir), false, logger); err != nil {
-			return nil, nil, fmt.Errorf("archive saas dir: %w", err)
-		}
-	} else {
-		logger.Warn("backup: saas dir missing", "dir", saasDir)
+	saasPrefix := filepath.Join(hubPrefix, saasSubdir)
+	saas, err := b.addTree(saasDir, saasPrefix, false)
+	if err != nil {
+		return nil, nil, fmt.Errorf("archive saas dir: %w", err)
 	}
+	gaps := saas.gaps
+	man.HubErrors = gaps
 
 	// 2. Fleet registry.
 	regPath := filepath.Join(dataDir, registryFile)
-	if content, err := os.ReadFile(regPath); err == nil {
-		if err := b.addBytes(filepath.Join(hubPrefix, registryFile), 0o644, content); err != nil {
+	regArchivePath := filepath.Join(hubPrefix, registryFile)
+	registry, regErr := os.ReadFile(regPath)
+	if regErr == nil {
+		if err := b.addBytes(regArchivePath, 0o644, registry); err != nil {
 			return nil, nil, fmt.Errorf("archive registry: %w", err)
 		}
 	} else {
-		logger.Warn("backup: registry missing", "path", regPath, "err", err)
+		gaps[regArchivePath] = hubReadError(regErr)
+	}
+	if regErr == nil && validateRegistry != nil {
+		if err := validateRegistry(registry); err != nil {
+			gaps[regArchivePath] = err.Error()
+		}
+	}
+	clusters, hives := backupTargets(saas, registry, logger)
+	if capture == collectArchivedSpokes {
+		clustersPath := filepath.Join(saasPrefix, clustersFile)
+		if gaps[clustersPath] != "" || gaps[regArchivePath] != "" {
+			return nil, nil, fmt.Errorf("enumerate spokes: %v", gaps)
+		}
+		logger.Info("backup: enumerated archived fleet", "clusters", len(clusters), "hives", len(hives))
+		collector = KubectlSpokeCollector{Clusters: clusters, Hives: hives}
 	}
 
 	// 3. Kubernetes Secrets that live outside the PVC. Without these the
@@ -416,7 +587,15 @@ func Build(key []byte, collector SpokeCollector, secrets SecretCollector, logger
 				return nil, nil, fmt.Errorf("archive secret %s: %w", it.Name, err)
 			}
 			man.SecretNames = append(man.SecretNames, it.Name)
+			saas.heartbeatMaster = saas.heartbeatMaster || hasArchivedHubSecret(it)
 		}
+	}
+	masterPath := filepath.Join(saasPrefix, heartbeatMasterFile)
+	if !saas.heartbeatMaster && gaps[masterPath] == "" {
+		gaps[masterPath] = "no bootstrap master in hub-secret.key or the archived hub secret"
+	}
+	for name, reason := range gaps {
+		logger.Warn("backup: incomplete hub state", "path", name, "reason", reason)
 	}
 
 	// 4. Per-spoke config. Individual spoke failures are recorded in the
@@ -472,8 +651,8 @@ func Build(key []byte, collector SpokeCollector, secrets SecretCollector, logger
 	return sealed, man, nil
 }
 
-// Verify decrypts an archive, re-hashes every file and compares against the
-// embedded manifest. It is the proof that a stored archive is restorable.
+// Verify decrypts an archive and checks the archived files against the
+// embedded manifest. The manifest also records any known collection gaps.
 func Verify(key, sealed []byte) (*Manifest, error) {
 	plain, err := Open(key, sealed)
 	if err != nil {
@@ -533,6 +712,16 @@ func Verify(key, sealed []byte) (*Manifest, error) {
 
 // Extract decrypts an archive and writes its contents under destDir.
 func Extract(key, sealed []byte, destDir string) (*Manifest, error) {
+	return extract(key, sealed, destDir, os.WriteFile)
+}
+
+// ExtractNewFiles decrypts an archive and requires each member to create a new
+// file. This rejects archive paths that alias on the extraction filesystem.
+func ExtractNewFiles(key, sealed []byte, destDir string) (*Manifest, error) {
+	return extract(key, sealed, destDir, writeNewArchiveFile)
+}
+
+func extract(key, sealed []byte, destDir string, writeFile func(string, []byte, os.FileMode) error) (*Manifest, error) {
 	if _, err := Verify(key, sealed); err != nil {
 		return nil, err
 	}
@@ -569,7 +758,7 @@ func Extract(key, sealed []byte, destDir string) (*Manifest, error) {
 		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(out, content, os.FileMode(hdr.Mode)&restoreFileMode); err != nil { // #nosec G115 -- only the low permission bits survive the restoreFileMode mask, so truncating the tar mode cannot widen it
+		if err := writeFile(out, content, os.FileMode(hdr.Mode)&restoreFileMode); err != nil { // #nosec G115 -- only the low permission bits survive the restoreFileMode mask, so truncating the tar mode cannot widen it
 			return nil, err
 		}
 		if hdr.Name == manifestName {
@@ -580,4 +769,17 @@ func Extract(key, sealed []byte, destDir string) (*Manifest, error) {
 		}
 	}
 	return man, nil
+}
+
+func writeNewArchiveFile(path string, content []byte, mode os.FileMode) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	_, writeErr := file.Write(content)
+	closeErr := file.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
 }

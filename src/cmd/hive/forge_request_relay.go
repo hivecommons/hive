@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
@@ -33,6 +34,8 @@ import (
 //     write at the hive's ACMM level). A nil authorizer denies everything.
 //   - The repo must be one of project.repos, off GitHub, not paused, and in
 //     the agent's scope.
+//   - A pull request must be allowed by the repo's open-PRs mode
+//     (repo_policies[].open_prs, repo_open_prs.go), as on GitHub.
 //   - Every pull request opened here carries the ready-for-review gate label,
 //     so a human releases it. The GitHub relay's self-authorization,
 //     reporter-trust and duplicate-claim checks read GitHub data and are not
@@ -43,6 +46,8 @@ import (
 //     so the agent does not wait on them.
 //   - A forge 4xx (other than 408 and 429) is final; other failures are
 //     retried a bounded number of times.
+//   - Push-branch requests are served, and review and merge requests are
+//     answered with a reason (forge_push_relay.go, #19916).
 //
 // Agent-written titles and bodies pass through prosefilter before they are
 // sent, as on the GitHub relays.
@@ -91,6 +96,18 @@ type forgeRequestRelay struct {
 	now        func() time.Time
 	logger     *slog.Logger
 	attempts   map[string]int
+	// openPRs is the per-repo open-PRs gate (repo_open_prs.go): the repo's
+	// mode and, when the PR may not open, why.
+	openPRs func(agent, repo string, issues []int, via string) (string, string)
+
+	// The push-branch, review and merge queues (forge_push_relay.go, #19916).
+	pushAuthz   github.PushBranchRequestAuthorizer
+	pushRemote  pushbroker.ForgeRemoteResolver
+	pushAudit   func(github.AuditRecord)
+	pushDir     string
+	reviewDir   string
+	mergeDir    string
+	queuesReady bool
 }
 
 func newForgeRequestRelay(cfg func() *config.Config, prAuthz github.PRRequestAuthorizer, issueAuthz github.IssueRequestAuthorizer, logger *slog.Logger) *forgeRequestRelay {
@@ -103,6 +120,11 @@ func newForgeRequestRelay(cfg func() *config.Config, prAuthz github.PRRequestAut
 		now:        time.Now,
 		logger:     logger,
 		attempts:   map[string]int{},
+		openPRs:    hiveOpenPRsGate(cfg, logger),
+		pushRemote: forgeRemoteResolver(cfg),
+		pushDir:    github.PushBranchRequestDir,
+		reviewDir:  github.ReviewRequestDir,
+		mergeDir:   github.MergeRequestDir,
 	}
 }
 
@@ -130,7 +152,7 @@ func startForgeRequestRelay(ctx context.Context, r *forgeRequestRelay) <-chan st
 	return done
 }
 
-// scanOnce handles every pending request in both directories once.
+// scanOnce handles every pending request in every queue once.
 //
 // It does nothing unless every repo is off GitHub, read on each scan, so a
 // reload that puts a repo on GitHub hands the queues back to the GitHub
@@ -139,11 +161,23 @@ func (r *forgeRequestRelay) scanOnce(ctx context.Context) {
 	if cfg := r.cfg(); cfg == nil || !cfg.AllReposOffGitHub() {
 		return
 	}
+	// Pushes first: an agent that drops a push and then a PR for the same
+	// branch in one tick gets the branch published before the PR is opened.
+	r.ensureQueueDirs()
+	for _, path := range pendingRequestFiles(r.pushDir) {
+		r.handlePushBranch(ctx, path)
+	}
 	for _, path := range pendingRequestFiles(r.prDir) {
 		r.handlePR(ctx, path)
 	}
 	for _, path := range pendingRequestFiles(r.issueDir) {
 		r.handleIssue(ctx, path)
+	}
+	for _, path := range pendingRequestFiles(r.reviewDir) {
+		r.handleReviewRequest(path)
+	}
+	for _, path := range pendingRequestFiles(r.mergeDir) {
+		r.handleMergeRequest(path)
 	}
 }
 
@@ -264,6 +298,15 @@ func (r *forgeRequestRelay) handlePR(ctx context.Context, path string) {
 		r.settle(path, ".rejected", false)
 		return
 	}
+	if r.openPRs != nil {
+		if mode, reason := r.openPRs(req.Agent, req.Repo, req.IssueN, "forge-relay"); reason != "" {
+			auditOpenPRsRefusal(req.Agent, req.Repo, mode, "forge-relay", reason)
+			fail("PR " + github.GateOpenPRs + " rejected: " + reason)
+			r.settle(path, ".rejected", false)
+			r.logger.Warn("forge request relay: PR REJECTED (open-prs)", "agent", req.Agent, "repo", req.Repo, "mode", mode, "reason", reason)
+			return
+		}
+	}
 	if reason := github.InvalidPRHeadReason(req.Head); reason != "" {
 		fail("PR head rejected: " + reason)
 		r.settle(path, ".rejected", false)
@@ -285,7 +328,7 @@ func (r *forgeRequestRelay) handlePR(ctx context.Context, path string) {
 		Base:   req.Base,
 		Title:  prosefilter.SanitizeTitle(req.Title),
 		Body:   prosefilter.Sanitize(req.Body),
-		Labels: []string{github.ReadyForReviewLabelName()},
+		Labels: []string{cfg.Governor.Labels.ReadyForReviewLabelOrDefault()},
 	})
 	if err != nil && !errors.Is(err, forge.ErrLabelsNotApplied) {
 		fail(err.Error())
@@ -330,6 +373,12 @@ const forgeStatusPrefix = "returned status "
 // can fix (the forge rejected the request itself). 408 and 429 are
 // throttling and stay transient.
 func isPermanentForgeRefusal(err error) bool {
+	// The forge took the call but left a label off, after the adapter
+	// looked the label up and tried to create it: a retry sends the same
+	// call (#19910).
+	if errors.Is(err, forge.ErrLabelsMissing) {
+		return true
+	}
 	msg := err.Error()
 	i := strings.Index(msg, forgeStatusPrefix+"4")
 	if i < 0 {

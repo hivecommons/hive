@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/workflowmodel"
+	"github.com/hivecommons/hive/pkg/workflowmodel/bundle"
 	"github.com/hivecommons/hive/pkg/workflowmodel/hivedefault"
 	wfstore "github.com/hivecommons/hive/pkg/workflowmodel/store"
 )
@@ -64,6 +65,79 @@ func wfReq(s *Server, method, path string, body any, owner bool) *httptest.Respo
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	return rec
+}
+
+func TestWorkflowMixedConcurrentVersionWrites(t *testing.T) {
+	s := workflowTestServer(t, true)
+	configureSpecLLM(s, false)
+	seed := techdocsModel(t)
+	path := "/api/workflows/" + seed.Metadata.Name
+	if rec := wfReq(s, http.MethodPost, "/api/workflows", seed, true); rec.Code != http.StatusCreated {
+		t.Fatalf("seed: %d %s", rec.Code, rec.Body)
+	}
+	editor := techdocsModel(t)
+	editor.Spec.Meta.Version = ""
+	editor.Spec.Meta.Description = "editor draft"
+	imported := techdocsModel(t)
+	imported.Spec.Meta.Version = "2"
+	imported.Spec.Meta.Description = "marketplace draft"
+	b, err := bundle.Export(imported, "andy", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := bundle.Encode(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests := []struct {
+		path string
+		body any
+	}{
+		{"/api/workflows", editor},
+		{path + "/1/confirm", nil},
+		{"/api/workflows/ingest/spec", map[string]any{"name": seed.Metadata.Name, "text": specSample, "useLLM": false, "save": true}},
+		{"/api/workflows/import", string(raw)},
+	}
+	start := make(chan struct{})
+	results := make(chan *httptest.ResponseRecorder, len(requests))
+	for _, req := range requests {
+		go func() {
+			<-start
+			results <- wfReq(s, http.MethodPost, req.path, req.body, true)
+		}()
+	}
+	close(start)
+
+	type savedWorkflow struct {
+		Entry wfstore.Entry
+		Model *workflowmodel.Model
+	}
+	seen := map[string]bool{"1": true}
+	for range requests {
+		rec := <-results
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("concurrent save: %d %s", rec.Code, rec.Body)
+		}
+		var result savedWorkflow
+		wfDecode(t, rec, &result)
+		v := result.Entry.Version
+		if v == "" || seen[v] {
+			t.Fatalf("duplicate or missing version %q after %v", v, seen)
+		}
+		seen[v] = true
+		read := wfReq(s, http.MethodGet, path+"/"+v, nil, false)
+		if read.Code != http.StatusOK {
+			t.Fatalf("read version %s: %d %s", v, read.Code, read.Body)
+		}
+		var stored savedWorkflow
+		wfDecode(t, read, &stored)
+		if stored.Entry.Hash != result.Entry.Hash || stored.Model == nil || stored.Model.Hash() != result.Entry.Hash {
+			t.Fatalf("version %s did not retain saved hash %s: %s", v, result.Entry.Hash, read.Body)
+		}
+		if result.Model != nil && (result.Model.Spec.Meta.Version != v || result.Model.Hash() != result.Entry.Hash) {
+			t.Fatalf("ingest response disagrees with saved entry: %s", rec.Body)
+		}
+	}
 }
 
 func TestWorkflowAPIDisabledWithoutStore(t *testing.T) {

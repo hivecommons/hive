@@ -22,6 +22,9 @@ type SandboxGitHubReadRelay = crux.SandboxGitHubReadRelay
 // never sees one from a previous install paired with the other.
 type sandboxReadRelayState struct {
 	cur atomic.Pointer[sandboxReadRelayInstall]
+	// inference is the sandbox inference listener (#19619), kept here so the
+	// Manager struct carries one field for its Job-facing listeners.
+	inference atomic.Pointer[sandboxInferenceRelayInstall]
 }
 
 type sandboxReadRelayInstall struct {

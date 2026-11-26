@@ -2,6 +2,7 @@ package github
 
 import (
 	"errors"
+	"log/slog"
 	"time"
 )
 
@@ -56,4 +57,71 @@ func WriteRequestResult(path string, data []byte) error {
 // per-label allowances, so a caller using it alone fails closed.
 func ReservedLabelForAgents(label, autoMergeLabel string) bool {
 	return reservedLabelForAgents(label, autoMergeLabel)
+}
+
+// EnsureRequestDir creates one agent-facing request queue with the drop-box
+// mode every relay uses (group-writable, setgid, sticky). It returns false
+// when the directory cannot be created.
+func EnsureRequestDir(logger *slog.Logger, kind, dir string) bool {
+	return ensureRequestDir(logger, kind, dir)
+}
+
+// ValidPushBranchName reports whether branch is a name the push-branch relay
+// will put in a refspec (hivecommons/hive#19916).
+func ValidPushBranchName(branch string) bool {
+	return validPushBranchName(branch)
+}
+
+// ValidatePushBranchDir checks the agent-named checkout of a push-branch
+// request: absolute, an existing directory, and owned by fileUID when
+// fileUID > 0.
+func ValidatePushBranchDir(dir string, fileUID int) error {
+	return validatePushBranchDir(dir, fileUID)
+}
+
+// PushBranchGitEnv is the environment the push-branch relay runs git with in
+// an agent-owned checkout: no prompts, hooks, fsmonitor or credential
+// helpers from the checkout, and token as a Basic auth extraHeader scoped to
+// remote. An empty token adds no header.
+func PushBranchGitEnv(dir, remote, token string) []string {
+	header := ""
+	if token != "" {
+		header = gitBasicAuthHeader(token)
+	}
+	return pushBranchGitEnv(dir, remote, header)
+}
+
+// PushBranchConfigListArgs are the git arguments that list a checkout's
+// config in the form PushBranchConfigRefusal reads. Run them with
+// PushBranchGitEnv and an empty token, so the listing carries no credential.
+func PushBranchConfigListArgs() []string {
+	return append([]string(nil), pushBranchConfigListArgs...)
+}
+
+// PushBranchConfigRefusal is why the push-branch relay refuses to push from a
+// checkout whose git config (listing, from PushBranchConfigListArgs) could
+// redirect or intercept the credentialed push, or "" when it may push
+// (hivecommons/hive#19959).
+func PushBranchConfigRefusal(listing string) string {
+	return pushBranchConfigRefusal(listing)
+}
+
+// PushBranchRepoInfoArgs are the git arguments whose output (the checkout's
+// common git dir and object format) PushBranchIsolatedGitDir reads.
+func PushBranchRepoInfoArgs() []string {
+	return append([]string(nil), pushBranchRepoInfoArgs...)
+}
+
+// PushBranchIsolatedGitDir builds the hive-owned GIT_DIR the push-branch
+// relay pushes from, so the push never reads the agent's repository config
+// (hivecommons/hive#19959). It returns the directory to run git in, the
+// environment to append after PushBranchGitEnv, and a cleanup.
+func PushBranchIsolatedGitDir(repoInfo, branch, sha string, ownerUID int) (string, []string, func(), error) {
+	return pushBranchIsolatedGitDir(repoInfo, branch, sha, ownerUID)
+}
+
+// FirstOutputLines returns the first n non-empty lines of a command's output,
+// as the relays quote git's diagnostics.
+func FirstOutputLines(output string, n int) string {
+	return firstOutputLines(output, n)
 }

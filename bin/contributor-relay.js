@@ -1241,6 +1241,19 @@ function warnQuotaGuardUnprovisionedOnce() {
     'You can ignore this. To turn the guard on, set HIVE_CONTRIBUTOR_QUOTA_READING_FILE or HIVE_CONTRIBUTOR_QUOTA_READING_JSON (see src/docs/contributor-relay.md).');
 }
 
+// auth_mode the Go publisher writes for a metered API-key login
+// (AuthModeAPIKey in src/pkg/rotation/rotation.go, hivecommons/hive#19932).
+const QUOTA_AUTH_MODE_API_KEY = 'api_key';
+
+let warnedQuotaGuardMetered = false;
+
+function warnQuotaGuardMeteredOnce() {
+  if (warnedQuotaGuardMetered) return;
+  warnedQuotaGuardMetered = true;
+  console.warn(`Contributor quota guard: ${BACKEND} is logged in with an API key, which has no subscription quota windows. ` +
+    'Tasks are not held back, and each task spends metered API credits on that key.');
+}
+
 let warnedQuotaGuardAwaitingPublisher = false;
 
 function warnQuotaGuardAwaitingPublisherOnce() {
@@ -1342,7 +1355,16 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading(),
   }
   contributorQuotaPaused = false;
   writeRelayStatus();
-  return usedBankedReset ? { admit: true, reason: 'banked_reset_available' } : { admit: true };
+  if (usedBankedReset) return { admit: true, reason: 'banked_reset_available' };
+  // A metered API-key login (hivecommons/hive#19932) has no subscription
+  // windows to protect, so the publisher writes an available reading with no
+  // windows. Admit it, and say once that the work spends API credits: the
+  // guard cannot protect a per-token bill.
+  if (state === 'available' && reading.auth_mode === QUOTA_AUTH_MODE_API_KEY) {
+    warnQuotaGuardMeteredOnce();
+    return { admit: true, reason: 'metered_api_key' };
+  }
+  return { admit: true };
 }
 
 // ── Guard resume (kubestellar/hive#6951) ─────────────────────────────────────
@@ -4260,9 +4282,12 @@ const HEADLESS_BACKENDS = {
   // deliberately does not join), so it is only ever reached through
   // CONTRIBUTOR_MODE=headless. `opencode run` exits with a real status code
   // on completion, the exit-code contract runHeadlessTask() relies on.
-  opencode: { flag: 'run' },
+  //
+  // flagsAfterCommand: `run` owns --auto and --model; the root binary rejects
+  // them ("Unrecognized flag: --auto in command opencode run", #19794).
+  opencode: { flag: 'run', flagsAfterCommand: true },
   // Kilo is OpenCode-derived but uses distinct credentials and config.
-  kilo: { flag: 'run' },
+  kilo: { flag: 'run', flagsAfterCommand: true },
   // muse exec "<prompt>" — Muse Code's documented non-interactive
   // sub-command ("Run one prompt non-interactively (headless)"). Verified
   // against Muse Code 1.0.3 (1.0.3-R2198.1): a completed run exits 0, a run
@@ -4394,6 +4419,7 @@ function createBoundedOutputCapture(maxBytes) {
 // Nothing is scraped: a live child IS the progress signal in this mode, exactly
 // as the hub's lease model needs ("still reporting" means "still alive").
 function headlessProgressFrame(task) {
+  refreshDetectedModel();
   return { type: 'task_progress', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, kind: task.kind, repo: task.repo, number: task.number, title: task.title, status: 'working', ...effectiveSelectionFields() };
 }
 
@@ -4771,6 +4797,7 @@ function runHeadlessTask(task) {
       writeHeadlessStatus(HEADLESS_STATE_WAITING, { revoked_task_id: task.task_id });
       return;
     }
+    refreshDetectedModel();
     const wasTimedOut = timedOut || signal === 'SIGKILL';
     const failed = spawnError || wasTimedOut || code !== 0 || signal;
     if (failed) {

@@ -112,6 +112,7 @@ func (p *GitHubProxy) translatorAgentName(r *http.Request) (string, bool) {
 // max-context-len only feeds token capping and defaults gracefully to 0
 // (no cap) until the async probe fills it in.
 func (p *GitHubProxy) SetInferenceRoute(agentName string, route *InferenceRoute) {
+	route, needProbe := p.inference.seedContextWindow(route) // hivecommons/hive#19913
 	p.inference.Set(agentName, route)
 	keySHA256 := config.APIKeySHA256(route.APIKey)
 	if keySHA256 != "" {
@@ -120,7 +121,7 @@ func (p *GitHubProxy) SetInferenceRoute(agentName string, route *InferenceRoute)
 		p.logger.Info("inference route set", "agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "model", route.Model, "maxContextLen", route.MaxContextLen, "api_key_sha256", "")
 	}
 
-	if route.MaxContextLen == 0 {
+	if needProbe {
 		endpoint, model, apiKey, caBundle := route.Endpoint, route.Model, route.APIKey, route.CABundle
 		go func() {
 			if maxLen := queryMaxModelLen(endpoint, model, apiKey, caBundle); maxLen > 0 {
@@ -323,13 +324,21 @@ func (p *GitHubProxy) ClearInferenceRoute(agentName string) {
 // inference backend. Agents use ANTHROPIC_BASE_URL=http://127.0.0.1:18444
 // to reach this server instead of api.anthropic.com.
 func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
+	return p.inferenceTranslatorHandlerFor(p.translatorAgentName, p.translatorRefusalAttrs)
+}
+
+// inferenceTranslatorHandlerFor is the translator with the caller identified
+// by identify and a refusal described by refusalAttrs: the loopback listener
+// uses the socket owner's UID, the sandbox inference listener a per-kick key
+// (#19619).
+func (p *GitHubProxy) inferenceTranslatorHandlerFor(identify func(*http.Request) (string, bool), refusalAttrs func(*http.Request) []any) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		agentName, ok := p.translatorAgentName(r)
+		agentName, ok := identify(r)
 		if !ok {
 			p.logger.Warn("inference request from unidentified caller refused",
-				p.translatorRefusalAttrs(r)...)
+				refusalAttrs(r)...)
 			setTranslatorOutcome(r.Context(), outcomeUnidentifiedCaller)
 			http.Error(w, `{"type":"error","error":{"type":"authentication_error","message":"caller could not be identified"}}`, http.StatusUnauthorized)
 			return
@@ -384,7 +393,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		}
 		p.logger.Info("inference request body", "agent", agentName, "len", len(body), "tool_count", toolCount, "preview", truncateBytes(body, 200))
 
-		openaiBody, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen, resolveInferencePreamble(route, agentName))
+		openaiBody, streamRequested, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen, resolveInferencePreamble(route, agentName))
 		if err != nil {
 			p.logTranslateFailure(agentName, err)
 			p.recordAgentInferenceError(agentName, "translation error: "+err.Error(), 0)
@@ -415,6 +424,26 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"inference client setup failed: %s"}}`, err.Error()), http.StatusBadGateway)
 			return
 		}
+		// A streaming request gets its 200 and message_start now, and a ping
+		// whenever nothing else reaches the CLI, so the CLI's idle watchdogs
+		// see bytes while the upstream queues, reasons or retries (#19793).
+		var stream *anthropicStream
+		if streamRequested {
+			stream = startAnthropicSSE(w, route.Model)
+			stream.keepAlive(inferenceStreamPingInterval())
+			defer stream.Close()
+		}
+		// failStream ends a started stream with an SSE error event and
+		// reports whether it did; without one the caller answers with the
+		// HTTP status.
+		failStream := func(status int, msg string) bool {
+			if stream == nil {
+				return false
+			}
+			setTranslatorOutcome(r.Context(), outcomeUpstreamError)
+			stream.fail(status, msg)
+			return true
+		}
 		resp, err := client.Do(upstreamReq)
 		if err == nil {
 			resp = retryInferenceOnOverload(r.Context(), p.logger, client, route, agentName, upstreamURL, openaiBody, resp)
@@ -432,7 +461,9 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			}
 			unreachableMsg := inferenceBackendUnreachableMessage(err, upstreamURL)
 			p.recordAgentInferenceError(agentName, unreachableMsg, 0)
-			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`, jsonEscape(unreachableMsg)), http.StatusBadGateway)
+			if !failStream(http.StatusBadGateway, unreachableMsg) {
+				http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`, jsonEscape(unreachableMsg)), http.StatusBadGateway)
+			}
 			return
 		}
 		applyInferenceIdleTimeout(p.logger, resp, agentName, route)
@@ -449,10 +480,13 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			p.recordInferenceResponseError(route, agentName, upstreamURL, resp, errBody)
 			backendMsg := inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server"))
 			p.recordAgentInferenceError(agentName, backendMsg, resp.StatusCode)
-			anthropicErr := fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`,
-				jsonEscape(backendMsg))
+			status, errorType := inferenceAnthropicErrorStatus(resp.StatusCode, errBody)
+			if failStream(status, backendMsg) {
+				return
+			}
+			anthropicErr := fmt.Sprintf(`{"type":"error","error":{"type":"%s","message":"%s"}}`, errorType, jsonEscape(backendMsg))
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(resp.StatusCode)
+			w.WriteHeader(status)
 			_, _ = w.Write([]byte(anthropicErr))
 			return
 		}
@@ -465,16 +499,15 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
 		if isStreaming {
-			w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Connection", "keep-alive")
-			w.WriteHeader(http.StatusOK)
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
+			if stream == nil {
+				// The upstream streams a response the CLI did not ask to
+				// stream: relay it as a stream, as before.
+				stream = startAnthropicSSE(w, route.Model)
 			}
-			usage, err := translateOpenAISSEToAnthropicUsage(resp.Body, w, route.Model)
+			usage, err := stream.relayOpenAISSE(resp.Body)
 			if err != nil {
 				p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
+				setTranslatorOutcome(r.Context(), outcomeUpstreamError)
 			}
 			p.recordGatewayUsage(agentName, route.Model, usage)
 			return
@@ -482,7 +515,9 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 
 		respBody, err := io.ReadAll(resp.Body)
 		if err != nil {
-			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"failed to read inference response"}}`, http.StatusBadGateway)
+			if !failStream(http.StatusBadGateway, "failed to read inference response") {
+				http.Error(w, `{"type":"error","error":{"type":"api_error","message":"failed to read inference response"}}`, http.StatusBadGateway)
+			}
 			return
 		}
 
@@ -493,6 +528,16 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		)
 
 		p.recordGatewayUsage(agentName, route.Model, extractOpenAIUsageDetailed(respBody))
+
+		if stream != nil {
+			// The upstream answered the streaming request with one JSON
+			// body: send it as the rest of the stream.
+			if err := stream.relayOpenAIResponse(respBody, route.Model); err != nil {
+				p.logger.Error("inference translate response failed", "agent", agentName, "error", err)
+				setTranslatorOutcome(r.Context(), outcomeUpstreamError)
+			}
+			return
+		}
 
 		translated, err := translateOpenAIResponseToAnthropic(respBody, route.Model)
 		if err != nil {
@@ -597,7 +642,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		return
 	}
 
-	openaiBody, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen, resolveInferencePreamble(route, agentName))
+	openaiBody, streamRequested, err := translateAnthropicToOpenAI(body, route.Model, route.MaxContextLen, resolveInferencePreamble(route, agentName))
 	if err != nil {
 		p.logTranslateFailure(agentName, err)
 		p.recordAgentInferenceError(agentName, "translation error: "+err.Error(), 0)
@@ -622,6 +667,17 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		p.writeHTTPError(conn, http.StatusBadGateway, "inference client setup failed: "+err.Error())
 		return
 	}
+	// As on the loopback translator: a streaming request gets its 200,
+	// message_start and pings before the upstream answers (#19793).
+	var stream *anthropicStream
+	if streamRequested {
+		stream, err = startAnthropicSSEConn(conn, route.Model)
+		if err != nil {
+			return
+		}
+		stream.keepAlive(inferenceStreamPingInterval())
+		defer stream.Close()
+	}
 	resp, err := client.Do(upstreamReq)
 	if err == nil {
 		resp = retryInferenceOnOverload(req.Context(), p.logger, client, route, agentName, upstreamURL, openaiBody, resp)
@@ -635,25 +691,33 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		}
 		unreachableMsg := inferenceBackendUnreachableMessage(err, upstreamURL)
 		p.recordAgentInferenceError(agentName, unreachableMsg, 0)
+		if stream != nil {
+			stream.fail(http.StatusBadGateway, unreachableMsg)
+			return
+		}
 		p.writeHTTPError(conn, http.StatusBadGateway, unreachableMsg)
 		return
 	}
 	applyInferenceIdleTimeout(p.logger, resp, agentName, route)
 	defer func() { _ = resp.Body.Close() }()
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errBody, _ := io.ReadAll(resp.Body)
 		p.recordInferenceResponseError(route, agentName, upstreamURL, resp, errBody)
 		backendMsg := inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server"))
 		p.recordAgentInferenceError(agentName, backendMsg, resp.StatusCode)
+		status, errorType := inferenceAnthropicErrorStatus(resp.StatusCode, errBody)
+		if stream != nil {
+			stream.fail(status, backendMsg)
+			return
+		}
 		anthropicErr := &http.Response{
-			StatusCode: resp.StatusCode,
+			StatusCode: status,
 			ProtoMajor: 1,
 			ProtoMinor: 1,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
 			Body: io.NopCloser(strings.NewReader(fmt.Sprintf(
-				`{"type":"error","error":{"type":"api_error","message":"%s"}}`,
-				jsonEscape(backendMsg)))),
+				`{"type":"error","error":{"type":"%s","message":"%s"}}`,
+				errorType, jsonEscape(backendMsg)))),
 		}
 		_ = anthropicErr.Write(conn)
 		return
@@ -667,14 +731,14 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	isStreaming := strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream")
 
 	if isStreaming {
-		hdr := "HTTP/1.1 200 OK\r\n" +
-			"Content-Type: text/event-stream; charset=utf-8\r\n" +
-			"Cache-Control: no-cache\r\n" +
-			"Connection: keep-alive\r\n\r\n"
-		if _, err := conn.Write([]byte(hdr)); err != nil {
-			return
+		if stream == nil {
+			// The upstream streams a response the CLI did not ask to stream:
+			// relay it as a stream, as before.
+			if stream, err = startAnthropicSSEConn(conn, route.Model); err != nil {
+				return
+			}
 		}
-		usage, err := translateOpenAISSEToAnthropicUsage(resp.Body, conn, route.Model)
+		usage, err := stream.relayOpenAISSE(resp.Body)
 		if err != nil {
 			p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
 		}
@@ -684,11 +748,24 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		if stream != nil {
+			stream.fail(http.StatusBadGateway, "failed to read inference response")
+			return
+		}
 		p.writeHTTPError(conn, http.StatusBadGateway, "failed to read inference response")
 		return
 	}
 
 	p.recordGatewayUsage(agentName, route.Model, extractOpenAIUsageDetailed(respBody))
+
+	if stream != nil {
+		// The upstream answered the streaming request with one JSON body:
+		// send it as the rest of the stream.
+		if err := stream.relayOpenAIResponse(respBody, route.Model); err != nil {
+			p.logger.Error("inference translate response failed", "agent", agentName, "error", err)
+		}
+		return
+	}
 
 	translated, err := translateOpenAIResponseToAnthropic(respBody, route.Model)
 	if err != nil {

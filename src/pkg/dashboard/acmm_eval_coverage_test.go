@@ -199,7 +199,7 @@ func TestCovB_ACMMCreateIssue_NoGHClient(t *testing.T) {
 	s.RegisterAPI(deps)
 
 	rec := doPost(s, "/api/acmm/issue", map[string]interface{}{
-		"repo": "repo1", "criterion_id": "acmm:claude-md",
+		"repo": "repo1", "criterion_id": "acmm:agent-instructions",
 	})
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("nil GHClient status = %d, want 500", rec.Code)
@@ -213,7 +213,7 @@ func TestCovB_ACMMCreateIssue_OrgEmpty(t *testing.T) {
 	s.RegisterAPI(deps)
 
 	rec := doPost(s, "/api/acmm/issue", map[string]interface{}{
-		"repo": "repo1", "criterion_id": "acmm:claude-md",
+		"repo": "repo1", "criterion_id": "acmm:agent-instructions",
 	})
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("org empty status = %d, want 500", rec.Code)
@@ -228,7 +228,7 @@ func TestCovB_ACMMCreateIssue_Success(t *testing.T) {
 	s.RegisterAPI(deps)
 
 	rec := doPost(s, "/api/acmm/issue", map[string]interface{}{
-		"repo": "repo1", "criterion_id": "acmm:claude-md",
+		"repo": "repo1", "criterion_id": "acmm:agent-instructions",
 	})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())

@@ -509,6 +509,34 @@ func TestHandleConnHTTPRequest(t *testing.T) {
 	}
 }
 
+func TestHandleConnRejectsOriginForm(t *testing.T) {
+	var logs bytes.Buffer
+	p := newTestProxy()
+	p.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	client, server := net.Pipe()
+	defer client.Close()
+	go p.handleConn(server)
+
+	if _, err := fmt.Fprint(client, "GET /health HTTP/1.1\r\nHost: example.com\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(client), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "absolute URL") {
+		t.Fatalf("response = %d %q, want 400 explaining absolute URL", resp.StatusCode, body)
+	}
+	if strings.Contains(logs.String(), "proxy: plain HTTP forward failed") {
+		t.Fatalf("origin-form request reported as an upstream failure: %s", logs.String())
+	}
+}
+
 func TestHandleConnTLSByte(t *testing.T) {
 	p := newTestProxy()
 
@@ -897,7 +925,7 @@ func TestRepoFilterAllowedDELETE(t *testing.T) {
 
 func TestTranslateAnthropicToOpenAINoSystem(t *testing.T) {
 	body := `{"model":"claude","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
-	result, err := translateAnthropicToOpenAI([]byte(body), "target-model", 0, "")
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "target-model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -914,7 +942,7 @@ func TestTranslateAnthropicToOpenAINoSystem(t *testing.T) {
 }
 
 func TestTranslateAnthropicToOpenAIInvalidJSON(t *testing.T) {
-	_, err := translateAnthropicToOpenAI([]byte("not json"), "model", 0, "")
+	_, _, err := translateAnthropicToOpenAI([]byte("not json"), "model", 0, "")
 	if err == nil {
 		t.Error("expected error for invalid JSON")
 	}
@@ -922,7 +950,7 @@ func TestTranslateAnthropicToOpenAIInvalidJSON(t *testing.T) {
 
 func TestTranslateAnthropicToOpenAIEmptySystem(t *testing.T) {
 	body := `{"model":"claude","max_tokens":100,"system":"","messages":[{"role":"user","content":"hi"}]}`
-	result, err := translateAnthropicToOpenAI([]byte(body), "model", 0, "")
+	result, _, err := translateAnthropicToOpenAI([]byte(body), "model", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

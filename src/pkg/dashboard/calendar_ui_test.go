@@ -118,3 +118,60 @@ func TestCalendarIndicatorStates(t *testing.T) {
 		t.Fatalf("indicator rules failed: %v\n%s", err, out)
 	}
 }
+
+func TestCalendarRefreshPreservesMeetingDraft(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not on PATH — the calendar refresh behavior was not executed")
+	}
+	html := indexHTML(t)
+	script := strings.Join([]string{
+		"const assert = require('node:assert/strict');",
+		jsFunc(t, html, "calendarRoleKnown"),
+		jsFunc(t, html, "calendarCanView"),
+		jsFunc(t, html, "calendarIsOwner"),
+		jsFunc(t, html, "calendarFormHtml"),
+		jsFunc(t, html, "calendarField"),
+		jsFunc(t, html, "fetchCalendar"),
+		jsFunc(t, html, "renderCalendar"),
+		"const window = { _hiveRole: 'owner' };",
+		"let _calendarData = null, _calendarError = '';",
+		"function calendarViewerTimeZone() { return 'UTC'; }",
+		"function escapeHtml(s) { return s; }",
+		"function renderCalendarIndicator() {}",
+		"function refreshSectionCardShell() {}",
+		"function setSectionSummary() {}",
+		"function calendarRowHtml(event) { return event.summary; }",
+		"const add = { hidden: true, set innerHTML(html) { this.draft = html ? { open: false, title: '', hint: {} } : null; } };",
+		"const email = {}, results = {};",
+		"const panel = { set innerHTML(html) { add.innerHTML = html.includes('Add meeting') ? html : ''; results.innerHTML = html; } };",
+		"const nodes = { 'calendar-panel': panel, 'calendar-email-in': email, 'calendar-add-form': add, 'calendar-results': results };",
+		"const document = { getElementById: id => nodes[id], querySelector: () => add.draft?.hint };",
+		"let response = { ok: true, json: async () => ({ upcoming: [] }) };",
+		"async function fetch() { return response; }",
+		"(async () => {",
+		"  await fetchCalendar();",
+		"  const draft = add.draft;",
+		"  assert.ok(draft, 'initial fetch renders the add form');",
+		"  draft.open = true;",
+		"  draft.title = 'In progress';",
+		"  response = { ok: true, json: async () => ({ upcoming: [{ summary: 'New event' }] }) };",
+		"  await fetchCalendar();",
+		"  assert.match(results.innerHTML, /New event/);",
+		"  assert.equal(add.draft, draft, 'a refresh must keep the same form');",
+		"  response = { ok: false, status: 503, json: async () => ({ error: 'Try again' }) };",
+		"  await fetchCalendar();",
+		"  assert.match(results.innerHTML, /Try again/);",
+		"  assert.equal(add.draft, draft, 'an error must keep the same form');",
+		"  assert.equal(draft.open, true);",
+		"  assert.equal(draft.title, 'In progress');",
+		"  window._hiveRole = 'read';",
+		"  await fetchCalendar();",
+		"  assert.equal(add.hidden, true);",
+		"  assert.equal(add.draft, null, 'revoked access clears the form');",
+		"})().catch(err => { console.error(err); process.exitCode = 1; });",
+	}, "\n")
+	if out, err := runNodeStdin(node, script); err != nil {
+		t.Fatalf("calendar refresh failed: %v\n%s", err, out)
+	}
+}

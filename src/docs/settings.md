@@ -55,6 +55,36 @@ a *new* hosted hive instead, use
 
 The same tab has a **Parent auto-close** card (owner only, `repos.<key>.parent_autoclose`): per monitored repo, choose "Close finished parents (default)", "Also close epics and holds", "Also close trackers whose work is done" or "Never auto-close parents". It shows the effective value for each repo, applies on save without a restart, and is audited. A parent a person reopened is never re-closed, and issues marked as tracking issues are never auto-closed. See [stage-labels](labels-and-control-signals/stage-labels.md#decomposed-parents--closed-by-their-children-never-stalled).
 
+### Open PRs per repo
+
+Each repo row has an **open PRs** select (`project.repo_policies[].open_prs`). The repo card on **Projects** has the same select next to its **auto-merge** switch. It works at every ACMM level, and a change saves at once, without **Save & close**.
+
+| Mode | YAML | What agents may do in the repo |
+|---|---|---|
+| **On** (default) | unset, or `on` | Open pull requests as usual. |
+| **Workflow only** | `workflow_only` | Open a pull request only for a workflow hand-off (`workflow.dispatch`) the hive delivered to that agent. The agent's own cadence work, such as coverage gaps and test hardening, may analyse and file issues but opens no PR. |
+| **Off** | `off` | Analyse, comment and file issues. No agent opens a pull request. |
+
+```yaml
+project:
+  repo_policies:
+    - repo: docs
+      open_prs: workflow_only
+```
+
+- `project.open_prs: false` (env `PROJECT_OPEN_PRS`) still wins: every repo is then off, whatever its own mode.
+- The mode is enforced where agent PRs open, not only in the prompt: the `hive-open-pr` relay, the forge relay for non-GitHub repos, the sandbox PR path and the sidecar callback all refuse a PR the mode forbids. The request result says why, and the refusal is audited as `agent_write_refused` with `gate=open-prs`.
+- For **Workflow only**, the hive decides whether a PR comes from a workflow hand-off by its own records of the hand-off kicks it planned and delivered, never by the PR's title, body or branch name:
+  - A `hive-open-pr` request must name the handed-off issue (`--issues <n>`, which the hand-off kick tells the agent to pass). The hand-off must have gone to that agent for that repo within the last 8 hours, and must not yet be settled (its deliverable has not shown up, and it was not marked as not started). A request that names no issue, or another issue, is refused, so the same agent's cadence PRs stay off.
+  - A sandboxed kick may push and open its PR only when its kick text is exactly a hand-off kick the hive planned for that agent and repo.
+  - A hand-off of a pull-request item (rather than an issue) cannot open a new PR through `hive-open-pr` in a **Workflow only** repo.
+- A runtime outside the hive process (the sidecar callback) cannot see those records, so a sandboxed kick there opens no PR in a **Workflow only** repo.
+- Who can trigger a hand-off matters: a hand-off is planned when an item enters a workflow state, so anyone who can move items into that state can cause the hive to hand work to the profile's agent.
+- Each kick tells the agent about a limited repo: "PRs are off for `<repo>`" or "only workflow hand-off PRs".
+- A workflow profile that opens a PR resolves to no agent in an **Off** repo.
+- Narrowing the mode needs repo write or the owner role. Widening it needs a verified owner, as for switching auto-merge back on. Switching back to **On** is stored as `open_prs: on`, so it also outranks a seed `hive.yaml` that says otherwise.
+- Pushing more commits to a PR that is already open is not opening a PR, and the mode does not stop it.
+
 ## Budget
 
 The token budget and its rolling period, optional dollar and coin caps, the percentage at which the governor enters budget-critical mode, per-agent exemptions, and the model lock that stops automatic model downgrades. See [Governor cadence and budget](operator-reference.md#governor-cadence-and-budget) and [Token collection and usage tracking](token-tracking.md).
@@ -96,7 +126,7 @@ Optional capabilities, each off or inert until you turn it on. Where a feature h
 - Reviewer-stated rules: [Reviewer-stated rules from review feedback](review-feedback-rules.md#settings). A card under Review (owner only, `review_feedback.rules.*`) turns capture on or off, picks whose rules are recorded at once, adds phrases that count, and switches built-in signals off; each control shows its default and where the current value comes from.
 - Linear agent: [Linear agent integration](linear-agent.md).
 - Upstream watch: [Upstream watch](upstream-watch.md#configuration).
-- Ask AI help: [Ask AI help](ask-ai-help.md).
+- Ask Hive: [Ask AI help](ask-ai-help.md). On by default on a hosted hive (hub mode), off by default on a self-hosted hive; switching it off saves `ask.enabled: false`.
 
 The other features on this tab (OpenTelemetry export, external execution, auto-plan, issue claims, PR follow-up, long-running runs, provider rotation, merge recommendations, convergence rollout, stall replan, and question auto-close) are explained by their **?** tooltips, and their configuration keys are listed in the [Hive operator reference](operator-reference.md#configuration-blocks).
 
@@ -169,7 +199,9 @@ Named variables that agents' prompt templates can use: each has a name, a type, 
 
 ## Dashboard
 
-Settings for the dashboard itself (`dashboard.*`): its port and agent poll interval, the Experiment Lab, whether the header also shows the usage gauge, hub-proxied auth, Sessions, the dashboard auth token, the access allowlist, and the issue bands.
+Settings for the dashboard itself (`dashboard.*`): its port and agent poll interval, the Experiment Lab, whether the header also shows the usage gauge, hub-proxied auth, GitHub sign-in, Sessions, the dashboard auth token, the access allowlist, and the issue bands.
+
+**GitHub sign-in** (`dashboard.github_sign_in`, on by default) offers the "Sign in with GitHub" device flow on the login page. Turn it off on a hive whose people all sign in through the hub: the login page then shows a "Sign in through the hub" link instead, `/api/gh-user-auth/start` and `/api/gh-user-auth/poll` refuse, and `hivectl login` to this hive stops working. The change applies without a restart. The link points at `dashboard.hub_sign_in_url`, else the `HIVE_HUB_URL` environment variable, else `hub.url`, and needs `hive_id`; the toggle shows the link it will use. When the hive cannot build one, the toggle is disabled and the server refuses to save it off, because the login page would then offer no way to sign in and lock everyone out, the owner included.
 
 **Inception (spek) sessions** (`dashboard.sessions.enabled`, on by default) turns on the [Inception (spek)](dashboard-sections.md#inception-spek) section, named shared CLI-agent terminals inside the dashboard that open in the hive's shared spek workspace, which replaced the removed Inception wizard. Set it to false to hide the section. The `HIVE_SESSIONS_ENABLED` environment variable, when set, overrides the switch, and the dialog says so. Beside it are the three limits, `dashboard.sessions.max_sessions`, `dashboard.sessions.max_per_user` and `dashboard.sessions.idle_ttl_hours`; 0 keeps the built-in default (12, 4 and 72), and `HIVE_SESSIONS_MAX`, `HIVE_SESSIONS_MAX_PER_USER` and `HIVE_SESSIONS_IDLE_TTL_HOURS` override them. **Answer the CLI startup screens** (`dashboard.sessions.autostart`, on by default) lets the hive take a starting session's CLI through its startup screens (first-run notice, trust for the session's folder, onboarding) to its input prompt, so the first request runs without a person; it never answers a permission prompt and never signs in, and `HIVE_SESSIONS_AUTOSTART` overrides the switch. See the [Sessions API](api-reference/sessions.md).
 

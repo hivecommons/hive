@@ -11,6 +11,407 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.374.0)
+
+### Added
+
+- Add the opt-in `headless_turns` agent setting. A translator-routed agent (an inference backend or a named gateway) with it set runs one headless `claude -p` per kick instead of a resident interactive Claude Code session. Anthropic bills that as Agent SDK usage, so Max, Ultra and Team subscribers can pay for these agents with their monthly API credits. The translator's key custody, metering and model discovery do not change (#19902).
+
+## 2026-11-26 (v5.373.11)
+
+### Fixed
+
+- **Inference reroute answers the CLI's `GET /v1/models` probe locally.** Agents on an OpenAI-compatible inference backend sent Claude Code's model-list request to the reroute, which treated it as an unknown endpoint: every call logged a `WARN inference reroute: unknown Anthropic API path not forwarded` and returned a 404, enough to trip the `unclassified_error_repeated` self-report. The reroute now answers `GET /v1/models` with an empty Anthropic list page (logged once at DEBUG), like it already does for `count_tokens` and CLI telemetry; the request still never reaches the backend. (#20045)
+
+## 2026-11-26 (v5.373.10)
+
+### Fixed
+
+- Preserve the text following a bold bullet title when importing Markdown into Knowledge.
+
+## 2026-11-26 (v5.373.9)
+
+### Fixed
+
+- Retry failed needs-human handoffs for stranded PR feedback while continuing to route new review comments.
+
+## 2026-11-26 (v5.373.8)
+
+### Fixed
+
+- Remove pull requests from the native merge queue again: the dequeue mutation now sends the pull request as `id`, the field GitHub's `DequeuePullRequestInput` expects, so merge queue gate reconciliation no longer fails on every dequeue.
+
+## 2026-11-26 (v5.373.7)
+
+### Fixed
+
+- Watch separate release versions from the same JSON index when subscriptions select different version fields. On upgrade, all existing generic index feeds establish a fresh baseline and their queued alerts are cleared.
+
+## 2026-11-26 (v5.373.6)
+
+### Fixed
+
+- The Knowledge tab Advisor card now shows how many closed work beads the retro arm comparison saw (with a closed PR, without a ref, without a matching decision), and its empty-state and footer copy no longer say only beads with a closed PR are counted.
+
+## 2026-11-26 (v5.373.5)
+
+### Changed
+
+- images: bump omp 19.1.0 -> 19.2.1 (#19999)
+- images: bump gh 2.105.0 -> 2.106.0 (#20000)
+
+## 2026-11-26 (v5.373.4)
+
+### Changed
+
+- Customers enrichment now enables local gitdm by default, downloading the public cncf/gitdm files when enrichment is enabled. To opt out, set `customers.enrichment.gitdm.enabled: false` or `HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED=false` ([#19972](https://github.com/hivecommons/hive/issues/19972)).
+
+## 2026-11-26 (v5.373.3)
+
+### Fixed
+
+- Codex rotation no longer treats an environment API key as a Codex login unless the auth mode is explicitly API-key; legacy auth-file keys are preserved and ambiguous or ChatGPT logins are held ([#19943](https://github.com/hivecommons/hive/issues/19943)).
+- The `ioscan classifier failed open` warning for a genuine classifier backend error now tells operators to check the endpoint is reachable and healthy instead of to configure an endpoint that is already set ([#19988](https://github.com/hivecommons/hive/issues/19988)).
+
+## 2026-11-26 (v5.373.2)
+
+### Fixed
+
+- Agent config writes from the dashboard are now serialised, so two saves at once cannot interleave, and the `config_agent_general` and `config_agent_cadences` audit lines record the before and after value of each changed field.
+
+## 2026-11-26 (v5.373.1)
+
+### Fixed
+
+- A block edited into the dashboard overlay (`ask`, `chat`, `customers` or any other block the config knows) now survives the config reload and the next save instead of being dropped silently. A block the hive cannot load, or an overlay file that is not valid YAML, is logged and kept as written rather than overwritten (#19740).
+- The close-on-merge backfill now recognises a real `Fixes #N` on a confirmation-gated issue (needs-human, epic, reporter confirmation) when the repo is configured without its owner. Such an issue gets `hive/likely-done` and the awaiting-confirmation comment again, instead of being labelled `hive/partially-addressed` as if the merge had been partial. Follow-up to [#19956](https://github.com/hivecommons/hive/issues/19956).
+
+## 2026-11-26 (v5.373.0)
+
+### Added
+
+- Colony P5: hub consent reads from colony, Settings for store and auto-accept (#19973)
+
+### Fixed
+
+- Preserve recognizable context overflow errors from inference gateways for Claude Code recovery.
+
+### Security
+
+- The push-branch relays (the GitHub push watcher and the forge-only push relay) no longer let an agent's own checkout config steer where the hive's credentialed push goes ([#19959](https://github.com/hivecommons/hive/issues/19959)). The push now runs from a hive-owned `GIT_DIR` (a minimal config, HEAD and the one branch ref at the commit the relay resolved, plus the checkout's shallow list) with `GIT_OBJECT_DIRECTORY` pointing at the checkout's objects, so it never reads the agent's `.git/config` or anything it includes, and the agent cannot swap that config in between a check and the push. Every relay git command also runs with system and global config off, `GIT_ASKPASS`/`SSH_ASKPASS` and `core.askPass` unset, lazy fetches disabled, `http.sslVerify`, `http.followRedirects`, `push.gpgSign`, `log.showSignature` and `push.recurseSubmodules` pinned, and only the remote's own scheme allowed. Commands that read the checkout (resolving the branch, the sign-off check) no longer carry the token at all. A checkout whose config sets `url.*.insteadOf`/`pushInsteadOf`, `http.<url>.*`, `credential.<url>.*`, a remote named by URL, a remote proxy, or an `http.*` key other than transport tuning (such as `http.proxy` or `http.sslCAInfo`) is refused with the keys to remove. Operators who relied on `/etc/gitconfig` or `~/.gitconfig` for the hive's own pushes (a CA bundle, a proxy) should use the `GIT_SSL_CAINFO` and `https_proxy` environment variables instead, which still apply. The GitHub watcher's git commands are now also bounded by a five-minute timeout.
+
+## 2026-11-26 (v5.372.0)
+
+### Added
+
+- Customers can now keep person records and enrichment results in the embedded hivecommons/colony store (`/data/customers/colony.db`, colony v0.3.0), behind `customers.store` / `HIVE_CUSTOMERS_STORE` (`json` by default, so nothing changes until an owner opts in). `shadow` imports `people.json` and `enrichment.json` in one transaction, keeps `.pre-colony` copies, writes every change to both and logs parity counts only; `colony` reads the colony store and still writes the JSON, so setting `json` again is a lossless rollback. Provenance maps onto colony's ranks (a hand edit is user-set, a hub value hub-shared with its label, forge and provider values enrichment), forget erases the person from the colony store and the backups in every mode, and a new `customers.enrichment.auto_accept: gitdm_high` policy (default `off`) can fill an empty organization from a gitdm login match without ever replacing a hand-set, hub or forge-profile value ([#19855](https://github.com/hivecommons/hive/issues/19855)).
+- Sandbox Jobs can now copy the workspace in and out with `agent_sandbox.job.workspace_transport: copy`, so `runtime: job` works without ReadWriteMany storage and the Job never mounts hive's data claim (#19621).
+- The copy transport's per-Job Secret and NetworkPolicy are owned by the Job, so they no longer leak after a hive restart. It also keeps the Job when the pull fails, pulls the workspace after a kick timeout, leaves sockets and FIFOs out of the archive, bounds the workspace `emptyDir` (`job.workspace_size_limit`), and refuses `network: host`. Its RBAC moved to a separate `hive-sandbox-jobs-copy` Role that you bind on purpose (#19694).
+
+### Fixed
+
+- Close-on-merge no longer closes an issue when the merged PR only references it with `Refs` (or `Part of`, `Addresses`, ...). A claim-ledger row, a covered-by-PR comment or a branch named after the issue used to outrank the author's own non-closing reference, so a PR that explicitly said it was partial still closed its issue with "Fixed by #N" on merge. Such a PR now leaves the issue open with the skip reason `refs_only` (logged at info). An issue labelled `hive/partially-addressed` is also left open unless the merged PR names it with `Fixes`/`Closes`/`Resolves`, on the close-on-merge sweep, its backfill and the task-list sweep alike. `Fixes`/`Closes` close as before, and decomposed-parent auto-close and `parent_autoclose` are unchanged ([#19956](https://github.com/hivecommons/hive/issues/19956)).
+
+### Security
+
+- The copy workspace transport is stricter before it ships. Its `hive-sandbox-jobs-copy` Role now grants only `create` on Secrets and NetworkPolicies and `patch` on Jobs, with no `delete` on either kind: the per-Job token Secret and policy are owned by the Job and garbage-collected with it, and hive no longer deletes them by name. The sample admission policy `sandbox-job-copy-admission.yaml` now enforces (`Deny`), names no namespace or service account (it matches namespaces labelled `hivecommons.dev/service-account=<sa>`), denies every Secret delete from hive, requires the Secret to be owned by its Job, constrains the NetworkPolicy's selector and rules, and allows only a resume of a Job. New `job.runtime_class_name` (env override `HIVE_SANDBOX_JOB_RUNTIME_CLASS_NAME`, default empty, unchanged behaviour) sets the Job pod's `runtimeClassName`. Copy mode is refused when `HIVE_REQUIRE_HARDENED` is set, and when hive's own pod runs under a runtime class such as Kata and `job.runtime_class_name` is empty, so agent code never leaves the VM silently. Reported by sdwilsh (#19621, #19694).
+- The Forgejo push relay now refuses a push that would publish a hive-authored commit without a `Signed-off-by` trailer, with the same denial as the GitHub push watcher, and records the `agent_branch_pushed` audit entry for every branch it publishes. On Forgejo the hive identity is the configured forge user (`project.ai_author`, by name or its noreply address) and the lanes' commit address domain, not a GitHub login. Both relays share one check and one audit builder ([#19960](https://github.com/hivecommons/hive/issues/19960)).
+
+## 2026-11-26 (v5.371.0)
+
+### Added
+
+- **Hub CRM fields on the colony store, with migration (off by default).** The new hub setting `HIVE_HUB_CUSTOMER_STORE` (`json`, the default, `shadow` or `colony`) moves the hub's person and fact data (name, organization, country, affiliation, Slack id, notes, profile location and bio, the top-repo cache, identities and consent records) onto the hivecommons/colony v0.3.0 store at `/data/saas/colony.db`, each value as a fact with its provenance: set by the user, set by an admin, or derived. `shadow` imports every user on boot in one transaction, reconciles each person, writes both stores and keeps reading the JSON; `colony` reads from colony with a per-field JSON fallback and still writes the JSON, so setting `json` again is the rollback. The migration never rewrites a JSON file, keeps the last 3 `colony.db` backups, is idempotent and logs counts only; a locked, unreadable or newer `colony.db` fails closed to `json`. Deleting a hub user erases them from colony in every mode. Slack id, notes, location, bio and email stay `local_only`. A hive inside the trust domain (`HIVE_HUB_CUSTOMERS_TRUSTED_HIVES`) now also gets a labeled `affiliation` in the customer match answer, from public github.com data only. The users admin page shows who set each name, company and country. Account and access data stays in the JSON. Phase 4 of [#19851](https://github.com/hivecommons/hive/issues/19851) ([#19856](https://github.com/hivecommons/hive/issues/19856)); see [Hub CRM on the colony store](src/docs/hub-deployment.md#hub-crm-on-the-colony-store).
+- A forge-only hive now pushes branches from push-branch requests to the repo's Forgejo remote, and answers review and merge requests with a reason instead of leaving the agent waiting (#19916).
+- Boot and the dashboard's forge settings warn when Forgejo repos have no `forgejo.integration`, so every token tier, the read-only ones included, pushes with the one write token (#19917).
+
+### Fixed
+
+- Forgejo and Gitea label writes now check what the forge applied. Forgejo answers HTTP 200 for a label name the repo lacks and applies nothing, so the PR relay could open a PR without its `ready-for-review` hold and report a clean open. The adapter now creates a missing label (gate labels get the same colour and description as on GitHub) and applies it, and a label that still does not land is an error the relay reports as "opened, but not held" ([#19910](https://github.com/hivecommons/hive/issues/19910)). The Forgejo automerge sweep now treats `ready-for-review` and `decision-needed` as blocking labels, as the GitHub sweeps do ([#19912](https://github.com/hivecommons/hive/issues/19912)). When the hive's Forgejo user has write but not admin access, Forgejo refuses the permission API for other users; the automerge and close-on-merge sweeps now read the repo's assignee list (the users with write access) instead of skipping every PR with `permission-read-failed` ([#19914](https://github.com/hivecommons/hive/issues/19914)). Reported by sdwilsh.
+- Inference-routed agents now tell the Claude CLI their model's real context window. Claude Code assumes a 1M-token window for gateway and local model IDs it does not recognize, so a conversation on a smaller model could outgrow the server's context before the CLI compacted. Hive now exports `CLAUDE_CODE_MAX_CONTEXT_TOKENS` from a new per-agent `max_context_tokens` setting, or from the window discovered on the endpoint's `/v1/models`, which now also reads `context_length` and `max_input_tokens` and no longer borrows another model's window on a multi-model gateway. Claude model IDs are left alone; `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` turns the export off. Reported by sdwilsh ([#19913](https://github.com/hivecommons/hive/issues/19913)).
+- The GitHub App coverage check no longer reports a repository as not covered when it was renamed within the same account and the installation covers it under its new name; it logs the stale config entry instead.
+- **`hive validate` checks `forgejo.integration.key_file`, and an unset Forgejo token names itself** ([#19919](https://github.com/hivecommons/hive/issues/19919)). `hive validate` now runs the signer's key checks on `forgejo.integration.key_file` (exists, readable, allowed mode, RSA key), so a wrong path fails there instead of at the first clone or push. Work discovery, the issue and PR relays, the governor's writer and merges now refuse to build a Forgejo REST client when the Forgejo token resolves empty (an unset `forgejo.token_env` variable), with an error that names the variable. Before, Forgejo answered the anonymous request for a private repo with a 404, and discovery logged "The target couldn't be found". The writer does not fall back to the GitHub client in that case. GitLab and Gitea keep their current behaviour. Reported by sdwilsh.
+- A refused push now says why. The push broker kept only `exit status 128` from a failed `git push`, so a missing token scope, a rejected ref and a network failure all read the same. The error now carries the last lines of git's output, with the minted token, URL credentials and other secret shapes removed. (#19924)
+- A Codex contributor that signs in with an API key is no longer held by the quota guard. The guard read the missing ChatGPT subscription windows as unknown quota and held the relay with a banner that looked like exhausted quota. The publisher now detects an API-key login with no ChatGPT login and writes an `available` reading marked `auth_mode: "api_key"` with no windows. The relay admits it and warns once that tasks spend metered API credits. A ChatGPT login, no login at all, or an unreadable `auth.json` still holds as before. (#19932)
+
+### Security
+
+- `coverage-hourly.yml` no longer grants `issues: write` at the workflow level. Only `create-issue-on-coverage-drop` files coverage issues, and it already asks for that permission itself, so the `gate` and `coverage` jobs now run read-only. Flagged by zizmor ([#19950](https://github.com/hivecommons/hive/issues/19950)).
+
+## 2026-11-26 (v5.370.0)
+
+### Added
+
+- A hive that authenticates with a personal access token can now rotate it without a restart through the owner-only `PUT /api/github-token` route. The new token is checked against the configured GitHub API first (it must sign in, read every project repo and carry the scopes the hive's ACMM level needs); a token that fails is refused and the current one keeps working. A verified token is saved like any other setting, takes effect at once for the hive, its agents and relays, and is recorded in the audit log by fingerprint. The token is never shown back; `GET /api/github-token` reports only its fingerprint, login and when it was verified. The route is refused on GitHub App hives, needs a JSON body and refuses cross-site requests, reports whether the token was sealed (a plaintext token keeps the config file owner-only), refuses a config with no source path, and answers 429 for 15 seconds after a rejected token. The Settings field and `hivectl` command (#19633) are not part of this change.
+
+### Fixed
+
+- The supervisor policy (`supervisor-nogithub.md`, `supervisor-advisory.md`) no longer tells the supervisor to kick agents. Agents have no kick route (`POST /api/kick/{agent}` is owner-only since #6557), so every 5-minute supervisor turn spent tool calls hunting for one and reported "no kick endpoint". The policy now says the governor kicks on cadence and the supervisor records stale or stuck agents in an advisory bead, and forbids the dashboard API, the `hive` binary, `pluk-send` and tmux as kick paths. Reported by sdwilsh ([#19891](https://github.com/hivecommons/hive/issues/19891)).
+- Forgejo and Gitea label requests now report an error when the repo lacks a requested label, so the PR relay flags a PR that opened without its ready-for-review hold.
+- Reject conflicting archive and destination paths during spoke restore dry runs and before replacing any files.
+
+## 2026-11-26 (v5.369.6)
+
+### Changed
+
+- Forge blocks (gitlab, gitea, forgejo) share one token source and accept an optional `token_file` under /secrets or /data/secrets, also settable in Settings (a single Settings write cannot leave a forge URL and `token_file` both set); configs with only `token_env` behave as before.
+
+### Fixed
+
+- Concurrent workflow saves, confirmations, ingestion and Marketplace imports now preserve each draft by allocating versions without overwriting other saves.
+
+## 2026-11-26 (v5.369.5)
+
+### Fixed
+
+- Preserve follow-up drafts typed in a session while an earlier send is being queued.
+
+## 2026-11-25 (v5.369.4)
+
+### Fixed
+
+- Continue self-authored automerge sweeps for accessible repositories when another repository returns 404.
+
+## 2026-11-25 (v5.369.3)
+
+### Fixed
+
+- The queued automerge sweep now skips repositories whose GitHub issue listing returns 404, logging the affected repository instead of preventing other repositories from being swept ([#19908](https://github.com/hivecommons/hive/issues/19908)). A 404 can also indicate missing access; operators should check the repository configuration and GitHub App permissions.
+
+## 2026-11-25 (v5.369.2)
+
+### Fixed
+
+- A GitHub 5xx on a PR or issue stage-label write (`stage labels: write failed`, `issue stage labels: write failed`) no longer files an `unclassified_error_repeated` fleet self-report ([#19889](https://github.com/hivecommons/hive/issues/19889), [#19887](https://github.com/hivecommons/hive/issues/19887)). The stage engine marks the write uncertain and the next sweep re-reads the item and reconciles its labels, so a transient upstream error is not a hive defect; the warning stays in local logs, and 4xx or non-label failures remain reportable.
+
+## 2026-11-25 (v5.369.1)
+
+### Changed
+
+- Activity monitor rows now show the maintainer's real decision. An untriaged issue whose reporter already opened a PR reads **Triage needed · contributor PR #N open**, with the PR named in the caption and an **Open contributor PR #N** entry under **Accept triage** (the tracker payload's new `triage_pr`). The row only displays this; the reporter-trust and triage gates are unchanged. A reviewer's `requires_human` / needs-decision verdict on a PR a person pushed themselves now parks at `stage/085-needs-decision` with the reviewer's question, so the row no longer says it is waiting on the author to push. Only `changes_requested`, a conflict, red checks or a missing DCO send the PR back to its author (`stage/071-needs-author`). **Behavior change:** since #15202 that verdict had routed a person's PR to 071. (#19843)
+
+### Fixed
+
+- The inference translator no longer leaves the Claude CLI on a silent stream while a model waits in a gateway queue or reasons, which made the CLI abort and resend the request after 300 seconds and threw away five minutes of generation each time ([#19793](https://github.com/hivecommons/hive/issues/19793)). For a streaming request it now sends the 200 and `message_start` before it calls the gateway, writes an Anthropic `ping` event after every 10 seconds of silence (`HIVE_INFERENCE_STREAM_PING_INTERVAL` changes the interval), forwards `delta.reasoning_content` as a `thinking` block, and flushes every event. Because the 200 is already out, a gateway failure on a streamed request (unreachable, a non-2xx status, or a stream that breaks) now reaches the CLI as an SSE `error` event with the same `inference backend ...` message and an Anthropic error type that follows the status. Non-streaming requests and `governor.inference_resilience` are unchanged. The operator docs also note the CLI's own `CLAUDE_STREAM_IDLE_TIMEOUT_MS` and `API_FORCE_IDLE_TIMEOUT` limits.
+
+## 2026-11-25 (v5.369.0)
+
+### Added
+
+- **GitHub now shows who made a dashboard label change** ([#19852](https://github.com/hivecommons/hive/issues/19852)): the dashboard writes labels with the Hive App's token, so GitHub showed the App as the one who released or added a hold, which read as automation overriding a person's hold. Adding or releasing a hold, accepting triage, and an approval that lifts `needs-human` or the sentinel label now leave one comment on the issue or PR naming the signed-in dashboard user and the labels changed. Each item and kind keeps one comment under a hidden `<!-- hive:dashboard-actor kind=… -->` marker, edited in place on the next action instead of posted again. The setting is `dashboard.attribute_label_actions` (on by default), and the audit-log entry is written as before.
+
+### Fixed
+
+- Keep the same agent selected and visible in the TUI when the fleet list refreshes and the agent is still present.
+
+## 2026-11-25 (v5.368.0)
+
+### Added
+
+- A hive configured with `forge: gitea` (project-wide or in `project.repo_policies[]`) now reads `/api/v1/version` from each Gitea instance it points at and, when the instance reports a Forgejo version, logs one warning per instance suggesting `forge: forgejo` — the only kind that gets the Forgejo automerge and close-on-merge sweeps ([#19832](https://github.com/hivecommons/hive/issues/19832)).
+
+### Fixed
+
+- Exclude closed GitHub issues from GitHub Projects work queues even when they still have a matching board status.
+- Update sibling named sessions when reissuing their shared contributor token with `hivectl`.
+
+## 2026-11-25 (v5.367.1)
+
+### Fixed
+
+- **Agent config saves no longer report success when the config was not written** ([#19847](https://github.com/hivecommons/hive/issues/19847)). `PUT /api/config/agent/{name}/general`, `.../cadences` and `.../models` used to log a failed save and still answer `200`, so the dashboard showed the change as saved while it lived only in memory and vanished on the next restart or reload. They now answer `500` when the write fails and `409` when the hive has no writable config source, and put the in-memory config back as it was. The whole request is validated before anything is applied, and a cadence for a governor mode the hive does not define is refused with `400` instead of being skipped silently.
+
+## 2026-11-25 (v5.367.0)
+
+### Added
+
+- Per-repo **open PRs** setting (`project.repo_policies[].open_prs`: `on`, `off` or `workflow_only`), the sibling of the per-repo auto-merge switch, at every ACMM level. `off` lets agents analyse, comment and file issues in a repo but open no PR there. `workflow_only` lets only workflow hand-off PRs (`workflow.dispatch`) open, so an agent's own cadence work, such as test hardening, files issues instead of PRs and reviews. It is enforced where agent PRs open: the `hive-open-pr` relay, the forge relay, the sandbox PR path and the sidecar callback. Each refusal is audited as `agent_write_refused` with `gate=open-prs`. A workflow PR is recognised from the hive's own record of the hand-off kicks it planned and delivered, never from PR text: a `hive-open-pr` request must name the handed-off issue, and a sandboxed kick must be the planned hand-off kick. Kicks name each limited repo, and the setting survives a reload through the dashboard overlay. Set it on **Settings → Repos** or on the repo card next to auto-merge (`POST /api/repos/open-prs`). `project.open_prs: false` still wins. **Behavior change:** `project.open_prs: false` used to stop only sandbox PRs; it now also stops PRs through the `hive-open-pr` and forge relays, and workflow profiles that open PRs resolve to no agent on such a hive. (#19870)
+- **Hub affiliation from hivecommons/colony.** The hub admin Users table's daily affiliation refresh now matches each user's public github.com login against the public cncf/gitdm files on the hub (on by default, `HIVE_HUB_AFFILIATION_COLONY_GITDM`; nothing about anyone is sent, emails are never used) and can ask CNCF DevStats for the user's CNCF contribution count (off by default, `HIVE_HUB_AFFILIATION_COLONY_DEVSTATS`, hourly cap). A colony value is labelled `colony:gitdm` or `colony:devstats` with colony's confidence, never replaces an organization the user or an admin set on the hub or the company on the person's own profile, and is not sent to any hive. Phase 1 of the Colony customer-data backend design ([#19851](https://github.com/hivecommons/hive/issues/19851)); see [telemetry.md](src/docs/telemetry.md#hub-affiliation-from-colony).
+
+### Fixed
+
+- ACMM criteria detection: Test suite now matches nested test directories (monorepos; vendored trees excluded), Coverage gate also accepts `.github/codecov.yml`, `dev/codecov.yml` and `.github/workflows/coverage.yml`, Code style config accepts more documented config names (such as `.prettierrc.yml`), and the four L2 agent instruction file criteria are merged into one `acmm:agent-instructions` criterion so any single file (such as `AGENTS.md`) passes. Waivers on the old `acmm:claude-md`, `acmm:copilot-instructions`, `acmm:agents-md`, and `acmm:cursor-rules` IDs are no longer recognized.
+
+### Security
+
+- **Customers hub import: the hub answers only its own trust domain.** `POST /api/customers/match` now answers only hives listed in the new hub setting `HIVE_HUB_CUSTOMERS_TRUSTED_HIVES` (the project's own hives; empty by default). Every other hive gets an empty match list, whatever its `customers.hub_import.enabled` says and whatever consent a person recorded for it, so the hub's knowledge about a person no longer reaches third-party spokes. Operators who use the hub import for their own hive must add its ID to the list. Part of [#19851](https://github.com/hivecommons/hive/issues/19851).
+
+## 2026-11-25 (v5.366.7)
+
+### Changed
+
+- CI now runs the Forgejo JWT live check against a real Forgejo 17 in a nightly lane on GitHub-hosted runners (schedule and manual dispatch only, never a required check), so the per-tier JWT path no longer depends on a manual run; `forgejo-live.sh` accepts `RUNTIME=docker` and a host Go toolchain, and the check also confirms a write-scope integration can push (#19494).
+
+### Fixed
+
+- A codex agent whose project lacks access to its configured model (the `■ Project ... does not have access to model` pane line) is now recorded as a backend auth denial with a backoff instead of ending every kick as `ended_no_visible_action`; only the model name is kept, not the project id. (#19810)
+- A forgotten hold on an all-green pull request no longer reads as a CI failure, and it no longer waits unnoticed. On a PR event, `native-queue-policy` now reports a head held only by `hold` or `do-not-merge/hold` as held: it still validates every policy provider, and when they are green the check passes with a `HELD:` notice instead of failing. Every merge-group run still refuses held PRs, and other blocking labels, drafts and moved heads still fail. The hive now raises a PR that has sat behind a hold label with every check green for longer than `escalation.stale_hold_after` (default 2h, `HIVE_STALE_HOLD_AFTER` overrides, `off` disables) once per held head, as a high-priority notification and a blocked lifecycle stage. A PR that also carries the opt-in `escalation.release_when_green_label` (default `hold/until-green`) has its hold labels removed once every check is green; a plain hold is never removed, and no approval or lgtm label is added. (#19839)
+- The contributor relay no longer assigns an issue a maintainer has put on hold or that is awaiting triage. Before, `selectTask` picked from the cached snapshot and only re-read the issue after the lease, claim and token mint, so a `hold` added half a minute earlier was logged as "claim refused" while the task was still sent. Now the chosen issue is read live before anything is committed: the hold family and configured hold labels, contribute skip labels, a closed state and the reporter-trust triage gate (configured trusted associations, logins and triage labels) all refuse it, and a failed read refuses too. The contribute admission also withholds cached rows whose webhook-patched labels show a hold or fail the triage gate, so they leave the Ready queue within seconds. An issue that gains a hold or loses its triage label while a contributor is working on it has its task revoked ("the maintainer put this issue on hold"), with the lease, claim and pending credential released and the contributor's branch and PR left alone. This happens from the `issues` webhook, and a two-minute reconcile catches a missed webhook. The ledger's fresh-claim admission applies the same triage gate. (#19846)
+- Fix the Ask Hive panel: it now sits below the dashboard header with a title and close button, uses one type scale, renders answers as markdown with numbered source citations, shows progress while a question is answered (with Retry on failure), and keeps scrolling inside the panel.
+
+## 2026-11-25 (v5.366.6)
+
+### Fixed
+
+- Open and act on the selected Knowledge fact when multiple layers contain the same slug.
+
+### Security
+
+- No automerge lane merges a PR that touches credential, keystore, auth or secret code, or that wears the sentinel alert label, until a person decides on that exact head ([#19741](https://github.com/hivecommons/hive/issues/19741)). This applies to App self-merge, trusted bots, trusted authors and contributors. The trusted-author lane had merged an owner's credential change on green CI alone. Three things let it through: the sentinel finding was notice-only, the swarm's changes_requested was a COMMENTED review, and the review gate was in shadow. The new `auto_merge.decision_gate` is on by default with a shipped set of credential paths. A trusted merger's APPROVED review on the head, the dashboard's Approve, or `/hive decision approve` releases it, and the tracker parks a held PR at 085. Set `paths` to replace the set, `sentinel: false` to leave sentinel-labelled trusted PRs to the label rules, or `enabled: false` to turn the gate off.
+
+## 2026-11-25 (v5.366.5)
+
+### Changed
+
+- Scoped-token tier names now have a named Go type (`agentmode.TokenTier`) instead of a bare string; no behavior change ([#19566](https://github.com/hivecommons/hive/pull/19566)).
+
+### Fixed
+
+- The post-merge DCO monitor no longer fails a contributor's private-email squash because the pull request also held GitHub "Update branch" merges made by the hive App. The merged-PR evidence rule from #19660 required every PR commit to belong to the PR author, so the squash of #19766 (69794fd) was reported as `pr-commit-not-by-pr-author`; it now ignores only verified web-flow merge commits authored by the hive App (`hivecommons-hive[bot]`, login and id), which carry base-branch content and none of the change. Merges by humans or any other GitHub App, unverified or single-parent bot commits, and PRs with no commit of the author's own still fail. (#19775)
+- Clear Inbox selections when items are hidden or removed, and list the affected items in the delete confirmation.
+
+## 2026-11-25 (v5.366.4)
+
+### Fixed
+
+- **A contributor's expired CLI login no longer files a fleet self-report against the hub** ([#19816](https://github.com/hivecommons/hive/issues/19816)). When a relay fails a `fix-pr` task because its own agent CLI cannot authenticate (an expired OAuth session, a missing login, a rejected API key) or declares `failure_kind: environment`, the hub's "fix-pr task failed; giving up on relay delivery" line is now logged at INFO instead of WARN, so it stays out of the `unclassified_error_repeated` feed. Retries, cooldowns and the stage engine's re-nudge/adoption hand-off are unchanged; a give-up for any other reason still warns.
+
+## 2026-11-25 (v5.366.3)
+
+### Fixed
+
+- The Hive Hub Contribute dialog keeps keyboard focus inside and restores it when closed.
+
+## 2026-11-25 (v5.366.2)
+
+### Fixed
+
+- An agent switched off an inference gateway backend while stopped or paused no longer keeps sending its requests to the inference translator, which failed every one with "inference no route"; its next start rebuilds the tmux session for the new backend.
+
+## 2026-11-25 (v5.366.1)
+
+### Fixed
+
+- The supersession sweep no longer fails or warns on every tick when a PR claims an issue that does not exist; the claim is skipped quietly.
+
+## 2026-11-25 (v5.366.0)
+
+### Added
+
+- Run `opencode` as a hub/spoke agent backend, not only a contributor one: both images now ship it (pinned, checksummed), the launcher starts the TUI unattended with the model passed through inline config, its pane is recognised as a live CLI, and the dashboard model picker lists its models. Also creates the shared opencode XDG bridge target that previously dangled and crashed opencode at startup.
+
+## 2026-11-25 (v5.365.7)
+
+### Fixed
+
+- The permissions watcher's "entries owned by another uid" summary now warns again only when the skipped count doubles, and treats the condition as cleared only after several empty ticks, so a surge that grows the unfixable tree every tick no longer warns every tick and trips the fleet self-report (#19791).
+
+## 2026-11-25 (v5.365.6)
+
+### Fixed
+
+- Sorting and refreshing the Hive Hub directory keep the active search filter and sort order.
+
+## 2026-11-25 (v5.365.5)
+
+### Fixed
+
+- Hive now checks the latest schedule before joining a meeting or marking it missed, so changed invites do not use the old time.
+
+## 2026-11-24 (v5.365.4)
+
+### Fixed
+
+- A hive paused through its fleet breaker no longer looks healthy in My Hives, and it can be resumed from where its paused state shows ([#19778](https://github.com/hivecommons/hive/issues/19778)). The My Hives row now carries a **⏸ paused** pill next to the mode badge, with a hover naming how many agents the breaker holds and who paused them. For the owner or a hub admin the pill reads **⏸ paused · ▶ resume** and resumes the hive on click. On the hive's own dashboard the owner's chip reads **paused · resume**, and it is clickable as soon as sign-in resolves instead of after the next status poll. A viewer who cannot release the breaker there gets a **Resume in My Hives ↗** link to the hub.
+
+## 2026-11-24 (v5.365.3)
+
+### Fixed
+
+- dashboard: the "model is not the <backend> spelling" warning no longer returns on every boot or upgrade once the hive has written the corrected id to the agent overlay (the rewrite is logged instead); the banner is raised only when that write fails, and it now has a Dismiss button that `POST /api/system-alerts/dismiss` accepts.
+- The Review Queue keeps your selected page when a background refresh finishes late, preserves keyboard focus during loading, and lets you retry failed or timed-out page changes.
+
+## 2026-11-24 (v5.365.2)
+
+### Fixed
+
+- Calendar refreshes preserve the draft and focus in the Add meeting form.
+- The Hub bulk weekly upgrade action now saves the Tuesday 1 pm ET schedule for selected hives, including hives shared with the owner role. Reapplying Weekly preserves the current week's upgrade record.
+
+## 2026-11-24 (v5.365.1)
+
+### Fixed
+
+- A repository bound to a rules-mode workflow model now gets the model's stage and whose-turn labels on its pull requests when auto-merge is off, which it always is below ACMM L6 ([#19768](https://github.com/hivecommons/hive/issues/19768)). Each auto-merge lane skipped such a repository before listing its PRs, so the stage pass never saw them. The request issue was staged, but the deliverable PR never got `stage/*` or `ready-for-*` labels (cncf/techdocs on `cncf-techdocs-assessment@curated-2026.11.4`). A workflow lane now lists the open PRs no auto-merge lane recorded. A PR that every lane handed off is also derived through the model's rules instead of being skipped.
+
+## 2026-11-24 (v5.365.0)
+
+### Added
+
+- `forgejo.integration` makes git clone and push on Forgejo repos use a one-hour JWT per agent token tier, signed with an operator-held RSA key for that tier's Forgejo authorized integration, instead of the shared `forgejo.token_env` access token (#19760, from #19576).
+
+## 2026-11-24 (v5.364.0)
+
+### Added
+
+- **Settings → Dashboard has a GitHub sign-in toggle** (#19721). `dashboard.github_sign_in` (#19618) could only be set by editing `hive.yaml.runtime` on the data volume; it now has a switch next to Hub-proxied auth, and `GET`/`PUT /api/config/dashboard` read and write `github_sign_in`. Turning it off swaps the login page's "Sign in with GitHub" button for a "Sign in through the hub" link and makes the device-flow endpoints (and `hivectl login`) refuse, without a restart. The toggle shows the hub link the login page will use. Without one (no `dashboard.hub_sign_in_url`, `HIVE_HUB_URL` or `hub.url`, or no `hive_id`) the toggle is disabled and the server refuses to turn it off, so the owner cannot lock everyone out. The hub link now also follows `HIVE_HUB_URL`. The default stays on.
+- The emitted `.hive/workflows/checks.yml` now resolves `spec:` check sources to a permalink built from the model's `workflow.hivecommons.dev/source` annotation and keeps the section title in a `description` field; non-spec and unresolvable sources are unchanged ([#19756](https://github.com/hivecommons/hive/issues/19756)).
+- `hive forge key-list --issuer https://keys.example.org --key /secrets/forgejo/jwt-signing.pem --out DIR` writes the two static files a Forgejo 17 authorized integration fetches to verify hive's JWTs: `.well-known/openid-configuration` and `jwks.json`. Serve `DIR` at the issuer URL over https. Pass `--key` once per key to publish the old and the new key during a rotation. The command refuses a key file that others can read, or that any group but `hive-launch` (GID 1002, the pod `fsGroup`) can read, so the shipped `/secrets` mount at `defaultMode: 0440` works while group `node`, which every agent UID shares, is refused. It never prints the private key. A key kept under `/data/secrets` still loads after the boot keystore sweep seals it in place. The new `crux/forgejwt` package signs the tokens: RS256, `kid` set to the key's RFC 7638 thumbprint, `iat` 60 s in the past, and `exp` one hour after minting. Nothing reads it from config yet. Refs [#19494](https://github.com/hivecommons/hive/issues/19494).
+
+## 2026-11-24 (v5.363.0)
+
+### Added
+
+- Hubs can turn off release tracking with `HIVE_HUB_RELEASE_TRACKING_DISABLED=true`, in the same style as `HIVE_HUB_MARKETPLACE_DISABLED`. The hub then skips the GitHub branch-tip SHA poll, image-branch discovery, the release-channel resolver and the stable-promotion status reads, so it makes no release-tracking calls to api.github.com or ghcr.io, and the dashboard shows its existing "unknown" state for the latest-image and channel rows. `network-requirements.md` now lists the hub's outbound hosts and which feature needs each ([#19726](https://github.com/hivecommons/hive/issues/19726)).
+
+### Fixed
+
+- A hub that cannot reach ghcr.io no longer retries the release-channel resolve and the image-branch lookup on every dashboard poll and snapshot rebuild. After a failed lookup it waits about 60 seconds and serves the previous answer or the "unknown" placeholder rows meanwhile, which cuts a firewalled hub from about 2,800 failing GHCR requests an hour to at most a few hundred and still recovers within a minute of GHCR coming back ([#19725](https://github.com/hivecommons/hive/issues/19725)).
+- The Workflow select on Settings → Repos now stays inside the dialog: options show only the model name and version, with the description on hover.
+- Closing or deleting a terminal session now coordinates with Resume so shutdown cannot kill a replacement terminal or leave a terminal the dashboard cannot track.
+
+## 2026-11-24 (v5.362.0)
+
+### Added
+
+- Sandbox Job kicks on a model gateway backend can now reach hive's inference translator through the opt-in `agent_sandbox.job.inference_proxy` listener ([#19619](https://github.com/hivecommons/hive/issues/19619)). It is off by default, serves TLS only, and gives each kick a per-kick key that is revoked when the kick ends, so the Job holds no gateway key and usage is recorded as for other agents.
+
+### Changed
+
+- Ask Hive (the docs help panel and its Help menu item) is now on by default on hosted hives, in hub mode through the hub relay, so no Kapa key is needed on the hive ([#19739](https://github.com/hivecommons/hive/issues/19739)). An explicit `ask.enabled: false`, `HIVE_ASK_ENABLED=false` or `ask.mode: off` still turns it off, each person still confirms the notice before their first question, and the hub's `HIVE_ASK_RELAY_DISABLED_HIVES` still refuses single hives. Self-hosted hives keep the off default, since they need their own key. Settings, Features shows the default and calls the toggle **Ask Hive**; switching it off saves `ask.enabled: false`.
+
+### Fixed
+
+- The manual repository rescan now works on a hive whose repos are all on Gitea or Forgejo ([#19494](https://github.com/hivecommons/hive/issues/19494)). It used to fail with a missing-credentials error because it called the GitHub enumerator directly; it now enumerates through the repo's own forge, as the eval cycle does, and skips GitHub CI enrichment for PRs on other forges.
+- hub: the hive list now opens a self-hosted spoke through the hub SSO handoff (`/api/saas/hives/<id>/open`), the same as a hosted spoke, so a spoke holding `HIVE_HUB_SECRET` signs the user in instead of showing its own login page. The hive-name link, the "your hive is ready" callout and the Dashboard menu link share one decision; self-service (`byo-`) spokes keep their direct link and a row with no dashboard URL stays plain text.
+- Hive now remembers the sequence of a calendar cancellation and ignores older updates for the same event.
+- Hub backups validate recovery inputs before publishing, protect older backups during upgrades, and retain hub archives with spoke gaps separately from full fleet archives.
+- Hive now imports Linear issue priorities correctly, including issues with no priority.
+
+## 2026-11-24 (v5.361.1)
+
+### Security
+
+- **Forgejo automerge no longer merges commits pushed after the approval label** ([#19701](https://github.com/hivecommons/hive/issues/19701)). The Forgejo automerge sweep checked who last added the automerge label (default `lgtm`) but not whether the pull request moved afterwards, so a pull request author without write access could push new commits after a writer's approval and have them merged once CI went green. The sweep now reads the pull request's timeline and skips it with reason `pushed-after-label` when a push (including a force push) follows the last label addition; a writer must add the label again to approve the new head.
+
+## 2026-11-24 (v5.361.0)
+
+### Added
+
+- **Forgejo repos get automerge and close-on-merge** ([#19671](https://github.com/hivecommons/hive/issues/19671)). The GitHub sweeps still skip every non-GitHub repo; a Forgejo repo now has its own sweeps, run every two minutes and with no GitHub client needed. Automerge merges an open, non-draft pull request through Forgejo's merge API, pinned to the head it judged (`head_commit_id`), only when auto-merge is on for the repo (off below ACMM L6, as on GitHub), it carries `governor.labels.automerge` (default `lgtm`) last added by someone other than its author who has write access, it carries no `hold`, sentinel, decision-needed or exempt label, Forgejo reports it mergeable, and the combined commit status at the head is `success` with at least one status. Close-on-merge relies on Forgejo closing the issues a pull request names with a closing keyword when it merges into the default branch, and closes, with a marked comment, the ones still open two minutes to seven days after a merge by the hive's own Forgejo user or a writer (for example a merge into another branch), after the unsolicited write-back gate allows it as an `issue_close`. It honours `hive: needs-confirmation` and `issues.close_on_merge`, and never closes again an issue a person reopened. GitLab and Gitea repos still get neither sweep.
+- A Forgejo repo's sandbox and Sessions workspaces are cloned from, and the push broker pushes to, the repo's own forge host with the forgejo block's token, which git now offers only to that host; the agents' proxy inspects only the configured Forgejo hosts, and GitLab and Gitea clone and push are refused as not implemented (#19677).
+- A hive with repositories on GitHub and on GitLab, Gitea or Forgejo now finds work in its non-GitHub repositories. The governor drops the GitHub client's share for each such repository, lists it through its forge adapter, and keeps GitHub CI and workflow-approval enrichment off its change requests. GitHub-only hives enumerate exactly as before. Refs [#19703](https://github.com/hivecommons/hive/issues/19703).
+
+### Fixed
+
+- GitHub App token: when a proactive installation-token refresh fails while the cached token is still valid, the hive now serves the cached token and waits a minute before trying to mint again. Before, every GitHub call in the 20 minutes before expiry retried the mint while holding the token lock, so an unreachable GitHub API made each caller wait up to 8 seconds and logged one warning per call. A refresh that times out is no longer self-reported as `unclassified_error_repeated`; other refresh failures (a revoked key, an uninstalled App) still are, and a token that truly expires still fails as before ([#19706](https://github.com/hivecommons/hive/issues/19706)).
+
+## 2026-11-24 (v5.360.0)
+
+### Added
+
+- A forge-only hive now serves agent requests through the forge. Pull requests opened with `hive-open-pr`, and issue, comment and label requests, go to the Forgejo or Gitea repository (GitLab has no create seams yet and is refused) with the same agent-manager authorization as on GitHub. Every such pull request carries the ready-for-review gate label until a person releases it. Hives with any repository on GitHub keep their GitHub relays unchanged. Refs [#19670](https://github.com/hivecommons/hive/issues/19670).
+
 ## 2026-11-24 (v5.359.0)
 
 ### Added

@@ -133,6 +133,7 @@ func newReviewThreadGuard(org func() string, botLogin func() string, logger *slo
 type reviewFeedbackSource interface {
 	FetchPRFeedback(ctx context.Context, repo string, number int) (github.PRFeedback, error)
 	CreateIssueComment(ctx context.Context, repo string, number int, body string) error
+	IssueCommentPosted(ctx context.Context, repo string, number int, body string) (bool, error)
 }
 
 // reviewFeedbackRoute says where a PR's feedback goes.
@@ -326,24 +327,31 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 				"comments", len(sc.IDs), "retry", sc.Retries+1, "max_retries", s.Retry.MaxRetries)
 		case reviewfeedback.StrandedExhausted:
 			res.Stranded++
-			s.needsHuman(ctx, key, repo, number, reviewfeedback.StrandedReason(sc.Retries+1), reviewfeedback.ItemsByID(fb.Items, sc.IDs), nil, &res)
-			continue
-		}
-		if len(fb.Items) == 0 {
-			continue
+			if err != nil {
+				continue
+			}
 		}
 		d := s.Store.Plan(key, fb.Items, s.Now, s.Limits)
+		handoffPending, err := s.retryStrandedHandoff(ctx, key, repo, number, fb, sc.Verdict == reviewfeedback.StrandedExhausted, &res)
+		if err != nil {
+			s.Logger.Warn("review feedback: could not persist stranded-feedback hand-off", "repo", repo, "pr", number, "error", err)
+			continue
+		}
 		switch d.Verdict {
 		case reviewfeedback.VerdictDebounce:
 			res.Debounced++
 			s.Logger.Debug("review feedback: burst still arriving, waiting to coalesce", "repo", repo, "pr", number, "comments", len(d.Items))
 		case reviewfeedback.VerdictCapReached:
 			res.CapReached++
-			s.needsHuman(ctx, key, repo, number, "it has been routed to its agent "+strconv.Itoa(s.Limits.WindowCap)+" times in "+s.Limits.Window.String()+"; further feedback is waiting, and a new comment from a person resets this", d.Items, nil, &res)
+			if !handoffPending {
+				s.needsHuman(ctx, key, repo, number, "it has been routed to its agent "+strconv.Itoa(s.Limits.WindowCap)+" times in "+s.Limits.Window.String()+"; further feedback is waiting, and a new comment from a person resets this", d.Items, nil, &res)
+			}
 		case reviewfeedback.VerdictKick:
 			recorded := s.recordedRules(repo, number, d.Items)
 			if route.Agent == "" {
-				s.needsHuman(ctx, key, repo, number, route.Reason, d.Items, nil, &res)
+				if !handoffPending {
+					s.needsHuman(ctx, key, repo, number, route.Reason, d.Items, nil, &res)
+				}
 				continue
 			}
 			brief := reviewfeedback.BuildBriefWithRules(repo, number, fb.HeadRef, s.WritingGuide, d.Items, recorded, s.Rules != nil)
@@ -377,15 +385,55 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 	return res
 }
 
+// retryStrandedHandoff retries a persisted note independently of agent kicks.
+// Its result also defers generic needs-human notes while a handoff is pending.
+func (s reviewFeedbackSweep) retryStrandedHandoff(ctx context.Context, key, repo string, number int, fb github.PRFeedback, countedStranded bool, res *reviewFeedbackResult) (bool, error) {
+	for {
+		note, obsolete, err := s.Store.NextStrandedHandoff(key, fb, s.Now, s.Retry)
+		if err != nil || note == nil {
+			return false, err
+		}
+		if !obsolete {
+			if note.Ready && fb.HeadSHA != "" {
+				if !countedStranded {
+					res.Stranded++
+				}
+				s.postNeedsHuman(ctx, key, repo, number, reviewfeedback.StrandedReason(note.Kicks), len(note.IDs), nil, note.Body, res)
+			}
+			return true, nil
+		}
+		// The original POST may have succeeded despite returning an error.
+		// Check before dropping its body and considering another note.
+		if note.Ready {
+			posted, err := s.Source.IssueCommentPosted(ctx, repo, number, note.Body)
+			if err != nil {
+				s.Logger.Warn("review feedback: could not check the obsolete hand-off", "repo", repo, "pr", number, "error", err)
+				return true, nil
+			}
+			if posted {
+				_, err := s.Store.MarkNeedsHuman(key, s.Now)
+				return true, err
+			}
+		}
+		if err := s.Store.DiscardStrandedHandoff(key, s.Now); err != nil {
+			return true, err
+		}
+	}
+}
+
 // needsHuman posts the needs-human note: once per PR when feedback cannot be
 // routed, or with drafts set, the replies the agent drafted but could not
 // post (#19096), at most once per Limits.Window (BlockedDraftsDue).
 func (s reviewFeedbackSweep) needsHuman(ctx context.Context, key, repo string, number int, reason string, items []github.FeedbackItem, drafts []reviewfeedback.ReplyDraft, res *reviewFeedbackResult) {
+	s.postNeedsHuman(ctx, key, repo, number, reason, len(items), drafts, reviewfeedback.NeedsHumanNote(reason, items, drafts), res)
+}
+
+func (s reviewFeedbackSweep) postNeedsHuman(ctx context.Context, key, repo string, number int, reason string, numItems int, drafts []reviewfeedback.ReplyDraft, body string, res *reviewFeedbackResult) {
 	if len(drafts) == 0 && s.Store.NeedsHumanNoted(key) {
 		return
 	}
-	s.Logger.Warn("review feedback: cannot route to an agent, asking a person", "repo", repo, "pr", number, "reason", reason, "comments", len(items), "drafted_replies", len(drafts))
-	if err := s.Source.CreateIssueComment(ctx, repo, number, reviewfeedback.NeedsHumanNote(reason, items, drafts)); err != nil { // writeback:solicited a person's review feedback on this hive-authored PR
+	s.Logger.Warn("review feedback: cannot route to an agent, asking a person", "repo", repo, "pr", number, "reason", reason, "comments", numItems, "drafted_replies", len(drafts))
+	if err := s.Source.CreateIssueComment(ctx, repo, number, body); err != nil { // writeback:solicited a person's review feedback on this hive-authored PR
 		s.Logger.Warn("review feedback: needs-human note not posted", "repo", repo, "pr", number, "error", err)
 		return
 	}

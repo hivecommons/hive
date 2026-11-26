@@ -128,6 +128,7 @@
     let _kbSelectedType = '';
     let _kbSearchQuery = '';
     let _kbSelectedFact = null;
+    let _kbFactRequest = 0;
     let _kbFacts = [];
     const _kbPageSize = 50;
     let _kbPageOffset = 0;
@@ -267,7 +268,8 @@
         }
         _kbInitialLoad = false;
         const enabledChanged = !prev || prev.enabled !== _kbCache.enabled || JSON.stringify(prev.primer || null) !== JSON.stringify(_kbCache.primer || null);
-        const layersChanged = !prev || JSON.stringify((prev.layers||[]).map(l=>l.type)) !== JSON.stringify((_kbCache.layers||[]).map(l=>l.type));
+        const layerKeys = stats => JSON.stringify((stats.layers || []).map(l => [l.type, l.source_layer]));
+        const layersChanged = !prev || layerKeys(prev) !== layerKeys(_kbCache);
         const docsChanged = !prev || JSON.stringify((prev._documents||[]).map(d=>d.slug)) !== JSON.stringify((_kbCache._documents||[]).map(d=>d.slug));
         if (!_kbRendered || enabledChanged || layersChanged || docsChanged) {
           _kbRendered = true;
@@ -292,9 +294,8 @@
       const list = document.getElementById('kb-layer-btns');
       if (list) {
         for (const btn of list.children) {
-          const isAll = btn.textContent.includes('All Layers');
           const btnLayer = btn.dataset.action === 'gh14' ? 'vault:' + btn.dataset.arg0 : btn.dataset.arg0;
-          btn.classList.toggle('active', layer === 'all' ? isAll : btnLayer === layer);
+          btn.classList.toggle('active', btnLayer === layer);
         }
       }
       kbSearch();
@@ -317,8 +318,15 @@
     const KB_AUTO_MEMORY_VIEW = 'auto-memory';
     const KB_AUTO_MEMORY_TAG = 'cli-memory';
 
-    async function kbLoadFacts(offset) {
+    async function kbLoadFacts(offset, keepFact = false) {
       const request = ++_kbRequest;
+      if (!keepFact) {
+        ++_kbFactRequest;
+        if (_kbSelectedFact) {
+          _kbSelectedFact = null;
+          renderKnowledgeDetail();
+        }
+      }
       const query = _kbSearchQuery;
       const layer = _kbSelectedLayer;
       const typeFilter = _kbSelectedType;
@@ -330,13 +338,13 @@
         url = '/api/knowledge/search?tag=' + KB_AUTO_MEMORY_TAG + '&include_states=draft&limit=200';
         if (typeFilter) url += '&type=' + encodeURIComponent(typeFilter);
       } else if (layer && layer !== 'all') {
-        // Check if this is a vault, document, or standard layer type
+        // Keep legacy layer names working alongside concrete source selectors.
         const standardLayers = ['personal','project','org','community'];
         if (layer.startsWith('doc:')) {
           const docSlug = layer.slice(4);
           url = '/api/knowledge/search?tag=' + encodeURIComponent(docSlug) + '&limit=50';
-        } else if (!standardLayers.includes(layer) && !layer.startsWith('git_source:')) {
-          url = '/api/knowledge/vaults/' + encodeURIComponent(layer) + '/facts';
+        } else if (!standardLayers.includes(layer) && !layer.startsWith('wiki:') && !layer.startsWith('git_source:')) {
+          url = '/api/knowledge/vaults/' + encodeURIComponent(layer.replace(/^vault:/, '')) + '/facts';
         } else {
           url = '/api/knowledge/' + encodeURIComponent(layer);
         }
@@ -357,7 +365,6 @@
         _kbHasMore = !!data.has_more;
         _kbFacts = Array.isArray(data) ? data : (data.results || data.facts || []);
         if (!query && layer === KB_AUTO_MEMORY_VIEW) _kbFacts = _kbFacts.filter(f => f.state === 'draft');
-        _kbSelectedFact = null;
         renderKnowledgeFacts();
       } catch (e) {
         if (request !== _kbRequest) return;
@@ -368,15 +375,17 @@
       }
     }
 
-    async function kbReadFact(slug, layer) {
-      if (!layer) {
-        const match = _kbFacts.find(f => f.slug === slug);
-        layer = match ? match.layer : 'project';
-      }
+    async function kbReadFact(slug, layer = 'all') {
+      const request = ++_kbFactRequest;
+      _kbSelectedFact = null;
+      renderKnowledgeDetail();
       try {
         const r = await fetch('/api/knowledge/' + encodeURIComponent(layer) + '/' + encodeURIComponent(slug));
         if (!r.ok) return;
-        _kbSelectedFact = await r.json();
+        const fact = await r.json();
+        if (request !== _kbFactRequest || fact.slug !== slug) return;
+        if (/^(wiki:|vault:sha256:|git_source:)/.test(layer) && fact.source_layer !== layer) return;
+        _kbSelectedFact = fact;
         renderKnowledgeDetail();
       } catch (e) { /* ignore */ }
     }
@@ -726,8 +735,8 @@
         if (node && !dragNode) {
           _kbGraphView = false;
           _kbSelectedLayer = 'all';
-          kbReadFact(node.slug);
           renderKnowledge();
+          kbReadFact(node.slug, node.data.source_layer || node.data.layer || undefined);
         }
       });
 
@@ -1109,19 +1118,21 @@
       html += '<div class="kb-sidebar">';
       html += '<div class="section-label m-0">Knowledge Sources</div>';
       html += '<div class="kb-layer-list" id="kb-layer-btns">';
-      // Aggregate row stays on top as the filter reset (kbSelectLayer keys on the 'All Layers' text)
+      // Aggregate row stays on top as the filter reset.
       html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === 'all' ? ' active' : ''}" data-action="kbSelectLayer" data-arg0="all"><span class="kb-layer-label">📋 All Layers</span><span class="kb-layer-count">${totalPages}</span></button>`;
       html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === KB_AUTO_MEMORY_VIEW ? ' active' : ''}" data-action="kbSelectLayer" data-arg0="${KB_AUTO_MEMORY_VIEW}" title="Drafts drained from the coding CLIs' own memory stores. No agent sees one until it is approved."><span class="kb-layer-label">🧠 Auto-memory drafts</span></button>`;
       for (const l of layers) {
-        const isGitSource = l.type && l.type.startsWith('git_source:');
-        const icon = KB_LAYER_ICONS[l.type] || (isGitSource ? '📄' : '📂');
-        const label = KB_LAYER_LABELS[l.type] || l.type;
-        const active = _kbSelectedLayer === l.type ? ' active' : '';
+        const sourceLayer = l.source_layer || l.type || '';
+        const isVault = sourceLayer.startsWith('vault:');
+        const isGitSource = sourceLayer.startsWith('git_source:');
+        const icon = isVault ? '📂' : KB_LAYER_ICONS[l.type] || (isGitSource ? '📄' : '📂');
+        const label = isVault ? l.type : KB_LAYER_LABELS[l.type] || l.type;
+        const active = _kbSelectedLayer === sourceLayer ? ' active' : '';
         const count = l.total_pages || 0;
         const layerStatus = statusMeta(l.healthy ? 'ready' : 'error');
         const healthTip = `${escapeHtml(label)}: ${l.healthy ? 'healthy' : 'unreachable'}`;
         const repoUrl = isGitSource && l.url ? (l.subpath ? l.url + '/tree/' + 'main/' + l.subpath : l.url) : '';
-        html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${active}" data-action="kbSelectLayer" data-arg0="${escapeHtml(l.type)}" title="${healthTip}">`;
+        html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${active}" data-action="kbSelectLayer" data-arg0="${escapeHtml(sourceLayer)}" title="${healthTip}">`;
         html += `<span class="kb-layer-label"><span class="kb-health-dot status-dot" data-status="${layerStatus.status}" title="${healthTip}"></span>${icon} ${escapeHtml(label)}</span>`;
         if (isGitSource && repoUrl) {
           html += `<a href="${escapeHtml(repoUrl)}" target="_blank" rel="noopener" data-action="gh3" style="color:var(--accent);text-decoration:none;font-size:var(--fs-base);flex-shrink:0" title="Open source repo in new tab">↗</a>`;
@@ -1188,7 +1199,8 @@
       if (_kbGraphView) {
         fetchKnowledgeGraph();
       } else {
-        kbSearch();
+        renderKnowledgeDetail();
+        kbLoadFacts(0, true);
       }
     }
 
@@ -1310,6 +1322,16 @@
         + '</ul>';
     }
 
+    // Retro coverage (#20011): how many closed work beads the arm comparison
+    // saw, so "no beads closed" reads differently from "closed but unmatched".
+    function kbAdvisorCoverageHTML(c) {
+      if (!c || typeof c !== 'object') return '';
+      const n = v => escapeHtml(String(Number(v) || 0));
+      return '<div class="kb-effective-meta">Coverage: ' + n(c.closed_beads) + ' closed work beads · '
+        + n(c.with_closed_pr) + ' with a closed PR · ' + n(c.no_ref) + ' without an issue or PR ref · '
+        + n(c.no_decision) + ' without a matching advisor decision</div>';
+    }
+
     function kbAdvisorArmRowHTML(a, note) {
       return '<tr><td>' + escapeHtml(a.arm) + (note ? ' <span class="kb-effective-meta">' + escapeHtml(note) + '</span>' : '') + '</td><td>' + escapeHtml(String(a.beads)) + '</td><td>'
         + kbAdvisorNum(a.mean_fix_attempts, 2) + '</td><td>' + kbAdvisorNum(a.mean_ci_failure_count, 2) + '</td><td>' + kbAdvisorNum(a.mean_kicks_received, 2) + '</td></tr>';
@@ -1342,15 +1364,19 @@
       html += kbAdvisorErrorsHTML(d.errors);
       const arms = d.arms || [];
       html += '<div class="section-label m-0" style="margin-top:var(--sp-4)">Closed beads by arm</div>';
+      html += kbAdvisorCoverageHTML(d.coverage);
       if (!arms.length && !d.mixed && !d.none) {
-        html += '<div class="kb-effective-meta">No closed beads with a closed PR yet.</div>';
+        const closed = (d.coverage && Number(d.coverage.closed_beads)) || 0;
+        html += '<div class="kb-effective-meta">' + (closed > 0
+          ? escapeHtml(String(closed)) + ' closed work beads, none classed into an arm yet.'
+          : 'No closed work beads yet.') + '</div>';
       } else {
         html += '<table class="kb-advisor-table"><thead><tr><th>Arm</th><th>Beads</th><th>Mean fix attempts</th><th>Mean CI failures</th><th>Mean kicks</th></tr></thead><tbody>';
         html += arms.map(a => kbAdvisorArmRowHTML(a, '')).join('');
         if (d.mixed) html += kbAdvisorArmRowHTML(d.mixed, 'in more than one arm; not comparable');
         if (d.none) html += kbAdvisorArmRowHTML(d.none, 'no advisor decision');
         html += '</tbody></table>';
-        html += '<div class="kb-effective-meta">Bead means cover every closed bead with a closed PR; the since window does not narrow them.</div>';
+        html += '<div class="kb-effective-meta">Bead means cover every closed work bead (advisory beads excluded); the since window does not narrow them.</div>';
       }
       html += '<div class="kb-effective-meta" style="margin-top:var(--sp-3)">Mean model latency ' + kbAdvisorNum(cost.mean_latency_ms, 0) + ' ms (' + escapeHtml(String(cost.latency_samples || 0)) + ' calls) · mean tokens '
         + kbAdvisorNum(cost.mean_prompt_tokens, 0) + ' prompt / ' + kbAdvisorNum(cost.mean_completion_tokens, 0) + ' completion (' + escapeHtml(String(cost.token_samples || 0)) + ' calls)</div>';
@@ -1427,8 +1453,9 @@
         const confPct = Math.round(conf * 100);
         const typeClass = 'kb-type-' + (f.type || 'pattern');
         const layerClass = 'kb-layer-' + (f.layer || 'project');
-        const selected = _kbSelectedFact && _kbSelectedFact.slug === f.slug ? ' selected' : '';
-        html += `<div class="kb-fact-item${selected}" data-action="gh17" data-arg0="${escapeHtml(f.slug || '')}">`;
+        const sourceLayer = f.source_layer || f.layer || '';
+        const selected = _kbSelectedFact && _kbSelectedFact.slug === f.slug && (_kbSelectedFact.source_layer || _kbSelectedFact.layer) === sourceLayer ? ' selected' : '';
+        html += `<div class="kb-fact-item${selected}" data-action="gh17" data-arg0="${escapeHtml(f.slug || '')}" data-arg1="${escapeHtml(sourceLayer)}">`;
         html += '<div class="kb-fact-meta">';
         html += kbConfidenceBadge(f);
         if (f.confidence_scored !== false) html += `<div class="kb-fact-conf-bar" title="${escapeHtml(f.confidence_reason || '')}"><div class="kb-fact-conf-fill" style="width:${confPct}%;background:${confColor(conf)}"></div></div>`;
@@ -1466,15 +1493,17 @@
         const m = /^agent:(.+)$/i.exec(String(t).trim());
         if (m) html += `<span class="kb-layer-badge" title="Drained from this agent's CLI memory">agent ${escapeHtml(m[1])}</span>`;
       }
-      if (f.state === 'draft' && viewerIsOwner()) {
+      if (f.state === 'draft' && f.source_layer?.startsWith('vault:') && viewerIsOwner()) {
         const slug = escapeHtml(f.slug || '');
-        html += `<button class="hv-btn btn-primary btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="approved" data-stop="1" title="Approve: agents whose scope includes this entry receive it in their kicks">Approve</button>`;
-        html += `<button class="hv-btn btn-danger btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="deprecated" data-stop="1" title="Discard: mark it deprecated so no agent receives it and the drain never re-drafts it">Discard</button>`;
+        const source = escapeHtml(f.source_layer);
+        html += `<button class="hv-btn btn-primary btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="approved" data-arg2="${source}" data-stop="1" title="Approve: agents whose scope includes this entry receive it in their kicks">Approve</button>`;
+        html += `<button class="hv-btn btn-danger btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="deprecated" data-arg2="${source}" data-stop="1" title="Discard: mark it deprecated so no agent receives it and the drain never re-drafts it">Discard</button>`;
       }
       return html;
     }
 
-    async function kbAutoMemoryReview(slug, state) {
+    async function kbAutoMemoryReview(slug, state, sourceLayer) {
+      if (!sourceLayer) return;
       const question = state === 'approved'
         ? 'Approve "' + slug + '"? It was written by an agent, and once approved it is injected into the kicks of every agent whose scope includes it.'
         : 'Discard "' + slug + '"? It is marked deprecated, no agent receives it, and the drain will not re-draft it.';
@@ -1482,7 +1511,7 @@
       try {
         const r = await fetch('/api/knowledge/entry/' + encodeURIComponent(slug) + '/state', {
           method: 'PUT', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ state, reason: 'auto-memory review (dashboard)' }),
+          body: JSON.stringify({ state, source_layer: sourceLayer, reason: 'auto-memory review (dashboard)' }),
         });
         if (!r.ok) { const e = await r.json().catch(() => ({})); await hiveAlert(e.error || 'Failed to change state'); return; }
         fetchKnowledgeStats();
@@ -1490,10 +1519,19 @@
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
+    function kbIsWikiFact(f) {
+      return f && (!f.source_layer || f.source_layer.startsWith('wiki:'));
+    }
+
     function renderKnowledgeDetail() {
       const el = document.getElementById('kb-fact-detail');
-      if (!el || !_kbSelectedFact) { if (el) el.innerHTML = ''; return; }
+      if (!el) return;
       const f = _kbSelectedFact;
+      const sourceLayer = f?.source_layer || f?.layer;
+      document.querySelectorAll('.kb-fact-item').forEach(item => {
+        item.classList.toggle('selected', item.dataset.arg0 === f?.slug && item.dataset.arg1 === sourceLayer);
+      });
+      if (!f) { el.innerHTML = ''; return; }
       const conf = typeof f.confidence === 'number' ? f.confidence : 0;
       const confPct = Math.round(conf * 100);
       const typeClass = 'kb-type-' + (f.type || 'pattern');
@@ -1517,29 +1555,23 @@
       if (f.tags && f.tags.length) html += `<div><span class="kb-detail-label">Tags:</span> ${f.tags.map(t => escapeHtml(t)).join(', ')}</div>`;
       html += '</div>';
 
-      // Action buttons
       html += '<div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-5);flex-wrap:wrap">';
-      html += `<button class="hv-btn btn-secondary nous-btn btn-primary btn-sm" data-action="kbOpenEdit">✏️ Edit</button>`;
+      const wiki = kbIsWikiFact(f);
+      if (wiki) {
+        html += `<button class="hv-btn btn-secondary nous-btn btn-primary btn-sm" data-action="kbOpenEdit">✏️ Edit</button>`;
+      }
       const promoteTargets = { personal: 'project', project: 'org', org: 'community' };
       const promoteTo = promoteTargets[f.layer];
-      if (promoteTo) {
-        html += `<button class="hv-btn btn-secondary nous-btn btn-primary btn-sm" data-action="kbPromote" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(f.layer)}" data-arg2="${promoteTo}">⬆ Promote to ${promoteTo}</button>`;
+      if (promoteTo && (wiki || sourceLayer.startsWith('vault:'))) {
+        html += `<button class="hv-btn btn-secondary nous-btn btn-primary btn-sm" data-action="kbPromote" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(sourceLayer)}" data-arg2="${promoteTo}">⬆ Promote to ${promoteTo}</button>`;
       }
-      html += `<button class="hv-btn btn-danger nous-btn btn-sm" data-action="kbDelete" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(f.layer)}">🗑 Delete</button>`;
+      if (wiki) {
+        html += `<button class="hv-btn btn-danger nous-btn btn-sm" data-action="kbDelete" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(sourceLayer)}" data-arg2="${escapeHtml(f.layer)}">🗑 Delete</button>`;
+      }
       html += '</div>';
 
       html += '</div>';
       el.innerHTML = html;
-
-      // Highlight selected fact in list
-      document.querySelectorAll('.kb-fact-item').forEach(item => item.classList.remove('selected'));
-      const items = document.querySelectorAll('.kb-fact-item');
-      for (const item of items) {
-        if (item.querySelector('.kb-fact-title')?.textContent === (kbCleanFactTitle(f.title) || f.slug)) {
-          item.classList.add('selected');
-          break;
-        }
-      }
     }
 
     // ── Knowledge modals and actions ──
@@ -1642,8 +1674,9 @@
     }
 
     function kbOpenEdit() {
-      if (!_kbSelectedFact) return;
       const f = _kbSelectedFact;
+      if (!kbIsWikiFact(f)) return;
+      const sourceLayer = f.source_layer || f.layer;
 
       let typeOpts = '';
       for (const t of KB_FACT_TYPES) {
@@ -1681,15 +1714,14 @@
           <div class="muted-xs">Layer: ${escapeHtml(f.layer || '')} · Slug: ${escapeHtml(f.slug || '')}</div>
           <div class="row-end mt-4">
             <button class="hv-btn btn-secondary nous-btn nous-config-btn-cancel" data-action="kbCloseModal">Cancel</button>
-            <button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbSubmitEdit">Save Changes</button>
+            <button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbSubmitEdit" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(sourceLayer)}">Save Changes</button>
           </div>
         </div>`;
       kbShowModal('Edit Fact', html);
     }
 
-    async function kbSubmitEdit() {
-      if (!_kbSelectedFact) return;
-      const f = _kbSelectedFact;
+    async function kbSubmitEdit(slug, sourceLayer) {
+      const request = _kbFactRequest;
       const title = document.getElementById('kb-edit-title')?.value?.trim();
       const body = document.getElementById('kb-edit-body')?.value?.trim();
       const type = document.getElementById('kb-edit-type')?.value;
@@ -1699,27 +1731,34 @@
       const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
 
       try {
-        const r = await fetch('/api/knowledge/' + encodeURIComponent(f.layer) + '/' + encodeURIComponent(f.slug), {
+        const r = await fetch('/api/knowledge/' + encodeURIComponent(sourceLayer) + '/' + encodeURIComponent(slug), {
           method: 'PUT', headers: _inceptionAuthHeaders(),
           body: JSON.stringify({ title, body, type, status, confidence: conf, tags }),
         });
         if (!r.ok) { const e = await r.json(); await hiveAlert(e.error || 'Failed to update'); return; }
         kbCloseModal();
-        kbReadFact(f.slug, f.layer);
-        kbSearch();
+        kbLoadFacts(0, true);
+        const f = _kbSelectedFact;
+        if (request === _kbFactRequest && f?.slug === slug && (f.source_layer || f.layer) === sourceLayer) {
+          kbReadFact(slug, sourceLayer);
+        }
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
-    async function kbDelete(slug, layer) {
+    async function kbDelete(slug, sourceLayer, layer) {
+      const request = _kbFactRequest;
       if (!(await hiveConfirm('Delete fact "' + slug + '" from ' + layer + '?'))) return;
       try {
-        const r = await fetch('/api/knowledge/' + encodeURIComponent(layer) + '/' + encodeURIComponent(slug), { method: 'DELETE' });
+        const r = await fetch('/api/knowledge/' + encodeURIComponent(sourceLayer) + '/' + encodeURIComponent(slug), { method: 'DELETE' });
         if (!r.ok) { const e = await r.json(); await hiveAlert(e.error || 'Failed to delete'); return; }
-        _kbSelectedFact = null;
-        const detail = document.getElementById('kb-fact-detail');
-        if (detail) detail.innerHTML = '';
+        const f = _kbSelectedFact;
+        if (request === _kbFactRequest || (f?.slug === slug && (f.source_layer || f.layer) === sourceLayer)) {
+          ++_kbFactRequest;
+          _kbSelectedFact = null;
+          renderKnowledgeDetail();
+        }
         fetchKnowledgeStats();
-        kbSearch();
+        kbLoadFacts(0, true);
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 

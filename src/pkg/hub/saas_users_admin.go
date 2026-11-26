@@ -161,6 +161,9 @@ func loadSaaSUser(username string) *SaaSUser {
 	// wall clock. Read-time only, never written here; sweepExpiredAccess
 	// (access_expiry.go) persists the prune and stamps the timeline event.
 	pruneExpiredHiveGrants(&u, time.Now())
+	// HIVE_HUB_CUSTOMER_STORE=colony: the CRM fields read from the colony
+	// store, field by field, falling back to this JSON (customer_store.go).
+	crmOverlayUser(&u)
 	return &u
 }
 
@@ -209,6 +212,9 @@ func saveSaaSUser(u *SaaSUser) error {
 		cleanup()
 		return err
 	}
+	// Shadow and colony modes dual-write the CRM fields to the colony store.
+	// The JSON written above stays the rollback copy (customer_store.go).
+	crmMirrorUser(u)
 	return nil
 }
 
@@ -338,14 +344,16 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	type adminUserView struct {
 		SaaSUser
-		StatusTier        string `json:"status_tier"`
-		Affiliation       string `json:"affiliation"`
-		AffiliationSource string `json:"affiliation_source,omitempty"`
-		ProfileBio        string `json:"profile_bio,omitempty"`
-		ProfileLocation   string `json:"profile_location,omitempty"`
-		PublicActivity    string `json:"public_activity,omitempty"`
-		TopRepo           string `json:"top_repo"`
-		TopRepoURL        string `json:"top_repo_url,omitempty"`
+		StatusTier            string `json:"status_tier"`
+		Affiliation           string `json:"affiliation"`
+		AffiliationSource     string `json:"affiliation_source,omitempty"`
+		AffiliationConfidence string `json:"affiliation_confidence,omitempty"`
+		CNCFContributions     int    `json:"cncf_contributions,omitempty"`
+		ProfileBio            string `json:"profile_bio,omitempty"`
+		ProfileLocation       string `json:"profile_location,omitempty"`
+		PublicActivity        string `json:"public_activity,omitempty"`
+		TopRepo               string `json:"top_repo"`
+		TopRepoURL            string `json:"top_repo_url,omitempty"`
 		// Provider is always populated (derived via userProvider) so the Users
 		// table's auth-method badge never has to parse — a legacy github-only
 		// record resolves to "github". This shadows SaaSUser.Provider's
@@ -359,16 +367,18 @@ func (s *HubServer) handleAdminUsers(w http.ResponseWriter, r *http.Request) {
 		name := users[i].GitHubUsername
 		topRepo := userTopRepoAssociation(&users[i], nil)
 		views = append(views, adminUserView{
-			SaaSUser:          users[i],
-			StatusTier:        userStatusTier(&users[i], live[name], engaged[name], now),
-			Affiliation:       topRepo.Affiliation,
-			AffiliationSource: topRepo.AffiliationSource,
-			ProfileBio:        topRepo.ProfileBio,
-			ProfileLocation:   topRepo.ProfileLocation,
-			PublicActivity:    topRepo.PublicActivity,
-			TopRepo:           topRepo.TopRepo,
-			TopRepoURL:        topRepo.TopRepoURL,
-			Provider:          userProvider(&users[i]),
+			SaaSUser:              users[i],
+			StatusTier:            userStatusTier(&users[i], live[name], engaged[name], now),
+			Affiliation:           topRepo.Affiliation,
+			AffiliationSource:     topRepo.AffiliationSource,
+			AffiliationConfidence: topRepo.AffiliationConfidence,
+			CNCFContributions:     topRepo.CNCFContributions,
+			ProfileBio:            topRepo.ProfileBio,
+			ProfileLocation:       topRepo.ProfileLocation,
+			PublicActivity:        topRepo.PublicActivity,
+			TopRepo:               topRepo.TopRepo,
+			TopRepoURL:            topRepo.TopRepoURL,
+			Provider:              userProvider(&users[i]),
 		})
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -701,6 +711,13 @@ func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		s.logger.Warn("admin delete user: consent removal failed", "target", username, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "failed to delete user's consent records")
+		return
+	}
+	// Erase the person from the colony store too, in every mode, before the
+	// JSON goes, so a failure leaves the account in place for a retry.
+	if err := crmForgetUser(u); err != nil {
+		s.logger.Warn("admin delete user: customer store erase failed", "target", username, "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "failed to erase user's customer record")
 		return
 	}
 	// Delete both canonical and legacy representations; otherwise a leftover

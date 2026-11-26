@@ -192,13 +192,23 @@ attempt to restart it before the kick did not work.
 Applies to agents that run each kick in a sandbox (podman, Kubernetes Job,
 OpenShell or Substrate). Error text names the setting, for example `sandbox
 image is not configured`, `sandbox execution requires a primary repo`,
-`sandbox job runtime requires job.workspace_claim`, or `agent has a live
+`sandbox job runtime requires job.workspace_claim` (not needed with
+`workspace_transport: copy`), or `agent has a live
 interactive session; sandbox kicks are blocked until it stops`.
 
 - **What to do:** set the named field in the agent's sandbox configuration
   (see [Sandbox isolation](sandbox-isolation.md)), or stop the leftover
   interactive session. Switching an agent into sandbox mode stops its terminal
   session on its own.
+
+A Kubernetes Job kick on `workspace_transport: copy` also fails closed, before
+it creates anything, with `kubejob: workspace_transport: copy is refused
+because HIVE_REQUIRE_HARDENED is set` (copy mode skips the relay containment
+preflight; use the claim transport on a hardened hive) or `kubejob:
+workspace_transport: copy is refused because hive's own pod runs under
+runtimeClassName "<class>" and job.runtime_class_name is empty` (set
+`job.runtime_class_name`, usually to the same class). See
+[Sandbox isolation](sandbox-isolation.md).
 
 ### unknown_agent
 

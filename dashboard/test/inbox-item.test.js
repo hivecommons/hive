@@ -52,7 +52,7 @@ function makeContext(role) {
     Array,
   };
   vm.createContext(ctx);
-  for (const fn of ['inboxIconSvg', 'inboxTitleParts', 'inboxMarkdownToText', 'inboxFactStateHtml', 'inboxSharePillText', 'inboxShareTargetHref', 'inboxSharePillHtml', 'inboxSharePillsHtml', 'inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemHasAudio', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxDeleteKind', 'inboxCanDelete', 'inboxDeleteBusy', 'inboxDeleteButtonHtml', 'inboxItemHtml']) {
+  for (const fn of ['inboxIconSvg', 'inboxTitleParts', 'inboxMarkdownToText', 'inboxFactStateHtml', 'inboxFactLayer', 'inboxSharePillText', 'inboxShareTargetHref', 'inboxSharePillHtml', 'inboxSharePillsHtml', 'inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemHasAudio', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxDeleteKind', 'inboxCanDelete', 'inboxDeleteBusy', 'inboxDeleteButtonHtml', 'inboxItemHtml']) {
     vm.runInContext(extractFunction(fn), ctx);
   }
   return ctx;
@@ -78,10 +78,11 @@ test('pending item explains that Plaud has no text yet and never shows the MCP e
 
 test('the Knowledge fact is a status pill and a metadata link, never a row button', () => {
   const ctx = makeContext('owner');
-  const html = vm.runInContext('inboxItemHtml(' + JSON.stringify(Object.assign({}, pendingItem, { fact_state: 'pending' })) + ')', ctx);
+  const fact = { ...pendingItem, fact_state: 'pending', fact_path: '/data/knowledge/connectors/personal/plaud-plaud-f_1.md', fact_source_layer: 'vault:sha256:recordings' };
+  const html = ctx.inboxItemHtml(fact);
   assert.doesNotMatch(html, /📚 Fact/);
   assert.doesNotMatch(html, /<button[^>]*data-action="inboxOpenFact"/, 'no Fact button');
-  assert.match(html, /<div class="muted-xs inbox-meta">[^]*<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="plaud-plaud-f_1" data-arg1="personal"[^>]*>open in Knowledge<\/a><\/div>/);
+  assert.match(html, /<div class="muted-xs inbox-meta">[^]*<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="plaud-plaud-f_1" data-arg1="vault:sha256:recordings"[^>]*>open in Knowledge<\/a><\/div>/);
   // The Knowledge state sits in the meta line, before the fact link, not as a floating pill.
   assert.match(html, /<div class="muted-xs inbox-meta">[^]*<span class="inbox-meta-state" role="status" data-status="not loaded" data-fact-state="pending"[^>]*>Pending text<\/span> · <a href="#" class="inbox-fact-link"/);
   assert.doesNotMatch(html, /kc-pill"[^>]*data-fact-state/, 'no floating fact pill');

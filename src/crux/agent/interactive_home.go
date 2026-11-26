@@ -370,9 +370,11 @@ func (m *Manager) setupAgentXDGDirs(agentName, home string, uid int) {
 		m.ownAgentDir(agentName, dir, uid)
 	}
 	for _, name := range xdgDataSharedBridges {
+		shared := filepath.Join(agentXDGDataHome(sharedAgentHome), name)
+		m.ensureSharedBridgeTarget(agentName, shared)
 		m.bridgeHomeEntry(agentName,
 			filepath.Join(agentXDGDataHome(home), name),
-			filepath.Join(agentXDGDataHome(sharedAgentHome), name))
+			shared)
 	}
 }
 

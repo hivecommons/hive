@@ -1,0 +1,94 @@
+# Forgejo JWT: the per-tier JWT path against a real Forgejo 17 (hivecommons/hive#19494).
+#
+# crux/forgejwt mints short-lived JWTs that a Forgejo authorized integration
+# accepts in place of a stored token (#19682). The unit tests encode our reading
+# of Forgejo's rules. This lane runs src/crux/forgejwt/testdata/forgejo-live.sh,
+# which publishes the key list made by `hive forge key-list` from nginx over
+# https with a private CA, starts a throwaway Forgejo that trusts only that host,
+# creates three authorized integrations, and runs TestForgejoAcceptsMintedTokens
+# (build tag forgejo_jwt_live). It shows that a read-scope advisor token reads
+# and cannot push, a write-scope integration pushes, and which claims and
+# Authorization schemes Forgejo accepts.
+#
+# Forgejo 17 is pinned here on its own: authorized integrations do not exist in
+# the 16.x image that forgejo-smoke.yml and forgejo-e2e.yml run. Move those lanes
+# to 17 together with this one when they upgrade, and keep the tag and digest in
+# step.
+#
+# Cadence (maintainer ruling on #19799): nightly plus manual dispatch only, on
+# GitHub-hosted runners. There are no push or pull_request triggers and the lane
+# never runs on the self-hosted pool. It is not a required check and must not be
+# added to branch protection or Tide's required contexts. A scheduled failure
+# opens (or comments on) a ci-failure issue, like the Flue and backend smoke
+# lanes. No secrets: the CA, signing key, admin and tokens are created per run
+# inside the throwaway containers. Images are pinned by digest.
+name: Forgejo JWT
+
+on:
+  schedule:
+    # Nightly at :40; :50 is the Forgejo smoke and :55 the Forgejo e2e.
+    - cron: '40 4 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# Build-cache isolation (see .github/scripts/go-cache-guard.sh).
+env:
+  GO_CACHE_GUARD_BUILD_CACHE: ${{ vars.HIVE_GO_BUILD_CACHE || 'job' }}
+
+jobs:
+  jwt:
+    if: github.repository == 'hivecommons/hive'
+    # Always GitHub-hosted, never HIVE_RUNNER_LABELS: see the cadence note above.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Warm shared Go tool cache (serialize the cold-cache population)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-toolcache-guard.sh"
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          cache: false
+          go-version-file: src/go.mod
+      - name: Guard shared Go cache (fall back when the runner volume is full)
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/go-cache-guard.sh"
+
+      - name: Check Forgejo accepts the minted JWTs
+        env:
+          RUNTIME: docker
+          HOST_GO: '1'
+          FORGEJO_IMAGE: codeberg.org/forgejo/forgejo:17.0.2@sha256:879f4f10a98e3e167b32cde5f7ae3af0163d50bfacf567559a27a0e95a95670c
+          NGINX_IMAGE: docker.io/library/nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+        run: bash src/crux/forgejwt/testdata/forgejo-live.sh
+
+  create-issue-on-failure:
+    # Schedule-gated like flue-smoke.yml and backend-smoke.yml: a red manual
+    # dispatch must never file. One open issue per lane; later failures comment.
+    if: failure() && github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [jwt]
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: File or update the Forgejo JWT failure issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const prefix = '[Forgejo JWT]';
+            const existing = await github.paginate(github.rest.issues.listForRepo, {owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'ci-failure', per_page: 100});
+            const dup = existing.find(i => !i.pull_request && i.title.startsWith(prefix));
+            const body = `Scheduled Forgejo JWT live check failed on ${context.sha}.\n\nRun: ${runUrl}\n\nRefs #19494.`;
+            if (dup) await github.rest.issues.createComment({owner: context.repo.owner, repo: context.repo.repo, issue_number: dup.number, body});
+            else await github.rest.issues.create({owner: context.repo.owner, repo: context.repo.repo, title: `${prefix} nightly live check failure on ${context.sha.substring(0, 7)}`, body, labels: ['ci-failure', 'kind/bug']});

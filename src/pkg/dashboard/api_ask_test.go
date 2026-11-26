@@ -322,3 +322,96 @@ func TestHiveAskSettingsFeaturesAndExport(t *testing.T) {
 		t.Fatalf("config JSON carries vendor ids: %s", js)
 	}
 }
+
+// TestHiveAskDefaultsOnForHostedHives: a hosted hive with a hub link, a hive
+// id and no ask block asks through the relay, still needs each person's
+// consent first, and the hub's per-hive disabled list (enforced at the
+// relay) is untouched. A self-hosted hive with no ask block stays off.
+func TestHiveAskDefaultsOnForHostedHives(t *testing.T) {
+	hubSrv := newAskFakeRemote(t, askHubReply)
+	s, _ := askTestServer(t, config.AskConfig{}, config.HubConfig{Enabled: true, URL: hubSrv.srv.URL, HiveType: config.HiveTypeHosted}, "")
+	st, problem := askEffective(s.deps.Config)
+	if !st.Enabled || st.Mode != config.AskModeHub || problem != "" || !askOn(s.deps.Config) {
+		t.Fatalf("hosted hive with no ask config: %+v %q", st, problem)
+	}
+	// Consent is still asked before the first question: nothing is relayed.
+	if r := askResult(t, askCall(s, "POST", "/api/ask", `{"question":"Where is pause?"}`, "alice")); r.Outcome != askai.OutcomeNotConsented {
+		t.Fatalf("a question before consent must be refused as not consented: %+v", r)
+	}
+	if b, _, _ := hubSrv.seen(); len(b) != 0 {
+		t.Fatalf("the hub saw %d requests before consent", len(b))
+	}
+	askCall(s, "PUT", "/api/ask/consent", `{"text_version":"`+askai.ConsentTextVersion+`"}`, "alice")
+	if r := askResult(t, askCall(s, "POST", "/api/ask", `{"question":"Where is pause?"}`, "alice")); r.Outcome != askai.OutcomeOK {
+		t.Fatalf("relayed answer %+v", r)
+	}
+	if _, _, paths := hubSrv.seen(); len(paths) != 1 || paths[0] != askai.RelayPath {
+		t.Fatalf("relay paths %v", paths)
+	}
+
+	selfHosted, _ := askTestServer(t, config.AskConfig{}, config.HubConfig{Enabled: true, URL: hubSrv.srv.URL}, "")
+	if askOn(selfHosted.deps.Config) {
+		t.Fatal("a self-hosted hive with no ask config must stay off")
+	}
+	if rec := askCall(selfHosted, "GET", "/api/ask/status", "", "alice"); rec.Code != http.StatusNotFound {
+		t.Fatalf("self-hosted default: %d", rec.Code)
+	}
+	if r := featuresAskResponse(selfHosted.deps.Config); r["askEnabled"] != false || r["askDefaulted"] != false || r["askMode"] != config.AskModeOff {
+		t.Fatalf("self-hosted features GET %v", r)
+	}
+}
+
+// TestHiveAskHubModeNeedsHubLinkAndHiveID: an explicit hub mode with no hub
+// URL, or with no hive id, stays off with the existing problem string.
+func TestHiveAskHubModeNeedsHubLinkAndHiveID(t *testing.T) {
+	hubMode := config.AskConfig{Enabled: askTrue(), Mode: config.AskModeHub}
+	noURL, _ := askTestServer(t, hubMode, config.HubConfig{HiveType: config.HiveTypeHosted}, "")
+	if st, problem := askEffective(noURL.deps.Config); problem != askNoHubProblem || askOn(noURL.deps.Config) || !st.Requested {
+		t.Fatalf("no hub url: %+v %q", st, problem)
+	}
+	noID, _ := askTestServer(t, hubMode, config.HubConfig{HiveType: config.HiveTypeHosted, URL: "https://hub.example"}, "")
+	noID.deps.Config.HiveID = ""
+	if st, problem := askEffective(noID.deps.Config); problem != askNoHubProblem || askOn(noID.deps.Config) || !st.Requested {
+		t.Fatalf("no hive id: %+v %q", st, problem)
+	}
+	if r := featuresAskResponse(noID.deps.Config); r["askEffective"] != false || r["askProblem"] != askNoHubProblem {
+		t.Fatalf("features GET without a hive id %v", r)
+	}
+}
+
+// TestHiveAskSettingsShowsTheHostedDefault: the Settings, Features GET shows
+// the toggle on for a hosted hive with nothing saved, and saving it off
+// persists an explicit false that keeps Ask off.
+func TestHiveAskSettingsShowsTheHostedDefault(t *testing.T) {
+	s, _ := askTestServer(t, config.AskConfig{}, config.HubConfig{Enabled: true, URL: "https://hub.example", HiveType: config.HiveTypeHosted}, "")
+	got := featuresAskResponse(s.deps.Config)
+	if got["askEnabled"] != true || got["askDefaulted"] != true || got["askEffective"] != true ||
+		got["askMode"] != config.AskModeHub || got["askModeEffective"] != config.AskModeHub || got["askProblem"] != "" {
+		t.Fatalf("hosted features GET with nothing saved %v", got)
+	}
+	off := false
+	apply, err := (featuresAskBody{AskEnabled: &off}).prepare()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := s.deps.Config
+	apply(cfg)
+	if cfg.Ask.Enabled == nil || *cfg.Ask.Enabled {
+		t.Fatalf("saving the toggle off must persist an explicit false: %+v", cfg.Ask)
+	}
+	got = featuresAskResponse(cfg)
+	if got["askEnabled"] != false || got["askDefaulted"] != false || got["askEffective"] != false || askOn(cfg) {
+		t.Fatalf("after saving off %v", got)
+	}
+
+	// HIVE_ASK_ENABLED=false wins over the default; the toggle still shows the
+	// hive.yaml view so the dialog can say env overrides it.
+	envOff, _ := askTestServer(t, config.AskConfig{}, config.HubConfig{Enabled: true, URL: "https://hub.example", HiveType: config.HiveTypeHosted}, "")
+	t.Setenv(config.EnvAskEnabled, "false")
+	if askOn(envOff.deps.Config) {
+		t.Fatal("HIVE_ASK_ENABLED=false must win over the hosted default")
+	}
+	if r := featuresAskResponse(envOff.deps.Config); r["askEnabled"] != true || r["askEffective"] != false {
+		t.Fatalf("env off features GET %v", r)
+	}
+}

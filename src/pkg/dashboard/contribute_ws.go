@@ -947,6 +947,17 @@ type ContributeWSHub struct {
 	// after the unlock.
 	unmintableRepos map[string]time.Time
 	unmintableMu    sync.Mutex
+	// assignGate is the live issue read selectTask runs on its chosen
+	// candidate before anything is leased, claimed or minted (the
+	// hold-on-assign incident). Nil means "use the wired GitHub client";
+	// tests inject a fake. See contribute_assign_gate.go.
+	assignGate func(ctx context.Context, repo string, number int) (ghpkg.IssueAssignGate, error)
+	// assignBlocked maps an item key to the instant its live-gate refusal
+	// lapses, so a held issue the cached snapshot still lists costs one
+	// forge read per assignGateBlockedTTL, not one per selection. Guarded by
+	// assignBlockedMu.
+	assignBlocked   map[string]time.Time
+	assignBlockedMu sync.Mutex
 	logger          *slog.Logger
 	seq             int
 	// taskGen is the monotonically increasing source of assignment GENERATION tokens
@@ -3964,6 +3975,12 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 		// true whenever clientGen == 0, and omitting task_gen yields 0, so
 		// the guard is opt-in from the client.
 		if hasTask {
+			if msg.Model != "" {
+				s.contributor.model = msg.Model
+				if s.contributor.profile != nil {
+					s.contributor.profile.Model = msg.Model
+				}
+			}
 			s.contributor.currentTask = nil
 			// #2539: drop the previewable prompt with the task it belonged to
 			// so the ops tab does not show a stale instruction after completion.
@@ -4337,6 +4354,12 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 		// cooldown was booked and the abandoned issue became instantly
 		// re-admissible while the credential stayed live.
 		if hasTask {
+			if msg.Model != "" {
+				s.contributor.model = msg.Model
+				if s.contributor.profile != nil {
+					s.contributor.profile.Model = msg.Model
+				}
+			}
 			s.contributor.currentTask = nil
 			s.contributor.tokenMintedAt = time.Time{}
 			s.contributor.taskAssignedAt = time.Time{}
@@ -4742,6 +4765,7 @@ func (h *ContributeWSHub) blockedClaimsLoop(interval time.Duration) {
 
 func (h *ContributeWSHub) cleanupLoop() {
 	go h.blockedClaimsLoop(5 * time.Minute)
+	go h.heldTaskReconcileLoop(heldTaskReconcileInterval)
 	if h.doneCh != nil {
 		defer close(h.doneCh)
 	}

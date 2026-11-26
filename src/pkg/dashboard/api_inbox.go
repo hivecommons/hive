@@ -357,6 +357,11 @@ func (s *Server) handleInboxList(w http.ResponseWriter, r *http.Request) {
 	}
 	svc := s.deps.Inbox
 	items, err := svc.Items(ctx)
+	if api := s.deps.Knowledge; api != nil {
+		for i := range items {
+			items[i].FactSourceLayer = string(api.VaultSourceLayerForFile(items[i].FactPath))
+		}
+	}
 	resp := InboxListResponse{
 		Items:       items,
 		Unprocessed: inbox.Unprocessed(items),

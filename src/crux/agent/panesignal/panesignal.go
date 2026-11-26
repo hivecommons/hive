@@ -19,6 +19,12 @@ const (
 	// AgyHeadlessRunningMarker is printed by the headless agy shim while a
 	// turn is running.
 	AgyHeadlessRunningMarker = "HIVE_AGY_HEADLESS_RUNNING"
+	// ClaudeHeadlessReadyMarker is printed at the shell prompt of a
+	// translator-routed agent that runs one `claude -p` per kick
+	// (headless_turns, #19902) once the pane is ready for the next turn.
+	ClaudeHeadlessReadyMarker = "HIVE_CLAUDE_HEADLESS_READY"
+	// ClaudeHeadlessRunningMarker is printed while such a turn is running.
+	ClaudeHeadlessRunningMarker = "HIVE_CLAUDE_HEADLESS_RUNNING"
 )
 
 // CLIPaneMarkers are strings that appear in a tmux pane when a CLI (claude,
@@ -43,6 +49,10 @@ var CLIPaneMarkers = []string{
 	// healthy. "%/" matches the fixed "%%/1.0M" context-meter suffix pi
 	// renders at every context size.
 	PiContextMarker,
+	// opencode's marker. Its TUI draws no "❯" and none of the strings above;
+	// without this a healthy opencode pane reads as a crashed CLI and every kick
+	// restarts it before delivery.
+	OpenCodeInputFooterMarker,
 	// bob's markers. NONE of the entries above match a running bob: verified
 	// against the installed bundle (bobshell 1.0.6 bundle/bob.js), which
 	// contains zero "❯" characters and no "esc cancel" / "/ commands" /
@@ -66,6 +76,9 @@ var CLIPaneMarkers = []string{
 	// launch, reuse, crash-detection and startup-kick gates keep working
 	// without treating a bare shell as a live backend.
 	AgyHeadlessReadyMarker,
+	// A headless_turns Claude pane runs no resident CLI either; its shim
+	// prints a ready marker at the shell prompt for the same gates.
+	ClaudeHeadlessReadyMarker,
 	cline.ReadyMarker,
 	cline.RunningMarker,
 }
@@ -141,6 +154,14 @@ var agentWorkingMarkers = []string{
 	BobBusyMarker,
 }
 
+// OpenCodeInputFooterMarker is the command hint opencode's TUI keeps in its
+// footer while idle ("ctrl+p commands"; the prompt box itself is a bare "┃"
+// gutter with an "Ask anything…" placeholder, which no other backend shares).
+// While a turn runs the footer swaps in "esc interrupt", which
+// agentWorkingMarkers already treats as busy, so readiness callers must check
+// ShowsAgentWorking first, as they do for every backend.
+const OpenCodeInputFooterMarker = "ctrl+p commands"
+
 // BobBusyMarker is the steer hint bob 2.x shows only while it is processing a
 // request. Verified live on Bob-Shell 2.0.5 (#15864).
 const BobBusyMarker = "Enter to steer"
@@ -165,11 +186,9 @@ func ShowsAgentWorking(pane string) bool {
 	if strings.LastIndex(pane, cline.RunningMarker) > strings.LastIndex(pane, cline.ReadyMarker) {
 		return true
 	}
-	if lastRunning := strings.LastIndex(pane, AgyHeadlessRunningMarker); lastRunning >= 0 {
-		lastReady := strings.LastIndex(pane, AgyHeadlessReadyMarker)
-		if lastReady < lastRunning {
-			return true
-		}
+	if headlessTurnRunning(pane, AgyHeadlessRunningMarker, AgyHeadlessReadyMarker) ||
+		headlessTurnRunning(pane, ClaudeHeadlessRunningMarker, ClaudeHeadlessReadyMarker) {
+		return true
 	}
 	if ShowsBusyFooter(pane) {
 		return true
@@ -180,6 +199,14 @@ func ShowsAgentWorking(pane string) bool {
 		}
 	}
 	return false
+}
+
+// headlessTurnRunning reports whether a headless shim's running marker is
+// newer than its ready marker, i.e. a turn started and has not yet returned
+// to the shell prompt.
+func headlessTurnRunning(pane, running, ready string) bool {
+	lastRunning := strings.LastIndex(pane, running)
+	return lastRunning >= 0 && strings.LastIndex(pane, ready) < lastRunning
 }
 
 // ShowsInputPrompt reports whether the pane content shows a CLI input
@@ -210,8 +237,10 @@ func ShowsInputPrompt(output string) bool {
 		strings.Contains(output, CodexInputPromptMarker) ||
 		strings.Contains(output, PiContextMarker) ||
 		strings.Contains(output, AgyHeadlessReadyMarker) ||
+		strings.Contains(output, ClaudeHeadlessReadyMarker) ||
 		strings.Contains(output, cline.ReadyMarker) ||
 		strings.Contains(output, "π >") ||
+		strings.Contains(output, OpenCodeInputFooterMarker) ||
 		strings.Contains(output, "╰─")
 }
 

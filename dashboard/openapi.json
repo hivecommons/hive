@@ -35920,6 +35920,89 @@
         }
       }
     },
+    "/api/repos/open-prs": {
+      "post": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Set the open-PRs mode for one repository",
+        "description": "Persists project.repo_policies[].open_prs for one watched repository, at every ACMM level: on (default) lets agents open PRs, off lets agents analyse, comment and file issues but open no PR, workflow_only lets only workflow hand-off PRs open. project.open_prs: false still makes every repo off. Narrowing needs the owner role or repository write permission (as for repository hold chips); widening needs a verified owner. Enforced by the hive-open-pr relay, the forge relay and the sandbox PR path. The live config is updated before the response.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "mode"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "description": "Repository as project.repos spells it: a bare name or owner/repo."
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "on",
+                      "off",
+                      "workflow_only"
+                    ],
+                    "description": "The repo's new open-PRs mode."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Open-PRs mode result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "repo": {
+                      "type": "string"
+                    },
+                    "mode": {
+                      "type": "string"
+                    },
+                    "effective": {
+                      "type": "string",
+                      "description": "The mode in force after project.open_prs."
+                    },
+                    "changed": {
+                      "type": "boolean"
+                    },
+                    "persisted": {
+                      "type": "boolean"
+                    },
+                    "minStatusSeq": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing repo, unknown mode, or a repo not listed in project.repos"
+          },
+          "403": {
+            "description": "Owner or repository write permission required; widening requires a verified owner"
+          },
+          "503": {
+            "description": "No config loaded"
+          }
+        }
+      }
+    },
     "/api/repos/{owner}/{repo}/hold-permission": {
       "get": {
         "tags": [
@@ -47793,6 +47876,35 @@
           "400": {"description": "No consent in progress, or the flow_id is not the one /start returned"},
           "403": {"description": "Owner role required"},
           "503": {"description": "No identity store on this hive"}
+        }
+      }
+    },
+    "/api/github-token": {
+      "get": {
+        "tags": ["System"],
+        "summary": "GitHub personal access token status",
+        "description": "Reports which PAT a PAT-mode hive authenticates with (hivecommons/hive#19633): mode (pat or app), whether it can be rotated here, the token's sha256 fingerprint prefix (the same one /api/config/export shows) and, when this process verified it, the token's login and verified_at. Never the token itself. Owner only.",
+        "responses": {
+          "200": {"description": "Token status", "content": {"application/json": {"schema": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["pat", "app"]}, "rotatable": {"type": "boolean"}, "configured": {"type": "boolean"}, "fingerprint": {"type": "string"}, "login": {"type": "string"}, "verified_at": {"type": "string", "format": "date-time"}}}}}},
+          "403": {"description": "Owner role required"},
+          "503": {"description": "Config unavailable"}
+        }
+      },
+      "put": {
+        "tags": ["System"],
+        "summary": "Rotate the GitHub personal access token",
+        "description": "Replaces the PAT without a restart. The new token is verified against the configured api_url first (GET /user, read access to every project repo, and the boot scope check for the current ACMM level); a failure is refused with 422 and nothing changes. A verified token is saved through the normal (keystore-sealed) config save path, then a new PAT client is adopted and running agents get fresh credentials. Audited as github_token_rotated / github_token_rejected by fingerprint. The response never carries the token. Refused with 409 when github.app_id is set. Owner only.",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["token"], "properties": {"token": {"type": "string", "writeOnly": true}}}}}},
+        "responses": {
+          "200": {"description": "Token rotated", "content": {"application/json": {"schema": {"type": "object", "properties": {"mode": {"type": "string", "enum": ["pat", "app"]}, "rotatable": {"type": "boolean"}, "configured": {"type": "boolean"}, "fingerprint": {"type": "string"}, "login": {"type": "string"}, "verified_at": {"type": "string", "format": "date-time"}, "sealed": {"type": "boolean", "description": "True when the saved token is a keystore envelope; false when written as plaintext (the config file is then kept 0600)."}}}}}},
+          "400": {"description": "Missing or empty token"},
+          "403": {"description": "Owner role required, or a cross-site request (Sec-Fetch-Site: cross-site)"},
+          "409": {"description": "This hive authenticates as a GitHub App (checked again under the GitHub config lock)"},
+          "415": {"description": "Content-Type must be application/json"},
+          "422": {"description": "The token failed verification; the current token is unchanged"},
+          "429": {"description": "A token was rejected recently; Retry-After says how long to wait"},
+          "500": {"description": "Config has no source path, the config file could not be made owner-only, or the save failed; the current token is unchanged"},
+          "503": {"description": "Rotation is not wired on this hive"}
         }
       }
     }

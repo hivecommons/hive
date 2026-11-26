@@ -8,12 +8,18 @@ agent_sandbox.job.affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringEx
 agent_sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].key # TODO #18809
 agent_sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].operator # TODO #18809
 agent_sandbox.job.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[].matchExpressions[].values[] # TODO #18809
+agent_sandbox.job.inference_proxy.enabled # TODO #19619
+agent_sandbox.job.inference_proxy.endpoint # TODO #19619
+agent_sandbox.job.inference_proxy.listen_addr # TODO #19619
 agent_sandbox.job.relay_image # TODO #11854
 agent_sandbox.job.relay_run_as_user # TODO #11854
+agent_sandbox.job.runtime_class_name # TODO #11854
 agent_sandbox.job.volumes[].claim # TODO #11854
 agent_sandbox.job.volumes[].mount_path # TODO #11854
 agent_sandbox.job.volumes[].name # TODO #11854
 agent_sandbox.job.volumes[].read_only # TODO #11854
+agent_sandbox.job.workspace_size_limit # TODO #11854
+agent_sandbox.job.workspace_transport # TODO #11854
 agent_sandbox.openshell.allow_hosts[] # TODO #17645 (OpenShell runtime; Settings control pending)
 agent_sandbox.openshell.binaries[] # TODO #17645 (OpenShell runtime; Settings control pending)
 agent_sandbox.openshell.gateway_url # TODO #17645 (OpenShell runtime; Settings control pending)
@@ -77,12 +83,14 @@ agents.<key>.emoji # TODO #11854
 agents.<key>.enabled # TODO #11854
 agents.<key>.explain_mode # TODO #11854
 agents.<key>.github_api_hourly_cap # TODO #11854
+agents.<key>.headless_turns # TODO #19902
 agents.<key>.id # TODO #11854
 agents.<key>.include_repos # TODO #11854
 agents.<key>.jev_mode # TODO #11854
 agents.<key>.kick_template # TODO #11854
 agents.<key>.lane_keywords[] # TODO #11854
 agents.<key>.launch_cmd # TODO #11854
+agents.<key>.max_context_tokens # TODO #11854
 agents.<key>.max_turn_duration # TODO #11854
 agents.<key>.metrics_collector # TODO #11854
 agents.<key>.mode # TODO #11854
@@ -128,8 +136,12 @@ agents.<key>.sandbox.job.github_read_proxy.enabled # TODO #18865
 agents.<key>.sandbox.job.github_read_proxy.endpoint # TODO #18865
 agents.<key>.sandbox.job.github_read_proxy.listen_addr # TODO #18865
 agents.<key>.sandbox.job.github_read_proxy.no_proxy[] # TODO #18865
+agents.<key>.sandbox.job.inference_proxy.enabled # TODO #19619
+agents.<key>.sandbox.job.inference_proxy.endpoint # TODO #19619
+agents.<key>.sandbox.job.inference_proxy.listen_addr # TODO #19619
 agents.<key>.sandbox.job.relay_image # TODO #11854
 agents.<key>.sandbox.job.relay_run_as_user # TODO #11854
+agents.<key>.sandbox.job.runtime_class_name # TODO #11854
 agents.<key>.sandbox.job.scheduler_name # TODO #11854
 agents.<key>.sandbox.job.service_account # TODO #11854
 agents.<key>.sandbox.job.ttl_seconds # TODO #11854
@@ -139,6 +151,8 @@ agents.<key>.sandbox.job.volumes[].name # TODO #11854
 agents.<key>.sandbox.job.volumes[].read_only # TODO #11854
 agents.<key>.sandbox.job.workspace_claim # TODO #11854
 agents.<key>.sandbox.job.workspace_claim_mount # TODO #11854
+agents.<key>.sandbox.job.workspace_size_limit # TODO #11854
+agents.<key>.sandbox.job.workspace_transport # TODO #11854
 agents.<key>.sandbox.network_mode # TODO #11854
 agents.<key>.sandbox.openshell.allow_hosts[] # TODO #17645 (OpenShell runtime; Settings control pending)
 agents.<key>.sandbox.openshell.binaries[] # TODO #17645 (OpenShell runtime; Settings control pending)
@@ -210,6 +224,9 @@ auto_merge.human_merge_pin_only.<key>.paths[] # bounded pin-only human-merge pol
 auto_merge.human_merge_pin_only.<key>.trusted_authors[] # bounded pin-only human-merge policy (#16262); yaml-only
 auto_merge.human_merge_title_prefixes[] # breaking-titled PRs wait for a human; yaml-only
 auto_merge.human_merge_labels[] # needs-owner-merge PRs wait for a human; yaml-only
+auto_merge.decision_gate.enabled # credential-path PRs wait for a person's decision; yaml-only
+auto_merge.decision_gate.paths[] # credential-path PRs wait for a person's decision; yaml-only
+auto_merge.decision_gate.sentinel # sentinel-flagged PRs wait for a person's decision; yaml-only
 auto_merge.merge_forward_trusted_human[] # TODO #11854
 auto_merge.native_merge_queue.enabled # native merge queue hand-off opt-in (#15198); yaml-only
 auto_merge.native_merge_queue.probe_ttl # merge-queue probe cache TTL (#15198); yaml-only
@@ -243,8 +260,16 @@ debug.pprof_addr # loopback-only pprof bind address, operator/debug knob, not a 
 dedupe.advisory_autoclose # advisory-checklist sweep; yaml-only (#15754)
 deployment.runtime # set via HIVE_DEPLOYMENT_RUNTIME env var or auto-detected, not a Settings control (#14072)
 duplicate_sweep.bot_authors[] # TODO #11854
+escalation.release_when_green_label # stale-hold opt-in release label; yaml/env only, Settings control pending (#19839)
+escalation.stale_hold_after # stale-hold threshold; yaml or HIVE_STALE_HOLD_AFTER, Settings control pending (#19839)
+escalation.stale_hold_labels[] # stale-hold watched labels; yaml-only, Settings control pending (#19839)
 evidence.complexity.enabled # TODO #11854
 evidence.complexity.static_analysis # TODO #11854
+forgejo.integration.audiences.<key> # Forgejo JWT signer setup is yaml-only for now; see docs/forge-app-setup.md (#19679)
+forgejo.integration.issuer # Forgejo JWT signer setup is yaml-only for now; see docs/forge-app-setup.md (#19679)
+forgejo.integration.key_file # Forgejo JWT signer setup is yaml-only for now; see docs/forge-app-setup.md (#19679)
+forgejo.integration.rest_audience # Forgejo JWT signer setup is yaml-only for now; see docs/forge-app-setup.md (#19920)
+forgejo.login # hive's own Forgejo username for repo-limited tokens that cannot read GET /user; yaml-only for now, Settings control pending; see docs/integrations/forgejo.md (#19994)
 github.additional_bot_logins[] # TODO #11854
 github.attention.admitter.<key> # single-admitter ownership and flap window are YAML-only rollout controls; see src/docs/attention-episodes.md
 github.attention.digest_recipients[] # opt-in attention digest recipients; yaml-only, see docs/notifications.md (#16271)
@@ -529,7 +554,6 @@ project.label_driven_approval_labels[] # TODO #11854
 project.label_driven_supersede_park_actors[] # TODO #11854
 project.label_driven_trust_org_members # TODO #11854
 project.label_driven_trusted_bots[] # TODO #11854
-project.open_prs # TODO #11854
 project.paused_repos[].at # TODO #11854
 project.paused_repos[].by # TODO #11854
 project.paused_repos[].reason # TODO #11854

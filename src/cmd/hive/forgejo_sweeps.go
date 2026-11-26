@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"time"
 
@@ -13,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/forgesweep"
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -46,11 +46,18 @@ func forgejoSweepAPIForRepo(cfg *config.Config, repo string) (forge.SweepAPI, er
 	if err := cfg.CheckForgeTokenHost(repo); err != nil {
 		return nil, err
 	}
-	token := os.Getenv(cfg.Forgejo.TokenEnvName())
-	if strings.TrimSpace(token) == "" {
-		return nil, fmt.Errorf("%s is empty", cfg.Forgejo.TokenEnvName())
+	token, source, err := forgejoRESTToken(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("forgejo token: %w", err)
 	}
-	return newForgejoSweepAPI(token, forge.Options{BaseURL: cfg.ForgeURLForRepo(repo), Org: cfg.Project.Org})
+	if strings.TrimSpace(token) == "" {
+		return nil, fmt.Errorf("%s is empty", source)
+	}
+	return newForgejoSweepAPI(token, forge.Options{
+		BaseURL: cfg.ForgeURLForRepo(repo),
+		Org:     cfg.Project.Org,
+		Login:   cfg.Forgejo.Login,
+	})
 }
 
 // forgejoSweeperFor builds one pass's sweeper from cfg. Only repos whose kind
@@ -65,6 +72,15 @@ func forgejoSweeperFor(cfg *config.Config, deps forgejoSweepDeps) *forgesweep.Sw
 		return nil
 	}
 	blocking := []string{forgejoHoldLabel, cfg.Sentinel.LabelOrDefault(), cfg.Governor.Labels.DecisionNeededLabelOrDefault()}
+	// The hive gate labels block as on GitHub (github.IsHiveGateLabel): the
+	// PR relay holds every PR it opens with ready-for-review, and a person
+	// releases it by removing the label (#19912). The defaults stay in the
+	// list after a rename, so a label applied under the old name still holds.
+	// The configured names are read from cfg too: on a forge-only hive no
+	// GitHub client installs them into pkg/github.
+	blocking = append(blocking, github.HiveGateLabels()...)
+	blocking = append(blocking, cfg.Governor.Labels.ReadyForReviewLabelOrDefault())
+	blocking = append(blocking, github.DefaultReadyForReviewLabel, github.DefaultDecisionNeededLabel)
 	blocking = append(blocking, cfg.Governor.Labels.Exempt...)
 	s := &forgesweep.Sweeper{
 		Repos:            repos,

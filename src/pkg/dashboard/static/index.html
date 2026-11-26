@@ -592,7 +592,8 @@
     .avatar-menu-signout { color: var(--red); }
     /* Guide button remains the topbar CTA through the shared primary chip
        recipe; its size/shape intentionally match every other nav chip. */
-    #fleet-breaker-wrap { display: inline-flex; align-items: center; }
+    #fleet-breaker-wrap { display: inline-flex; align-items: center; gap: var(--nav-chip-gap, 8px); }
+    #fleet-breaker-hub-link[hidden] { display: none; }
     #fleet-breaker-btn2[data-status="ok"] { --nav-chip-color: var(--status-ok); }
     #fleet-breaker-btn2[data-status="error"] { --nav-chip-color: var(--status-error); }
     #fleet-breaker-dot, #fleet-breaker-icon { transition: color .15s, transform .15s; }
@@ -3457,6 +3458,10 @@
     .repo-name .repo-automerge-toggle { margin: 0 0 0 auto; }
     .repo-automerge-toggle .config-toggle-label { font-size: var(--fs-2xs); }
     .repo-automerge-switch { flex: 0 0 auto; }
+    /* Per-repo open-PRs mode select, beside the auto-merge switch. */
+    .repo-open-prs { display: inline-flex; align-items: center; flex: 0 0 auto; white-space: nowrap; gap: var(--sp-2); margin: 0; font-size: var(--fs-2xs); color: var(--muted); }
+    .repo-open-prs .config-toggle-label { font-size: var(--fs-2xs); }
+    .repo-open-prs-select { font-size: var(--fs-2xs); padding: var(--sp-0) var(--sp-2); }
     .repo-swarm-btn { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--border)); background: color-mix(in srgb, var(--amber) 10%, transparent); color: var(--amber); opacity: 0.85; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-swarm-btn:hover { opacity: 1; border-color: var(--amber); }
     .repo-swarm-btn[data-busy="1"] { opacity: 0.5; cursor: default; }
@@ -4665,7 +4670,10 @@
     .tabbed-modal-body { flex:1 1 auto; min-height:0; overflow:auto; }
     .hive-dialog-title { font-size: var(--fs-lg); font-weight: 700; color: var(--text); margin-bottom: var(--sp-5); }
     .hive-dialog-body { font-size: 0.9rem; color: var(--muted); line-height: 1.5; white-space: pre-wrap; margin-bottom: var(--sp-7); }
-    .hive-dialog-body.long { max-height: min(55vh, 520px); overflow: auto; }
+    .hive-dialog-body.long { max-height: min(55vh, 520px); }
+    .hive-dialog.hive-confirm-scroll { display: flex; flex-direction: column; overflow: hidden; }
+    .hive-confirm-scroll > .modal-scroll { min-height: 0; overflow-wrap: anywhere; }
+    .hive-confirm-scroll > :not(.modal-scroll) { flex-shrink: 0; }
     /* .modal-scroll — shared long-content scroll region for every modal
        (release notes, alerts, export viewer, decision dialogs, settings
        bodies). Scrollability is made discoverable: a thin always-visible
@@ -4688,6 +4696,7 @@
     .hive-dialog-error { min-height: 1.2em; margin-top: var(--sp-3); font-size: var(--fs-sm); color: var(--red); }
     /* Optional "remember my choice" row under the body (hiveConfirm cfg.check) */
     .hive-dialog-check { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--muted); margin: calc(-1 * var(--sp-4)) 0 var(--sp-6); cursor: pointer; }
+    .hive-confirm-scroll > .hive-dialog-check { margin-top: 0; }
     .hive-dialog-check input { accent-color: var(--accent); margin: 0; }
     .hive-dialog-buttons { display: flex; gap: 10px; justify-content: flex-end; }
     /* Export / link viewer (hiveExportViewer): the handed-over text sits in
@@ -4966,6 +4975,7 @@
       background: var(--green);
       border-color: var(--green);
     }
+    .config-toggle-note-warn { color: var(--status-warn); }
     .config-toggle-switch.disabled {
       opacity: 0.5;
       cursor: not-allowed;
@@ -5325,6 +5335,8 @@
     .wf-enabled-toggle { margin: var(--sp-3) 0 var(--sp-1); }
     .wf-enabled-toggle .config-toggle-label { font-weight: 700; }
     .wf-enabled-explain { margin: 0 0 var(--sp-4); max-width: 60em; }
+    .wf-repo-binding { min-width: 0; max-width: 100%; }
+    .wf-repo-select { min-width: 0; max-width: min(100%, 32em); text-overflow: ellipsis; }
     .wf-derivation-off { color: var(--status-warn); }
     .wf-dispatch-gap { color: var(--status-warn); white-space: normal; }
     .wf-prov, .wf-compiled { display: inline-block; border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; border: var(--line-width) solid var(--border); color: var(--muted); }
@@ -9493,6 +9505,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
           <span id="fleet-breaker-pill" class="nav-chip__label">running</span>
           <span id="fleet-breaker-icon" class="nav-chip__icon" aria-hidden="true"><svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg></span>
         </button>
+        <!-- Shown only while the breaker is engaged and this viewer cannot
+             release it here: points at the hub My Hives page, whose ⋮ menu
+             carries "Resume hive" for the owner or a hub admin (#19778). -->
+        <a id="fleet-breaker-hub-link" class="nav-chip nav-chip--action" href="#" target="_blank" rel="noopener noreferrer"
+           title="Resume this hive from the hub: My Hives → ⋮ → Resume hive (hive owner or hub admin)"
+           aria-label="Resume this hive from My Hives on the hub" hidden><span class="nav-chip__label">Resume in My Hives ↗</span></a>
       </span>
       <span id="agent-navbar-upnext" class="agent-navbar-upnext" hidden aria-label="Upcoming agent run order" title="Upcoming agent run order"></span>
     </div>
@@ -9878,7 +9896,11 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
   <div class="mt-6 mb-8" id="calendar-section" data-dashboard-section="calendar-section">
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="calendar-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Calendar section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📅 Calendar</h2>
     <div class="section-body">
-      <div id="calendar-panel" class="calendar-panel"><p class="muted-xs">Loading calendar…</p></div>
+      <div id="calendar-panel" class="calendar-panel">
+        <div id="calendar-email-in" hidden></div>
+        <div id="calendar-add-form" hidden></div>
+        <div id="calendar-results" class="calendar-panel"><p class="muted-xs">Loading calendar…</p></div>
+      </div>
       <div id="meeting-drafts-panel" class="calendar-panel"></div>
     </div>
   </div>
@@ -10308,6 +10330,13 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       // token. Without this, every one of those failures would open its own
       // the in-app dialog. All concurrent callers now share one dialog.
       let _ensureAuthTokenFlight = null;
+      const _authPromptEvents = new EventTarget();
+      let _authPromptOpen = false;
+      function _setAuthPromptOpen(open) {
+        _authPromptOpen = open;
+        _authPromptEvents.dispatchEvent(new Event('change'));
+      }
+
       function _ensureAuthToken() {
         if (!_ensureAuthTokenFlight) {
           _ensureAuthTokenFlight = _ensureAuthTokenInner().finally(() => { _ensureAuthTokenFlight = null; });
@@ -10336,12 +10365,14 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
           } catch {}
           // Self-hosted hive with a token configured but none stored locally:
           // ask the operator to paste it once. It persists in localStorage.
-          const entered = await hivePrompt({
+          const prompt = hivePrompt({
             title: 'Dashboard token required',
             label: _authRejected
               ? 'The stored dashboard token was rejected — it is probably stale (rotated since this browser saved it). Paste the current HIVE_DASHBOARD_TOKEN:'
               : 'This hive requires its dashboard token to make changes. Paste HIVE_DASHBOARD_TOKEN:'
           });
+          _setAuthPromptOpen(true);
+          const entered = await prompt.finally(() => _setAuthPromptOpen(false));
           if (entered && entered.trim()) {
             _authToken = entered.trim();
             try { localStorage.setItem('hive-token', _authToken); } catch {}
@@ -10465,9 +10496,16 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
             _authToken = null;
             _authRejected = true;
           }
+          const onPromptChange = opts.__hiveOnAuthPromptChange;
+          const notifyPrompt = onPromptChange && (() => onPromptChange(_authPromptOpen));
+          if (notifyPrompt) {
+            _authPromptEvents.addEventListener('change', notifyPrompt, { signal: opts.signal });
+            if (_authPromptOpen) notifyPrompt();
+          }
           try {
             await _ensureAuthToken();
           } finally {
+            if (notifyPrompt) _authPromptEvents.removeEventListener('change', notifyPrompt);
             _authRejected = false;
           }
           if (_authToken) {
@@ -13071,42 +13109,80 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // that invariant is enforced server-side (Manager.EngageBreaker/
     // ReleaseBreaker); the UI only reflects and triggers it.
     let _fleetBreakerEngaged = false;
+    // fleetBreakerChipView decides the chip's text for a breaker state and
+    // viewer. An engaged breaker must always say how to get out of it
+    // (#19778): an owner's chip names the action in its visible label, not
+    // only in the ▶ icon, and a viewer who cannot release it here is pointed
+    // at the hub My Hives page, whose ⋮ menu carries "Resume hive" — the
+    // place a hub-initiated pause comes from. hubURL is '' unless the link
+    // should show and the URL is http(s).
+    function fleetBreakerChipView(engaged, canToggle, count, myHivesURL) {
+      const held = count + ' agent' + (count === 1 ? '' : 's');
+      if (!engaged) {
+        return {
+          label: 'running',
+          ariaLabel: canToggle ? 'Fleet breaker: running — click to pause all agents' : 'Fleet breaker: running',
+          title: 'Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched.',
+          hubURL: '',
+        };
+      }
+      if (canToggle) {
+        return {
+          label: 'paused · resume',
+          ariaLabel: 'Fleet breaker: paused — click to resume paused agents',
+          title: 'Hive paused — the fleet breaker is holding ' + held + '. Click to resume; only the agents the breaker paused restart, on-demand and manually-paused agents stay as they are.',
+          hubURL: '',
+        };
+      }
+      const url = String(myHivesURL || '');
+      const hubURL = /^https?:\/\//i.test(url) ? url : '';
+      return {
+        label: 'paused',
+        ariaLabel: 'Fleet breaker: paused',
+        title: 'Hive paused — the fleet breaker is holding ' + held + '. Only the hive owner can resume it: from this chip when signed in as owner' +
+          (hubURL ? ', or from My Hives on the hub (⋮ → Resume hive).' : '.'),
+        hubURL: hubURL,
+      };
+    }
     // Renders the topbar breaker as one status chip button: state dot + label +
     // action icon. Owners can toggle it; read-only viewers get the same chip in a
-    // disabled status-only state (server also 403s non-owner POSTs).
+    // disabled status-only state (server also 403s non-owner POSTs) plus, while
+    // engaged, a link to where they can resume it.
     function _renderFleetBreaker(engaged, agents) {
       _fleetBreakerEngaged = !!engaged;
       const wrap = document.getElementById('fleet-breaker-wrap');
       if (!wrap) return;
       wrap.style.display = '';
       const count = (agents || []).length;
+      const canToggle = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const view = fleetBreakerChipView(_fleetBreakerEngaged, canToggle, count, window._myHivesURL);
       const btn = document.getElementById('fleet-breaker-btn2');
       if (btn) {
         const fleetStatus = statusMeta(_fleetBreakerEngaged ? 'paused' : 'running');
-        const canToggle = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
         const label = document.getElementById('fleet-breaker-pill');
         const dot = document.getElementById('fleet-breaker-dot');
         const icon = document.getElementById('fleet-breaker-icon');
-        const stateText = _fleetBreakerEngaged ? 'paused' : fleetStatus.label;
-        const actionText = _fleetBreakerEngaged ? 'resume paused agents' : 'pause all agents';
         btn.style.display = '';
         btn.classList.toggle('paused', _fleetBreakerEngaged);
         btn.dataset.status = fleetStatus.status;
         btn.disabled = !canToggle;
         btn.setAttribute('aria-disabled', canToggle ? 'false' : 'true');
         btn.setAttribute('aria-pressed', _fleetBreakerEngaged ? 'true' : 'false');
-        btn.setAttribute('aria-label', canToggle
-          ? ('Fleet breaker: ' + stateText + ' — click to ' + actionText)
-          : ('Fleet breaker: ' + stateText));
-        btn.title = _fleetBreakerEngaged
-          ? ('Fleet breaker is ENGAGED — ' + count + ' agent' + (count === 1 ? '' : 's') +
-             ' held paused. Release resumes only those; on-demand and manually-paused agents are untouched.')
-          : 'Fleet breaker: pause every running agent at once. Releasing restores only the agents this breaker paused — on-demand agents and any agent you paused yourself are never touched.';
-        if (label) label.textContent = stateText;
+        btn.setAttribute('aria-label', view.ariaLabel);
+        btn.title = view.title;
+        if (label) label.textContent = view.label;
         if (dot) dot.textContent = _fleetBreakerEngaged ? '○' : '●';
         if (icon) icon.innerHTML = _fleetBreakerEngaged
           ? '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 2.2v7.6a.6.6 0 0 0 .92.5l6-3.8a.6.6 0 0 0 0-1l-6-3.8a.6.6 0 0 0-.92.5Z"/></svg>'
           : '<svg viewBox="0 0 12 12" aria-hidden="true"><rect x="2.5" y="2" width="2.4" height="8" rx="0.6"/><rect x="7.1" y="2" width="2.4" height="8" rx="0.6"/></svg>';
+      }
+      // href is assigned as a property from a URL fleetBreakerChipView already
+      // limited to http(s); it is never interpolated into markup.
+      const hubLink = document.getElementById('fleet-breaker-hub-link');
+      if (hubLink) {
+        if (view.hubURL) hubLink.href = view.hubURL;
+        else hubLink.removeAttribute('href');
+        hubLink.hidden = !view.hubURL;
       }
       // When engaged, make it obvious the whole fleet is held.
       const section = document.getElementById('agents-section');
@@ -18175,7 +18251,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
       if (n === 0 && mods.indexOf('draft') >= 0) return 'Open · draft';
       // Guarded: test harnesses lift this function by name without the 000-new helpers.
-      if (n === 0 && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item)) return 'Triage needed';
+      // An open contributor PR rides the triage word (hivecommons/hive#19843).
+      const triagePR = typeof stageTrackerTriagePRSuffix === 'function' ? stageTrackerTriagePRSuffix(item) : '';
+      if (n === 0 && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item)) return 'Triage needed' + triagePR;
       if (n === 0 && typeof stageTrackerNewState === 'function' && stageTrackerNewState(item)) return 'New';
       // An issue parked on a person (045, or a pre-045 085 with no covering
       // PR) is parked itself, so no "(its PR)" suffix.
@@ -18183,7 +18261,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       switch (n) {
         case 0: return 'Open';
         case 10: return 'Waiting for a worker';
-        case 15: return 'Triage needed';
+        case 15: return 'Triage needed' + triagePR;
         case 17: return 'Possibly exists · needs author';
         case 18: return 'Open for discussion';
         case 20: return 'Claimed';
@@ -19465,6 +19543,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         let word = state === 'active' && STAGE_TRACKER_ACTIVE_WORD[cur] ? STAGE_TRACKER_ACTIVE_WORD[cur] : (st.short || st.label || String(n));
         if (state === 'active' && n === 50) word = 'CI + Review';
         if (state === 'active' && n === 10 && cur === 10 && typeof stageTrackerTrackingWord === 'function') { const tw = stageTrackerTrackingWord(item); if (tw) word = tw; }
+        // 015 with an open contributor PR names it (hivecommons/hive#19843).
+        if (state === 'active' && cur === 15 && typeof stageTrackerTriagePRSuffix === 'function') word += stageTrackerTriagePRSuffix(item);
         if (state === 'active' && n === 30 && cur === 70 && !codeWorking) word = 'PR in progress';
         // A merge-train member's word is its place in the train (#15117).
         if (state === 'active' && !detour && n > 0 && typeof stageTrackerTrainWord === 'function') { const tw = stageTrackerTrainWord(item, trains); if (tw) word = tw; }
@@ -19496,7 +19576,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         else if (openBlocked) word = 'Open · blocked';
         else if (advisory) word = advisory.chip || 'Advisory · read & close';
         else if (openDraft) word = 'Draft';
-        else if (openTriage) word = 'Triage needed';
+        else if (openTriage) word = 'Triage needed' + (typeof stageTrackerTriagePRSuffix === 'function' ? stageTrackerTriagePRSuffix(item) : '');
         else if (openNew) word = 'New';
         // A plain, blocked or draft Open step (no stage label, not held)
         // says how long it has sat there, from the same instant the since
@@ -19779,6 +19859,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!fresh || fresh.next_mover !== 'maintainer') return false;
       const gates = Array.isArray(fresh.gates) ? fresh.gates : [];
       return gates.some(g => g && g.name === 'triage' && g.state === 'next');
+    }
+    // Pure: the open contributor PR on an issue waiting on triage — the
+    // payload's triage_pr block — or null (hivecommons/hive#19843). An
+    // untriaged issue whose reporter already opened a PR asks the
+    // maintainer "accept the issue and review PR #N", not a bare triage.
+    function stageTrackerTriagePROf(item) {
+      if (!item || item.kind === 'pr' || !item.triage_pr || typeof item.triage_pr !== 'object') return null;
+      return Number(item.triage_pr.number) > 0 ? item.triage_pr : null;
+    }
+    // Pure: " · contributor PR #N open" for the "Triage needed" chevron
+    // word, or '' when the issue has no open contributor PR.
+    function stageTrackerTriagePRSuffix(item) {
+      const pr = stageTrackerTriagePROf(item);
+      return pr ? ' · contributor PR #' + Number(pr.number) + ' open' : '';
     }
     // "Next: …" and "Gates ahead: triage ✓ → actionable → claimed" for the
     // row tooltip and the lit chevron. nowMs refreshes the next-pass countdown.
@@ -25787,13 +25881,36 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       ctx = ctx || {};
       const who = ctx.login ? '@' + ctx.login : 'you';
       const when = stageTrackerNextPassWord(stageTrackerNextPassLeftMs(item, nowMs || Date.now(), governor));
-      return 'adds `' + stageTrackerTriageLabel(item) + '` as ' + who + '; the hive takes it on its next pass' + (when ? ' (' + when + ')' : '');
+      // Guarded: fixtures lift this function by name without the helper.
+      const pr = typeof stageTrackerTriagePRNumber === 'function' ? stageTrackerTriagePRNumber(item) : 0;
+      // Accepting the issue is also what lifts the open PR's merge-side
+      // reporter-trust hold (hivecommons/hive#19843).
+      const lifts = pr ? '; PR #' + pr + ' can then be reviewed and merged' : '';
+      return 'adds `' + stageTrackerTriageLabel(item) + '` as ' + who + '; the hive takes it on its next pass' + (when ? ' (' + when + ')' : '') + lifts;
+    }
+    // Pure: the open contributor PR number on an issue waiting on triage
+    // (the payload's triage_pr), or 0.
+    function stageTrackerTriagePRNumber(item) {
+      if (!item || item.kind === 'pr' || !item.triage_pr || typeof item.triage_pr !== 'object') return 0;
+      return Number(item.triage_pr.number) || 0;
+    }
+    // Pure: the "Open contributor PR #N" menu entry under Accept triage, or
+    // null when the issue has no open contributor PR. It opens the PR on
+    // GitHub; the review itself happens there.
+    function stageTrackerTriagePRAction(item) {
+      const n = stageTrackerTriagePRNumber(item);
+      if (!n) return null;
+      const url = String(item.triage_pr.url || '');
+      const by = item.triage_pr.author ? ' by @' + item.triage_pr.author : '';
+      return { id: 'open:triage-pr', label: 'Open contributor PR #' + n, hint: 'review the PR' + by + ' on GitHub', enabled: !!url, why: url ? '' : 'No GitHub link', url, lead: true };
     }
     // Pure: the item as it reads once triage is accepted — 010 Actionable,
     // the needs-triage pill and the 👤 next-move gone — for the optimistic
     // re-render before the tracker's next payload confirms it.
     function stageTrackerTriageAccepted(item) {
       const next = Object.assign({}, item);
+      // Accepted: the contributor PR is ordinary covering work now.
+      delete next.triage_pr;
       next.modifiers = (Array.isArray(item.modifiers) ? item.modifiers : []).filter(m => m !== 'needs-triage');
       if ((Number(item.stage) || 0) === STAGE_TRACKER_TRIAGE_STAGE) {
         next.stage = STAGE_TRACKER_ACTIONABLE_STAGE;
@@ -25908,6 +26025,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // hold): the ask the row makes has its answer first.
       const triage = stageTrackerTriageNeeded(item);
       if (triage) out.push({ id: 'accept-triage', label: 'Accept triage', hint: stageTrackerTriageHint(item, ctx, ctx.nowMs, ctx.governor), enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, lead: true });
+      // An untriaged issue with an open contributor PR (hivecommons/hive#19843):
+      // the PR to review sits right under Accept triage.
+      const triagePR = triage && typeof stageTrackerTriagePRAction === 'function' ? stageTrackerTriagePRAction(item) : null;
+      if (triagePR) out.push(triagePR);
       // An advisory issue (hivecommons/hive#15381) asks for one thing:
       // read it, then close it. "Close now" leads; it is the existing
       // decision close path with the verdict `close-read`. A checklist the
@@ -28130,6 +28251,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       }
       if (id === 'open') {
         for (const it of items) if (it.url) window.open(it.url, '_blank', 'noopener');
+        return { toasts: [], pending: [] };
+      }
+      if (id === 'open:triage-pr') {
+        // The contributor PR on an untriaged issue (hivecommons/hive#19843).
+        for (const it of items) { const a = stageTrackerTriagePRAction(it); if (a && a.url) window.open(a.url, '_blank', 'noopener'); }
         return { toasts: [], pending: [] };
       }
       if (id === 'open:app-settings') {
@@ -34299,8 +34425,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         var bg = a.severity === 'error' ? 'color-mix(in srgb, var(--red) 14%, transparent)' : 'color-mix(in srgb, var(--yellow) 14%, transparent)';
         var border = a.severity === 'error' ? 'var(--red)' : 'var(--yellow)';
         var textColor = 'var(--text)'; // banner copy stays neutral; severity lives in the tint/border
-        var dismiss = (a.id || '').indexOf('plan-stall-') === 0
-          ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="dismissSystemAlert" data-arg0="' + esc(a.id || '') + '" data-stop="1" title="Dismiss this needs-human plan alert">Dismiss</button>'
+        // Mirrors systemAlertDismissible in server.go.
+        var alertID = a.id || '';
+        var dismissible = alertID.indexOf('plan-stall-') === 0 || alertID.indexOf('model-id-normalized-') === 0;
+        var dismiss = dismissible
+          ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="dismissSystemAlert" data-arg0="' + esc(alertID) + '" data-stop="1" title="Dismiss this alert">Dismiss</button>'
           : '';
         var guideTip = a.onboarding ? '<div class="onboarding-guide-tip">' + onboardingGuideTipHtml(a.guideStep || 'github-app') + '</div>' : '';
         return '<div style="background:' + bg + ';border:1px solid ' + border + ';border-radius:8px;padding:var(--sp-5) var(--sp-6);margin-bottom:var(--sp-4);display:flex;align-items:center;gap:10px;font-size:0.85rem">'
@@ -35337,6 +35466,64 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             btn.textContent = label || (enabled ? 'auto-merge off' : 'auto-merge on');
           }
         }
+      }
+    }
+
+    // Per-repo open-PRs mode (repo_policies[].open_prs): the sibling of the
+    // auto-merge switch, at every level. Shared by the repo card and the
+    // Settings → Repos row.
+    const REPO_OPEN_PRS_MODES = [
+      { value: 'on', label: 'On', tip: 'Agents may open pull requests in this repo' },
+      { value: 'workflow_only', label: 'Workflow only', tip: 'Only workflow hand-off pull requests; cadence work (coverage, test hardening) files issues instead' },
+      { value: 'off', label: 'Off', tip: 'Agents open no pull requests here; they analyse, comment and file issues' },
+    ];
+    const REPO_OPEN_PRS_RANK = { off: 0, workflow_only: 1, on: 2 };
+
+    // repoOpenPRsSelectHtml renders the select. Narrowing needs the repo
+    // pause tier (canNarrow); widening needs the owner role, mirroring the
+    // server's asymmetric gate. hiveOff says project.open_prs is false, so
+    // every repo is off whatever its own mode.
+    function repoOpenPRsSelectHtml(repo, setting, hiveOff, canNarrow, extraClass) {
+      const current = REPO_OPEN_PRS_RANK[setting] !== undefined ? setting : 'on';
+      const isOwner = dashboardRoleAtLeast(window._hiveRole || 'read', 'owner');
+      const editable = canNarrow || isOwner;
+      const tip = hiveOff
+        ? 'project.open_prs is false: agents open no pull requests in any repo, whatever this repo\'s own mode'
+        : (editable ? 'Open PRs: whether agents may open pull requests in this repo' : 'Requires repo write or owner role to change');
+      const opts = REPO_OPEN_PRS_MODES.map(m => {
+        const widens = REPO_OPEN_PRS_RANK[m.value] > REPO_OPEN_PRS_RANK[current];
+        const disabled = widens ? !isOwner : !canNarrow && m.value !== current && !isOwner;
+        return `<option value="${m.value}" title="${esc(m.tip)}" ${m.value === current ? 'selected' : ''} ${disabled ? 'disabled' : ''}>${esc(m.label)}</option>`;
+      }).join('');
+      return `<label class="repo-open-prs ${extraClass || ''}" title="${esc(tip)}"><span class="config-toggle-label">open PRs${hiveOff ? ' (hive off)' : ''}</span><select class="repo-open-prs-select" aria-label="${esc('open PRs for ' + repo)}" data-prev="${esc(current)}" ${editable ? '' : 'disabled'} data-change-action="setRepoOpenPRs" data-arg0="${esc(repo)}" data-arg-types="s,v,t">${opts}</select></label>`;
+    }
+
+    async function setRepoOpenPRs(repo, mode, el) {
+      const prev = (el && el.dataset.prev) || 'on';
+      if (!mode || mode === prev) return;
+      if (el) el.disabled = true;
+      try {
+        const resp = await fetch('/api/repos/open-prs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ repo: repo, mode: mode })
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));
+        if (el) { el.dataset.prev = data.mode || mode; el.disabled = false; }
+        if (typeof _configState !== 'undefined' && _configState && _configState.data) {
+          if (!_configState.data.repoOpenPRs) _configState.data.repoOpenPRs = {};
+          _configState.data.repoOpenPRs[data.repo || repo] = { value: data.mode || mode, effective: data.effective || mode };
+        }
+        const label = (REPO_OPEN_PRS_MODES.find(m => m.value === (data.mode || mode)) || {}).label || mode;
+        showToast('Open PRs for ' + repo + ': ' + label + (data.persisted === false ? ' (not saved to disk)' : ''), data.persisted === false ? 'warning' : 'success');
+        // Same #11020 floor as the auto-merge switch, so the refetch cannot
+        // repaint the old mode.
+        noteStatusMutation(data.minStatusSeq);
+        fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+      } catch (e) {
+        showToast('Open PRs change failed: ' + (e && e.message ? e.message : 'network error'), 'error');
+        if (el) { el.value = prev; el.disabled = false; }
       }
     }
 
@@ -39097,6 +39284,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
               ? (autoMergeOn ? 'Disable Hive auto-merge for this repo' : 'Enable Hive auto-merge for this repo')
               : (autoMergeOn ? 'Requires repo write or owner role to disable Hive auto-merge' : 'Requires owner role to enable Hive auto-merge'));
         const autoMergeBtn = `<label class="config-toggle repo-automerge-toggle" title="${esc(autoMergeTip)}"><span class="config-toggle-label">auto-merge</span><span class="config-toggle-switch repo-automerge-switch ${autoMergeOn ? 'on' : ''} ${canSetAutoMerge ? '' : 'disabled'}" role="switch" tabindex="0" aria-checked="${autoMergeOn ? 'true' : 'false'}" aria-label="${esc('auto-merge for ' + cardRepo)}" data-disabled="${canSetAutoMerge ? 'false' : 'true'}" ${canSetAutoMerge ? `data-action="toggleRepoAutoMerge" data-keydown-action="toggleRepoAutoMerge" data-keys="Enter, " data-arg0="${esc(cardRepo)}" data-arg1="${autoMergeOn ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1"` : ''}></span></label>`;
+        // Per-repo open-PRs mode (repo_policies[].open_prs), next to the
+        // auto-merge switch and shown at every level.
+        const openPrsSetting = r.openPrsMode || 'on';
+        const openPrsCtl = repoOpenPRsSelectHtml(cardRepo, openPrsSetting, r.openPrsModeEffective === 'off' && openPrsSetting !== 'off', canPauseRepo, 'repo-open-prs-card');
         const writebackCtl = repoWritebackControlHtml(cardRepo, status);
         const pauseBtn = canPauseRepo
           ? `<button class="repo-pause-btn" data-action="toggleRepoPause" data-arg0="${esc(cardRepo)}" data-arg1="${r.paused ? 'true' : 'false'}" data-arg-types="s,j,t" data-stop="1" data-prevent="1" title="${r.paused ? 'Resume agent activity on this repo' : 'Quiet this repo — agents stop writing to it and stop being handed work on it — without stopping the rest of the hive'}">${r.paused ? '▶ resume' : '⏸ pause'}</button>`
@@ -39125,7 +39316,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           ${cardForge.kind === 'github'
             ? `<div class="repo-provider-label" style="color:${isPublic ? 'var(--muted)' : 'var(--indigo)'}" title="This repo lives on ${esc(hostLabel)}${isPublic ? '' : ' (GitHub Enterprise), not public github.com'}">${esc(hostLabel)}${isPublic ? '' : ' · Enterprise'}</div>`
             : `<div class="repo-provider-label" data-forge="${esc(cardForge.kind)}" style="color:var(--indigo)" title="This repo lives on ${esc(cardForge.name)} at ${esc(cardForge.host)}">${cardForge.icon} ${esc(cardForge.name)} · ${esc(cardForge.host)}</div>`}
-          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${currentBasePill}${forkPill}${pausedPill}</span>${autoMergeBtn}<span class="repo-header-spacer"></span><span class="repo-header-actions">${writebackCtl}${swarmBtn}${pauseBtn}</span></div>
+          <div class="repo-name">${orderHandle}<a href="${esc(repoUrl)}" target="_blank" rel="noopener" title="${esc(r.full || r.name)}" style="color:inherit;text-decoration:none">${esc(r.full || r.name)}</a><span class="repo-header-badges">${overviewFilter && overviewRepoMatches ? `<span class="repo-filtered-chip">${overviewRepoMatches.count} matching</span>` : ''}${pillFilterIsActive ? repoPillFilterClearChip(repoFilterCounts) : ''}${swarmPill}${currentBasePill}${forkPill}${pausedPill}</span>${autoMergeBtn}${openPrsCtl}<span class="repo-header-spacer"></span><span class="repo-header-actions">${writebackCtl}${swarmBtn}${pauseBtn}</span></div>
           <div class="repo-stats">
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.issuesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.issues >= 0 ? r.issues : '?'}</span>${iSpark}</div><div class="label">issues</div></a>${issueBreakdown}</div>
             <div class="repo-stat"><a href="${esc(repoUrl + cardForge.changesPath)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none"><div class="spark-row"><span class="num">${r.prs >= 0 ? r.prs : '?'}</span>${pSpark}</div><div class="label">PRs</div></a>${prBreakdown}</div>
@@ -46528,6 +46719,7 @@ function burnAreaChart() {
     let _kbSelectedType = '';
     let _kbSearchQuery = '';
     let _kbSelectedFact = null;
+    let _kbFactRequest = 0;
     let _kbFacts = [];
     const _kbPageSize = 50;
     let _kbPageOffset = 0;
@@ -46667,7 +46859,8 @@ function burnAreaChart() {
         }
         _kbInitialLoad = false;
         const enabledChanged = !prev || prev.enabled !== _kbCache.enabled || JSON.stringify(prev.primer || null) !== JSON.stringify(_kbCache.primer || null);
-        const layersChanged = !prev || JSON.stringify((prev.layers||[]).map(l=>l.type)) !== JSON.stringify((_kbCache.layers||[]).map(l=>l.type));
+        const layerKeys = stats => JSON.stringify((stats.layers || []).map(l => [l.type, l.source_layer]));
+        const layersChanged = !prev || layerKeys(prev) !== layerKeys(_kbCache);
         const docsChanged = !prev || JSON.stringify((prev._documents||[]).map(d=>d.slug)) !== JSON.stringify((_kbCache._documents||[]).map(d=>d.slug));
         if (!_kbRendered || enabledChanged || layersChanged || docsChanged) {
           _kbRendered = true;
@@ -46692,9 +46885,8 @@ function burnAreaChart() {
       const list = document.getElementById('kb-layer-btns');
       if (list) {
         for (const btn of list.children) {
-          const isAll = btn.textContent.includes('All Layers');
           const btnLayer = btn.dataset.action === 'gh14' ? 'vault:' + btn.dataset.arg0 : btn.dataset.arg0;
-          btn.classList.toggle('active', layer === 'all' ? isAll : btnLayer === layer);
+          btn.classList.toggle('active', btnLayer === layer);
         }
       }
       kbSearch();
@@ -46717,8 +46909,15 @@ function burnAreaChart() {
     const KB_AUTO_MEMORY_VIEW = 'auto-memory';
     const KB_AUTO_MEMORY_TAG = 'cli-memory';
 
-    async function kbLoadFacts(offset) {
+    async function kbLoadFacts(offset, keepFact = false) {
       const request = ++_kbRequest;
+      if (!keepFact) {
+        ++_kbFactRequest;
+        if (_kbSelectedFact) {
+          _kbSelectedFact = null;
+          renderKnowledgeDetail();
+        }
+      }
       const query = _kbSearchQuery;
       const layer = _kbSelectedLayer;
       const typeFilter = _kbSelectedType;
@@ -46730,13 +46929,13 @@ function burnAreaChart() {
         url = '/api/knowledge/search?tag=' + KB_AUTO_MEMORY_TAG + '&include_states=draft&limit=200';
         if (typeFilter) url += '&type=' + encodeURIComponent(typeFilter);
       } else if (layer && layer !== 'all') {
-        // Check if this is a vault, document, or standard layer type
+        // Keep legacy layer names working alongside concrete source selectors.
         const standardLayers = ['personal','project','org','community'];
         if (layer.startsWith('doc:')) {
           const docSlug = layer.slice(4);
           url = '/api/knowledge/search?tag=' + encodeURIComponent(docSlug) + '&limit=50';
-        } else if (!standardLayers.includes(layer) && !layer.startsWith('git_source:')) {
-          url = '/api/knowledge/vaults/' + encodeURIComponent(layer) + '/facts';
+        } else if (!standardLayers.includes(layer) && !layer.startsWith('wiki:') && !layer.startsWith('git_source:')) {
+          url = '/api/knowledge/vaults/' + encodeURIComponent(layer.replace(/^vault:/, '')) + '/facts';
         } else {
           url = '/api/knowledge/' + encodeURIComponent(layer);
         }
@@ -46757,7 +46956,6 @@ function burnAreaChart() {
         _kbHasMore = !!data.has_more;
         _kbFacts = Array.isArray(data) ? data : (data.results || data.facts || []);
         if (!query && layer === KB_AUTO_MEMORY_VIEW) _kbFacts = _kbFacts.filter(f => f.state === 'draft');
-        _kbSelectedFact = null;
         renderKnowledgeFacts();
       } catch (e) {
         if (request !== _kbRequest) return;
@@ -46768,15 +46966,17 @@ function burnAreaChart() {
       }
     }
 
-    async function kbReadFact(slug, layer) {
-      if (!layer) {
-        const match = _kbFacts.find(f => f.slug === slug);
-        layer = match ? match.layer : 'project';
-      }
+    async function kbReadFact(slug, layer = 'all') {
+      const request = ++_kbFactRequest;
+      _kbSelectedFact = null;
+      renderKnowledgeDetail();
       try {
         const r = await fetch('/api/knowledge/' + encodeURIComponent(layer) + '/' + encodeURIComponent(slug));
         if (!r.ok) return;
-        _kbSelectedFact = await r.json();
+        const fact = await r.json();
+        if (request !== _kbFactRequest || fact.slug !== slug) return;
+        if (/^(wiki:|vault:sha256:|git_source:)/.test(layer) && fact.source_layer !== layer) return;
+        _kbSelectedFact = fact;
         renderKnowledgeDetail();
       } catch (e) { /* ignore */ }
     }
@@ -47126,8 +47326,8 @@ function burnAreaChart() {
         if (node && !dragNode) {
           _kbGraphView = false;
           _kbSelectedLayer = 'all';
-          kbReadFact(node.slug);
           renderKnowledge();
+          kbReadFact(node.slug, node.data.source_layer || node.data.layer || undefined);
         }
       });
 
@@ -47509,19 +47709,21 @@ function burnAreaChart() {
       html += '<div class="kb-sidebar">';
       html += '<div class="section-label m-0">Knowledge Sources</div>';
       html += '<div class="kb-layer-list" id="kb-layer-btns">';
-      // Aggregate row stays on top as the filter reset (kbSelectLayer keys on the 'All Layers' text)
+      // Aggregate row stays on top as the filter reset.
       html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === 'all' ? ' active' : ''}" data-action="kbSelectLayer" data-arg0="all"><span class="kb-layer-label">📋 All Layers</span><span class="kb-layer-count">${totalPages}</span></button>`;
       html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${_kbSelectedLayer === KB_AUTO_MEMORY_VIEW ? ' active' : ''}" data-action="kbSelectLayer" data-arg0="${KB_AUTO_MEMORY_VIEW}" title="Drafts drained from the coding CLIs' own memory stores. No agent sees one until it is approved."><span class="kb-layer-label">🧠 Auto-memory drafts</span></button>`;
       for (const l of layers) {
-        const isGitSource = l.type && l.type.startsWith('git_source:');
-        const icon = KB_LAYER_ICONS[l.type] || (isGitSource ? '📄' : '📂');
-        const label = KB_LAYER_LABELS[l.type] || l.type;
-        const active = _kbSelectedLayer === l.type ? ' active' : '';
+        const sourceLayer = l.source_layer || l.type || '';
+        const isVault = sourceLayer.startsWith('vault:');
+        const isGitSource = sourceLayer.startsWith('git_source:');
+        const icon = isVault ? '📂' : KB_LAYER_ICONS[l.type] || (isGitSource ? '📄' : '📂');
+        const label = isVault ? l.type : KB_LAYER_LABELS[l.type] || l.type;
+        const active = _kbSelectedLayer === sourceLayer ? ' active' : '';
         const count = l.total_pages || 0;
         const layerStatus = statusMeta(l.healthy ? 'ready' : 'error');
         const healthTip = `${escapeHtml(label)}: ${l.healthy ? 'healthy' : 'unreachable'}`;
         const repoUrl = isGitSource && l.url ? (l.subpath ? l.url + '/tree/' + 'main/' + l.subpath : l.url) : '';
-        html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${active}" data-action="kbSelectLayer" data-arg0="${escapeHtml(l.type)}" title="${healthTip}">`;
+        html += `<button class="hv-btn btn-secondary btn-sm kb-layer-btn${active}" data-action="kbSelectLayer" data-arg0="${escapeHtml(sourceLayer)}" title="${healthTip}">`;
         html += `<span class="kb-layer-label"><span class="kb-health-dot status-dot" data-status="${layerStatus.status}" title="${healthTip}"></span>${icon} ${escapeHtml(label)}</span>`;
         if (isGitSource && repoUrl) {
           html += `<a href="${escapeHtml(repoUrl)}" target="_blank" rel="noopener" data-action="gh3" style="color:var(--accent);text-decoration:none;font-size:var(--fs-base);flex-shrink:0" title="Open source repo in new tab">↗</a>`;
@@ -47588,7 +47790,8 @@ function burnAreaChart() {
       if (_kbGraphView) {
         fetchKnowledgeGraph();
       } else {
-        kbSearch();
+        renderKnowledgeDetail();
+        kbLoadFacts(0, true);
       }
     }
 
@@ -47710,6 +47913,16 @@ function burnAreaChart() {
         + '</ul>';
     }
 
+    // Retro coverage (#20011): how many closed work beads the arm comparison
+    // saw, so "no beads closed" reads differently from "closed but unmatched".
+    function kbAdvisorCoverageHTML(c) {
+      if (!c || typeof c !== 'object') return '';
+      const n = v => escapeHtml(String(Number(v) || 0));
+      return '<div class="kb-effective-meta">Coverage: ' + n(c.closed_beads) + ' closed work beads · '
+        + n(c.with_closed_pr) + ' with a closed PR · ' + n(c.no_ref) + ' without an issue or PR ref · '
+        + n(c.no_decision) + ' without a matching advisor decision</div>';
+    }
+
     function kbAdvisorArmRowHTML(a, note) {
       return '<tr><td>' + escapeHtml(a.arm) + (note ? ' <span class="kb-effective-meta">' + escapeHtml(note) + '</span>' : '') + '</td><td>' + escapeHtml(String(a.beads)) + '</td><td>'
         + kbAdvisorNum(a.mean_fix_attempts, 2) + '</td><td>' + kbAdvisorNum(a.mean_ci_failure_count, 2) + '</td><td>' + kbAdvisorNum(a.mean_kicks_received, 2) + '</td></tr>';
@@ -47742,15 +47955,19 @@ function burnAreaChart() {
       html += kbAdvisorErrorsHTML(d.errors);
       const arms = d.arms || [];
       html += '<div class="section-label m-0" style="margin-top:var(--sp-4)">Closed beads by arm</div>';
+      html += kbAdvisorCoverageHTML(d.coverage);
       if (!arms.length && !d.mixed && !d.none) {
-        html += '<div class="kb-effective-meta">No closed beads with a closed PR yet.</div>';
+        const closed = (d.coverage && Number(d.coverage.closed_beads)) || 0;
+        html += '<div class="kb-effective-meta">' + (closed > 0
+          ? escapeHtml(String(closed)) + ' closed work beads, none classed into an arm yet.'
+          : 'No closed work beads yet.') + '</div>';
       } else {
         html += '<table class="kb-advisor-table"><thead><tr><th>Arm</th><th>Beads</th><th>Mean fix attempts</th><th>Mean CI failures</th><th>Mean kicks</th></tr></thead><tbody>';
         html += arms.map(a => kbAdvisorArmRowHTML(a, '')).join('');
         if (d.mixed) html += kbAdvisorArmRowHTML(d.mixed, 'in more than one arm; not comparable');
         if (d.none) html += kbAdvisorArmRowHTML(d.none, 'no advisor decision');
         html += '</tbody></table>';
-        html += '<div class="kb-effective-meta">Bead means cover every closed bead with a closed PR; the since window does not narrow them.</div>';
+        html += '<div class="kb-effective-meta">Bead means cover every closed work bead (advisory beads excluded); the since window does not narrow them.</div>';
       }
       html += '<div class="kb-effective-meta" style="margin-top:var(--sp-3)">Mean model latency ' + kbAdvisorNum(cost.mean_latency_ms, 0) + ' ms (' + escapeHtml(String(cost.latency_samples || 0)) + ' calls) · mean tokens '
         + kbAdvisorNum(cost.mean_prompt_tokens, 0) + ' prompt / ' + kbAdvisorNum(cost.mean_completion_tokens, 0) + ' completion (' + escapeHtml(String(cost.token_samples || 0)) + ' calls)</div>';
@@ -47827,8 +48044,9 @@ function burnAreaChart() {
         const confPct = Math.round(conf * 100);
         const typeClass = 'kb-type-' + (f.type || 'pattern');
         const layerClass = 'kb-layer-' + (f.layer || 'project');
-        const selected = _kbSelectedFact && _kbSelectedFact.slug === f.slug ? ' selected' : '';
-        html += `<div class="kb-fact-item${selected}" data-action="gh17" data-arg0="${escapeHtml(f.slug || '')}">`;
+        const sourceLayer = f.source_layer || f.layer || '';
+        const selected = _kbSelectedFact && _kbSelectedFact.slug === f.slug && (_kbSelectedFact.source_layer || _kbSelectedFact.layer) === sourceLayer ? ' selected' : '';
+        html += `<div class="kb-fact-item${selected}" data-action="gh17" data-arg0="${escapeHtml(f.slug || '')}" data-arg1="${escapeHtml(sourceLayer)}">`;
         html += '<div class="kb-fact-meta">';
         html += kbConfidenceBadge(f);
         if (f.confidence_scored !== false) html += `<div class="kb-fact-conf-bar" title="${escapeHtml(f.confidence_reason || '')}"><div class="kb-fact-conf-fill" style="width:${confPct}%;background:${confColor(conf)}"></div></div>`;
@@ -47866,15 +48084,17 @@ function burnAreaChart() {
         const m = /^agent:(.+)$/i.exec(String(t).trim());
         if (m) html += `<span class="kb-layer-badge" title="Drained from this agent's CLI memory">agent ${escapeHtml(m[1])}</span>`;
       }
-      if (f.state === 'draft' && viewerIsOwner()) {
+      if (f.state === 'draft' && f.source_layer?.startsWith('vault:') && viewerIsOwner()) {
         const slug = escapeHtml(f.slug || '');
-        html += `<button class="hv-btn btn-primary btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="approved" data-stop="1" title="Approve: agents whose scope includes this entry receive it in their kicks">Approve</button>`;
-        html += `<button class="hv-btn btn-danger btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="deprecated" data-stop="1" title="Discard: mark it deprecated so no agent receives it and the drain never re-drafts it">Discard</button>`;
+        const source = escapeHtml(f.source_layer);
+        html += `<button class="hv-btn btn-primary btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="approved" data-arg2="${source}" data-stop="1" title="Approve: agents whose scope includes this entry receive it in their kicks">Approve</button>`;
+        html += `<button class="hv-btn btn-danger btn-sm" data-action="kbAutoMemoryReview" data-arg0="${slug}" data-arg1="deprecated" data-arg2="${source}" data-stop="1" title="Discard: mark it deprecated so no agent receives it and the drain never re-drafts it">Discard</button>`;
       }
       return html;
     }
 
-    async function kbAutoMemoryReview(slug, state) {
+    async function kbAutoMemoryReview(slug, state, sourceLayer) {
+      if (!sourceLayer) return;
       const question = state === 'approved'
         ? 'Approve "' + slug + '"? It was written by an agent, and once approved it is injected into the kicks of every agent whose scope includes it.'
         : 'Discard "' + slug + '"? It is marked deprecated, no agent receives it, and the drain will not re-draft it.';
@@ -47882,7 +48102,7 @@ function burnAreaChart() {
       try {
         const r = await fetch('/api/knowledge/entry/' + encodeURIComponent(slug) + '/state', {
           method: 'PUT', headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ state, reason: 'auto-memory review (dashboard)' }),
+          body: JSON.stringify({ state, source_layer: sourceLayer, reason: 'auto-memory review (dashboard)' }),
         });
         if (!r.ok) { const e = await r.json().catch(() => ({})); await hiveAlert(e.error || 'Failed to change state'); return; }
         fetchKnowledgeStats();
@@ -47890,10 +48110,19 @@ function burnAreaChart() {
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
+    function kbIsWikiFact(f) {
+      return f && (!f.source_layer || f.source_layer.startsWith('wiki:'));
+    }
+
     function renderKnowledgeDetail() {
       const el = document.getElementById('kb-fact-detail');
-      if (!el || !_kbSelectedFact) { if (el) el.innerHTML = ''; return; }
+      if (!el) return;
       const f = _kbSelectedFact;
+      const sourceLayer = f?.source_layer || f?.layer;
+      document.querySelectorAll('.kb-fact-item').forEach(item => {
+        item.classList.toggle('selected', item.dataset.arg0 === f?.slug && item.dataset.arg1 === sourceLayer);
+      });
+      if (!f) { el.innerHTML = ''; return; }
       const conf = typeof f.confidence === 'number' ? f.confidence : 0;
       const confPct = Math.round(conf * 100);
       const typeClass = 'kb-type-' + (f.type || 'pattern');
@@ -47917,29 +48146,23 @@ function burnAreaChart() {
       if (f.tags && f.tags.length) html += `<div><span class="kb-detail-label">Tags:</span> ${f.tags.map(t => escapeHtml(t)).join(', ')}</div>`;
       html += '</div>';
 
-      // Action buttons
       html += '<div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-5);flex-wrap:wrap">';
-      html += `<button class="hv-btn btn-secondary nous-btn btn-primary btn-sm" data-action="kbOpenEdit">✏️ Edit</button>`;
+      const wiki = kbIsWikiFact(f);
+      if (wiki) {
+        html += `<button class="hv-btn btn-secondary nous-btn btn-primary btn-sm" data-action="kbOpenEdit">✏️ Edit</button>`;
+      }
       const promoteTargets = { personal: 'project', project: 'org', org: 'community' };
       const promoteTo = promoteTargets[f.layer];
-      if (promoteTo) {
-        html += `<button class="hv-btn btn-secondary nous-btn btn-primary btn-sm" data-action="kbPromote" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(f.layer)}" data-arg2="${promoteTo}">⬆ Promote to ${promoteTo}</button>`;
+      if (promoteTo && (wiki || sourceLayer.startsWith('vault:'))) {
+        html += `<button class="hv-btn btn-secondary nous-btn btn-primary btn-sm" data-action="kbPromote" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(sourceLayer)}" data-arg2="${promoteTo}">⬆ Promote to ${promoteTo}</button>`;
       }
-      html += `<button class="hv-btn btn-danger nous-btn btn-sm" data-action="kbDelete" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(f.layer)}">🗑 Delete</button>`;
+      if (wiki) {
+        html += `<button class="hv-btn btn-danger nous-btn btn-sm" data-action="kbDelete" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(sourceLayer)}" data-arg2="${escapeHtml(f.layer)}">🗑 Delete</button>`;
+      }
       html += '</div>';
 
       html += '</div>';
       el.innerHTML = html;
-
-      // Highlight selected fact in list
-      document.querySelectorAll('.kb-fact-item').forEach(item => item.classList.remove('selected'));
-      const items = document.querySelectorAll('.kb-fact-item');
-      for (const item of items) {
-        if (item.querySelector('.kb-fact-title')?.textContent === (kbCleanFactTitle(f.title) || f.slug)) {
-          item.classList.add('selected');
-          break;
-        }
-      }
     }
 
     // ── Knowledge modals and actions ──
@@ -48042,8 +48265,9 @@ function burnAreaChart() {
     }
 
     function kbOpenEdit() {
-      if (!_kbSelectedFact) return;
       const f = _kbSelectedFact;
+      if (!kbIsWikiFact(f)) return;
+      const sourceLayer = f.source_layer || f.layer;
 
       let typeOpts = '';
       for (const t of KB_FACT_TYPES) {
@@ -48081,15 +48305,14 @@ function burnAreaChart() {
           <div class="muted-xs">Layer: ${escapeHtml(f.layer || '')} · Slug: ${escapeHtml(f.slug || '')}</div>
           <div class="row-end mt-4">
             <button class="hv-btn btn-secondary nous-btn nous-config-btn-cancel" data-action="kbCloseModal">Cancel</button>
-            <button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbSubmitEdit">Save Changes</button>
+            <button class="hv-btn btn-primary nous-btn btn-blue" data-action="kbSubmitEdit" data-arg0="${escapeHtml(f.slug)}" data-arg1="${escapeHtml(sourceLayer)}">Save Changes</button>
           </div>
         </div>`;
       kbShowModal('Edit Fact', html);
     }
 
-    async function kbSubmitEdit() {
-      if (!_kbSelectedFact) return;
-      const f = _kbSelectedFact;
+    async function kbSubmitEdit(slug, sourceLayer) {
+      const request = _kbFactRequest;
       const title = document.getElementById('kb-edit-title')?.value?.trim();
       const body = document.getElementById('kb-edit-body')?.value?.trim();
       const type = document.getElementById('kb-edit-type')?.value;
@@ -48099,27 +48322,34 @@ function burnAreaChart() {
       const tags = tagsRaw.split(',').map(t => t.trim()).filter(Boolean);
 
       try {
-        const r = await fetch('/api/knowledge/' + encodeURIComponent(f.layer) + '/' + encodeURIComponent(f.slug), {
+        const r = await fetch('/api/knowledge/' + encodeURIComponent(sourceLayer) + '/' + encodeURIComponent(slug), {
           method: 'PUT', headers: _inceptionAuthHeaders(),
           body: JSON.stringify({ title, body, type, status, confidence: conf, tags }),
         });
         if (!r.ok) { const e = await r.json(); await hiveAlert(e.error || 'Failed to update'); return; }
         kbCloseModal();
-        kbReadFact(f.slug, f.layer);
-        kbSearch();
+        kbLoadFacts(0, true);
+        const f = _kbSelectedFact;
+        if (request === _kbFactRequest && f?.slug === slug && (f.source_layer || f.layer) === sourceLayer) {
+          kbReadFact(slug, sourceLayer);
+        }
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
-    async function kbDelete(slug, layer) {
+    async function kbDelete(slug, sourceLayer, layer) {
+      const request = _kbFactRequest;
       if (!(await hiveConfirm('Delete fact "' + slug + '" from ' + layer + '?'))) return;
       try {
-        const r = await fetch('/api/knowledge/' + encodeURIComponent(layer) + '/' + encodeURIComponent(slug), { method: 'DELETE' });
+        const r = await fetch('/api/knowledge/' + encodeURIComponent(sourceLayer) + '/' + encodeURIComponent(slug), { method: 'DELETE' });
         if (!r.ok) { const e = await r.json(); await hiveAlert(e.error || 'Failed to delete'); return; }
-        _kbSelectedFact = null;
-        const detail = document.getElementById('kb-fact-detail');
-        if (detail) detail.innerHTML = '';
+        const f = _kbSelectedFact;
+        if (request === _kbFactRequest || (f?.slug === slug && (f.source_layer || f.layer) === sourceLayer)) {
+          ++_kbFactRequest;
+          _kbSelectedFact = null;
+          renderKnowledgeDetail();
+        }
         fetchKnowledgeStats();
-        kbSearch();
+        kbLoadFacts(0, true);
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
@@ -50061,7 +50291,8 @@ function burnAreaChart() {
       const href = inboxShareTargetHref(rec, canOpen);
       if (href) return '<a' + attrs + ' href="' + escapeHtml(href) + '"' + (/^https?:/.test(href) ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + inner + '</a>';
       if (canOpen && rec.destination === 'knowledge' && (rec.ref || {}).id && it && it.fact_slug) {
-        return '<a' + attrs + ' href="#" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '">' + inner + '</a>';
+        const layer = inboxFactLayer(it);
+        if (layer) return '<a' + attrs + ' href="#" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(layer) + '">' + inner + '</a>';
       }
       return '<span' + attrs + '>' + inner + '</span>';
     }
@@ -50092,7 +50323,8 @@ function burnAreaChart() {
       const dur = inboxFmtDuration(it.duration_ms);
       // The backing Knowledge fact is a plain link in the metadata line, not
       // an action: it only opens the fact.
-      const factLink = it.fact_slug ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
+      const factLayer = it.fact_slug && inboxFactLayer(it);
+      const factLink = factLayer ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(factLayer) + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
       // The title is shown without its trailing recording id; the id and the
       // Knowledge state join the meta line, and the full title is the tooltip.
       const tp = inboxTitleParts(it.title || it.id);
@@ -50455,7 +50687,12 @@ function burnAreaChart() {
       const settings = data.settings || {};
       const rules = Array.isArray(settings.rules) ? settings.rules.length : 0;
       if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
-      const shown = items.filter(it => _inboxShowProcessed || !it.processed);
+      const shown = inboxShownItems();
+      const selectedBeforeRender = _inboxSelected.size;
+      inboxPruneSelection(shown);
+      const closeBulkMenu = _inboxSelected.size !== selectedBeforeRender && _inboxShareMenu?.btn.dataset.action === 'inboxBulkMenu';
+      const restoreBulkFocus = closeBulkMenu && (_inboxShareMenu.btn === document.activeElement || _inboxShareMenu.el.contains(document.activeElement));
+      if (closeBulkMenu) inboxShareMenuClose(false);
       // Sources line: only configured sources are chips (with the account
       // hint); the rest sit behind a "+N more" disclosure next to Connect
       // sources, so the header is one quiet line instead of a wall of
@@ -50487,6 +50724,10 @@ function burnAreaChart() {
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
       const paint = () => { panel.innerHTML = html; };
       inboxPreserveAudio(panel, typeof inboxNoteKeepFocus === 'function' ? () => inboxNoteKeepFocus(paint) : paint);
+      if (restoreBulkFocus) {
+        const control = panel.querySelector('[data-action="inboxBulkMenu"]') || panel.querySelector('[data-action="inboxToggleProcessed"]');
+        control?.focus();
+      }
       inboxApplyFocus(panel);
     }
 
@@ -50509,6 +50750,16 @@ function burnAreaChart() {
     }
     function inboxToggleSources() { _inboxSourcesOpen = !_inboxSourcesOpen; renderInbox(); }
 
+    function inboxShownItems() {
+      return ((_inboxCache || {}).items || []).filter(it => _inboxShowProcessed || !it.processed);
+    }
+    function inboxPruneSelection(shown) {
+      if (!_inboxSelected.size) return;
+      const shownKeys = new Set(shown.map(inboxItemKey));
+      for (const key of _inboxSelected) {
+        if (!shownKeys.has(key)) _inboxSelected.delete(key);
+      }
+    }
     function inboxToggleProcessed() { _inboxShowProcessed = !_inboxShowProcessed; renderInbox(); }
     function inboxToggleSelect(src, id) {
       const key = src + '/' + id;
@@ -50516,12 +50767,15 @@ function burnAreaChart() {
       renderInbox();
     }
     function inboxSelectAll() {
-      const shown = ((_inboxCache || {}).items || []).filter(it => _inboxShowProcessed || !it.processed);
+      const shown = inboxShownItems();
       if (_inboxSelected.size === shown.length) _inboxSelected.clear();
       else _inboxSelected = new Set(shown.map(inboxItemKey));
       renderInbox();
     }
     function inboxFind(src, id) { return ((_inboxCache || {}).items || []).find(it => it.source === src && it.id === id); }
+    function inboxFactLayer(it) {
+      return it.fact_source_layer || (it.fact_path ? '' : it.layer || 'all');
+    }
     function inboxOpenFact(slug, layer) {
       ocNavigate('knowledge-section');
       kbReadFact(slug, layer || undefined);
@@ -51349,7 +51603,7 @@ function burnAreaChart() {
           kept ? n(kept, 'Knowledge fact', 'Knowledge facts') + ' of synced sources ' + (kept === 1 ? 'is' : 'are') + ' kept: the sync maintains ' + (kept === 1 ? 'it' : 'them') + '.' : ''
         ];
       }
-      parts.push(inboxDeleteSharesText(shares), 'This cannot be undone.');
+      parts.push(list.map(it => '• ' + (it.title || inboxItemKey(it))).join('\n'), inboxDeleteSharesText(shares), 'This cannot be undone.');
       return {
         title: list.length === 1 ? 'Delete this item?' : 'Delete ' + list.length + ' items?',
         message: parts.filter(Boolean).join('\n\n'),
@@ -51368,17 +51622,35 @@ function burnAreaChart() {
       if (window._hiveRole !== 'owner' && window._hiveRole !== 'read-write') return [];
       return [{ id: 'manage', label: 'Manage', items: [{ id: 'delete', label: 'Delete…', disabled: false, hint: '' }] }];
     }
-    async function inboxDeleteRun(items) {
+    function inboxDeleteEligible(it) {
+      return inboxCanDelete(it, window._hiveRole, window._hiveUser) && !inboxDeleteBusy(it);
+    }
+    async function inboxDeleteRun(items, bulk = false) {
       const list = (items || []).filter(Boolean);
       if (!list.length) return;
       const dlg = inboxDeleteDialog(list);
-      const cfg = { title: dlg.title, message: dlg.message, confirmLabel: 'Delete', danger: true };
+      const cfg = { title: dlg.title, message: dlg.message, confirmLabel: 'Delete', danger: true, scrollBody: list.length > 1 };
       if (dlg.knowledge) cfg.check = { label: INBOX_DELETE_KNOWLEDGE_LABEL, checked: false };
       const answer = await hiveConfirm(cfg);
       if (!answer) return;
+      const visible = bulk ? new Map(inboxShownItems().map(it => [inboxItemKey(it), it])) : null;
+      const current = list.map(it => bulk ? visible.get(inboxItemKey(it)) : inboxFind(it.source, it.id));
+      if (current.some(it => !inboxDeleteEligible(it) || (bulk && !_inboxSelected.has(inboxItemKey(it))))) {
+        showToast(bulk ? 'The Inbox selection changed. Review it before deleting.' : 'This item can no longer be deleted. Review the Inbox.', 'error');
+        return;
+      }
+      const removeKnowledge = !!(dlg.knowledge && answer.checked);
+      if (removeKnowledge && list.some((it, i) => {
+        const latest = current[i];
+        return (inboxDeleteKnowledgeRemovable(it) || inboxDeleteKnowledgeRemovable(latest)) &&
+          (it.fact_slug !== latest.fact_slug || it.layer !== latest.layer);
+      })) {
+        showToast('A Knowledge copy changed. Review the items before deleting.', 'error');
+        return;
+      }
       try {
         const r = await fetch('/api/inbox/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ items: list.map(it => ({ source: it.source, item_id: it.id })), remove_knowledge: !!(dlg.knowledge && answer.checked) }) });
+          body: JSON.stringify({ items: list.map(it => ({ source: it.source, item_id: it.id })), remove_knowledge: removeKnowledge }) });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         for (const d of (data.items || [])) {
@@ -51402,9 +51674,9 @@ function burnAreaChart() {
     // Delete… in the bulk menu: the selected items the viewer may delete.
     function inboxDeleteSelected() {
       const picked = Array.from(_inboxSelected).map(k => { const i = k.indexOf('/'); return inboxFind(k.slice(0, i), k.slice(i + 1)); }).filter(Boolean);
-      const allowed = picked.filter(it => inboxCanDelete(it, window._hiveRole, window._hiveUser) && !inboxDeleteBusy(it));
+      const allowed = picked.filter(inboxDeleteEligible);
       if (!allowed.length) { showToast(picked.length ? 'None of the selected items can be deleted by you right now' : 'Nothing selected', 'error'); return undefined; }
-      return inboxDeleteRun(allowed);
+      return inboxDeleteRun(allowed, true);
     }
     // ── Inbox: ● Record a meeting or note into the Inbox ──
     // The browser records with MediaRecorder and uploads one chunk every
@@ -53382,13 +53654,8 @@ function burnAreaChart() {
     }
 
     async function fetchCalendar() {
-      const host = document.getElementById('calendar-panel');
-      if (!calendarRoleKnown()) {
-        if (host) host.innerHTML = '<p class="muted-xs">Loading calendar…</p>';
-        return;
-      }
-      if (!calendarCanView()) {
-        if (host) host.innerHTML = '<p class="empty-dashed">The calendar is visible to the hive owner and read-write users.</p>';
+      if (!calendarRoleKnown() || !calendarCanView()) {
+        renderCalendar();
         return;
       }
       try {
@@ -53405,7 +53672,7 @@ function burnAreaChart() {
     dashboardSetInterval('calendar', fetchCalendar, CALENDAR_POLL_MS);
 
     function calendarFormHtml() {
-      return '<details class="calendar-add"><summary class="calendar-add-summary">Add meeting</summary><div class="calendar-add-grid mt-2">' +
+      return '<details class="calendar-add"><summary class="calendar-add-summary">Add meeting</summary><form><div class="calendar-add-grid mt-2">' +
         '<label>Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-calendar-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
         '<label>Title (optional)<input class="kb-search-box" type="text" data-calendar-field="title" maxlength="200" placeholder="Weekly sync" autocomplete="off"></label>' +
         '<label>Starts<input class="kb-search-box" type="datetime-local" data-calendar-field="start"></label>' +
@@ -53413,9 +53680,8 @@ function burnAreaChart() {
         '<label>Repeats<select class="kb-search-box" data-calendar-field="repeat"><option value="none">Does not repeat</option><option value="daily">Daily</option>' +
         '<option value="weekdays">Every weekday</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>' +
         '<button type="button" class="hv-btn btn-primary btn-sm" data-action="calendarAdd">Add meeting</button></div>' +
-        '<p class="muted-xs">Times are in your time zone (' + escapeHtml(calendarViewerTimeZone() || 'local') + '). ' +
-        (calendarIsOwner() ? 'Hive joins about a minute before the start.' : 'The hive owner approves meetings you add.') + '</p>' +
-        '<div class="hive-dialog-error" role="alert" data-calendar-field="error"></div></details>';
+        '<p class="muted-xs">Times are in your time zone (' + escapeHtml(calendarViewerTimeZone() || 'local') + '). <span data-calendar-field="hint"></span></p>' +
+        '<div class="hive-dialog-error" role="alert" data-calendar-field="error"></div></form></details>';
     }
 
     function calendarActionButtons(e) {
@@ -53469,7 +53735,8 @@ function burnAreaChart() {
       const last = (e.history || []).length ? e.history[e.history.length - 1] : null;
       const mid = e.meeting_id || (last && last.meeting_id) || '';
       if (!mid) return '';
-      const live = e.status === 'live' || (last && last.status === 'live');
+      const occurrence = (e.history || []).find(h => h?.meeting_id === mid);
+      const live = e.status === 'live' || occurrence?.status === 'live';
       return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="calendarOpenMeeting" data-arg0="' + escapeHtml(mid) + '">' + (live ? 'Open live panel' : 'Notes') + '</button>';
     }
 
@@ -53569,20 +53836,45 @@ function burnAreaChart() {
 
     function renderCalendar() {
       refreshSectionCardShell('calendar-section');
-      const host = document.getElementById('calendar-panel');
+      const email = document.getElementById('calendar-email-in');
+      const add = document.getElementById('calendar-add-form');
+      const results = document.getElementById('calendar-results');
+      const known = calendarRoleKnown();
+      const canView = known && calendarCanView();
+      if (!canView) {
+        _calendarData = null;
+        _calendarError = '';
+      }
       renderCalendarIndicator();
-      if (!host) return;
-      if (_calendarError) {
-        host.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_calendarError) + '</p>';
-        setSectionSummary('calendar-section', 'unavailable');
+      if (!email || !add || !results) return;
+      if (!canView) {
+        email.innerHTML = add.innerHTML = '';
+        email.hidden = add.hidden = true;
+        results.innerHTML = known
+          ? '<p class="empty-dashed">The calendar is visible to the hive owner and read-write users.</p>'
+          : '<p class="muted-xs">Loading calendar…</p>';
         return;
       }
       const data = _calendarData || {};
+      const emailHtml = !_calendarError && typeof emailInRowHtml === 'function' ? emailInRowHtml('calendar', data.email_in) : '';
+      email.innerHTML = emailHtml;
+      email.hidden = !emailHtml;
+      // Polls may update the schedule while an operator is editing the form.
+      if (add.hidden && !_calendarError) {
+        add.innerHTML = calendarFormHtml();
+        add.hidden = false;
+      }
+      const hint = calendarField('hint');
+      if (hint) hint.textContent = calendarIsOwner() ? 'Hive joins about a minute before the start.' : 'The hive owner approves meetings you add.';
+      if (_calendarError) {
+        results.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_calendarError) + '</p>';
+        setSectionSummary('calendar-section', 'unavailable');
+        return;
+      }
       const upcoming = data.upcoming || [];
       const recent = data.recent || [];
       const pending = upcoming.filter(e => e.status === 'awaiting_approval').length;
-      host.innerHTML = (typeof emailInRowHtml === 'function' ? emailInRowHtml('calendar', data.email_in) : '') + calendarFormHtml() +
-        '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
+      results.innerHTML = '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
         (recent.length ? '<div class="calendar-subsection"><div class="section-label m-0">Recent</div><div class="calendar-list">' + recent.map(calendarRowHtml).join('') + '</div></div>' : '');
       setSectionSummary('calendar-section', upcoming.length + ' upcoming' + (pending ? ' · ' + pending + ' awaiting approval' : ''));
     }
@@ -53606,21 +53898,37 @@ function burnAreaChart() {
 
     async function calendarAdd() {
       const err = calendarField('error');
-      const repeat = (calendarField('repeat') || {}).value || 'none';
+      if (!err) return;
+      const form = err.closest('form');
+      const button = form.querySelector('[data-action="calendarAdd"]');
+      if (button.disabled) return;
+      const fields = ['url', 'title', 'start', 'end', 'repeat'].map(calendarField);
+      const values = fields.map(field => field.value);
+      const [url, title, start, end, repeat] = values;
       const body = {
-        url: ((calendarField('url') || {}).value || '').trim(),
-        title: ((calendarField('title') || {}).value || '').trim(),
-        start: calendarLocalISO((calendarField('start') || {}).value),
-        end: calendarLocalISO((calendarField('end') || {}).value),
+        url: url.trim(),
+        title: title.trim(),
+        start: calendarLocalISO(start),
+        end: calendarLocalISO(end),
         rrule: CALENDAR_REPEAT_RULES[repeat] || '',
         timezone: calendarViewerTimeZone()
       };
-      if (!body.url || !body.start) { if (err) err.textContent = 'A meeting link and a start time are required.'; return; }
+      if (!body.url || !body.start) { err.textContent = 'A meeting link and a start time are required.'; return; }
+      err.textContent = '';
+      button.disabled = true;
       try {
         const ev = await calendarPost('/api/meetings/schedule', body);
+        if (fields.every((field, i) => field.value === values[i])) {
+          form.reset();
+          form.closest('details').open = false;
+        }
         showToast(ev && ev.status === 'awaiting_approval' ? 'Meeting added; it waits for the owner to approve' : 'Meeting scheduled', 'success');
         fetchCalendar();
-      } catch (e) { if (err) err.textContent = e.message; }
+      } catch (e) {
+        err.textContent = e.message;
+      } finally {
+        button.disabled = false;
+      }
     }
 
     async function calendarAct(id, action) {
@@ -54806,6 +55114,7 @@ function burnAreaChart() {
     // tooltip: the source, the login it was read for and when.
     function customersFieldProvenance(f) {
       if (f && f.rule === 'location') return 'Derived from the location';
+      if (f && f.rule === 'gitdm_auto_accepted') return 'Auto-accepted from cncf/gitdm (a GitHub login match, auto-accept policy gitdm_high). Dismiss clears it.';
       const label = customersFieldSourceLabel(f) || 'GitHub';
       let t = 'From the public ' + label + ' profile';
       if (f && f.login) t += ' of ' + f.login;
@@ -55201,11 +55510,12 @@ function burnAreaChart() {
         const manual = cur.source === 'manual';
         // A hub value carries its hub label (#19163, #19306); editing it
         // here makes it manual.
-        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from ' + (customersFieldSourceLabel(cur) || 'GitHub')))) : (manual ? 'cleared by hand' : 'not known');
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : (cur.rule === 'gitdm_auto_accepted' ? 'auto-accepted from cncf/gitdm' : 'from ' + (customersFieldSourceLabel(cur) || 'GitHub'))))) : (manual ? 'cleared by hand' : 'not known');
         const tip = cur.value && cur.source === 'auto' ? ' title="' + escapeHtml(customersFieldProvenance(cur)) + '"' : '';
         return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs"' + tip + '>(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
-          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let the public profile fill this in again">Auto</button>' : '');
+          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let the public profile fill this in again">Auto</button>' : '') +
+          (cur.value && cur.source === 'auto' && cur.rule === 'gitdm_auto_accepted' ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersAffiliationDismiss" data-arg0="' + escapeHtml(cur.value) + '" title="Clear this auto-accepted organization and do not accept it again">Dismiss</button>' : '');
       }).join('');
       const cc = customersProfileValue(p, 'country');
       const ccLine = /^[A-Z]{2}$/.test(cc) ? '<div class="muted-xs" data-customers-field="country-line"><span aria-hidden="true">' + customersFlagEmoji(cc) + '</span> ' + escapeHtml(cc) + ' ' + escapeHtml(customersCountryName(cc)) + '</div>' : '';
@@ -55934,20 +56244,6 @@ function burnAreaChart() {
       } catch (e) { await hiveAlert('Error: ' + e.message); }
     }
 
-    async function kbSearchVault(name) {
-      const el = document.getElementById('kb-fact-list');
-      if (!el) return;
-      try {
-        const r = await fetch('/api/knowledge/vaults/' + encodeURIComponent(name) + '/facts');
-        if (!r.ok) { _kbFacts = []; renderKnowledgeFacts(); return; }
-        _kbFacts = await r.json();
-        _kbServerPaged = false;
-        _kbPageOffset = 0;
-        _kbHasMore = false;
-        renderKnowledgeFacts();
-      } catch (e) { _kbFacts = []; renderKnowledgeFacts(); }
-    }
-
     // fetchKnowledgeStats() — deferred to _deferredInit
 
     // --- Audit Log ---
@@ -56358,10 +56654,7 @@ function burnAreaChart() {
       if (paging) {
         var multiPage = _reviewQueueHasMore || _reviewQueueOffset > 0;
         paging.style.display = multiPage ? 'flex' : 'none';
-        var prev = document.getElementById('review-queue-prev');
-        var next = document.getElementById('review-queue-next');
-        if (prev) prev.disabled = _reviewQueueOffset <= 0;
-        if (next) next.disabled = !_reviewQueueHasMore;
+        updateReviewQueuePageButtons();
         var range = document.getElementById('review-queue-range');
         if (range) {
           var first = items.length ? _reviewQueueOffset + 1 : 0;
@@ -56371,31 +56664,81 @@ function burnAreaChart() {
       }
     }
 
-    async function fetchReviewQueue() {
+    const REVIEW_QUEUE_FETCH_TIMEOUT_MS = 12000;
+    let _reviewQueueRequest = null;
+
+    function updateReviewQueuePageButtons() {
+      const pagePending = _reviewQueueRequest?.paging === true;
+      const prev = document.getElementById('review-queue-prev');
+      const next = document.getElementById('review-queue-next');
+      // Keep the active button focusable during the request.
+      if (prev) {
+        prev.disabled = _reviewQueueOffset <= 0;
+        prev.setAttribute('aria-disabled', String(prev.disabled || pagePending));
+      }
+      if (next) {
+        next.disabled = !_reviewQueueHasMore;
+        next.setAttribute('aria-disabled', String(next.disabled || pagePending));
+      }
+    }
+
+    async function fetchReviewQueue(offset = _reviewQueueOffset) {
+      // Keep polling and repeat clicks from superseding an in-flight page change.
+      if (_reviewQueueRequest?.paging) return;
+      const request = { paging: offset !== _reviewQueueOffset };
+      _reviewQueueRequest = request;
+      if (request.paging) updateReviewQueuePageButtons();
       var panel = document.getElementById('review-queue-panel');
+      const controller = new AbortController();
+      let timer;
+      let expire;
+      const deadline = new Promise((_, reject) => {
+        expire = () => {
+          controller.abort();
+          reject(new Error('Review queue request timed out'));
+        };
+      });
+      // Pause the deadline while the operator enters a new dashboard token.
+      const onAuthPromptChange = open => {
+        clearTimeout(timer);
+        if (!open && !controller.signal.aborted) timer = setTimeout(expire, REVIEW_QUEUE_FETCH_TIMEOUT_MS);
+      };
+      onAuthPromptChange(false);
       try {
-        var resp = await fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + _reviewQueueOffset);
+        var resp = await Promise.race([
+          fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + offset, {
+            signal: controller.signal,
+            __hiveOnAuthPromptChange: onAuthPromptChange,
+          }),
+          deadline,
+        ]);
+        if (_reviewQueueRequest !== request) return;
         if (!resp.ok) {
           if (panel && !panel.querySelector('.review-queue-entry')) {
             panel.innerHTML = '<div class="review-queue-empty">Review queue unavailable.</div>';
           }
           return;
         }
-        var data = await resp.json();
-        renderReviewQueue(data);
-      } catch (e) {}
+        var data = await Promise.race([resp.json(), deadline]);
+        if (_reviewQueueRequest === request) renderReviewQueue(data);
+      } catch (e) {
+      } finally {
+        clearTimeout(timer);
+        if (_reviewQueueRequest === request) {
+          _reviewQueueRequest = null;
+          if (request.paging) updateReviewQueuePageButtons();
+        }
+      }
     }
 
     function reviewQueuePrevPage() {
       if (_reviewQueueOffset <= 0) return;
-      _reviewQueueOffset = Math.max(0, _reviewQueueOffset - REVIEW_QUEUE_PAGE_SIZE);
-      fetchReviewQueue();
+      return fetchReviewQueue(Math.max(0, _reviewQueueOffset - REVIEW_QUEUE_PAGE_SIZE));
     }
 
     function reviewQueueNextPage() {
       if (!_reviewQueueHasMore) return;
-      _reviewQueueOffset += REVIEW_QUEUE_PAGE_SIZE;
-      fetchReviewQueue();
+      return fetchReviewQueue(_reviewQueueOffset + REVIEW_QUEUE_PAGE_SIZE);
     }
     // fetchReviewQueue() — deferred to _deferredInit
 
@@ -59672,9 +60015,11 @@ function burnAreaChart() {
     }
 
     // ── Input bar ──
+    const _sessionsInputRevisions = new WeakMap();
     function sessionsInputChanged(el) {
       const bar = el && el.closest ? el.closest('.sessions-input') : null;
       if (!bar) return;
+      _sessionsInputRevisions.set(el, (_sessionsInputRevisions.get(el) || 0) + 1);
       const max = Number(_sessionsData.limits && _sessionsData.limits.max_input_bytes) || 0;
       const counter = bar.querySelector('.sessions-input-count');
       if (!counter || !max) return;
@@ -59695,12 +60040,16 @@ function burnAreaChart() {
       if (!s) return;
       const box = document.getElementById('sessions-input-text-' + s.id);
       if (!box) return;
-      const check = sessionsCheckInput(box.value, _sessionsData.limits);
+      const text = box.value;
+      const revision = _sessionsInputRevisions.get(box);
+      const check = sessionsCheckInput(text, _sessionsData.limits);
       if (!check.ok) { showToast(check.error, 'error'); return; }
       try {
-        const data = await sessionsPostInput(s.id, box.value, String(submit) === '1' || submit === true);
-        box.value = '';
-        sessionsInputChanged(box);
+        const data = await sessionsPostInput(s.id, text, String(submit) === '1' || submit === true);
+        if (box.value === text && _sessionsInputRevisions.get(box) === revision) {
+          box.value = '';
+          sessionsInputChanged(box);
+        }
         showToast(sessionsQueuedToast(s.name || s.id, data && data.queued), 'success');
       } catch (e) { showToast('Could not send: ' + e.message, 'error'); }
     }
@@ -60732,9 +61081,20 @@ function burnAreaChart() {
       el.addEventListener('scroll', sync, { passive: true });
       // Content arrives async (release notes fetch) and hidden modals have no
       // layout until opened: re-check whenever size or children change.
-      if (typeof ResizeObserver === 'function') new ResizeObserver(sync).observe(el);
-      if (typeof MutationObserver === 'function') new MutationObserver(sync).observe(el, { childList: true, subtree: true, characterData: true });
-      if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('resize', sync, { passive: true });
+      const size = typeof ResizeObserver === 'function' ? new ResizeObserver(sync) : null;
+      const content = typeof MutationObserver === 'function' ? new MutationObserver(sync) : null;
+      const viewport = typeof window === 'undefined' ? null : window;
+      size?.observe(el);
+      content?.observe(el, { childList: true, subtree: true, characterData: true });
+      viewport?.addEventListener?.('resize', sync, { passive: true });
+      el.hiveModalScrollCleanup = () => {
+        size?.disconnect();
+        content?.disconnect();
+        viewport?.removeEventListener?.('resize', sync);
+        el.removeEventListener('scroll', sync);
+        if (el.dataset) delete el.dataset.modalScrollWired;
+        delete el.hiveModalScrollCleanup;
+      };
       sync();
       return el;
     }
@@ -60758,20 +61118,21 @@ function burnAreaChart() {
       x.addEventListener('click', () => { if (typeof onClose === 'function') onClose(); });
       dlg.insertBefore(x, dlg.firstChild);
     }
-    function hiveWireDialog(overlay, resolve, cancelValue, okSelector, cancelSelector, submit) {
+    function hiveWireDialog(overlay, resolve, cancelValue, okSelector, cancelSelector, submit, submitOnEnter = true) {
       let done = false;
       const focusableSelector = 'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
       const close = (val) => {
         if (done) return;
         done = true;
         document.removeEventListener('keydown', onKey, true);
+        for (const el of overlay.querySelectorAll('.modal-scroll')) el.hiveModalScrollCleanup?.();
         overlay.remove();
         resolve(val);
       };
       overlay.hiveDialogClose = () => close(cancelValue);
       const onKey = (e) => {
         if (e.key === 'Escape') { e.preventDefault(); close(cancelValue); return; }
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' && submitOnEnter) {
           const tag = e.target && e.target.tagName ? e.target.tagName.toLowerCase() : '';
           if (tag !== 'textarea') { e.preventDefault(); submit(close); }
           return;
@@ -60798,6 +61159,7 @@ function burnAreaChart() {
     // cfg.check = { label } adds a checkbox under the body (a "don't show this
     // again" opt-out); the promise then resolves { checked } instead of true
     // so the caller can persist the choice. Without cfg.check it is true/false.
+    // cfg.scrollBody keeps the heading and actions in view above and below long content.
     function hiveConfirm(opts, title) {
       const cfg = hiveNormalizeDialogOptions(opts, title);
       return new Promise(resolve => {
@@ -60810,17 +61172,18 @@ function burnAreaChart() {
         const body = cfg.title ? message : (parts.length > 1 ? parts.slice(1).join('\n\n') : message);
         const confirmLabel = cfg.confirmLabel || cfg.ok || 'OK';
         const check = cfg.check && typeof cfg.check === 'object' ? cfg.check : null;
-        overlay.innerHTML = `<div class="hive-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">
+        const scrollBody = cfg.scrollBody === true;
+        overlay.innerHTML = `<div class="hive-dialog${scrollBody ? ' hive-confirm-scroll' : ''}" role="dialog" aria-modal="true" aria-labelledby="hive-dialog-title">
           <div id="hive-dialog-title" class="hive-dialog-title">${hiveDialogEscape(heading)}</div>
-          <div class="hive-dialog-body">${hiveDialogEscape(body)}</div>
+          <div class="hive-dialog-body${scrollBody ? ' long modal-scroll' : ''}"${scrollBody ? ' tabindex="0" data-initial-focus' : ''}>${hiveDialogEscape(body)}</div>
           ${check ? `<label class="hive-dialog-check"><input type="checkbox" class="hive-dialog-check-input"${check.checked ? ' checked' : ''}>${hiveDialogEscape(check.label || 'Don\'t show this again')}</label>` : ''}
           <div class="hive-dialog-buttons">
             <button type="button" class="hv-btn btn-secondary hive-dialog-btn cancel">${hiveDialogEscape(cfg.cancelLabel || 'Cancel')}</button>
-            <button type="button" class="hv-btn ${hiveConfirmIsDanger(cfg, message) ? 'btn-danger' : 'btn-primary'} hive-dialog-btn primary" data-initial-focus>${hiveDialogEscape(confirmLabel)}</button>
+            <button type="button" class="hv-btn ${hiveConfirmIsDanger(cfg, message) ? 'btn-danger' : 'btn-primary'} hive-dialog-btn primary">${hiveDialogEscape(confirmLabel)}</button>
           </div></div>`;
         document.body.appendChild(overlay);
         const box = check ? overlay.querySelector('.hive-dialog-check-input') : null;
-        hiveWireDialog(overlay, resolve, false, '.primary', '.cancel', close => close(check ? { checked: !!(box && box.checked) } : true));
+        hiveWireDialog(overlay, resolve, false, '.primary', '.cancel', close => close(check ? { checked: !!(box && box.checked) } : true), !scrollBody);
       });
     }
     // cfg.check = { label } adds the same opt-out box as hiveConfirm; the
@@ -62318,7 +62681,7 @@ function burnAreaChart() {
     const ACMM_LEVEL_NAMES = {0:'Prerequisites not met',1:'Inception',2:'Advisory',3:'Quality-Gated',4:'Security-Aware',5:'Semi-Autonomous',6:'Autonomous'};
     const ACMM_LEVEL_DESCRIPTIONS = {
       0: 'Foundational tooling: test suites, CI/CD, templates, and code style enforcement.',
-      2: 'AI agents receive explicit instructions via CLAUDE.md, copilot-instructions, cursor rules, and prompt catalogs.',
+      2: 'AI agents receive explicit instructions via an agent instruction file (AGENTS.md, CLAUDE.md, copilot-instructions, or cursor rules) and prompt catalogs.',
       3: 'PR acceptance metrics, review rubrics, quality dashboards, and safety model enforcement are in place.',
       4: 'Self-tuning QA, nightly compliance, automated review application, AI-fix workflows, and session continuity.',
       5: 'GitHub Actions AI integration, auto-QA self-tuning, public metrics, policy-as-code, and reflection logs.',
@@ -62333,10 +62696,7 @@ function burnAreaChart() {
       'acmm:prereq-contrib-guide': 'A contributing guide that tells agents (and humans) the project\'s conventions, branching model, and review process.',
       'acmm:prereq-code-style': 'A linter/formatter config (ESLint, Prettier, golangci-lint, Ruff) so agents produce code matching project style.',
       'acmm:prereq-coverage-gate': 'A coverage threshold that prevents agents from merging changes that reduce test coverage.',
-      'acmm:claude-md': 'CLAUDE.md gives Claude Code project-specific instructions — conventions, forbidden patterns, preferred libraries.',
-      'acmm:copilot-instructions': 'Copilot instructions file that customizes GitHub Copilot\'s suggestions for this repo.',
-      'acmm:agents-md': 'AGENTS.md documents which AI agents work on the repo, their roles, and coordination rules.',
-      'acmm:cursor-rules': 'Cursor rules file that configures Cursor IDE\'s AI behavior for this project.',
+      'acmm:agent-instructions': 'Any one agent instruction file (AGENTS.md, CLAUDE.md, Copilot instructions, or Cursor rules) gives coding agents project-specific conventions and constraints.',
       'acmm:prompts-catalog': 'A catalog of reusable prompts/commands that agents can invoke for common tasks.',
       'acmm:editor-config': 'EditorConfig ensures consistent formatting (indentation, line endings) across all editors and agents.',
       'acmm:simple-skills': 'Custom skills/commands that extend agent capabilities with project-specific automation.',
@@ -65214,9 +65574,11 @@ function burnAreaChart() {
       window._aiAuthor = cfg.ai_author_effective || '';
       renderPRAuthorInMenu();
       // Hub My Hives page for the user-menu shortcut (#9696). Empty on a
-      // standalone hive, which keeps the entry hidden.
+      // standalone hive, which keeps the entry hidden. The paused breaker
+      // chip links there too (#19778), so repaint it now the URL is known.
       window._myHivesURL = cfg.my_hives_url || '';
       renderMyHivesMenuItem();
+      if (typeof refreshFleetBreakerState === 'function') refreshFleetBreakerState();
       // Ask AI help (#19184): load the panel only when this hive has it on.
       if (typeof loadAskPanel === 'function') loadAskPanel(cfg);
       const repoDisplay = cfg.org && cfg.primaryRepo && !cfg.primaryRepo.includes('/')
@@ -65496,6 +65858,8 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment', key: 'customers.enrichment.enabled', text: 'customers enrichment public affiliation activity employer company organization cncf colony HIVE_CUSTOMERS_ENRICHMENT_ENABLED customers.enrichment.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment: gitdm', key: 'customers.enrichment.gitdm.enabled', text: 'customers enrichment gitdm cncf affiliation affiliations employer company dates snapshot refresh interval HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED HIVE_CUSTOMERS_ENRICHMENT_GITDM_REFRESH_INTERVAL customers.enrichment.gitdm.enabled customers.enrichment.gitdm.refresh_interval' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment: devstats', key: 'customers.enrichment.devstats.enabled', text: 'customers enrichment devstats cncf public contributions activity github login hourly limit budget HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_ENABLED HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_HOURLY_LIMIT customers.enrichment.devstats.enabled customers.enrichment.devstats.hourly_limit' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment: auto-accept', key: 'customers.enrichment.auto_accept', text: 'customers enrichment auto accept auto-accept gitdm_high gitdm affiliation organization suggestion HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT customers.enrichment.auto_accept' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customer record store', key: 'customers.store', text: 'customers store colony colony.db shadow json migration parity people.json HIVE_CUSTOMERS_STORE customers.store' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Customer enrichment: crowd.dev', key: 'customers.enrichment.crowddev.enabled', text: 'customers enrichment crowd.dev crowddev lfx insights api token affiliation activity HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_ENABLED HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN customers.enrichment.crowddev.enabled customers.enrichment.crowddev.token_file' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Data directories and session retention', key: 'data.metrics_dir', text: 'data directories metrics logs agent configs claude copilot bob sessions retention prune janitor data.agents_dir data.bob_sessions_dir data.claude_sessions_dir data.copilot_sessions_dir data.logs_dir data.metrics_dir data.session_retention_days' },
@@ -65503,7 +65867,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Review gate', label: 'Review gate: comments, dispatch and out-of-scope findings', key: 'review.post_comments', text: 'review swarm post comments fan out parallel perspectives combined all authors fix human prs acknowledge no findings confidence score priority labels fixer agent human decision label self authored decision policy reviews per head revise verdicts webhook event driven debounce pending ttl redispatch out of scope backlog issues recommendations review.post_comments review.self_authored_decision_policy review.event_driven review.event_debounce_s review.pending_ttl review.max_redispatch review.head_max_retries review.max_reviews_per_head review.revise_verdicts_before review.out_of_scope_backlog_disabled review.max_out_of_scope_backlog_issues review.recommendations.enabled review.recommendations.min_ready_to_open' },
       { tab: 'Features', section: 'Review gate', label: 'Review evidence bundles', key: 'evidence.enabled', text: 'review evidence bundles audit signing key ed25519 evidence.enabled evidence.signing_key_file' },
       { tab: 'Features', section: 'Review gate', label: 'Benchmarks', key: 'benchmarks.publish', text: 'benchmarks leaderboard publish anonymized hive hash repo consent benchmarks.publish benchmarks.repo_consent hivecommons.dev/benchmarks' },
-      { tab: 'Features', section: 'Integrations & observability', label: 'GitLab, Gitea and Forgejo forges', key: 'gitlab.gitlab_url', text: 'gitlab gitea forgejo codeberg forge instance url token env gitlab.gitlab_url gitlab.token_env gitea.gitea_url gitea.token_env forgejo.forgejo_url forgejo.token_env' },
+      { tab: 'Features', section: 'Integrations & observability', label: 'GitLab, Gitea and Forgejo forges', key: 'gitlab.gitlab_url', text: 'gitlab gitea forgejo codeberg forge instance url token env token file gitlab.gitlab_url gitlab.token_env gitlab.token_file gitea.gitea_url gitea.token_env gitea.token_file forgejo.forgejo_url forgejo.token_env forgejo.token_file' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Token mint key and TTL', key: 'mint.max_ttl_seconds', text: 'token mint signing key path max ttl lifetime jwt mint.key_path mint.max_ttl_seconds' },
       { tab: 'Features', section: 'Autonomy & ACMM', label: 'Design-first planning', key: 'planning.design_approved_label', text: 'planning design approved label architect revisions concurrent designs plan from label planning.design_approved_label planning.max_concurrent_designs planning.max_design_revisions planning.plan_from_label' },
       { tab: 'Features', section: 'Autonomy & ACMM', label: 'Write-back containment', key: 'writeback.unsolicited.min_level', text: 'write-back writeback containment unsolicited comments labels sentinel hold-gate stage labels opt-in label backfill per repo mode suppressed acmm level duplicate dedupe burst rate cap hourly writeback.unsolicited.min_level writeback.unsolicited.require_labels writeback.unsolicited.backfill writeback.per_repo writeback.kinds writeback.dedupe.enabled writeback.dedupe.same_item_ttl writeback.dedupe.burst_items writeback.dedupe.burst_window writeback.dedupe.hourly_cap' },
@@ -67535,6 +67899,22 @@ function burnAreaChart() {
         '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.autostart !== false ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="autostart"></div><span class="config-toggle-label">Answer the CLI startup screens ' + yamlHint('dashboard.sessions.autostart') + ' ' + settingHelpMark('settings', 'dashboard', 'Session startup', 'When a session starts, Hive takes the vendor CLI through its startup screens (first-run notice, trust for the session folder, onboarding) to its input prompt, so the first request runs without a person. It never answers a tool or command permission prompt and never signs in. On by default; the HIVE_SESSIONS_AUTOSTART environment variable, when set, overrides this switch.') + '</span></div>';
     }
 
+    // dashboard.github_sign_in (#19721): an unset key reads as on. The note
+    // names the hub link the login page falls back to when it is off. With no
+    // link the switch is disabled while on (the server refuses that save too),
+    // because turning it off would lock everyone out, the owner included.
+    function renderGovDashboardGitHubSignIn(dash) {
+      const on = dash.github_sign_in !== false;
+      const link = dash.hub_sign_in_link || '';
+      const locked = on && !link;
+      const note = link
+        ? ' <span class="text-muted">When off, the login page links to ' + esc(link) + '.</span>'
+        : ' <span class="config-toggle-note-warn">' + (on
+          ? 'Cannot be turned off: this hive has no hub sign-in link, so the login page would offer no way to sign in. Set dashboard.hub_sign_in_url (or hub.url / HIVE_HUB_URL) and hive_id first.'
+          : 'No hub sign-in link: the login page says hub sign-in is not configured. Turn this back on, or set dashboard.hub_sign_in_url (or hub.url / HIVE_HUB_URL) and hive_id.') + '</span>';
+      return '<div class="config-toggle"><div class="config-toggle-switch' + (on ? ' on' : '') + (locked ? ' disabled' : '') + '" role="switch" aria-checked="' + (on ? 'true' : 'false') + '"' + (locked ? ' aria-disabled="true" data-disabled="true"' : '') + ' data-action="toggleConfigSwitch" data-section="dashboard" data-key="github_sign_in"></div><span class="config-toggle-label">GitHub sign-in ' + yamlHint('dashboard.github_sign_in') + ' ' + settingHelpMark('settings', 'dashboard', 'GitHub sign-in', 'Offers the "Sign in with GitHub" device flow on the login page. On by default. When off, the login page shows a "Sign in through the hub" link instead, /api/gh-user-auth/start and /poll refuse, and hivectl login to this hive stops working. It can only be turned off when the hive has a hub sign-in link. Applies without a restart.') + note + '</span></div>';
+    }
+
     function renderGovDashboard(dash) {
       const bands = dash.issue_bands || {};
       const authTokenText = dash.auth_token_configured ? 'Configured — enter a new token to rotate, or save an empty value to clear.' : 'Not configured.';
@@ -67548,6 +67928,7 @@ function burnAreaChart() {
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.experiment_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="experiment_lab"></div><span class="config-toggle-label">Experiment Lab ' + yamlHint('dashboard.experiment_lab') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.subscription_gauge_header ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="subscription_gauge_header"></div><span class="config-toggle-label">Also show the usage gauge in the header ' + yamlHint('dashboard.subscription_gauge_header') + ' ' + settingHelpMark('settings', 'dashboard', 'Usage gauge in the header', 'The usage fuel gauge is on the Overview by default for the owner, with a row for each provider the agents use (Claude, Copilot and others). This also shows it as a small chip in the header on every page, with the needle on the limit closest to empty. It reads the usage measurements hive already makes, so it adds no calls to any provider. Only the hive owner sees it. These are the plans this hive is signed in with, not the hive token budget. Off by default.') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.hub_proxied ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="hub_proxied"></div><span class="config-toggle-label">Hub-proxied auth ' + yamlHint('dashboard.hub_proxied') + ' <span class="text-muted">Managed by hub on hosted hives.</span></span></div>' +
+        renderGovDashboardGitHubSignIn(dash) +
         renderGovDashboardSessions(dash) +
         '<div class="config-field"><label>Dashboard auth token ' + yamlHint('dashboard.auth_token') + '</label><input type="password" autocomplete="new-password" placeholder="' + esc(authTokenText) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="auth_token" data-arg-types="s,s,v"><div class="config-help">Write-only; the current token is never echoed.</div></div>' +
         '<h3>Access allowlist</h3>' +
@@ -73132,6 +73513,11 @@ function burnAreaChart() {
         const cbInherit = cbHasOverride
           ? '<button class="remove-item" data-action="clearRepoCurrentBaseOverride" data-arg0="' + esc(r) + '" data-arg-types="s" title="Clear this repo override and inherit the Features default">inherit</button>'
           : '<span class="rt-inherit">inherits</span>';
+        // Per-repo open-PRs mode (repo_policies[].open_prs), saved at once
+        // like the repo card's auto-merge switch (POST /api/repos/open-prs).
+        const opPolicy = (_configState.data.repoOpenPRs || {})[r] || {};
+        const opSetting = opPolicy.value || 'on';
+        const opRow = repoOpenPRsSelectHtml(r, opSetting, _configState.data.openPRsHiveWide === false, dashboardRoleAtLeast(window._hiveRole || 'read', 'read-write'), 'rt-check');
         const cbRow = '<label title="' + cbTitle + '" class="rt-check"><input type="checkbox" ' + (cbEffective ? 'checked' : '') + ' data-change-action="toggleRepoCurrentBase" data-arg0="' + esc(r) + '" data-arg-types="s,c"> Merge only on current base</label>' + cbInherit;
         // #11313 label-driven approvals (Prow-style): opt-in per repo, with the
         // sub-row (approval labels + help) only while the toggle is on.
@@ -73144,7 +73530,7 @@ function burnAreaChart() {
           </div>`;
         // Fully forge-qualified so the row is unambiguous: github.ibm.com/org/repo.
         const displayName = ghHost + '/' + r;
-        return `<div class="config-list-item config-repo-row" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span class="config-repo-name" title="${esc(displayName)}">${esc(displayName)}</span><label class="rt-check" title="${holdTitle}"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}${cbRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>` + ldSub + renderRepoWorkflowRow(r);
+        return `<div class="config-list-item config-repo-row" style="align-items:center;gap:var(--sp-3)"><span data-action="setDefaultRepo" data-arg0="${esc(r)}" style="${starStyle}" title="${starTitle}">${isDefault ? '★' : '☆'}</span><span class="config-repo-name" title="${esc(displayName)}">${esc(displayName)}</span><label class="rt-check" title="${holdTitle}"><input type="checkbox" ${effectiveHold ? 'checked' : ''} ${selfAuthEnvLocked ? 'disabled' : ''} data-change-action="toggleRepoSelfAuthHold" data-arg0="${esc(r)}" data-arg-types="s,c"> Hold hive-authored PRs for human sign-off (#5117)</label>${inheritButton}${rtRow}${cbRow}${opRow}<span style="${pillBase}" title="${pillTitle}">${pillLabel}</span><button class="remove-item" data-action="removeListItem" data-arg0="repos" data-arg1="list" data-arg2="${i}" data-arg-types="s,s,j">&#x2715;</button></div>` + ldSub + renderRepoWorkflowRow(r);
       }).join('');
       const hostNote = isGHE
         ? ` on <strong style="color:var(--indigo)">${esc(ghHost)}</strong> (GitHub Enterprise)`
@@ -74840,13 +75226,17 @@ function burnAreaChart() {
       const options = _workflowState.workflows.map(w => {
         const key = workflowKey(w.name, w.version);
         const compiled = w.compiled !== false;
-        const label = key + (w.description ? ' — ' + w.description : '') + (compiled ? '' : ' (draft, does not compile)');
-        return `<option value="${esc(key)}" ${key === current ? 'selected' : ''} ${compiled ? '' : 'disabled'}>${esc(label)}</option>`;
+        // The label is the key alone: the description can run to hundreds
+        // of characters and would widen the select past the dialog
+        // (hivecommons/hive#19744); it stays available on hover.
+        const label = key + (compiled ? '' : ' (draft, does not compile)');
+        const desc = w.description ? ` title="${esc(w.description)}"` : '';
+        return `<option value="${esc(key)}"${desc} ${key === current ? 'selected' : ''} ${compiled ? '' : 'disabled'}>${esc(label)}</option>`;
       }).join('');
       const flag = _workflowState.enabled || !bound
         ? ''
         : '<span class="rt-inherit wf-derivation-off" title="workflow.enabled is off: the binding is recorded and the monitor shows the model\'s columns, but stage derivation still runs the built-in engine. Turn on &quot;Derive stages from bound models&quot; on Settings → Workflows.">columns only — turn on derivation in Workflows</span>';
-      return `<div class="config-list-item ld-sub" data-wf-repo="${esc(repo)}"><label class="rt-check" title="Which workflow model this repository follows (hivecommons/hive#17620). hive-default is the built-in lifecycle; a custom model changes the monitor's columns and, when workflow.enabled is on, how stages are derived.">Workflow <select ${locked ? 'disabled' : ''} data-change-action="setRepoWorkflow" data-arg0="${esc(repo)}" data-arg-types="s,v">${options}</select></label>${flag}${bound ? `<span class="rt-inherit" title="Bound to ${esc(current)}">bound</span>` : '<span class="rt-inherit">default</span>'}</div>${bound ? renderRepoWorkflowProfileRows(repo, workflowDispatchProfilesFor(bound, _workflowState.dispatch), _workflowState.agents, locked) : ''}`;
+      return `<div class="config-list-item ld-sub" data-wf-repo="${esc(repo)}"><label class="rt-check wf-repo-binding" title="Which workflow model this repository follows (hivecommons/hive#17620). hive-default is the built-in lifecycle; a custom model changes the monitor's columns and, when workflow.enabled is on, how stages are derived.">Workflow <select class="wf-repo-select" ${locked ? 'disabled' : ''} data-change-action="setRepoWorkflow" data-arg0="${esc(repo)}" data-arg-types="s,v">${options}</select></label>${flag}${bound ? `<span class="rt-inherit" title="Bound to ${esc(current)}">bound</span>` : '<span class="rt-inherit">default</span>'}</div>${bound ? renderRepoWorkflowProfileRows(repo, workflowDispatchProfilesFor(bound, _workflowState.dispatch), _workflowState.agents, locked) : ''}`;
     }
 
     // Which hive agent fills each profile the bound model hands items to
@@ -79304,7 +79694,7 @@ function burnAreaChart() {
         <div class="config-field"><label>Job scheduler name ${yamlHint('agent_sandbox.job.scheduler_name')} ${settingHelpMark('settings', 'security-and-access', 'Job scheduler name', `Kubernetes schedulerName for sandbox Job pods. Leave empty for the cluster default; set when an admission webhook requires a custom scheduler for device-requesting pods (e.g. spyre-scheduler).`)}</label><input type="text" value="${esc(sec.agentSandboxJobSchedulerName || '')}" placeholder="cluster default" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobSchedulerName" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job TTL (seconds) ${yamlHint('agent_sandbox.job.ttl_seconds')} ${settingHelpMark('settings', 'security-and-access', 'Job TTL (seconds)', `Seconds a finished sandbox Job is kept. 0 uses the default.`)}</label><input type="number" min="0" value="${Number(sec.agentSandboxJobTtlSeconds || 0)}" data-change-action="markSecurityNumber" data-arg0="agentSandboxJobTtlSeconds" data-arg-types="s,v"></div>
         <div class="config-field"><label>Job secrets (names) ${yamlHint('agent_sandbox.job.env_from_secrets[]')} ${settingHelpMark('settings', 'security-and-access', 'Job secrets', `Names of Kubernetes Secrets whose keys become environment variables in the sandbox Job. One name per line. Names only: never paste a secret value here.`)}</label><textarea rows="2" class="mono" placeholder="one Secret name per line" data-change-action="markSecurityLines" data-arg0="agentSandboxJobEnvFromSecrets" data-arg-types="s,v">${esc((sec.agentSandboxJobEnvFromSecrets || []).join('\n'))}</textarea></div>
-        <div class="config-field"><label>Job workspace claim ${yamlHint('agent_sandbox.job.workspace_claim')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim', `PVC holding the workspace for the job runtime. Required for runtime job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaim || '')}" placeholder="PersistentVolumeClaim name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaim" data-arg-types="s,s,v"></div>
+        <div class="config-field"><label>Job workspace claim ${yamlHint('agent_sandbox.job.workspace_claim')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim', `PVC holding the workspace for the job runtime. Required for runtime job unless workspace_transport: copy.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaim || '')}" placeholder="PersistentVolumeClaim name" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaim" data-arg-types="s,s,v"></div>
         <div class="config-field"><label>Job workspace claim mount ${yamlHint('agent_sandbox.job.workspace_claim_mount')} ${settingHelpMark('settings', 'security-and-access', 'Job workspace claim mount', `Where the workspace claim is mounted in the Job.`)}</label><input type="text" value="${esc(sec.agentSandboxJobWorkspaceClaimMount || '')}" placeholder="mount path" data-change-action="markDirty" data-arg0="security" data-arg1="agentSandboxJobWorkspaceClaimMount" data-arg-types="s,s,v"></div>
         <details class="settings-subsection-details" id="gov-sandbox-job-scheduling"><summary class="settings-subsection-summary">Job scheduling, resources, preflight, setup and GitHub read relay</summary>
         ${sandboxSchedulingHtml('hive', sec)}
@@ -80714,13 +81104,13 @@ function burnAreaChart() {
           ${f.customersProfileFillEffective !== f.customersProfileFill ? `<p class="config-help">HIVE_CUSTOMERS_PROFILE_FILL_ENABLED (or turning Customers off) overrides this setting: the profile fill is currently <b>${f.customersProfileFillEffective ? 'on' : 'off'}</b>.</p>` : ''}
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.customersEnrichmentEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnrichmentEnabled"></div>
-            <span class="config-toggle-label">Public affiliation and activity (enrichment) ${yamlHint('customers.enrichment.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment', `OFF by default. The master switch for adding public facts about confirmed customers from CNCF sources: who they work for (cncf/gitdm, crowd.dev) and their public contributions (devstats). Each source below has its own switch and stays off until you turn it on too. Suggested people are never looked up, and nothing found ever replaces an organization a person set by hand or shared from the hub: an affiliation only appears as a suggestion you accept or dismiss. Forgetting a person deletes what was found for them. Needs Customers on. HIVE_CUSTOMERS_ENRICHMENT_ENABLED overrides it. See src/docs/customers-enrichment.md.`)}</span>
+            <span class="config-toggle-label">Public affiliation and activity (enrichment) ${yamlHint('customers.enrichment.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment', `OFF by default. The master switch for adding public facts about confirmed customers from CNCF sources: who they work for (cncf/gitdm, crowd.dev) and their public contributions (devstats). Each source below has its own switch; gitdm defaults on, the others off. Suggested people are never looked up, and nothing found ever replaces an organization a person set by hand or shared from the hub: an affiliation only appears as a suggestion you accept or dismiss. Forgetting a person deletes what was found for them. Needs Customers on. HIVE_CUSTOMERS_ENRICHMENT_ENABLED overrides it. See src/docs/customers-enrichment.md.`)}</span>
           </div>
           ${f.customersEnrichmentEffective !== f.customersEnrichmentEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENRICHMENT_ENABLED (or turning Customers off) overrides this setting: enrichment is currently <b>${f.customersEnrichmentEffective ? 'on' : 'off'}</b>.</p>` : ''}
           <details class="settings-subsection-details"><summary class="settings-subsection-summary">Enrichment sources</summary>
             <div class="config-toggle">
               <div class="config-toggle-switch ${f.customersEnrichmentGitdmEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnrichmentGitdmEnabled"></div>
-              <span class="config-toggle-label">gitdm affiliations ${yamlHint('customers.enrichment.gitdm.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment: gitdm', `OFF by default. Downloads the public CNCF affiliation files from github.com/cncf/gitdm (the same files for every hive) and matches confirmed customers against them on this hive. Nothing about any person is sent anywhere: the only request is for the public files, refreshed on the interval below (default 24h). A match is offered as an affiliation suggestion marked "gitdm" with its dates. Needs enrichment on. HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED overrides it.`)}</span>
+              <span class="config-toggle-label">gitdm affiliations ${yamlHint('customers.enrichment.gitdm.enabled')} ${settingHelpMark('settings', 'features', 'Customer enrichment: gitdm', `ON by default when enrichment is on. Downloads the public CNCF affiliation files from github.com/cncf/gitdm (the same files for every hive) and matches confirmed customers against them on this hive. Nothing about any person is sent anywhere: the only request is for the public files, refreshed on the interval below (default 24h). A match is offered as an affiliation suggestion marked "gitdm" with its dates. Needs enrichment on. HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED overrides it.`)}</span>
             </div>
             ${f.customersEnrichmentGitdmEffective !== f.customersEnrichmentGitdmEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED (or a switch above) overrides this setting: gitdm is currently <b>${f.customersEnrichmentGitdmEffective ? 'on' : 'off'}</b>.</p>` : ''}
             <div class="config-toggle">
@@ -80738,16 +81128,21 @@ function burnAreaChart() {
               <div class="config-field"><label>devstats lookups per hour ${yamlHint('customers.enrichment.devstats.hourly_limit')} ${settingHelpMark('settings', 'features', 'devstats hourly limit', `How many devstats lookups all people together may make in one hour. 0 uses the default (30); the most allowed is 120. HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_HOURLY_LIMIT overrides it.`)}</label><input type="number" min="0" max="120" step="1" value="${esc(String(f.customersEnrichmentDevstatsHourlyLimit || ''))}" placeholder="${esc(String((f.customersEnrichmentDefaults || {}).customersEnrichmentDevstatsHourlyLimit || 30))}" data-change-action="markDirty" data-arg0="features" data-arg1="customersEnrichmentDevstatsHourlyLimit" data-arg-types="s,s,N"></div>
               <div class="config-field"><label>crowd.dev API token ${yamlHint('customers.enrichment.crowddev.token_file')} ${settingHelpMark('settings', 'features', 'crowd.dev API token', `Saved straight away, owner only, sealed in the keystore at customers.enrichment.crowddev.token_file. It is never shown again; this field only says whether one is set. Clear removes it. HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN, when set, wins over the saved token.`)}</label><input type="password" id="customers-crowddev-token" autocomplete="new-password" placeholder="${f.customersEnrichmentCrowdDevTokenSet ? 'A token is set' : 'No token set'}"><div style="display:flex;gap:var(--sp-3);margin-top:var(--sp-3)"><button type="button" class="hv-btn btn-secondary btn" data-action="saveCustomersCrowdDevToken" data-arg0="save">Save token</button><button type="button" class="hv-btn btn-secondary btn" data-action="saveCustomersCrowdDevToken" data-arg0="clear">Clear</button></div><div class="config-help" id="customers-crowddev-token-status">${f.customersEnrichmentCrowdDevTokenSet ? 'A token is set.' : 'No token set.'}</div></div>
             </div>
+            <div class="config-field"><label>Auto-accept gitdm affiliations ${yamlHint('customers.enrichment.auto_accept')} ${settingHelpMark('settings', 'features', 'Customer enrichment: auto-accept', `off by default: every affiliation a source finds is a suggestion you accept or dismiss. gitdm_high accepts a current gitdm affiliation matched by the person's confirmed GitHub login into an organization that is empty or was filled automatically before. It never replaces a value set by hand, a cleared value, a value shared from the hub or the company on the person's own forge profile, and an email-only match is never accepted. An accepted value is labelled as auto-accepted, and Dismiss clears it and keeps it from coming back. Needs gitdm on. HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT overrides it. See src/docs/customers-enrichment.md.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="customersEnrichmentAutoAccept" data-arg-types="s,s,v">${[['', 'default (off)'], ['off', 'off'], ['gitdm_high', 'gitdm_high']].map(([v, l]) => `<option value="${esc(v)}"${String(f.customersEnrichmentAutoAccept || '').trim().toLowerCase() === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>${(() => { const saved = String(f.customersEnrichmentAutoAccept || '').trim().toLowerCase(); if (saved && !['off', 'gitdm_high'].includes(saved)) return `<div class="config-help">The saved value is not a known policy, so auto-accept is <b>off</b>. Pick one to replace it.</div>`; return f.customersEnrichmentAutoAcceptEffective && f.customersEnrichmentAutoAcceptEffective !== (saved || 'off') ? `<div class="config-help">HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT (or gitdm being off) overrides this setting: auto-accept is currently <b>${esc(f.customersEnrichmentAutoAcceptEffective)}</b>.</div>` : ''; })()}</div>
+          </details>
+          <details class="settings-subsection-details"><summary class="settings-subsection-summary">Customer record store</summary>
+            <div class="config-field"><label>Store mode ${yamlHint('customers.store')} ${settingHelpMark('settings', 'features', 'Customer record store', `json by default. Where Customers keeps person records and enrichment results while they move onto the embedded colony store. json is today's behaviour, and no colony.db is created. shadow imports people.json and enrichment.json into /data/customers/colony.db once, writes every change to both, keeps reading the JSON, and logs a counts-only parity check at startup and after each discovery sweep. colony reads from colony.db and still writes the JSON, so setting json again loses nothing. A colony.db that cannot be opened falls back to json and is left untouched. Read at startup, so a change applies on the next restart. HIVE_CUSTOMERS_STORE overrides it. See src/docs/design/colony-customer-data-backend.md.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="customersStore" data-arg-types="s,s,v">${[['', 'default (json)'], ['json', 'json'], ['shadow', 'shadow'], ['colony', 'colony']].map(([v, l]) => `<option value="${esc(v)}"${String(f.customersStore || '').trim().toLowerCase() === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>${(() => { const saved = String(f.customersStore || '').trim().toLowerCase(); if (saved && !['json', 'shadow', 'colony'].includes(saved)) return `<div class="config-help">The saved value is not a known store mode, so the store mode is <b>json</b>. Pick one to replace it.</div>`; return f.customersStoreEffective && f.customersStoreEffective !== (saved || 'json') ? `<div class="config-help">HIVE_CUSTOMERS_STORE overrides this setting: the store mode is <b>${esc(f.customersStoreEffective)}</b> from the next restart.</div>` : ''; })()}</div>
           </details>
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.askEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="askEnabled"></div>
-            <span class="config-toggle-label">Ask AI help ${yamlHint('ask.enabled')} ${settingHelpMark('settings', 'features', 'Ask AI help', `OFF by default. Shows an Ask panel that answers questions about using this dashboard from the Hive docs. What is sent: the question a person types, and the label of the dashboard section they are in (from a fixed list, never anything on screen), to Kapa.ai, an AI service; the project's Kapa administrators can read questions in their analytics. Nothing else leaves: no login, email, page content, URL, repo, hive or agent name. Each person confirms a notice before their first question and can withdraw. Questions that look like a password, token or key are refused and not sent. Answers show their sources and an "AI generated, may be wrong" label. Needs a mode: hub (hosted hives, through the hub relay; no key on this hive) or direct (this hive calls Kapa.ai with its own key, set as ask.kapa.project_id, ask.kapa.integration_id and ask.kapa.api_key_file in hive.yaml or HIVE_ASK_* env). Limits: ask.limits.person_per_minute, ask.limits.person_per_hour, ask.limits.hive_per_hour, ask.limits.global_per_minute, ask.limits.in_flight, ask.limits.daily. HIVE_ASK_ENABLED overrides the switch. See src/docs/design/dashboard-ask-ai-help.md.`)}</span>
+            <span class="config-toggle-label">Ask Hive ${yamlHint('ask.enabled')} ${settingHelpMark('settings', 'features', 'Ask Hive', `ON by default on a hosted hive (hub mode, through the hub relay, no key kept here); OFF by default on a self-hosted hive, which needs direct mode and its own key. Shows an Ask Hive panel, also in the Help menu, that answers questions about using this dashboard from the Hive docs. What is sent: the question a person types, and the label of the dashboard section they are in (from a fixed list, never anything on screen), to Kapa.ai, an AI service; the project's Kapa administrators can read questions in their analytics. Nothing else leaves: no login, email, page content, URL, repo, hive or agent name. Each person confirms a notice before their first question and can withdraw. Questions that look like a password, token or key are refused and not sent. Answers show their sources and an "AI generated, may be wrong" label. Turning it off here saves ask.enabled: false, which stays off. Needs a mode: hub (hosted hives, through the hub relay; no key on this hive; the default on a hosted hive) or direct (this hive calls Kapa.ai with its own key, set as ask.kapa.project_id, ask.kapa.integration_id and ask.kapa.api_key_file in hive.yaml or HIVE_ASK_* env). Limits: ask.limits.person_per_minute, ask.limits.person_per_hour, ask.limits.hive_per_hour, ask.limits.global_per_minute, ask.limits.in_flight, ask.limits.daily. HIVE_ASK_ENABLED overrides the switch. See src/docs/design/dashboard-ask-ai-help.md.`)}</span>
           </div>
           ${f.askEnabled && !f.askEffective ? `<p class="config-help">Ask stays off: ${esc(f.askProblem || 'HIVE_ASK_ENABLED overrides this setting')}.</p>` : ''}
           ${!f.askEnabled && f.askEffective ? `<p class="config-help">HIVE_ASK_ENABLED overrides this setting: Ask is currently <b>on</b>.</p>` : ''}
-          <div class="config-field"><label>Ask mode ${yamlHint('ask.mode')} ${settingHelpMark('settings', 'features', 'Ask mode', `off does nothing. hub (hosted hives) asks through the hub relay with this hive's existing hub credential, so no Kapa key is kept here. direct calls Kapa.ai with this hive's own key file. HIVE_ASK_MODE overrides it.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="askMode" data-arg-types="s,s,v">${['off', 'hub', 'direct'].map(m => `<option value="${esc(m)}"${(f.askMode || 'off') === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
+          ${f.askDefaulted && f.askEffective ? `<p class="config-help">On by default for this hosted hive. Turn it off to save ask.enabled: false.</p>` : ''}
+          <div class="config-field"><label>Ask mode ${yamlHint('ask.mode')} ${settingHelpMark('settings', 'features', 'Ask mode', `off does nothing. hub (hosted hives, and their default) asks through the hub relay with this hive's existing hub credential, so no Kapa key is kept here. direct calls Kapa.ai with this hive's own key file. HIVE_ASK_MODE overrides it.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="askMode" data-arg-types="s,s,v">${['off', 'hub', 'direct'].map(m => `<option value="${esc(m)}"${(f.askMode || 'off') === m ? ' selected' : ''}>${esc(m)}</option>`).join('')}</select></div>
           <div class="config-toggle">
             <div class="config-toggle-switch ${f.askSendSectionLabel ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="askSendSectionLabel"></div>
             <span class="config-toggle-label">Send the section label with questions ${yamlHint('ask.send_section_label')} ${settingHelpMark('settings', 'features', 'Ask section label', `ON by default. Adds the name of the dashboard section the person is in, taken from a fixed list of section names, so "where is this button" finds the right page. Off sends the question alone. HIVE_ASK_SEND_SECTION_LABEL overrides it.`)}</span>
@@ -80970,16 +81365,20 @@ function burnAreaChart() {
           <div class="config-field-row">
             <div class="config-field"><label>GitLab URL ${yamlHint('gitlab.gitlab_url')} ${settingHelpMark('settings', 'features', 'GitLab URL', `GitLab instance root, e.g. https://gitlab.example.com. Empty uses ${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}.`)}</label><input type="text" value="${esc(f.gitlabUrl || '')}" placeholder="${esc(platformDefaults.gitlabUrl || 'https://gitlab.com')}" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabUrl" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>GitLab token env var ${yamlHint('gitlab.token_env')} ${settingHelpMark('settings', 'features', 'GitLab token env var', `The NAME of the environment variable holding the GitLab token, never the token itself.`)}</label><input type="text" value="${esc(f.gitlabTokenEnv || '')}" placeholder="${esc(platformDefaults.gitlabTokenEnv || 'GITLAB_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabTokenEnv" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>GitLab token file ${yamlHint('gitlab.token_file')} ${settingHelpMark('settings', 'features', 'GitLab token file', `A file holding the GitLab token, under /secrets or /data/secrets. When set it is used instead of the env var. Never the token itself.`)}</label><input type="text" value="${esc(f.gitlabTokenFile || '')}" placeholder="/secrets/gitlab/token" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="gitlabTokenFile" data-arg-types="s,s,w"></div>
           </div>
           <div class="config-field-row">
             <div class="config-field"><label>Gitea URL ${yamlHint('gitea.gitea_url')} ${settingHelpMark('settings', 'features', 'Gitea URL', `Gitea or Forgejo instance root, e.g. https://codeberg.org. There is no default; it is required for the Gitea forge.`)}</label><input type="text" value="${esc(f.giteaUrl || '')}" placeholder="https://gitea.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="giteaUrl" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>Gitea token env var ${yamlHint('gitea.token_env')} ${settingHelpMark('settings', 'features', 'Gitea token env var', `The NAME of the environment variable holding the Gitea token, never the token itself.`)}</label><input type="text" value="${esc(f.giteaTokenEnv || '')}" placeholder="${esc(platformDefaults.giteaTokenEnv || 'GITEA_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="giteaTokenEnv" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Gitea token file ${yamlHint('gitea.token_file')} ${settingHelpMark('settings', 'features', 'Gitea token file', `A file holding the Gitea token, under /secrets or /data/secrets. When set it is used instead of the env var. Never the token itself.`)}</label><input type="text" value="${esc(f.giteaTokenFile || '')}" placeholder="/secrets/gitea/token" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="giteaTokenFile" data-arg-types="s,s,w"></div>
           </div>
           <div class="config-field-row">
             <div class="config-field"><label>Forgejo URL ${yamlHint('forgejo.forgejo_url')} ${settingHelpMark('settings', 'features', 'Forgejo URL', `Forgejo instance root, e.g. https://codeberg.org. There is no default; it is required for the Forgejo forge.`)}</label><input type="text" value="${esc(f.forgejoUrl || '')}" placeholder="https://forgejo.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="forgejoUrl" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>Forgejo token env var ${yamlHint('forgejo.token_env')} ${settingHelpMark('settings', 'features', 'Forgejo token env var', `The NAME of the environment variable holding the Forgejo token, never the token itself.`)}</label><input type="text" value="${esc(f.forgejoTokenEnv || '')}" placeholder="${esc(platformDefaults.forgejoTokenEnv || 'FORGEJO_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="forgejoTokenEnv" data-arg-types="s,s,w"></div>
+            <div class="config-field"><label>Forgejo token file ${yamlHint('forgejo.token_file')} ${settingHelpMark('settings', 'features', 'Forgejo token file', `A file holding the Forgejo token, under /secrets or /data/secrets. When set it is used instead of the env var. Never the token itself.`)}</label><input type="text" value="${esc(f.forgejoTokenFile || '')}" placeholder="/secrets/forgejo/token" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="forgejoTokenFile" data-arg-types="s,s,w"></div>
           </div>
-          <div class="config-help">Requires restart: the forge client is built at boot.</div>
+          ${f.forgejoSharedTokenWarning ? `<div class="config-help config-toggle-note-warn" data-testid="forgejo-shared-token-warning">${esc(f.forgejoSharedTokenWarning)}</div>` : ''}
+          <div class="config-help">Requires restart: the forge client is built at boot. A rotated token file needs no restart, because it is read each time the token is needed.</div>
         </div>
 
         <div class="settings-subsection">
@@ -85851,6 +86250,10 @@ function burnAreaChart() {
       if (username) window._hiveUser = username;
       if (role) window._hiveRole = role;
       if (typeof subscriptionGaugeRefresh === 'function') subscriptionGaugeRefresh();
+      // The breaker chip first renders at DOMContentLoaded, before the role is
+      // known, so an owner saw a disabled "paused" chip with no way to resume
+      // until the next status poll (#19778). Repaint it for the real role.
+      if (typeof refreshFleetBreakerState === 'function') refreshFleetBreakerState();
       const banner = document.getElementById('gh-auth-banner');
       const topBtn = document.getElementById('oc-gh-login-btn');
       const avatarWrap = document.getElementById('oc-gh-avatar-wrap');
@@ -87970,10 +88373,10 @@ function burnAreaChart() {
       gh11: function (event, A) { _kbSetupView='webhook';renderKnowledge(); },
       gh12: function (event, A) { _kbSetupView='none';renderKnowledge(); },
       gh13: function (event, A) { _kbSetupView='choose';renderKnowledge(); },
-      gh14: function (event, A) { _kbSelectedLayer='vault:'+A[0];kbSearchVault(A[0]); },
+      gh14: function (event, A) { kbSelectLayer('vault:' + A[0]); },
       gh15: function (event, A) { _kbSearchQuery=this.value;kbSearch(); },
       gh16: function (event, A) { _kbSearchQuery=this.value; },
-      gh17: function (event, A) { kbReadFact(A[0]); },
+      gh17: function (event, A) { kbReadFact(A[0], A[1] || undefined); },
       kbPreviousPage: function () { kbChangePage(-1); },
       kbNextPage: function () { kbChangePage(1); },
       gh18: function (event, A) { kbRemoveGitSource(A[0],A[1]); },

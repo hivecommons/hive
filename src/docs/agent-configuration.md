@@ -649,6 +649,28 @@ Two rules of thumb:
 
   Only `POST /v1/messages` is translated into an OpenAI `/v1/chat/completions` call. The Claude CLI also talks to its Anthropic host for housekeeping — telemetry batches (`/api/event_logging/...`), error reports, `POST /v1/messages/count_tokens` — and none of that has a meaning to an OpenAI-compatible gateway; forwarding it used to cost a gateway `400 Missing required parameter: 'messages'` per call, charged against the provider's request rate limit (roughly two failures per real completion in practice). The translator and the MITM reroute now answer those locally: `count_tokens` returns a chars-based estimate, anything under `/api/` returns `{}`, and any other path is a 404 in Anthropic error shape with a `WARN` log line naming the method and path, so a new CLI endpoint shows up in the hive log rather than as gateway noise. Inference-routed `claude` sessions are additionally launched with `DISABLE_TELEMETRY=1`, `DISABLE_ERROR_REPORTING=1`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and `CLAUDE_CODE_AUTO_MODE_SERVER=0`; subscription sessions are not. The last one matters for Claude Code's [auto-mode classifier](https://code.claude.com/docs/en/auto-mode-classifier-billing): the CLI otherwise asks the inference host for a server-side safety verdict (`safeguards` field in, `safeguard_results` out) that an OpenAI-compatible gateway can never return, then halts the session on an interactive "this session isn't eligible because your requests go through 127.0.0.1:18444 … Enter to continue" notice. With the variable set the CLI runs its own classifier requests through the translator like any other call. Should the notice still appear (for example from a settings file that re-enables the server check), the lifetime prompt watcher presses Enter for it.
 
+### Context window for inference-routed agents
+
+Claude Code sizes auto-compaction from the model ID. It does not know gateway or local IDs such as `vllm/Qwen3.8-27B`, and for those it assumes a 1M-token window (it shows `Model "..." isn't recognized · context assumed to be 1m tokens`). On a model server with a smaller context, a conversation can then grow past the server's limit before the CLI compacts, and the server refuses the turn (#19913).
+
+Hive tells the CLI the real window with `CLAUDE_CODE_MAX_CONTEXT_TOKENS` when it knows one. It uses, in order:
+
+1. The agent's `max_context_tokens` setting (tokens). Set it when the model server enforces a window that its `/v1/models` listing does not report, or reports wrongly:
+
+   ```yaml
+   agents:
+     quality:
+       backend: litellm
+       model: vllm/Qwen3.8-27B-Q8_K_XL
+       max_context_tokens: 262144
+   ```
+
+2. The window the inference translator discovered from the endpoint's `/v1/models`: `max_model_len` (vLLM), then `context_length` (gufo, OpenRouter), then `max_input_tokens` (used by some gateways; LiteLLM's own `/v1/models` does not report a window, so set `max_context_tokens` there). A listing entry is used only when its `id` matches the model, or when the listing has a single model. The discovery runs in the background when the route is set, so a window learned for a model applies from the next launch of an agent on that model. Learned windows are kept in memory only, so after a hive restart the first launch on each model gets no discovered window. Set `max_context_tokens` when the window must apply from the first launch. The `inference route max context length resolved` log line records a learned window.
+
+`max_context_tokens` describes the agent's configured `model`. It is not applied while a model override (a dashboard switch or pin) runs another model, and a review head on a different model does not inherit it; those fall back to discovery.
+
+Hive does not export the variable for model IDs that contain `claude` (for example `anthropic/claude-sonnet-5-5`), because the CLI already knows those windows. Set `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` to turn the export off for the whole hive. Sandbox Job kicks do not get the variable yet: the sandbox drops every variable whose name contains `TOKEN`.
+
 ### Per-agent homes: what is shared and what is private
 
 Each per-UID agent runs with its own durable `HOME` under `/data/home/agents/<name>`. "One login authenticates the fleet" is implemented by *bridging* — symlinks from the per-agent home back to the same path under the shared `/data/home` — and the bridge list is deliberately narrow:
@@ -750,10 +772,42 @@ governor:
 
 A valid environment variable wins over the yaml key; an invalid one is ignored and named in a start-up warning. Values are whole numbers, and seconds are capped at 3600.
 
-- **Timeouts.** The connect and response-header timeouts apply to the request to the gateway. A non-streaming call only gets headers once the model has finished, so keep `response_header_timeout_s` above your longest healthy generation. The idle-stream timeout counts only time spent waiting for the upstream, from one byte to the next, so a stream that is slow but keeps producing bytes is never cut. A timeout is not retried: the agent gets the same `502` (before any byte) or the same stopped stream (after) that a dead upstream always gave.
-- **Retry.** With `retry_enabled`, a `429` or a `5xx` other than `501` is resent up to `retry_max_retries` times, with exponential backoff (`base * 2^(n-1)`, capped at `retry_max_delay_s`) and jitter in the upper half of each step. A `Retry-After` (seconds or an HTTP date) is honored, plus jitter of up to one base step; one longer than `retry_max_delay_s` is not waited for, and the response is passed to the agent instead. A retry happens only while no response byte has reached the agent, so a stream that has started is never replayed. The retry resends the translated request that is already held in memory with the same headers and the route's current key, so there is no buffer to size and no body-size cap. The existing single resend after a `401` is separate and unchanged, and key resolution is untouched.
-- **Mid-stream death.** A stream that dies after its first byte is logged (`inference SSE translation failed`) and stopped, as before.
+- **Timeouts.** The connect and response-header timeouts apply to the request to the gateway. A non-streaming call only gets headers once the model has finished, so keep `response_header_timeout_s` above your longest healthy generation. The idle-stream timeout counts only time spent waiting for the upstream, from one byte to the next, so a stream that is slow but keeps producing bytes is never cut. A timeout is not retried: a non-streaming call gets the same `502` a dead upstream always gave, and a streaming call ends with an SSE `error` event.
+- **Retry.** With `retry_enabled`, a `429` or a `5xx` other than `501` is resent up to `retry_max_retries` times, with exponential backoff (`base * 2^(n-1)`, capped at `retry_max_delay_s`) and jitter in the upper half of each step. A `Retry-After` (seconds or an HTTP date) is honored, plus jitter of up to one base step; one longer than `retry_max_delay_s` is not waited for, and the response is passed to the agent instead. A retry happens only while no byte of the upstream response has been relayed to the agent, so a stream that has started is never replayed (the keep-alive `message_start` and `ping` events below carry no upstream content). The retry resends the translated request that is already held in memory with the same headers and the route's current key, so there is no buffer to size and no body-size cap. The existing single resend after a `401` is separate and unchanged, and key resolution is untouched.
+- **Mid-stream death.** A stream that dies after its first byte is logged (`inference SSE translation failed`) and ended with an SSE `error` event instead of `message_stop`, so the CLI does not take the cut response for a complete one.
 - **Observability.** Each retry logs `inference upstream retrying` and each timeout logs `inference upstream timeout`, with `backend`, `status` and `agent` (and `attempt`, `delay_ms` or `kind`), never a request or response body and never a header value. Counters `crux.proxy.inference.retries` (attributes `route`, `status`) and `crux.proxy.inference.timeouts` (attributes `route`, `kind` of `connect`, `response_header` or `idle`) are exported through the OpenTelemetry meter.
+
+#### Streamed responses and the Claude CLI's idle timers
+
+Through a custom `ANTHROPIC_BASE_URL`, the Claude CLI aborts a stream that sends no bytes for 5 minutes, counting the wait for response headers, and one that sends no parsed event for 5 minutes, then retries the request ([Streaming idle watchdogs](https://code.claude.com/docs/en/network-config#streaming-idle-watchdogs)). A model that waits in a gateway queue or reasons for longer than that used to lose the whole generation this way ([#19793](https://github.com/hivecommons/hive/issues/19793)). For a request the CLI asks to stream, the translator therefore:
+
+- answers `200` with `message_start` before it sends the request to the gateway, then writes an Anthropic `ping` event whenever nothing else has reached the CLI for 10 seconds. `HIVE_INFERENCE_STREAM_PING_INTERVAL` (a Go duration such as `5s`, read once) changes the interval; an invalid or non-positive value falls back to `10s` and is logged as a warning. Pings keep the byte-level timers alive while the gateway has not answered yet.
+- forwards `delta.reasoning_content` as an Anthropic `thinking` block (`thinking_delta` events). These are parsed events, so a long reasoning phase keeps the event-level timer alive too, and the agent's transcript keeps the reasoning. The block is not sent back to the gateway on the next turn.
+- flushes every event as soon as it is written.
+
+Because the `200` has already gone out, a gateway failure on a streamed request (unreachable, a non-2xx status, or a broken stream) reaches the CLI as an SSE `error` event, not as an HTTP status. The message is the same `inference backend returned <status>: ...` or `inference backend unreachable: ...` text, and the error type follows the status: `rate_limit_error` for `429`, `overloaded_error` for `503` and `529`, `authentication_error` for `401`, `api_error` for other `5xx`. Non-streaming requests are unchanged.
+
+If a turn is still cut, raise the CLI's own limits: `CLAUDE_STREAM_IDLE_TIMEOUT_MS` (5 to 30 minutes) lengthens the watchdogs, and `API_FORCE_IDLE_TIMEOUT=0` turns the body idle timeout off. Hive does not set either. An agent in a tmux pane inherits the hive process's environment, so setting them in the hive container's environment reaches the CLI; a sandbox Job runs in its own pod and does not inherit it.
+
+#### Headless turns (`headless_turns`): one `claude -p` per kick
+
+A translator-routed agent (`vllm`, `llm-d`, `litellm`, `watsonx` or a named gateway) normally runs the interactive Claude CLI resident in its pane. Anthropic counts that as interactive Claude Code even when the route ends at Anthropic with a Console API key, and the monthly API credits that come with Max, Ultra and Team plans do not pay for interactive Claude Code: the request fails with `Your credit balance is too low` while the credit sits unspent. Per Anthropic's [help article](https://support.claude.com/en/articles/17154008), `claude -p` run with an API key from the linked Console organization is billed as Agent SDK usage, which those credits do cover ([#19902](https://github.com/hivecommons/hive/issues/19902)).
+
+`headless_turns: true` on an agent switches it to that mode. It is off by default:
+
+```yaml
+agents:
+  ci-maintainer:
+    backend: litellm
+    model: anthropic/claude-sonnet-5-5
+    headless_turns: true
+```
+
+- **What changes.** The pane holds a shell instead of a resident CLI. Each kick runs `hive claude-turn`, which starts one `claude -p --input-format stream-json --output-format stream-json` with the agent's usual launch flags (model, `--bare --settings`, the GitHub-write and host-state deny rules, tool rules, MCP flags), feeds it the prompt on stdin, and renders its output as plain pane text. The pane shows `HIVE_CLAUDE_HEADLESS_RUNNING` while a turn runs and `HIVE_CLAUDE_HEADLESS_READY` at the prompt, which the kick, busy and turn-end gates read.
+- **What does not change.** The CLI still talks to Hive's translator, so the real gateway key stays out of the agent's environment, `/v1/models` discovery, metering, key rotation, the opt-in timeouts and retries, and spending-limit detection all work as before. Hive does not edit the CLI's requests or its system prompt.
+- **Continuity.** The first kick after a launch starts a new session; later kicks resume it by id (`--resume`). `clear_on_kick: true` (the default) starts a new session on every non-resume kick, which replaces the interactive `/clear`. If the recorded session can no longer be resumed, the turn starts a new one and says so in the pane.
+- **What is skipped.** There is no idle placeholder kick at launch (a headless turn is a full model call), no consent-screen watcher, and no post-kick "continue" or action nudges, because the pane is a shell between turns and each turn ends when `claude -p` exits. PR follow-up resume kicks are refused, as for headless agy.
+- **Scope.** The setting applies only to translator-routed agents; it is ignored on `claude` (subscription) and every other CLI backend, and when `launch_cmd` is set. Whether a given request is covered by subscriber credits is Anthropic's decision; Hive only changes how the CLI is started.
 
 ### Claude Managed Agents hosted execution
 
@@ -870,6 +924,14 @@ Two consequences worth knowing:
 
 - **Model validation does not save you here.** `POST /api/model/...` checks the model against the agent's *current effective* backend, and deliberately fails **open** when that backend's model list cannot be enumerated (see `validateModelForAgent`). Codex is exactly such a backend, so `switch` to codex followed by `model` set to a Claude id is accepted. Reverse the order and the model is validated against the backend you are about to leave. Neither order gives you a checked pair.
 - **The atomic route does not restart the agent.** It persists the pair and syncs it into the live process config, so the running CLI keeps its current method until the agent next restarts. That is usually what you want for a scripted change — the two-call path pays for two restarts — but if you need the change to take effect now, restart the agent afterwards.
+
+### When an agent config save fails
+
+`PUT /api/config/agent/{name}/general`, `.../cadences` and `.../models` answer `200` only once the change is written to the config file ([#19847](https://github.com/hivecommons/hive/issues/19847)). They validate the whole request first and change nothing in memory when the request is refused:
+
+- **`400`** for an invalid value, including a cadence for a governor mode the hive does not define.
+- **`409`** when the hive has no writable config source, so the change would be lost on the next restart.
+- **`500`** when the write fails. The message names the error, and the in-memory config is put back as it was.
 
 ### Switching the method or model of an agent that is not running
 

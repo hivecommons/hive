@@ -449,15 +449,18 @@
   },
   "GitLab": {
     "URL": "",
-    "TokenEnv": ""
+    "TokenEnv": "",
+    "TokenFile": ""
   },
   "Gitea": {
     "URL": "",
-    "TokenEnv": ""
+    "TokenEnv": "",
+    "TokenFile": ""
   },
   "Forgejo": {
     "URL": "",
-    "TokenEnv": ""
+    "TokenEnv": "",
+    "TokenFile": ""
   },
   "Notifications": {
     "Ntfy": null,
@@ -778,6 +781,7 @@
     "trusted_authors": {},
     "contributor_lane": {},
     "contributor_tier": {},
+    "decision_gate": {},
     "merge_train": {},
     "native_merge_queue": {},
     "hive_superseding": {},

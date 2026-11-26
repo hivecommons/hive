@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/crux/agentmode"
 )
 
 // scriptedGit answers git invocations from a table keyed on the joined argv,
@@ -23,6 +25,9 @@ type scriptedGit struct {
 	fails   map[string]error
 	calls   []string
 	pushErr error
+	// pushOut, when set, is what the push returns instead of "ok": the
+	// stdout+stderr ExecRunner hands back from a failed git push.
+	pushOut string
 	pushed  bool
 }
 
@@ -31,6 +36,9 @@ func (g *scriptedGit) Run(_ context.Context, _ string, _ []string, name string, 
 	if slices.Contains(args, "push") {
 		g.pushed = true
 		g.calls = append(g.calls, "push")
+		if g.pushOut != "" {
+			return []byte(g.pushOut), g.pushErr
+		}
 		return []byte("ok"), g.pushErr
 	}
 	g.calls = append(g.calls, key)
@@ -380,12 +388,12 @@ func TestGitHubAppMinterRequiresAuth(t *testing.T) {
 // scopeRecorder is the TokenScoper the minter tests drive: it records what
 // the broker asked for so the test can assert the scope, not GitHub's reply.
 type scopeRecorder struct {
-	tier  string
+	tier  agentmode.TokenTier
 	repos []string
 	token string
 }
 
-func (r *scopeRecorder) ScopedTokenForRepos(_ context.Context, tier string, repos []string) (string, error) {
+func (r *scopeRecorder) ScopedTokenForRepos(_ context.Context, tier agentmode.TokenTier, repos []string) (string, error) {
 	r.tier, r.repos = tier, repos
 	return r.token, nil
 }

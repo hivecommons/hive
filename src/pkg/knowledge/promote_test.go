@@ -23,13 +23,14 @@ func TestIsUpwardPromotion(t *testing.T) {
 		{LayerOrg, LayerProject, false},
 		{LayerProject, LayerPersonal, false},
 		{LayerProject, LayerProject, false},
+		{LayerProject, "unknown", false},
 	}
 
 	for _, tt := range tests {
 		t.Run(string(tt.from)+"→"+string(tt.to), func(t *testing.T) {
-			got := isUpwardPromotion(tt.from, tt.to)
+			got := IsUpwardPromotion(tt.from, tt.to)
 			if got != tt.want {
-				t.Errorf("isUpwardPromotion(%s, %s) = %v, want %v", tt.from, tt.to, got, tt.want)
+				t.Errorf("IsUpwardPromotion(%s, %s) = %v, want %v", tt.from, tt.to, got, tt.want)
 			}
 		})
 	}

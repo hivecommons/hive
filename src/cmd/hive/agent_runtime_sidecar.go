@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/api"
 	"github.com/hivecommons/hive/crux/api/callback"
 	cruxconfig "github.com/hivecommons/hive/crux/config"
@@ -264,7 +265,7 @@ func (h *sidecarHost) Enabled() bool {
 	return m != nil && m.Enabled()
 }
 
-func (h *sidecarHost) MintAgentToken(agentName, tier string) (string, error) {
+func (h *sidecarHost) MintAgentToken(agentName string, tier agentmode.TokenTier) (string, error) {
 	h.mu.Lock()
 	m := h.mint
 	h.mu.Unlock()
@@ -365,6 +366,13 @@ func (h *sidecarHost) knowledgeAdviser() crux.KnowledgeAdviser {
 // the relay and read GitHub as they did before.
 func (h *sidecarHost) SetSandboxGitHubReadRelay(crux.SandboxGitHubReadRelay, []string) {
 	h.inProcessOnly("SetSandboxGitHubReadRelay")
+}
+
+// SetSandboxInferenceRelay is in-process-only (#19619) for the same reason:
+// Enroll is a Go call into hive's proxy. A sidecar runtime's Job kicks reach
+// inference as they did before the listener existed.
+func (h *sidecarHost) SetSandboxInferenceRelay(crux.SandboxInferenceRelay) {
+	h.inProcessOnly("SetSandboxInferenceRelay")
 }
 
 // SetInferenceRoute and ClearInferenceRoute are cruxhost.InferenceRouter:
@@ -518,6 +526,16 @@ func (b *boot) hiveCallbackCapabilities() *cruxhost.Capabilities {
 	deps.Usage = lateUsageSink{get: b.inferenceSinkRef, logger: b.logger, once: &sync.Once{}}
 	if b.ghClient != nil {
 		deps.PullRequests = b.ghClient
+		// Per-repo open-PRs mode (repo_open_prs.go). The callback names no
+		// agent, so the hand-off record cannot vouch for a workflow PR here:
+		// a workflow_only repo refuses, as an off one does.
+		deps.RepoPRRefusal = func(repo string) string {
+			reason := b.cfg.RepoOpenPRsRefusal(repo, false)
+			if reason != "" {
+				auditOpenPRsRefusal("", repo, string(b.cfg.RepoOpenPRsMode(repo)), "sidecar", reason)
+			}
+			return reason
+		}
 	}
 	if sh, ok := b.agentMgr.(*sidecarHost); ok {
 		deps.Policy = func() callback.Policy { return sh.policy(b.gatewayNames) }

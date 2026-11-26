@@ -58,3 +58,7 @@ __pycache__/
 # `go build` output of src/cmd/workflow-survey (a 4.4 MB binary was committed
 # by mistake in #17679). Build product, never source.
 src/cmd/workflow-survey/workflow-survey
+
+# A raw CI run log committed by mistake in #16771. Local debugging output,
+# never source.
+.ci-log.txt

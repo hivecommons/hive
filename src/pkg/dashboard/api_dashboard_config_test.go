@@ -113,6 +113,97 @@ func TestDashboardSettingsAPISubscriptionGaugeHeaderToggle(t *testing.T) {
 	}
 }
 
+// TestDashboardSettingsAPIGitHubSignInToggle covers dashboard.github_sign_in
+// in Settings (#19721): an unset key reads as on, the owner can turn it off and
+// on, an omitted field leaves it unchanged, and the login page follows the
+// saved value without a restart.
+func TestDashboardSettingsAPIGitHubSignInToggle(t *testing.T) {
+	t.Setenv(config.HubURLEnvVar, "")
+	s := govServer(t)
+	s.deps.Config.Dashboard.GitHubSignIn = nil
+	// Turning it off needs a hub sign-in link (see the refusal test below).
+	s.deps.Config.HiveID = "h1"
+	s.deps.Config.Hub.URL = "https://hub.example.com"
+
+	var got dashboardSettingsPayload
+	get := doOwnerGet(s, "/api/config/dashboard")
+	if get.Code != http.StatusOK {
+		t.Fatalf("GET = %d: %s", get.Code, get.Body.String())
+	}
+	if err := json.Unmarshal(get.Body.Bytes(), &got); err != nil {
+		t.Fatalf("GET body: %v", err)
+	}
+	if !got.GitHubSignIn {
+		t.Fatal("github_sign_in = false with the key unset, want true")
+	}
+
+	put := doPut(s, "/api/config/dashboard", map[string]any{"github_sign_in": false})
+	if put.Code != http.StatusOK {
+		t.Fatalf("PUT off = %d: %s", put.Code, put.Body.String())
+	}
+	if s.deps.Config.Dashboard.GitHubSignInEnabled() {
+		t.Fatal("dashboard.github_sign_in not saved as false")
+	}
+	if err := json.Unmarshal(put.Body.Bytes(), &got); err != nil || got.GitHubSignIn {
+		t.Fatalf("PUT response github_sign_in = %v (err %v), want false", got.GitHubSignIn, err)
+	}
+	if s.signInPage() == loginPage {
+		t.Fatal("login page still offers GitHub sign-in after the toggle was turned off")
+	}
+
+	if rec := doPut(s, "/api/config/dashboard", map[string]any{"agent_poll_interval_s": 9}); rec.Code != http.StatusOK {
+		t.Fatalf("unrelated PUT = %d: %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.Dashboard.GitHubSignInEnabled() {
+		t.Fatal("a PUT without github_sign_in turned GitHub sign-in back on")
+	}
+
+	if rec := doPut(s, "/api/config/dashboard", map[string]any{"github_sign_in": true}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT on = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !s.deps.Config.Dashboard.GitHubSignInEnabled() {
+		t.Fatal("dashboard.github_sign_in not saved as true")
+	}
+	if s.signInPage() != loginPage {
+		t.Fatal("login page does not offer GitHub sign-in after the toggle was turned back on")
+	}
+}
+
+// TestDashboardSettingsAPIGitHubSignInOffNeedsHubLink: with no hub sign-in
+// link, turning GitHub sign-in off would leave the login page with no way in,
+// so the PUT is refused and the value stays on. HIVE_HUB_URL counts as a hub
+// URL, as it does for the login page.
+func TestDashboardSettingsAPIGitHubSignInOffNeedsHubLink(t *testing.T) {
+	t.Setenv(config.HubURLEnvVar, "")
+	s := govServer(t)
+	s.deps.Config.Dashboard.GitHubSignIn = nil
+	s.deps.Config.Dashboard.HubSignInURL = ""
+	s.deps.Config.Hub.URL = ""
+	s.deps.Config.HiveID = "h1"
+
+	put := doPut(s, "/api/config/dashboard", map[string]any{"github_sign_in": false})
+	if put.Code != http.StatusConflict {
+		t.Fatalf("PUT off without a hub link = %d, want 409: %s", put.Code, put.Body.String())
+	}
+	if !strings.Contains(put.Body.String(), "no hub sign-in link") {
+		t.Fatalf("refusal does not explain itself: %s", put.Body.String())
+	}
+	if !s.deps.Config.Dashboard.GitHubSignInEnabled() || s.signInPage() != loginPage {
+		t.Fatal("a refused PUT still turned GitHub sign-in off")
+	}
+	if rec := doPut(s, "/api/config/dashboard", map[string]any{"github_sign_in": true}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT on without a hub link = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	t.Setenv(config.HubURLEnvVar, "https://hub.example.com")
+	if rec := doPut(s, "/api/config/dashboard", map[string]any{"github_sign_in": false}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT off with HIVE_HUB_URL set = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.Dashboard.GitHubSignInEnabled() {
+		t.Fatal("dashboard.github_sign_in not saved as false with HIVE_HUB_URL set")
+	}
+}
+
 func TestDashboardSettingsAPISubscriptionGaugeHeaderRejectsNonOwner(t *testing.T) {
 	s := govServer(t)
 	var b bytes.Buffer

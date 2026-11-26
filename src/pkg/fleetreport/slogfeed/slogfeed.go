@@ -115,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || unresolvedConversationsSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) || unauthorizedLoginRejected(r) {
+	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || unresolvedConversationsSkip(r) || reviewRetryServerError(r) || stageLabelServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) || unauthorizedLoginRejected(r) || appTokenRefreshTimeoutFallback(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -196,6 +196,34 @@ func ghcrTransientTimeout(r slog.Record) bool {
 			return false
 		}
 		return true
+	})
+	return timedOut
+}
+
+// appTokenRefreshFallbackMessage is the WARN pkg/github's AppAuth.Token logs
+// when a proactive installation-token refresh fails while the cached token is
+// still valid (src/pkg/github/app.go). Keep the two strings in sync.
+const appTokenRefreshFallbackMessage = "github app token proactive refresh failed; serving still-valid cached token" // #nosec G101 -- a log message to match, not a credential
+
+// appTokenRefreshTimeoutFallback reports whether r is that fallback caused by
+// the mint timing out. The cached token keeps every caller working and the
+// refresh is retried on a backoff long before the token expires, so a slow or
+// unreachable GitHub API is not a hive defect (hivecommons/hive#19706). If the
+// outage outlasts the token, callers fail with their own errors. The WARN
+// stays in local logs; non-timeout refresh failures (a 401 from a revoked key,
+// a 404 from an uninstalled App) stay reportable as early warnings.
+func appTokenRefreshTimeoutFallback(r slog.Record) bool {
+	if r.Level != slog.LevelWarn || strings.TrimSpace(r.Message) != appTokenRefreshFallbackMessage {
+		return false
+	}
+	timedOut := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key != "error" {
+			return true
+		}
+		text := a.Value.String()
+		timedOut = strings.Contains(text, "context deadline exceeded") || strings.Contains(text, "Client.Timeout exceeded")
+		return false
 	})
 	return timedOut
 }
@@ -423,6 +451,33 @@ func reviewRetryServerError(r slog.Record) bool {
 		if a.Key == "error" {
 			e := a.Value.String() + " "
 			match = (strings.Contains(e, "/reviews") || strings.Contains(e, "/pulls/")) &&
+				(strings.Contains(e, ": 500 ") || fleetreport.IsGitHubUpstreamUnavailable(e))
+			return false
+		}
+		return true
+	})
+	return match
+}
+
+// stageLabelServerError reports whether r is a stage-label sweep's "write
+// failed" warning (the PR sweep's "stage labels: write failed" or the issue
+// sweep's "issue stage labels: write failed") caused by a GitHub 5xx on a
+// label write (POST/PUT/DELETE .../issues/<n>/labels). The stage engine marks
+// the effect uncertain and the next sweep re-reads the item and reconciles its
+// stage labels, so a transient upstream 5xx is not a hive defect
+// (hivecommons/hive#19889, hivecommons/hive#19887). 4xx, non-label and
+// non-HTTP errors stay reportable.
+func stageLabelServerError(r slog.Record) bool {
+	switch strings.TrimSpace(r.Message) {
+	case "stage labels: write failed", "issue stage labels: write failed":
+	default:
+		return false
+	}
+	match := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "error" {
+			e := a.Value.String() + " "
+			match = strings.Contains(e, "/labels") &&
 				(strings.Contains(e, ": 500 ") || fleetreport.IsGitHubUpstreamUnavailable(e))
 			return false
 		}

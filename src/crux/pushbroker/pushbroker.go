@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/authz"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
@@ -24,7 +25,7 @@ import (
 
 const (
 	DefaultRemote = "origin"
-	DefaultTier   = "contributor"
+	DefaultTier   = agentmode.TokenTierContributor
 )
 
 var DefaultProtectedPaths = []string{
@@ -53,11 +54,6 @@ var credentialEnvPrefixes = []string{
 	"GITHUB_TOKEN=", "GH_TOKEN=", "HIVE_GITHUB_TOKEN=", "COPILOT_GITHUB_TOKEN=", "GITLAB_TOKEN=", "GITEA_TOKEN=", "FORGEJO_TOKEN=",
 	"GIT_ASKPASS=", "SSH_ASKPASS=",
 }
-
-// pushRemoteHost is the only host a sandbox workspace is cloned from
-// (SandboxExecutor.prepareWorkspace), and therefore the only host the broker
-// will hand a minted token to.
-const pushRemoteHost = "github.com"
 
 type TokenMinter interface {
 	MintPushToken(ctx context.Context, repo string) (string, error)
@@ -93,7 +89,7 @@ func (ExecRunner) Run(ctx context.Context, dir string, env []string, name string
 // needs from the host's GitHub App credential (*github.AppAuth in hive), kept
 // as an interface so this package stays inside the Crux ring.
 type TokenScoper interface {
-	ScopedTokenForRepos(ctx context.Context, tier string, repos []string) (string, error)
+	ScopedTokenForRepos(ctx context.Context, tier agentmode.TokenTier, repos []string) (string, error)
 }
 
 // GitHubAppMinter mints a per-push token through the host's TokenScoper.
@@ -102,14 +98,14 @@ type TokenScoper interface {
 // storing a typed nil (see cmd/hive's appMinter).
 type GitHubAppMinter struct {
 	Auth TokenScoper
-	Tier string
+	Tier agentmode.TokenTier
 }
 
 func (m GitHubAppMinter) MintPushToken(ctx context.Context, repo string) (string, error) {
 	if m.Auth == nil {
 		return "", errors.New("pushbroker: nil GitHub App auth")
 	}
-	tier := strings.TrimSpace(m.Tier)
+	tier := agentmode.TokenTier(strings.TrimSpace(string(m.Tier)))
 	if tier == "" {
 		tier = DefaultTier
 	}
@@ -148,6 +144,11 @@ type Broker struct {
 	// pushed. Set BaseRef to the same commit so the scans judge only the
 	// kick's own commits.
 	LeaseSHA string
+	// RemoteBaseURL is the forge instance root the workspace was cloned from
+	// (SandboxExecutor.prepareWorkspace), and the only one the broker pushes
+	// to and hands the minted token to. Empty is DefaultForgeBaseURL
+	// (github.com). Minter must mint tokens for this forge.
+	RemoteBaseURL string
 }
 
 // leaseSHARE is a full object name; anything else is refused before it can
@@ -272,9 +273,17 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 	// process owner via /proc/<pid>/environ) and have a credential helper echo
 	// it back to git. The helper text itself carries only the variable NAME, so
 	// the secret stays out of argv and off disk.
+	//
+	// The helper is scoped to the forge's origin: git consults it only for a
+	// request to that exact scheme, host and port, so the token cannot follow
+	// a redirect or reach any other host.
+	helperKey, err := CredentialHelperKey(b.RemoteBaseURL)
+	if err != nil {
+		return b.fail(res, err)
+	}
 	args := []string{
 		"-c", "core.hooksPath=/dev/null",
-		"-c", "credential.helper=" + pushCredentialHelper,
+		"-c", helperKey + "=" + pushCredentialHelper,
 		"push", "--no-verify",
 	}
 	inputs := map[string]string{"commit": res.Commit, "remote": b.remote()}
@@ -289,16 +298,25 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 	// helpers are reset before the -c helper above is appended, and the
 	// remote's URL is the pinned one.
 	env := append(b.gitEnv(), pushTokenEnvVar+"="+token)
+	var pushOutput []byte
 	_, err = effects.Execute(ctx, b.Mutation, effects.Claim{
 		Repo:   b.Repo,
 		Kind:   effects.KindBranchPush,
 		Target: b.Branch,
 		Inputs: inputs,
 	}, func(ctx context.Context) (effects.Result, error) {
-		_, runErr := b.runner().Run(ctx, b.Workspace, env, "git", args...)
+		out, runErr := b.runner().Run(ctx, b.Workspace, env, "git", args...)
+		pushOutput = out
 		return effects.Result{Provenance: res.Commit}, runErr
 	})
 	if err != nil {
+		// Keep git's own diagnostics (a 403 for a missing scope, a rejected
+		// ref, a DNS failure) so the operator and the agent can tell them
+		// apart. The tail is scrubbed first: git can echo a remote URL, and
+		// the minted token must never travel in an error string.
+		if detail := pushFailureDetail(pushOutput, token); detail != "" {
+			err = fmt.Errorf("%w: %s", err, detail)
+		}
 		if res.Lease != "" {
 			return b.fail(res, fmt.Errorf("git push to existing branch %q refused or failed; with the lease, a branch that moved off %s since the kick checked it out is never overwritten: %w", b.Branch, shortSHA(res.Lease), err))
 		}
@@ -308,9 +326,57 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 	return res, nil
 }
 
+const (
+	// pushFailureTailLines bounds how many trailing lines of git's output a
+	// push error carries. Git prints the cause last ("remote: Forbidden",
+	// "The requested URL returned error: 403"); progress noise comes first.
+	pushFailureTailLines = 6
+	// pushFailureTailBytes caps the carried tail so a chatty remote cannot
+	// turn one error string into a log flood.
+	pushFailureTailBytes = 1024
+)
+
+// urlUserinfoRE matches the userinfo part of a URL (scheme://user:pass@host).
+// Git prints remote URLs in its diagnostics, and a URL written with embedded
+// credentials would otherwise carry them into the error.
+var urlUserinfoRE = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]+@`)
+
+// pushFailureDetail returns a scrubbed, bounded tail of git's push output for
+// an error message, or "" when git printed nothing useful. It removes the
+// minted token verbatim, any URL userinfo, and every credential shape
+// logscrub knows, then keeps the last pushFailureTailLines non-empty lines
+// within pushFailureTailBytes.
+func pushFailureDetail(out []byte, token string) string {
+	text := string(out)
+	if t := strings.TrimSpace(token); t != "" {
+		text = strings.ReplaceAll(text, t, "[REDACTED]")
+	}
+	text = urlUserinfoRE.ReplaceAllString(text, "${1}[REDACTED]@")
+	text = logscrub.ScrubString(text)
+	var lines []string
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r", "\n"), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) > pushFailureTailLines {
+		lines = lines[len(lines)-pushFailureTailLines:]
+	}
+	detail := strings.Join(lines, " | ")
+	if len(detail) > pushFailureTailBytes {
+		detail = "..." + detail[len(detail)-pushFailureTailBytes:]
+		// Never cut inside a multi-byte rune.
+		detail = strings.ToValidUTF8(detail, "")
+	}
+	return detail
+}
+
 func (b *Broker) validate() error {
 	if strings.TrimSpace(b.Workspace) == "" || strings.TrimSpace(b.Branch) == "" || strings.TrimSpace(b.Repo) == "" {
 		return errors.New("pushbroker: workspace, branch, and repo are required")
+	}
+	if _, err := NormalizeForgeBaseURL(b.RemoteBaseURL); err != nil {
+		return err
 	}
 	if lease := strings.TrimSpace(b.LeaseSHA); lease != "" && !leaseSHARE.MatchString(lease) {
 		return fmt.Errorf("pushbroker: lease %q is not a full commit SHA", lease)
@@ -609,7 +675,7 @@ func (b *Broker) gitEnv() []string {
 			strings.HasPrefix(entry, "GIT_CONFIG_PARAMETERS=") ||
 			strings.HasPrefix(entry, "GIT_TRACE")
 	})
-	env = append(env, configEnv(workspaceConfigOverrides(b.remote(), b.Repo))...)
+	env = append(env, configEnv(workspaceConfigOverrides(b.remote(), b.expectedRemoteURL()))...)
 	if name, email, ok := gitidentity.AgentIdentity(strings.TrimSpace(b.AgentName)); ok {
 		env = append(env,
 			"GIT_AUTHOR_NAME="+name,

@@ -182,6 +182,7 @@ Read the relay's startup/hold diagnostics, not only its connected status:
 
 - `unprovisioned` means there is no usable route to a reading: **work is admitted without quota protection**, with a warning.
 - A configured reading that is missing, malformed, `unknown`, or `stale` **holds** work. A fresh publisher marker can also make a missing automatic reading hold.
+- A `codex` API-key login has no subscription windows. When `auth.json` contains an API key, or sets Codex's own `auth_mode: "apikey"` alongside an `OPENAI_API_KEY` or `CODEX_API_KEY` environment variable, the publisher writes an `available` reading with `auth_mode: "api_key"` and no windows. The relay **admits** work with a one-time warning that each task spends metered API credits. A ChatGPT login always wins; an environment key alone does not prove the login mode, so an ambiguous failed probe still holds ([#19932](https://github.com/hivecommons/hive/issues/19932), [#19943](https://github.com/hivecommons/hive/issues/19943)).
 - A low reading names the window/reserve; a held relay retries automatically. An explicit contributor pause still wins when headroom returns.
 
 With an explicitly configured shared pool, `just contribute-quota status` inspects its scoped controls; use the **same pool/account/backend configuration** as the running relay. It is not proof of provider headroom by itself. Do not select `continue-*` or turn the guard `off` just to make setup look successful. See [shared-pool setup](#sharing-one-quota-reserve-across-those-relays), [guard policy](#the-contributor-quota-guard-holds-before-the-provider-refuses), and [publisher mechanics](#how-the-reading-reaches-the-guard-kubestellarhive6967) for reserves, consent, markers, and mixed-version rules.
@@ -771,7 +772,7 @@ Positional lists have no names, and one hand-edit that drops a field transposes 
 ```bash
 hivectl hives list                                        # which hives, and which one is active
 hivectl hives add hive-b --hub wss://hive-b.example.com/contribute
-hivectl hives reissue hive-b                              # rotate only hive-b's saved token
+hivectl hives reissue hive-b                              # rotate hive-b's contributor token
 hivectl hives use hive-b                                  # make it the hub the relay starts on
 hivectl hives rename hive-b staging
 hivectl hives remove staging                              # asks you to type the name
@@ -791,7 +792,7 @@ The same list is available in the terminal UI: `just contribute-tui` (or `hivect
 
 From a fresh checkout, `just contribute-tui` and `just contribute-hives` share `bin/hivectl-bootstrap.sh`: they first honor `HIVECTL`, then `./bin/hivectl`, user/system installs, and `PATH`; when none is present, they extract `hivectl` from the Hive image into `./bin/hivectl`. The checkout records the image digest beside the binary and refreshes when the digest changes, refusing to run an unverifiable stale copy if Podman cannot inspect or pull the image.
 
-See [hivectl.md](hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) for the full command reference, including adding a hive whose token you already hold (`--token-stdin`) and reissuing one saved hive token through the profile store (`hivectl hives reissue <name> --hub <url>`).
+See [hivectl.md](hivectl.md#hives--named-profiles-for-the-hives-you-contribute-to) for the full command reference, including adding a hive whose token you already hold (`--token-stdin`) and reissuing a contributor token through the profile store (`hivectl hives reissue <name> --hub <url>`).
 
 ### Onboarding a whole hub's Hives (`hivectl hives hub`)
 
@@ -841,10 +842,9 @@ hivectl hives reissue acme
 ```
 
 `hivectl hives reissue` calls `POST /api/contribute/reissue-token` with your
-GitHub token from `gh auth token`, replaces only that named profile's
-registration token in `profiles.yml`, and then regenerates `contributor.env`
-with the existing projection code. Other profile tokens are left untouched. If
-the hub says the GitHub account is not registered, run
+GitHub token from `gh auth token`, updates the registration token for the
+contributor's local profiles on that hive in `profiles.yml`, and regenerates
+`contributor.env`. If the hub says the GitHub account is not registered, run
 `hivectl hives add <name> --hub <url>` instead.
 
 The legacy `just contribute-move` path is for positional `contributor.env`

@@ -51,6 +51,17 @@ const (
 	// the caller already treats as "App not usable → show install banner".
 	tokenMintTimeout = 8 * time.Second
 
+	// tokenRefreshRetryInterval is how long Token() waits after a FAILED
+	// proactive refresh before it tries to mint again, serving the still-valid
+	// cached token meanwhile. Without it every Token() call inside the
+	// refresh window re-attempted the mint under a.mu's write lock, so a
+	// GitHub API that times out stalled every GitHub caller in the process for
+	// up to tokenMintTimeout each and logged one WARN per call
+	// (hivecommons/hive#19706: 37 in 10m). The refresh window is
+	// tokenRefreshBuffer long, so this still leaves many attempts before the
+	// cached token truly expires.
+	tokenRefreshRetryInterval = time.Minute
+
 	// Per-agent scoped token caches. entrypoint.sh pre-creates each file as
 	// dev:hive-<agent> mode 0640 so the hive process (dev) can rewrite it in
 	// place and ONLY the owning agent's private group can read it — no chown
@@ -99,6 +110,10 @@ type AppAuth struct {
 	mu          sync.RWMutex
 	cachedToken string
 	tokenExpiry time.Time
+	// refreshRetryAt is the earliest time Token() re-attempts a proactive
+	// refresh after one failed while the cached token was still valid; zero
+	// once a mint succeeds.
+	refreshRetryAt time.Time
 	// botLogin is the App bot identity ("<app-slug>[bot]") this installation's
 	// tokens act as. Set via SetBotLogin at client wiring time; when non-empty,
 	// WriteAgentToken publishes it to the trusted bot-identity file (#4044).
@@ -171,10 +186,24 @@ func (a *AppAuth) generateJWT() (string, error) {
 	return token.SignedString(a.key)
 }
 
+// servableCachedToken returns the cached token when Token() should serve it
+// without minting: before the refresh window opens, or inside it while a
+// failed proactive refresh is still backing off and the token has not expired.
+// The caller holds a.mu.
+func (a *AppAuth) servableCachedToken(now time.Time) (string, bool) {
+	if a.cachedToken == "" {
+		return "", false
+	}
+	if now.Before(a.tokenExpiry.Add(-tokenRefreshBuffer)) ||
+		(now.Before(a.refreshRetryAt) && now.Before(a.tokenExpiry)) {
+		return a.cachedToken, true
+	}
+	return "", false
+}
+
 func (a *AppAuth) Token(ctx context.Context) (string, error) {
 	a.mu.RLock()
-	if a.cachedToken != "" && time.Now().Before(a.tokenExpiry.Add(-tokenRefreshBuffer)) {
-		token := a.cachedToken
+	if token, ok := a.servableCachedToken(time.Now()); ok {
 		a.mu.RUnlock()
 		return token, nil
 	}
@@ -183,8 +212,8 @@ func (a *AppAuth) Token(ctx context.Context) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if a.cachedToken != "" && time.Now().Before(a.tokenExpiry.Add(-tokenRefreshBuffer)) {
-		return a.cachedToken, nil
+	if token, ok := a.servableCachedToken(time.Now()); ok {
+		return token, nil
 	}
 
 	// We are inside the tokenRefreshBuffer window (or have no token yet): try to
@@ -198,12 +227,18 @@ func (a *AppAuth) Token(ctx context.Context) (string, error) {
 	// made the dashboard's github_auth health check flap red↔green on a hive
 	// whose App is genuinely working. We only hard-fail once no usable token
 	// remains — i.e. the cache is empty or the cached token has truly expired.
+	// After a failed refresh, refreshRetryAt holds further attempts off for
+	// tokenRefreshRetryInterval so a sustained outage costs one bounded mint
+	// and one WARN per interval, not one per caller.
 	newToken, expiry, err := a.mintInstallationToken(ctx)
 	if err != nil {
-		if a.cachedToken != "" && time.Now().Before(a.tokenExpiry) {
+		if now := time.Now(); a.cachedToken != "" && now.Before(a.tokenExpiry) {
+			a.refreshRetryAt = now.Add(tokenRefreshRetryInterval)
+			// slogfeed.appTokenRefreshFallbackMessage matches this text; keep in sync.
 			a.logger.Warn("github app token proactive refresh failed; serving still-valid cached token",
 				"expires_at", a.tokenExpiry.Format(time.RFC3339),
 				"installation_id", a.installationID,
+				"retry_at", a.refreshRetryAt.Format(time.RFC3339),
 				"error", err,
 			)
 			return a.cachedToken, nil
@@ -213,6 +248,7 @@ func (a *AppAuth) Token(ctx context.Context) (string, error) {
 
 	a.cachedToken = newToken
 	a.tokenExpiry = expiry
+	a.refreshRetryAt = time.Time{}
 	a.logger.Info("github app token refreshed",
 		"expires_at", a.tokenExpiry.Format(time.RFC3339),
 		"installation_id", a.installationID,
@@ -271,10 +307,14 @@ func (a *AppAuth) mintInstallationTokenWithOptions(ctx context.Context, installa
 	return installToken.GetToken(), installToken.GetExpiresAt().Time, nil
 }
 
+// TokenTier aliases agentmode.TokenTier so callers that only hold a tier name
+// (pkg/dashboard) can convert without importing crux/agentmode directly.
+type TokenTier = agentmode.TokenTier
+
 // ScopedToken creates a short-lived installation token with permissions
 // scoped to a contributor's trust tier. Unlike Token(), this is NOT
 // cached — each call creates a fresh token.
-func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) {
+func (a *AppAuth) ScopedToken(ctx context.Context, tier agentmode.TokenTier) (string, error) {
 	return a.ScopedTokenForRepos(ctx, tier, nil)
 }
 
@@ -288,7 +328,7 @@ func (a *AppAuth) ScopedToken(ctx context.Context, tier string) (string, error) 
 // empty/nil slice yields the tier-scoped, installation-wide token (unchanged
 // behavior for callers that do not scope by repo). Like ScopedToken, the token is
 // NOT cached — each call mints fresh.
-func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []string) (string, error) {
+func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier agentmode.TokenTier, repos []string) (string, error) {
 	// installation_id 0 means the App is not installed on the hive's org (or
 	// auto-discovery never found it). GitHub answers
 	// POST /app/installations/0/access_tokens with a 404, which the repo-scope
@@ -306,7 +346,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 
 	var perms *gh.InstallationPermissions
 	switch tier {
-	case crux.SharedUIDReadTokenTier:
+	case agentmode.TokenTierSharedUIDRead:
 		// Shared-UID agents cannot isolate credentials from one another.
 		// Never deliver a write-capable token, regardless of the agent's role.
 		perms = &gh.InstallationPermissions{
@@ -317,7 +357,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			PullRequests: gh.Ptr("read"),
 			Issues:       gh.Ptr("read"),
 		}
-	case "newcomer":
+	case agentmode.TokenTierNewcomer:
 		// Newcomers (ISSUES_ONLY agents) can comment on and file issues, and
 		// READ code — filing a meaningful issue requires reading the repo it
 		// is about (#4289). Write remains impossible: contents:write is
@@ -328,7 +368,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			Contents: gh.Ptr("read"),
 			Metadata: gh.Ptr("read"),
 		}
-	case "contributor":
+	case agentmode.TokenTierContributor:
 		perms = &gh.InstallationPermissions{
 			Issues:       gh.Ptr("write"),
 			Contents:     gh.Ptr("write"),
@@ -349,7 +389,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			Metadata:            gh.Ptr("read"),
 			VulnerabilityAlerts: gh.Ptr("read"),
 		}
-	case "trusted", "merger", agentmode.SecCheckTrustedTier:
+	case agentmode.TokenTierTrusted, agentmode.TokenTierMerger, agentmode.SecCheckTrustedTier:
 		perms = &gh.InstallationPermissions{
 			Issues:       gh.Ptr("write"),
 			Contents:     gh.Ptr("write"),
@@ -373,7 +413,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			// below retries without it).
 			perms.VulnerabilityAlerts = gh.Ptr("read")
 		}
-	case "reviewer":
+	case agentmode.TokenTierReviewer:
 		// The reviewer tier is the advisor tier under a distinct name: the
 		// role plumbing (agentmode.TokenTierForRole) stays, the permission
 		// level does not widen.
@@ -417,7 +457,7 @@ func (a *AppAuth) ScopedTokenForRepos(ctx context.Context, tier string, repos []
 			Metadata:     gh.Ptr("read"),
 			PullRequests: gh.Ptr("read"),
 		}
-	case "advisor":
+	case agentmode.TokenTierAdvisor:
 		// Advisors review agent PRs and audit repo contents — their core
 		// function is READING the repo, so Contents:read is required (#4289:
 		// without it every contents/tarball API call and git fetch 403s no
@@ -626,7 +666,7 @@ func (a *AppAuth) publishBotLogin() {
 // The write must therefore be IN PLACE. A write-temp-then-rename would
 // replace the pre-created inode with a fresh dev:node one and silently
 // destroy both the ownership and the isolation guarantee.
-func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, agentUID int) error {
+func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName string, tier agentmode.TokenTier, agentUID int) error {
 	token, err := a.ScopedToken(ctx, tier)
 	if err != nil {
 		return fmt.Errorf("minting scoped token for %s: %w", agentName, err)
@@ -673,7 +713,7 @@ func (a *AppAuth) WriteAgentToken(ctx context.Context, agentName, tier string, a
 	}
 	// Shared-UID mode has no private agent group; keep this owner-only even
 	// if a previous deployment pre-created a group-readable cache.
-	if agentUID == 0 && tier == crux.SharedUIDReadTokenTier {
+	if agentUID == 0 && tier == agentmode.TokenTierSharedUIDRead {
 		if err := f.Chmod(agentTokenCachePerms); err != nil {
 			_ = f.Close()
 			return fmt.Errorf("securing shared-UID token cache %s: %w", cachePath, err)

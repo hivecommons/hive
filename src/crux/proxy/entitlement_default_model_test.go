@@ -68,7 +68,7 @@ func TestRouteWithEntitledModel_FallsBackToGatewayDefault(t *testing.T) {
 	// The outbound OpenAI body names the forwarded route's model — never the
 	// model the Claude CLI put in its own request (its built-in default).
 	cliBody := []byte(`{"model":"claude-sonnet-4-5-20250929","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}`)
-	out, err := translateAnthropicToOpenAI(cliBody, got.Model, 0, "")
+	out, _, err := translateAnthropicToOpenAI(cliBody, got.Model, 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}

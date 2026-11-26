@@ -1546,6 +1546,22 @@ test('muse headless argv uses `muse exec` with the prompt as a trailing position
   } finally { teardown(relay); }
 });
 
+test('opencode and kilo headless argv puts --auto and --model after the run subcommand (#19794)', () => {
+  for (const backend of ['opencode', 'kilo']) {
+    const relay = loadRelay({
+      backend, mode: 'headless', model: 'opencode/hy4-flash-free', backendPerm: '--auto',
+    });
+    try {
+      const a = relay.buildHeadlessArgv('say ok');
+      const run = a.args.indexOf('run');
+      assert.equal(run, 0, `${backend}: run must lead the argv: ${JSON.stringify(a.args)}`);
+      assert.ok(a.args.indexOf('--auto') > run, `${backend}: --auto must follow run: ${JSON.stringify(a.args)}`);
+      assert.ok(a.args.indexOf('--model') > run, `${backend}: --model must follow run: ${JSON.stringify(a.args)}`);
+      assert.equal(a.args[a.args.length - 1], 'say ok');
+    } finally { teardown(relay); }
+  }
+});
+
 test('openhands headless argv never carries --model and maps AGENT_MODEL to LLM_MODEL', () => {
   // OpenHands has no --model flag: an argv --model would be rejected by its
   // argparse (exit 2) and the task would be reported failed. The model
@@ -2451,6 +2467,35 @@ test('MLX endpoint failure refuses execution rather than falling back to a hoste
 function headlessProgressFrames(relay, taskId) {
   return relay.__sent.filter(m => m.type === 'task_progress' && m.task_id === taskId);
 }
+test('#19993 headless progress and terminal reports refresh codex rollout models', () => {
+  const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'relay-codex-'));
+  const dir = path.join(root, 'sessions', '2026', '11', '26');
+  fs.mkdirSync(dir, { recursive: true });
+  const rollout = (name, model) => fs.writeFileSync(path.join(dir, `rollout-${name}.jsonl`), JSON.stringify({ type: 'turn_context', payload: { model } }) + '\n');
+  try {
+    for (const outcome of ['complete', 'failed']) {
+      rollout('01', 'gpt-old');
+      const relay = loadRelay({ backend: 'codex', mode: 'headless', env: { CODEX_HOME: root }, execFileResult: { defer: true } });
+      try {
+        const task = { task_id: `codex-${outcome}`, task_gen: 2, kind: 'issue', repo: 'x/y', number: 1 };
+        relay.setCurrentTask(task);
+        relay.runHeadlessTask(task);
+        rollout('02', 'gpt-progress');
+        relay.headlessProgressTick(task);
+        assert.strictEqual(headlessProgressFrames(relay, task.task_id).pop().model, 'gpt-progress');
+        rollout('03', 'gpt-terminal');
+        relay.__completeDeferredExecFile(outcome === 'failed' ? Object.assign(new Error('failed'), { code: 1 }) : null);
+        const terminal = relay.__sent.find(m => m.type === `task_${outcome}`);
+        assert.strictEqual(terminal.model, 'gpt-terminal');
+      } finally {
+        teardown(relay);
+        fs.rmSync(path.join(dir, 'rollout-02.jsonl'), { force: true });
+        fs.rmSync(path.join(dir, 'rollout-03.jsonl'), { force: true });
+      }
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 
 test('#7778 a headless task arms the progress timer and renews the hub lease while its child runs', () => {
   const relay = loadRelay({ backend: 'codex', mode: 'headless', execFileResult: { defer: true } });
@@ -16256,4 +16301,44 @@ test('failCurrentTask prints the CLI output tail to the local log, not only the 
     console.error = err;
   }
   assert.ok(lines.some(l => l.includes('CLI output tail') && l.includes('Unrecognized flag: --auto')), lines.join('\n'));
+});
+
+// ── #19932 Codex API-key login: metered, not unknown ────────────────────────
+test('#19932 an api_key reading admits and says work spends API credits', () => {
+  const relay = loadRelay({ backend: 'codex', env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({
+    state: 'available', captured_at: new Date().toISOString(), cause: 'api_key_login', auth_mode: 'api_key', limits: [],
+  }) } });
+  const lines = [];
+  const savedWarn = console.warn;
+  console.warn = (...args) => lines.push(args.join(' '));
+  try {
+    const d = relay.evaluateContributorQuota({ complexity: 'medium' });
+    assert.strictEqual(d.admit, true);
+    assert.strictEqual(d.reason, 'metered_api_key');
+    relay.evaluateContributorQuota({ complexity: 'medium' });
+    const metered = lines.filter((l) => l.includes('logged in with an API key'));
+    assert.strictEqual(metered.length, 1, lines.join('\n'));
+    assert.ok(metered[0].includes('metered API credits'), metered[0]);
+  } finally {
+    console.warn = savedWarn;
+    teardown(relay);
+  }
+});
+
+test('#19932 auth_mode never admits an unknown or stale reading', () => {
+  for (const state of ['unknown', 'stale']) {
+    const relay = loadRelay({ backend: 'codex', env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state, auth_mode: 'api_key', limits: [] }) } });
+    try {
+      assert.strictEqual(relay.evaluateContributorQuota(null).admit, false);
+    } finally { teardown(relay); }
+  }
+});
+
+test('#19932 a windowed reading keeps its window reserve despite auth_mode', () => {
+  const relay = loadRelay({ backend: 'codex', env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({
+    state: 'available', captured_at: new Date().toISOString(), auth_mode: 'api_key', limits: [{ id: 'p', kind: 'five_hour', pct_remaining: 0 }],
+  }) } });
+  try {
+    assert.strictEqual(relay.evaluateContributorQuota({ complexity: 'medium' }).admit, false);
+  } finally { teardown(relay); }
 });

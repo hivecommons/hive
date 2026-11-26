@@ -230,6 +230,7 @@ The Hive Go process sends notifications for these events:
 | The inference provider starts rebuffing kicks with spending-limit errors; sent once per crossing of the latch, not per cycle (`Provider spending limit reached`). | high | provider-budget kick gate in `runEvalCycle`, `src/cmd/hive/main_eval_cycle.go` |
 | A probe kick succeeds after a spending-limit clip and agent kicks resume (`Provider spending limit lifted`). | default | provider-budget recovery path in `runEvalCycle`, `src/cmd/hive/main_eval_cycle.go` |
 | A PR stays red after exhausting its automated fix-attempt budget and is escalated to a human (`Fix loop escalated`). | high | `runEscalationSweep` in `src/cmd/hive/main_sweeps.go` |
+| An open PR has sat behind a hold label (`escalation.stale_hold_labels`, default `hold` and `do-not-merge/hold`) with every check green for longer than `escalation.stale_hold_after` (default 2h, `HIVE_STALE_HOLD_AFTER` overrides, `off` disables); sent once per held head, and recorded as a blocked lifecycle stage (`PR held with all checks green`). A hold whose PR also carries the opt-in `escalation.release_when_green_label` (default `hold/until-green`) is instead released once every check is green; a plain hold is never removed, and no approval or lgtm label is added. | high | `runStaleHoldSweep` in `src/cmd/hive/stale_hold_sweep.go` |
 | The planning stall-replan lane re-kicks the architect on a stalled plan (`Plan replan`) or hits the replan cap (`Plan replan-cap`). | high | `src/pkg/planning/replan.go` via `src/pkg/dashboard/replan_sink.go` |
 | The convergence rollout mode changes at runtime (settings PUT, YAML reload, or env override); sent once per transition, not per cycle (`Convergence mode changed`). | default | `applyConvergenceKickAdmission` in `src/cmd/hive/convergence_kick.go` |
 
@@ -492,7 +493,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).PostNoteOrFold` | `status` | passthrough wrapper; attributed to its caller |
 | `github.(*Client).SweepLegacyFleetReportIssues` | `status` |  |
 | `github.(*Client).UpsertIssueMarkerComment` | `status` | passthrough wrapper; attributed to its caller |
-| `github.(*Client).EditIssueMarkerComment` | `status` | passthrough wrapper; attributed to its caller |
+| `github.(*Client).editIssueMarkerComment` | `status` | passthrough wrapper behind `EditIssueMarkerComment` (budgeted) and `EditOperatorMarkerComment` (dashboard actor notes, unbudgeted); attributed to its caller |
 | `automerge.(*engineStatusForge).CreateComment` | `status` | passthrough wrapper shared by normal-mode stage notes and the quiet-mode status-comment forge under `prstatus.Write`; attributed to its caller |
 | `github.(*clientStatusForge).CreateComment` | `status` | passthrough wrapper (status-comment forge under `prstatus.Write`); attributed to its caller |
 | `github.(*Client).PostIssueNote` | `status` | passthrough wrapper (issue status card, `attention_pilot`); attributed to its caller |
@@ -521,6 +522,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.handleMergedPRIssueStage` | `status` |  |
 | `github.runRecheckSoak` | `status` |  |
 | `main.postReviewAcknowledgements` | `status` |  |
+| `main.releaseGreenHold` | `status` | one note on the pass that removes a hold whose PR carries the opt-in release-when-green label (`escalation.release_when_green_label`) |
 | `main.reviewFeedbackSweep.acknowledgeRules` | `status` |  |
 | `main.rfcNotifySource.Comment` | `status` |  |
 | `main.unparkEscalatedPR` | `status` |  |
@@ -553,7 +555,7 @@ without a class. Review submissions and review requests are always counted as
 | `main.rfcCoverageForge.CreateComment` | `attention` |  |
 | `main.runEscalationSweep` | `attention` |  |
 | `main.reviewFeedbackSweep.checkRuleReply` | `attention` |  |
-| `main.reviewFeedbackSweep.needsHuman` | `attention` |  |
+| `main.reviewFeedbackSweep.postNeedsHuman` | `attention` |  |
 | `main.reviewFeedbackSweep.proposeRuleHome` | `attention` |  |
 | `prfollowup.postStaleHeadPushNotes` | `attention` |  |
 | `scheduler.(*Scheduler).judgePriorArt` | `attention` |  |

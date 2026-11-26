@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/config"
 )
 
@@ -50,7 +51,7 @@ func TestSharedUIDReadTokenLifecycle(t *testing.T) {
 			}
 			wantTier := TokenTierForRole(m.agentMode(a), a.Config.Role)
 			if tc.uid == 0 {
-				wantTier = crux.SharedUIDReadTokenTier
+				wantTier = agentmode.TokenTierSharedUIDRead
 			}
 			checkMint := func(stage string, wantCalls int) {
 				t.Helper()

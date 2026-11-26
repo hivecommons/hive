@@ -177,6 +177,36 @@ func (r *UserSessionRuntime) SetCloneMinter(m pushbroker.TokenMinter) {
 	r.cloneMinter = m
 }
 
+// SetForgeRemotes installs the resolver for repos that are not on
+// github.com: such a workspace is cloned from its own forge with that forge's
+// minter, never from github.com with the GitHub App token.
+func (r *UserSessionRuntime) SetForgeRemotes(resolve pushbroker.ForgeRemoteResolver) {
+	r.workspaceMu.Lock()
+	defer r.workspaceMu.Unlock()
+	r.forgeRemotes = resolve
+}
+
+// workspaceRemote returns the forge root and minter a session workspace for
+// repo clones with: github.com and the GitHub App minter unless the resolver
+// places repo on another forge.
+func (r *UserSessionRuntime) workspaceRemote(repo string) (string, pushbroker.TokenMinter, error) {
+	if r.forgeRemotes == nil {
+		return pushbroker.DefaultForgeBaseURL, r.cloneMinter, nil
+	}
+	remote, ok, err := r.forgeRemotes(repo)
+	if err != nil {
+		return "", nil, err
+	}
+	if !ok {
+		return pushbroker.DefaultForgeBaseURL, r.cloneMinter, nil
+	}
+	base, err := pushbroker.NormalizeForgeBaseURL(remote.BaseURL)
+	if err != nil {
+		return "", nil, err
+	}
+	return base, remote.Minter, nil
+}
+
 func userSessionWorkspaceRoot() string {
 	if v := os.Getenv(userSessionWorkspaceDirEnv); v != "" {
 		return v
@@ -249,9 +279,9 @@ func (r *UserSessionRuntime) ensureWorkspace(spec crux.UserSessionSpec, uid int)
 	return ws, nil
 }
 
-// cloneWorkspace clones https://github.com/<org>/<name>.git into a staging
-// directory as the hive, then has root hand it to the sessions group and move
-// it to ws. The token travels only in a one-shot `git -c credential.helper`
+// cloneWorkspace clones <forge>/<org>/<name>.git (github.com unless the forge
+// resolver places the repo elsewhere) into a staging directory as the hive,
+// then has root hand it to the sessions group and move it to ws. The token travels only in a one-shot `git -c credential.helper`
 // (before the subcommand, so git does not persist it) and its file is removed
 // before this returns; `core.sharedRepository=group` is the ONLY config
 // written into the clone, and the lock that follows
@@ -279,9 +309,13 @@ func (r *UserSessionRuntime) cloneWorkspace(org, name, ws string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), userSessionWorkspaceCloneTimeout)
 	defer cancel()
 	repo := org + "/" + name
-	authArgs, cleanupAuth := r.workspaceCloneAuth(ctx, repo, parent)
+	base, minter, err := r.workspaceRemote(repo)
+	if err != nil {
+		return fmt.Errorf("session workspace for %s: %w", repo, err)
+	}
+	authArgs, cleanupAuth := r.workspaceCloneAuth(ctx, base, minter, repo, parent)
 	defer cleanupAuth()
-	url := "https://github.com/" + repo + ".git"
+	url := pushbroker.ForgeRepoURL(base, repo)
 	args := append(append(append([]string{}, userSessionHiveGitArgs...), authArgs...), "clone", "-c", "core.sharedRepository=group", "--", url, staging)
 	if out, err := r.git(ctx, "", pushbroker.PushEnv(os.Environ()), args...); err != nil {
 		_ = os.RemoveAll(staging)
@@ -319,18 +353,23 @@ func (r *UserSessionRuntime) removeWorkspaceStaging(staging string) error {
 // a minter, or when minting fails, the clone is attempted anonymously (public
 // repositories) and the reason is logged. The returned cleanup removes the
 // file and is safe to call twice.
-func (r *UserSessionRuntime) workspaceCloneAuth(ctx context.Context, repo, dir string) ([]string, func()) {
+func (r *UserSessionRuntime) workspaceCloneAuth(ctx context.Context, base string, minter pushbroker.TokenMinter, repo, dir string) ([]string, func()) {
 	noop := func() {}
-	if r.cloneMinter == nil {
+	if minter == nil {
 		return nil, noop
 	}
-	token, err := r.cloneMinter.MintPushToken(ctx, repo)
+	token, err := minter.MintPushToken(ctx, repo)
 	if err != nil || strings.TrimSpace(token) == "" {
 		r.logger.Warn("session workspace: no clone token, cloning anonymously", "repo", repo, "error", err)
 		return nil, noop
 	}
 	path := filepath.Join(dir, userSessionWorkspaceCredPrefix+fmt.Sprint(r.now().UnixNano()))
-	line := "https://x-access-token:" + token + "@github.com\n"
+	// The store helper answers only for the forge in this line.
+	line, err := pushbroker.CredentialStoreLine(base, token)
+	if err != nil {
+		r.logger.Warn("session workspace: clone token unusable, cloning anonymously", "repo", repo, "error", err)
+		return nil, noop
+	}
 	if err := os.WriteFile(path, []byte(line), userSessionWorkspaceCredMode); err != nil {
 		r.logger.Warn("session workspace: writing clone credential file failed, cloning anonymously", "repo", repo, "error", err)
 		return nil, noop

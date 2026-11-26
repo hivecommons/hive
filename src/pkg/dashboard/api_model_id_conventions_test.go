@@ -3,7 +3,9 @@ package dashboard
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -168,6 +170,7 @@ func TestHandleSwitch_KeepsValidAndNonClaudeModels(t *testing.T) {
 // agent and returns the warning for the UI to show.
 func TestHandleAgentConfigModels_NormalizesDottedClaudeModel(t *testing.T) {
 	s, deps := apiServer(t)
+	writableConfig(t, deps.Config)
 	rec := doPut(s, "/api/config/agent/scanner/models", map[string]any{"model": dottedClaudeModel})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
@@ -196,9 +199,8 @@ func TestHandleAgentConfigModels_NormalizesDottedClaudeModel(t *testing.T) {
 	}
 }
 
-// Rewrites done by the config loader are surfaced as warnings at startup and
-// written to the agent overlay so they do not repeat on every boot.
-func TestSurfaceModelIDNormalizations(t *testing.T) {
+func bootNormalizedServer(t *testing.T) (*Server, string) {
+	t.Helper()
 	s, dir := notRunningServer(t)
 	s.deps.Config.ModelIDNormalizations = []config.ModelIDNormalization{
 		{Agent: notRunningTestAgent, Backend: config.ClaudeBackend, From: dottedClaudeModel, To: dashedClaudeModel},
@@ -206,6 +208,36 @@ func TestSurfaceModelIDNormalizations(t *testing.T) {
 	ac := s.deps.Config.Agents[notRunningTestAgent]
 	ac.Model = dashedClaudeModel
 	s.deps.Config.Agents[notRunningTestAgent] = ac
+	return s, dir
+}
+
+// Rewrites done by the config loader are written to the agent overlay so they
+// do not repeat on every boot. Once persisted there is nothing left for the
+// operator to do, so no banner is raised: it used to come back on every boot
+// or upgrade of a hub-provisioned hive whose seed config carried the other
+// spelling, with no way to dismiss it (#19747).
+func TestSurfaceModelIDNormalizations_PersistedRaisesNoBanner(t *testing.T) {
+	s, dir := bootNormalizedServer(t)
+
+	s.surfaceModelIDNormalizations()
+
+	if a, ok := findSystemAlert(s, modelIDNormalizedAlertPrefix+notRunningTestAgent); ok {
+		t.Fatalf("persisted rewrite must not raise a banner, got %+v", a)
+	}
+	if !strings.Contains(overlayText(t, dir), dashedClaudeModel) {
+		t.Fatalf("overlay must carry the normalized id")
+	}
+}
+
+// A rewrite that cannot be persisted repeats on every boot, so it is still
+// surfaced to the operator.
+func TestSurfaceModelIDNormalizations_UnpersistedRaisesBanner(t *testing.T) {
+	s, dir := bootNormalizedServer(t)
+	notADir := filepath.Join(dir, "not-a-dir")
+	if err := os.WriteFile(notADir, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.deps.Config.Data.AgentsDir = notADir
 
 	s.surfaceModelIDNormalizations()
 
@@ -213,8 +245,27 @@ func TestSurfaceModelIDNormalizations(t *testing.T) {
 	if !ok || a.Severity != "warning" || !strings.Contains(a.Message, dottedClaudeModel) {
 		t.Fatalf("alert = %+v (present %v)", a, ok)
 	}
-	if !strings.Contains(overlayText(t, dir), dashedClaudeModel) {
-		t.Fatalf("overlay must carry the normalized id")
+}
+
+// The model-id rewrite banner can be dismissed through the system-alert
+// dismiss endpoint, which used to accept only plan-stall ids (#19747).
+func TestSystemAlertDismiss_AcceptsModelIDNormalizedAlert(t *testing.T) {
+	s, _ := apiServer(t)
+	id := modelIDNormalizedAlertPrefix + "supervisor"
+	s.AddSystemAlert(id, "warning", modelIDConventionWarning("supervisor", "copilot", "claude-sonnet-4-6", "claude-sonnet-4.6"))
+
+	rec := doPost(s, "/api/system-alerts/dismiss", map[string]string{"id": id})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if _, ok := findSystemAlert(s, id); ok {
+		t.Fatalf("alert must be cleared after dismiss")
+	}
+
+	// Other alert kinds stay non-dismissible.
+	s.AddSystemAlert("launch-cmd-degraded-x", "error", "x")
+	if rec := doPost(s, "/api/system-alerts/dismiss", map[string]string{"id": "launch-cmd-degraded-x"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a non-dismissible alert", rec.Code)
 	}
 }
 

@@ -6,7 +6,7 @@ This page is for teams whose repositories live on [Forgejo](https://forgejo.org/
 
 ## Status: partial, in progress
 
-**A Forgejo-only hive does not do agent work yet.** Hive has a first-class `forgejo` forge kind, and a hive with every repository on Forgejo boots without GitHub credentials. The governor still discovers work through GitHub only, so such a hive finds nothing to do. Agents cannot yet clone from or push to a Forgejo host. The remaining work is tracked in [#19494](https://github.com/hivecommons/hive/issues/19494) and [#19493](https://github.com/hivecommons/hive/issues/19493). This page is updated as each piece merges.
+**A Forgejo-only hive finds work, clones, pushes and merges, with gaps.** Hive has a first-class `forgejo` forge kind, and a hive with every repository on Forgejo boots without GitHub credentials. The governor discovers issues and pull requests through the forge adapter ([#19673](https://github.com/hivecommons/hive/pull/19673)), sandbox Job kicks and dashboard Sessions clone from and push to the Forgejo host ([#19678](https://github.com/hivecommons/hive/pull/19678)), though a pod-run agent (`sandbox.runtime` off) gets no credential for the Forgejo host and can clone only public repositories ([#19997](https://github.com/hivecommons/hive/issues/19997)), agent issue and pull request requests go through the forge ([#19681](https://github.com/hivecommons/hive/pull/19681)), and the automerge and close-on-merge sweeps run on Forgejo repositories ([#19676](https://github.com/hivecommons/hive/pull/19676)). The gaps a live run against Forgejo 17 found are tracked in [#19909](https://github.com/hivecommons/hive/issues/19909). This page is updated as each piece merges.
 
 ## What Forgejo is
 
@@ -22,23 +22,21 @@ Forgejo is a self-hosted software forge: Git hosting, issues, pull requests, pac
 | Adapter calls | The Forgejo adapter in `src/pkg/forge/forgejo_forge.go` reads a repository, lists open issues and pull requests, comments, adds and removes labels, sets the `hold` label, and merges a pull request with a hold gate and an optional head-SHA guard. Unit tests run against a fake server. The nightly [Forgejo smoke workflow](https://github.com/hivecommons/hive/blob/v5/.github/workflows/forgejo-smoke.yml) runs read, comment, label and merge against a real Forgejo container. |
 | Dashboard and tools | A Projects card on a Forgejo repository names Forgejo and its host and links to the instance's `/issues` and `/pulls` pages. The Settings dialog has Forgejo URL and token variable fields. `hivectl` presets, the hub forge switch and the proxy deny messages accept `forgejo`. |
 
-The adapter calls exist, but on a Forgejo-only hive nothing reaches them yet, because the governor cycle that would call them starts from GitHub. [What runs through the adapter today](forges.md#what-runs-through-the-adapter-today) has the details.
+[What runs through the adapter today](forges.md#what-runs-through-the-adapter-today) has the details of each call.
 
 ## In progress
 
-None of these has merged on v5. Each links to the issue that tracks it.
+Each links to the issue that tracks it. [#19909](https://github.com/hivecommons/hive/issues/19909) lists them all.
 
-- Work discovery through the forge adapter, so the governor finds issues and pull requests on Forgejo ([#19494](https://github.com/hivecommons/hive/issues/19494), item 3).
-- Clone and push to the Forgejo host, with credentials from the proxy ([#19494](https://github.com/hivecommons/hive/issues/19494), item 4).
-- Issue and pull request creation through the forge, and the request-file watchers ([#19494](https://github.com/hivecommons/hive/issues/19494), item 5).
-- Automerge and close-on-merge sweeps for Forgejo repositories ([#19494](https://github.com/hivecommons/hive/issues/19494), item 6).
-- Short-lived, per-tier Forgejo credentials signed by the hive ([#19493](https://github.com/hivecommons/hive/issues/19493), open PR [#19576](https://github.com/hivecommons/hive/pull/19576)).
+- Short-lived, per-tier Forgejo credentials cover git clone and push ([#19682](https://github.com/hivecommons/hive/pull/19682), [#19760](https://github.com/hivecommons/hive/pull/19760)). REST calls use the `token_env` access token unless `forgejo.integration.rest_audience` is set, in which case they send a short-lived JWT too ([#19920](https://github.com/hivecommons/hive/issues/19920)). See [Forge setup](../forge-app-setup.md#forgejo-git-credentials-one-short-lived-token-per-tier).
+- A forge-only hive serves push-branch requests. It answers review and merge requests with a reason instead of serving them ([#19916](https://github.com/hivecommons/hive/issues/19916)).
+- When the hive's Forgejo user has write but not admin access, Forgejo refuses the permission API for other users. The automerge sweep then reads the repo's assignee list, and a labeller on that list may release a merge. The list also holds members of a team with write on any one unit, or with read on pull requests. The close-on-merge sweep does not accept the assignee list: it honours closing keywords only from the hive's own user or an author whose permission it can read as write ([#19914](https://github.com/hivecommons/hive/issues/19914)).
 
 The hub's get-started flow provisions hosted hives on GitHub and GitHub Enterprise only. A Forgejo repository URL is refused there for now.
 
 ## Configure a Forgejo repository in hive.yaml
 
-These keys parse and validate on v5. Setting them gives you a hive that loads and shows your Forgejo repositories on the dashboard. It does not yet give you agents that work on them.
+These keys parse and validate on v5. Setting them gives you a hive that loads your Forgejo repositories, finds their work and lets agents clone and push, within the gaps listed under [In progress](#in-progress).
 
 ```yaml
 project:
@@ -50,6 +48,7 @@ project:
 forgejo:
   forgejo_url: https://codeberg.org   # bare instance root; no default
   token_env: FORGEJO_TOKEN            # env var NAME, never the token
+  # login: hive-bot                   # optional: hive's own username; lets the close-on-merge sweep skip GET /user when the token is repo-limited
 ```
 
 Put the Forgejo access token in the environment variable that `token_env` names. The token never goes in `hive.yaml`.
@@ -69,6 +68,7 @@ project:
 | `project.forge` | `github` | `forgejo` selects the Forgejo adapter for every repository in `project.repos`. |
 | `forgejo.forgejo_url` | none | Instance root, for example `https://codeberg.org` or `https://forgejo.example.com`. The adapter appends `/api/v1` itself, so do not add it. |
 | `forgejo.token_env` | `FORGEJO_TOKEN` | Name of the environment variable that holds the token. Sent as `Authorization: token <TOKEN>`. |
+| `forgejo.login` | none | The hive's own Forgejo username. Optional: set it when the token is limited to specific repositories, because such a token cannot read the token's own user through `GET /user`; the close-on-merge sweep uses this login instead ([#19994](https://github.com/hivecommons/hive/issues/19994)). |
 | `project.repo_policies[].forge` | `project.forge` | Moves one repository to `forgejo`. |
 | `project.repo_policies[].forge_url` | `forgejo.forgejo_url` | Bare instance root for that repository. Must match the block's host and port. |
 

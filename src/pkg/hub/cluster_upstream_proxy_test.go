@@ -25,10 +25,10 @@ func renderManifestWithUpstreamProxy(t *testing.T, up *ClusterUpstreamProxy) str
 		"AuthorizedUsers": "alice:owner", "Host": "test-hive.example", "Owner": "alice",
 		"HubPublicURL": "https://hub.example", "ProjectName": "test", "PrimaryRepo": "org/repo",
 		"AppKeys":              []provisionAppKey{},
-		"HasUpstreamProxy":     up.enabled(),
-		"UpstreamProxyURL":     up.url(),
-		"UpstreamProxyHosts":   up.hosts(),
-		"UpstreamProxyNoProxy": up.noProxy(),
+		"HasUpstreamProxy":     up.Enabled(),
+		"UpstreamProxyURL":     up.EnvURL(),
+		"UpstreamProxyHosts":   up.EnvHosts(),
+		"UpstreamProxyNoProxy": up.EnvNoProxy(),
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

@@ -13,7 +13,10 @@
     .tabbed-modal-body { flex:1 1 auto; min-height:0; overflow:auto; }
     .hive-dialog-title { font-size: var(--fs-lg); font-weight: 700; color: var(--text); margin-bottom: var(--sp-5); }
     .hive-dialog-body { font-size: 0.9rem; color: var(--muted); line-height: 1.5; white-space: pre-wrap; margin-bottom: var(--sp-7); }
-    .hive-dialog-body.long { max-height: min(55vh, 520px); overflow: auto; }
+    .hive-dialog-body.long { max-height: min(55vh, 520px); }
+    .hive-dialog.hive-confirm-scroll { display: flex; flex-direction: column; overflow: hidden; }
+    .hive-confirm-scroll > .modal-scroll { min-height: 0; overflow-wrap: anywhere; }
+    .hive-confirm-scroll > :not(.modal-scroll) { flex-shrink: 0; }
     /* .modal-scroll — shared long-content scroll region for every modal
        (release notes, alerts, export viewer, decision dialogs, settings
        bodies). Scrollability is made discoverable: a thin always-visible
@@ -36,6 +39,7 @@
     .hive-dialog-error { min-height: 1.2em; margin-top: var(--sp-3); font-size: var(--fs-sm); color: var(--red); }
     /* Optional "remember my choice" row under the body (hiveConfirm cfg.check) */
     .hive-dialog-check { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--muted); margin: calc(-1 * var(--sp-4)) 0 var(--sp-6); cursor: pointer; }
+    .hive-confirm-scroll > .hive-dialog-check { margin-top: 0; }
     .hive-dialog-check input { accent-color: var(--accent); margin: 0; }
     .hive-dialog-buttons { display: flex; gap: 10px; justify-content: flex-end; }
     /* Export / link viewer (hiveExportViewer): the handed-over text sits in
@@ -314,6 +318,7 @@
       background: var(--green);
       border-color: var(--green);
     }
+    .config-toggle-note-warn { color: var(--status-warn); }
     .config-toggle-switch.disabled {
       opacity: 0.5;
       cursor: not-allowed;

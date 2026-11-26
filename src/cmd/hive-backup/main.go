@@ -28,13 +28,15 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
 	"os"
 
-	"github.com/hivecommons/hive/pkg/hubbackup"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/pkg/hub"
+	"github.com/hivecommons/hive/pkg/hubbackup"
 	"github.com/hivecommons/hive/pkg/spokebackup"
 )
 
@@ -88,6 +90,11 @@ Environment:
 		hubbackup.DefaultDataDir, hubbackup.EnvRetention, hubbackup.DefaultRetention)
 }
 
+func validateFleetRegistry(data []byte) error {
+	var registry hub.Registry
+	return json.Unmarshal(data, &registry)
+}
+
 func cmdRun(args []string, logger *slog.Logger) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	local := fs.String("local", "", "write archive to this local path instead of object storage")
@@ -95,19 +102,30 @@ func cmdRun(args []string, logger *slog.Logger) {
 	_ = fs.Parse(args)
 
 	opts := hubbackup.Options{
-		LocalOnly:  *local != "",
-		LocalPath:  *local,
-		SkipSpokes: *skipSpokes == "true",
+		LocalOnly:             *local != "",
+		LocalPath:             *local,
+		SkipSpokes:            *skipSpokes == "true",
+		ValidateFleetRegistry: validateFleetRegistry,
 	}
 	man, dest, err := hubbackup.Run(opts, logger)
 	if err != nil {
 		logger.Error("backup failed", "err", err)
 		os.Exit(exitCodeError)
 	}
-	fmt.Printf("backup complete: %s\n", dest)
+	switch {
+	case len(man.HubErrors) > 0:
+		fmt.Printf("incomplete hub backup written: %s\n", dest)
+	case man.SpokesSkipped:
+		fmt.Printf("hub-only backup saved: %s\n", dest)
+	case len(man.SpokeErrors) > 0:
+		fmt.Printf("partial spoke backup saved: %s\n", dest)
+	default:
+		fmt.Printf("backup complete: %s\n", dest)
+	}
 	fmt.Printf("  files:        %d\n", len(man.Files))
 	fmt.Printf("  spokes:       %d\n", len(man.SpokeIDs))
 	fmt.Printf("  secrets:      %d\n", len(man.SecretNames))
+	printHubGaps(man)
 	if len(man.SpokeErrors) > 0 {
 		fmt.Printf("  SPOKE GAPS:   %d (see manifest)\n", len(man.SpokeErrors))
 		for id, e := range man.SpokeErrors {
@@ -142,13 +160,31 @@ func cmdVerify(args []string, logger *slog.Logger) {
 		logger.Error("verify failed", "err", err)
 		os.Exit(exitCodeError)
 	}
-	fmt.Printf("archive OK: %d files, %d spokes, created %s\n",
+	status := "archive OK"
+	switch {
+	case len(man.HubErrors) > 0 || len(man.SpokeErrors) > 0:
+		status = "partial archive integrity OK"
+	case man.SpokesSkipped:
+		status = "hub-only archive integrity OK"
+	}
+	fmt.Printf("%s: %d files, %d spokes, created %s\n", status,
 		len(man.Files), len(man.SpokeIDs), man.CreatedAt.Format("2006-01-02T15:04:05Z"))
+	printHubGaps(man)
 	if len(man.SpokeErrors) > 0 {
 		fmt.Printf("WARNING: %d spokes were NOT captured:\n", len(man.SpokeErrors))
 		for id, e := range man.SpokeErrors {
 			fmt.Printf("  - %s: %s\n", id, e)
 		}
+	}
+}
+
+func printHubGaps(man *hubbackup.Manifest) {
+	if len(man.HubErrors) == 0 {
+		return
+	}
+	fmt.Printf("WARNING: %d hub paths are missing or unusable:\n", len(man.HubErrors))
+	for path, e := range man.HubErrors {
+		fmt.Printf("  - %s: %s\n", path, e)
 	}
 }
 

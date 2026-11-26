@@ -94,14 +94,8 @@ func (s *Server) handleWorkflowConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	inferred := workflowmodel.Inferred(m)
-	next, err := st.NextVersion(name)
-	if err != nil {
-		workflowStoreError(w, err)
-		return
-	}
 	c := workflowmodel.Confirm(m, requestUser(r))
-	c.Spec.Meta.Version = next
-	e, err := st.Save(c, requestUser(r), time.Now().UTC())
+	e, err := st.SaveNextVersion(c, requestUser(r), time.Now().UTC())
 	if err != nil {
 		workflowStoreError(w, err)
 		return

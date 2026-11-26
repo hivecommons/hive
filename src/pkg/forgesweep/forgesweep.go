@@ -46,9 +46,17 @@ const (
 	closeMarkerFormat = "<!-- hive-close-on-merge pr=%d -->"
 )
 
-// writeAccess are the Forgejo permission levels that may release a merge or
-// author a pull request whose closing keywords the sweep honours.
+// writeAccess are the Forgejo permission levels that may author a pull
+// request whose closing keywords the sweep honours.
 var writeAccess = map[string]bool{"write": true, "admin": true, "owner": true}
+
+// releaseAccess are the levels that may release a merge with the automerge
+// label. It adds forge.PermissionAssignable, the answer when the hive's
+// Forgejo user has write but not admin and Forgejo refuses the permission
+// API (#19914): the timeline already shows the labeller added a label to the
+// pull request, which Forgejo allows only with write on pull requests. The
+// close-on-merge author check has no such evidence and keeps writeAccess.
+var releaseAccess = map[string]bool{"write": true, "admin": true, "owner": true, forge.PermissionAssignable: true}
 
 // closingRefRe matches a same-repository closing keyword ("Fixes #12").
 // Forgejo's keywords are close, closes, closed, fix, fixes, fixed, resolve,
@@ -136,9 +144,10 @@ func (s *Sweeper) blockedBy(labels []string) string {
 // AutoMerge merges the Forgejo pull requests that pass every gate: the repo
 // has auto-merge on, the PR is open, not a draft and carries the automerge
 // label and no blocking label, the label was last added by someone other
-// than the author who has write access, Forgejo reports the PR mergeable, and
-// the combined commit status at the head is success with at least one
-// status. The merge is pinned to that head (head_commit_id).
+// than the author who has write access and no push to the PR followed it,
+// Forgejo reports the PR mergeable, and the combined commit status at the
+// head is success with at least one status. The merge is pinned to that head
+// (head_commit_id).
 func (s *Sweeper) AutoMerge(ctx context.Context) []MergeOutcome {
 	if s.API == nil || s.AutoMergeEnabled == nil || strings.TrimSpace(s.AutoMergeLabel) == "" {
 		return nil
@@ -211,21 +220,31 @@ func (s *Sweeper) tryMerge(ctx context.Context, api forge.SweepAPI, repo string,
 	if !pr.Mergeable {
 		return skip("not-mergeable")
 	}
-	labeler, ok, err := api.LabelLastAddedBy(ctx, repo, number, s.AutoMergeLabel)
+	// The timeline is read after PullFacts, so a push that lands between
+	// the two shows up as a pull_push here, and one that lands later moves
+	// the head off the pinned HeadSHA and Forgejo refuses the merge.
+	add, ok, err := api.LabelLastAdded(ctx, repo, number, s.AutoMergeLabel)
 	if err != nil {
 		return skip("timeline-read-failed")
 	}
 	if !ok {
 		return skip("label-adder-unknown")
 	}
+	labeler := add.Login
 	if strings.EqualFold(labeler, pr.Author) {
 		return skip("self-approved")
+	}
+	// The label approves the head its adder saw. A push after it, by the
+	// author or anyone else, leaves the new commits unreviewed: a writer
+	// must add the label again.
+	if add.PushedAfter {
+		return skip("pushed-after-label")
 	}
 	perm, err := api.Permission(ctx, repo, labeler)
 	if err != nil {
 		return skip("permission-read-failed")
 	}
-	if !writeAccess[perm] {
+	if !releaseAccess[perm] {
 		return skip("labeler-lacks-write")
 	}
 	state, total, err := api.CombinedStatus(ctx, repo, pr.HeadSHA)
@@ -323,7 +342,7 @@ func (s *Sweeper) CloseOnMerge(ctx context.Context) []CloseOutcome {
 		}
 		self, err := api.Self(ctx)
 		if err != nil {
-			s.log().Warn("forgejo close-on-merge: token user unknown", "repo", repo, "error", err)
+			s.log().Warn("forgejo close-on-merge: token user unknown (a token limited to specific repositories cannot read /user; set forgejo.login)", "repo", repo, "error", err)
 			continue
 		}
 		pulls, err := api.RecentlyMergedPulls(ctx, repo, DefaultMergedPullsScanned)

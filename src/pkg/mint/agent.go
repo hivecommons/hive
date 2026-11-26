@@ -3,6 +3,8 @@ package mint
 import (
 	"fmt"
 	"time"
+
+	"github.com/hivecommons/hive/crux/agentmode"
 )
 
 // This file is the agent-credential integration for the mint: it turns an
@@ -11,9 +13,9 @@ import (
 // the agent can request ALONGSIDE its existing GitHub App token. It never
 // replaces the App token path — it is an additional, opt-in credential.
 //
-// Tiers are passed as plain strings (not an AgentMode) on purpose so pkg/mint
-// stays free of a pkg/agent import; the caller already has the tier in hand at
-// the WriteAgentToken call site.
+// Tiers are passed as an agentmode.TokenTier (not an AgentMode) on purpose so
+// pkg/mint stays free of a pkg/agent import; the caller already has the tier in
+// hand at the WriteAgentToken call site.
 
 // agentTokenAudience is the audience embedded in agent-scoped mint tokens. A
 // downstream WIF/verifier is configured to accept this audience for hive agent
@@ -40,27 +42,27 @@ const (
 // tierScopes maps a trust-tier string to the scopes an agent at that tier is
 // entitled to. Unknown tiers fall through to the least-privilege advisor set
 // (read-only) — fail closed, never widen on a typo.
-var tierScopes = map[string][]string{
-	"advisor":     {ScopeIssuesRead},
-	"newcomer":    {ScopeIssuesRead, ScopeIssuesWrite},
-	"contributor": {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite},
+var tierScopes = map[agentmode.TokenTier][]string{
+	agentmode.TokenTierAdvisor:     {ScopeIssuesRead},
+	agentmode.TokenTierNewcomer:    {ScopeIssuesRead, ScopeIssuesWrite},
+	agentmode.TokenTierContributor: {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite},
 	// The sec-check role refinement of contributor (agentmode.SecCheckTier):
 	// same hive-side scopes; the extra Dependabot alerts read lives only on
 	// the GitHub App token.
-	"sec-check": {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite},
-	"trusted":   {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite, ScopeMerge},
+	agentmode.SecCheckTier:     {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite},
+	agentmode.TokenTierTrusted: {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite, ScopeMerge},
 	// The sec-check role refinement of trusted (agentmode.SecCheckTrustedTier):
 	// same hive-side scopes as trusted.
-	"sec-check-trusted": {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite, ScopeMerge},
+	agentmode.SecCheckTrustedTier: {ScopeIssuesRead, ScopeIssuesWrite, ScopeContentsWrite, ScopePullsWrite, ScopeMerge},
 }
 
 // ScopesForTier returns the scope set for a trust tier. An unrecognized tier
 // yields the least-privilege read-only set (fail closed). The returned slice is
 // a fresh copy the caller may mutate.
-func ScopesForTier(tier string) []string {
+func ScopesForTier(tier agentmode.TokenTier) []string {
 	scopes, ok := tierScopes[tier]
 	if !ok {
-		scopes = tierScopes["advisor"]
+		scopes = tierScopes[agentmode.TokenTierAdvisor]
 	}
 	return append([]string(nil), scopes...)
 }
@@ -93,7 +95,7 @@ func (a *AgentMinter) Enabled() bool { return a != nil && a.minter != nil }
 // returns a signed token verifiable against the mint's JWKS. An empty agentName
 // is a caller error and returns a non-nil error (fail closed rather than mint an
 // unattributable token).
-func (a *AgentMinter) MintAgentToken(agentName, tier string) (string, error) {
+func (a *AgentMinter) MintAgentToken(agentName string, tier agentmode.TokenTier) (string, error) {
 	if !a.Enabled() {
 		return "", nil
 	}

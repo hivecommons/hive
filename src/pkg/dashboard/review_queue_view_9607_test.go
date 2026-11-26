@@ -73,7 +73,7 @@ func TestReviewQueueViewStaticWiring(t *testing.T) {
 		`id="review-queue-panel"`,
 		`data-action="reviewQueuePrevPage"`,
 		`data-action="reviewQueueNextPage"`,
-		`fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + _reviewQueueOffset)`,
+		`fetch('/api/review/queue?limit=' + REVIEW_QUEUE_PAGE_SIZE + '&offset=' + offset,`,
 		`reviewEvidenceButtonHtml(e.repo, e.number) +`,
 		`function reviewEvidenceButtonHtml(repo, number)`,
 		`data-action="openReviewEvidence"`,
@@ -181,6 +181,174 @@ assert.match(entry({ reasons: [] }), /no ranking reasons recorded/);
 const evil = entry({ title: '<img src=x onerror=alert(1)>' });
 assert.doesNotMatch(evil, /<img src=x/);
 assert.match(evil, /&lt;img src=x/);
+`
+
+func TestReviewQueuePagingKeepsSelectedPage(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node unavailable")
+	}
+	html := indexHTML(t)
+	start := strings.Index(html, "    function renderReviewQueue(data)")
+	end := strings.Index(html, "    // fetchReviewQueue() — deferred to _deferredInit")
+	if start < 0 || end <= start {
+		t.Fatal("could not find review-queue paging source")
+	}
+	script := html[start:end] + reviewQueuePagingFixture + fetchWrapperSource(t, html) + reviewQueuePagingAssertions
+	if out, err := exec.Command(node, "-e", script).CombinedOutput(); err != nil {
+		t.Fatalf("review-queue paging failed: %v\n%s", err, out)
+	}
+}
+
+const reviewQueuePagingFixture = `
+const assert = require('node:assert/strict');
+const REVIEW_QUEUE_PAGE_SIZE = 25;
+const DASHBOARD_SERVER_HISTORY_CAP = 50;
+let _reviewQueueTotal = 0, _reviewQueueLimit = 25, _reviewQueueOffset = 0, _reviewQueueHasMore = false;
+const window = { _reviewQueueHistory: [], location: new URL('http://localhost/'), fetch: fetchFixture };
+let storedToken = 'fixture-old-token';
+const localStorage = {
+  getItem: () => storedToken,
+  setItem: (_, value) => { storedToken = value; },
+  removeItem: () => { storedToken = null; }
+};
+let finishAuthPrompt;
+function hivePrompt() {
+  return new Promise(resolve => { finishAuthPrompt = resolve; });
+}
+const panel = { innerHTML: '', querySelector: () => panel.innerHTML.includes('review-queue-entry') };
+function pagingButton() {
+  return { setAttribute: function (name, value) { this[name] = value; } };
+}
+const range = {}, prev = pagingButton(), next = pagingButton();
+const elements = {
+  'review-queue-panel': panel, 'review-queue-paging': { style: {} },
+  'review-queue-range': range, 'review-queue-prev': prev, 'review-queue-next': next,
+};
+const document = { getElementById: id => elements[id] };
+function refreshSectionCardShell() {}
+function setSectionSummary() {}
+function updateReviewSectionSummary() {}
+function capDashboardArray(value) { return value; }
+function renderReviewQueueEntry() { return '<div class="review-queue-entry">PR</div>'; }
+
+const requests = [];
+const deadlines = new Set();
+function setTimeout(callback) { deadlines.add(callback); return callback; }
+function clearTimeout(callback) { deadlines.delete(callback); }
+function fetch(url, opts) { return window.fetch(url, opts); }
+function fetchFixture(url, opts) {
+  const target = new URL(url, window.location);
+  if (target.pathname === '/api/auth/token') return Promise.resolve({ ok: true, json: async () => ({ configured: true }) });
+  if (target.pathname === '/api/gh-user-auth/status') return Promise.resolve({ ok: true, json: async () => ({ logged_in: false }) });
+  assert.equal(target.pathname, '/api/review/queue');
+  const offset = Number(target.searchParams.get('offset'));
+  return new Promise(resolve => requests.push({offset, resolve, signal: opts.signal, authorization: opts.headers?.Authorization}));
+}
+function page(offset) {
+  return { offset, limit: 25, total: 75, has_more: offset < 50, items: Array(25).fill({}) };
+}
+function reply(offset) {
+  const request = requests.shift();
+  assert.equal(request.offset, offset);
+  request.resolve({ ok: true, json: async () => page(offset) });
+}
+async function expireDeadline(request) {
+  assert.equal(deadlines.size, 1);
+  const [expire] = deadlines;
+  expire();
+  await Promise.race([request, new Promise((_, reject) => {
+    setImmediate(() => reject(new Error('paging stayed locked after timeout')));
+  })]);
+}
+`
+
+const reviewQueuePagingAssertions = `
+// An unresolved promise does not keep Node alive.
+process.exitCode = 1;
+(async function () {
+  const initial = fetchReviewQueue();
+  reply(0);
+  await initial;
+  assert.equal(range.textContent, '1–25 of 75');
+
+  // Let the old poll reach JSON decoding before the operator clicks Next.
+  const poll = fetchReviewQueue();
+  const oldRequest = requests.shift();
+  assert.equal(oldRequest.offset, 0);
+  let finishOldPage;
+  oldRequest.resolve({ ok: true, json: () => new Promise(resolve => { finishOldPage = resolve; }) });
+  await new Promise(setImmediate);
+  assert.equal(typeof finishOldPage, 'function');
+  const advance = reviewQueueNextPage();
+  reviewQueueNextPage();
+  fetchReviewQueue();
+  assert.deepEqual(requests.map(request => request.offset), [25]);
+  assert.equal(next.disabled, false);
+  assert.equal(next['aria-disabled'], 'true');
+  reply(25);
+  await advance;
+  assert.equal(range.textContent, '26–50 of 75');
+  finishOldPage(page(0));
+  await poll;
+  assert.equal(range.textContent, '26–50 of 75');
+
+  const failed = reviewQueueNextPage();
+  const failedRequest = requests.shift();
+  assert.equal(failedRequest.offset, 50);
+  failedRequest.resolve({ ok: false, status: 500 });
+  await failed;
+  assert.equal(range.textContent, '26–50 of 75');
+  assert.equal(prev.disabled, false);
+  assert.equal(next.disabled, false);
+  assert.equal(prev['aria-disabled'], 'false');
+  assert.equal(next['aria-disabled'], 'false');
+  const retry = reviewQueueNextPage();
+  reply(50);
+  await retry;
+  assert.equal(range.textContent, '51–75 of 75');
+
+  // A fetch wrapper can stay pending even after the network is aborted.
+  const stalled = reviewQueuePrevPage();
+  const stalledRequest = requests.shift();
+  assert.equal(stalledRequest.offset, 25);
+  assert.equal(prev['aria-disabled'], 'true');
+  await expireDeadline(stalled);
+  assert.equal(stalledRequest.signal.aborted, true);
+  assert.equal(range.textContent, '51–75 of 75');
+  assert.equal(prev['aria-disabled'], 'false');
+  const back = reviewQueuePrevPage();
+  const authRequest = requests.shift();
+  assert.equal(authRequest.offset, 25);
+  assert.equal(authRequest.authorization, 'Bearer fixture-old-token');
+  authRequest.resolve({ ok: false, status: 401 });
+  await new Promise(setImmediate);
+  assert.equal(typeof finishAuthPrompt, 'function');
+  assert.equal(deadlines.size, 0);
+  assert.equal(prev['aria-disabled'], 'true');
+  finishAuthPrompt('fixture-new-token');
+  await new Promise(setImmediate);
+  assert.equal(deadlines.size, 1);
+  assert.equal(requests[0].authorization, 'Bearer fixture-new-token');
+  reply(25);
+  await back;
+  assert.equal(range.textContent, '26–50 of 75');
+
+  const stalledBody = reviewQueueNextPage();
+  const bodyRequest = requests.shift();
+  assert.equal(bodyRequest.offset, 50);
+  let finishStalledBody;
+  bodyRequest.resolve({ ok: true, json: () => new Promise(resolve => { finishStalledBody = resolve; }) });
+  await new Promise(setImmediate);
+  assert.equal(typeof finishStalledBody, 'function');
+  await expireDeadline(stalledBody);
+  assert.equal(bodyRequest.signal.aborted, true);
+  assert.equal(next['aria-disabled'], 'false');
+  finishStalledBody(page(50));
+  await new Promise(setImmediate);
+  assert.equal(range.textContent, '26–50 of 75');
+  assert.equal(deadlines.size, 0);
+})().then(() => { process.exitCode = 0; }, err => console.error(err));
 `
 
 func TestReviewQueueSupersededActionsWithoutAutoClose(t *testing.T) {

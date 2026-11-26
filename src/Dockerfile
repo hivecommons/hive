@@ -349,9 +349,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     chmod +x /usr/local/bin/ttyd
 
 # --- Layer 2b: GitHub CLI (off-PATH — only snapshot publisher uses it) ---
-ARG GH_VERSION=2.105.0
-ARG GH_SHA256_AMD64=79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f
-ARG GH_SHA256_ARM64=b1278c75107423d818f1937fd92cafc9e5e9b606631568f68d7fb816f5885a02
+ARG GH_VERSION=2.106.0
+ARG GH_SHA256_AMD64=a476449fa9625413c54a3734eded62e9e480e49f421ff08e7f3b3879c059a033
+ARG GH_SHA256_ARM64=5e8a0c51e1a8345f36bd0b8bb88604b6a5388df16f3ab3e3b9b6d794fa223a67
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GH_ARCH=amd64; GH_SHA256="$GH_SHA256_AMD64" ;; \
@@ -446,7 +446,7 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @openai/codex@${CODEX_V
     echo "WARN: OpenAI Codex CLI install failed — skipping"
 
 # --- Layer 7: Claude Code (most frequent updates) ---
-ARG CLAUDE_CODE_VERSION=2.1.331
+ARG CLAUDE_CODE_VERSION=2.1.332
 # --ignore-scripts (kept, deliberately: no arbitrary postinstall runs during the
 # build) skips claude-code's install.cjs, which is what LINKS the platform
 # native binary into the package's bin/. The binary itself ships in the
@@ -467,9 +467,9 @@ RUN npm install -g --ignore-scripts --no-fund --no-audit @anthropic-ai/claude-co
 # Installs from the OFFICIAL aaif-goose/goose repo, pinned to a fixed release and
 # SHA-256-verified before extraction. Download failures are tolerated because
 # Goose is an optional backend; checksum mismatches must hard-fail the build.
-ARG GOOSE_VERSION=1.60.1
-ARG GOOSE_SHA256_AMD64=0327b1857f8030343f59b77503e0455629bbf472c2901cb94b88389d6278635a
-ARG GOOSE_SHA256_ARM64=6a962a0ba55829e00f6f297dff736d53b9bdc8da84f0f49c4768e2557ac39cbe
+ARG GOOSE_VERSION=1.61.0
+ARG GOOSE_SHA256_AMD64=442bc7ce579e12f01bc9725295445bfc4ac50ee49a01331a31884abd6e59f7b7
+ARG GOOSE_SHA256_ARM64=ec0cbcb6676dcc4d138fa12ad4bafefdbb989d97734d62a7be91621ec879d3f9
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GOOSE_ARCH=x86_64; GOOSE_SHA256="$GOOSE_SHA256_AMD64" ;; \
@@ -576,9 +576,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=19.1.0
-ARG OMP_SHA256_AMD64=be2b45c437b623e15c29b1f8c98aacb842f92118196454b5e9eed884359e9a01
-ARG OMP_SHA256_ARM64=785e8e519acb55852a85e5495271d768a221ca92c095c043cd3eb0d7f8d3eafc
+ARG OMP_VERSION=19.2.1
+ARG OMP_SHA256_AMD64=e8b937f9bf023baa147bdd300ad5421af0a6ef8b1f350c47a9a93d5fca94feca
+ARG OMP_SHA256_ARM64=92d4cce4b14814f6b838aa86dcec6359f0cb089cbcc300e8463cbb5326991fe0
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \
@@ -595,6 +595,38 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
        && omp --version; \
      else \
        echo "WARN: omp download failed — skipping (backend: omp will be unavailable)"; \
+     fi
+
+# --- OpenCode CLI (backend: opencode) ---
+# Shipped in the hub/spoke image so agents can launch backend: opencode (parity with Dockerfile.contributor; keep the two layers identical).
+# The release tarball holds one self-contained executable (`opencode`). Pins are
+# the digests GitHub publishes for the glibc linux-x64 / linux-arm64 assets of
+# anomalyco/opencode v2.3.2; bump OPENCODE_VERSION and both digests together.
+# Download failures are tolerated like Goose/agy/omp (the backend is optional and
+# a Releases outage must not block every other backend's image); checksum
+# mismatches never are. No credential is baked in: opencode reads
+# $XDG_DATA_HOME/opencode/auth.json or provider env vars, and its bundled
+# `opencode/*-free` models need none.
+ARG OPENCODE_VERSION=2.3.2
+ARG OPENCODE_SHA256_AMD64=563b5d663637226b6e3bb4bb6803281bc39b0d2cd88db06d674b6420aab009b0
+ARG OPENCODE_SHA256_ARM64=9d10185acdb72336e086e699ca363a6065f410fd3c1caed0dc8046e95ac06ccb
+RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
+  && case "$ARCH" in \
+       amd64|x86_64) OPENCODE_ASSET=opencode-linux-x64; OPENCODE_SHA256="$OPENCODE_SHA256_AMD64" ;; \
+       arm64|aarch64) OPENCODE_ASSET=opencode-linux-arm64; OPENCODE_SHA256="$OPENCODE_SHA256_ARM64" ;; \
+       *) echo "unsupported arch for opencode: $ARCH" >&2; exit 1 ;; \
+     esac \
+  && if curl -fsSL --retry 60 --retry-delay 10 --retry-max-time 600 --retry-connrefused --retry-all-errors \
+       --connect-timeout 15 --speed-limit 1024 --speed-time 30 --max-time 600 \
+       "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${OPENCODE_ASSET}.tar.gz" \
+       -o /tmp/opencode.tgz; then \
+       echo "${OPENCODE_SHA256}  /tmp/opencode.tgz" | sha256sum -c - \
+       && tar -xzf /tmp/opencode.tgz -C /tmp opencode \
+       && install -m 0755 /tmp/opencode /usr/local/bin/opencode \
+       && rm -f /tmp/opencode /tmp/opencode.tgz \
+       && opencode --version; \
+     else \
+       echo "WARN: opencode download failed — skipping (backend: opencode will be unavailable)"; \
      fi
 
 # --- Layer 8.3: Muse Code CLI (backend: muse) ---

@@ -114,6 +114,14 @@ func HasHiveGateLabel(labels []string) bool {
 	return false
 }
 
+// HiveGateLabelDefinition returns the colour (six hex digits, no "#") and the
+// description for a gate label, so a forge adapter that creates a missing gate
+// label (pkg/forge on Gitea and Forgejo, #19910) uses the same wording as
+// EnsureHiveGateLabels. ok is false for any other label.
+func HiveGateLabelDefinition(name string) (color, description string, ok bool) {
+	return hiveGateLabelDefinition(name)
+}
+
 // hiveGateLabelDefinition returns the colour and description for a gate label.
 func hiveGateLabelDefinition(name string) (color, description string, ok bool) {
 	switch {
