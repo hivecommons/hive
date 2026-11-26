@@ -2752,8 +2752,10 @@ func adoptionDecisionLapseDwell(reason string, policy StageLabelPolicy) (time.Du
 
 // noteAdoptionDecisionLapsed posts adoptionDecisionLapsedComment once per
 // (head, decision) when an escalation whose note already went out on the
-// head comes back after a person's return lapsed. Recorded only once
-// GitHub accepted the post, so a failed one is retried. Returns the
+// head comes back after a person's return lapsed. The body opens with
+// AdoptionDecisionLapsedMarker, and the lapse is recorded
+// (MarkAdoptionDecisionLapseNoted) only once GitHub accepted the post, so
+// a failed one is retried and a posted one never repeats. Returns the
 // comments posted.
 func (c *Engine) noteAdoptionDecisionLapsed(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, reason string, decision review.HumanChangeRequest, now time.Time) (int, error) {
 	if !adoptionDecisionLapsed(obs, rec, policy, reason, decision, now) {
