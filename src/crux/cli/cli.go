@@ -160,7 +160,7 @@ func (e *Env) Run(ctx context.Context, args []string) int {
 	}
 	if opts.remoteSelected() {
 		switch rest[0] {
-		case "help", "-h", "--help", "serve", agent.AgyTurnSubcommand, "cline-turn":
+		case "help", "-h", "--help", "serve", agent.AgyTurnSubcommand, agent.ClaudeTurnSubcommand, "cline-turn":
 			// serve is where the runtime lives; a CRUX_SERVER left in a shell
 			// profile must not stop a local server from starting. agy-turn is
 			// the pane-side subprocess the serving runtime itself spawns.
@@ -196,6 +196,13 @@ func (e *Env) dispatch(ctx context.Context, opts globalOptions, name string, arg
 		// The manager types `<own executable> agy-turn …` into a headless agy
 		// pane; under `crux serve` that executable is crux.
 		return agent.RunAgyTurn(args, e.Stdout, e.Stderr)
+	case agent.ClaudeTurnSubcommand:
+		if remote {
+			fmt.Fprintf(e.Stderr, "crux: %s is not available over the control socket\n", name)
+			return ExitUsage
+		}
+		// Typed into a headless_turns pane as `<own executable> claude-turn …`.
+		return agent.RunClaudeTurn(args, e.Stdout, e.Stderr)
 	case "cline-turn":
 		if remote {
 			return ExitUsage
@@ -366,6 +373,8 @@ Commands (each maps onto crux.Runtime):
                                   on a unix socket; --listen adds TCP with --token)
   agy-turn                        one headless agy turn; typed into a pane by the
                                   runtime that spawned it, not run by hand
+  claude-turn                     one headless Claude Code turn (claude -p) for a
+                                  headless_turns agent; typed into its pane
   cline-turn                      one bounded Cline CLI turn (stdin prompt);
                                   --model provider/model, --check for preflight
   job-bridge -- CMD [ARGS...]     a Job's container command on the copy

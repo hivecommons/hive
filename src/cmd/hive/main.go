@@ -7588,6 +7588,10 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Run from inside a headless agy agent's pane, one per kick; see
 		// pkg/agent/agy_turn.go.
 		return true, cruxruntime.RunAgyTurn(args[1:], stdout, stderr)
+	case "claude-turn":
+		// Run from inside a headless_turns agent's pane, one per kick; see
+		// crux/agent/claude_turn.go.
+		return true, cruxruntime.RunClaudeTurn(args[1:], stdout, stderr)
 	case "cline-turn":
 		return true, cruxruntime.RunClineTurn(args[1:], stdout, stderr)
 	case jev.Subcommand:

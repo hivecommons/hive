@@ -312,7 +312,8 @@ type AgentConfig struct {
 	// default" (HIVE_EXPLAIN_MODE), while "off" is an explicit per-agent
 	// opt-OUT that survives an operator turning explanation on fleet-wide.
 	// Valid values: "" | off | brief | full — see ExplainMode* constants.
-	ExplainMode string `yaml:"explain_mode,omitempty" json:"explain_mode,omitempty"`
+	ExplainMode   string `yaml:"explain_mode,omitempty" json:"explain_mode,omitempty"`
+	HeadlessTurns bool   `yaml:"headless_turns,omitempty" json:"headless_turns,omitempty"` // one claude -p per kick on translator routes; see agent/claude_headless.go (#19902)
 	// Sandbox opts this agent into phase-1 sandbox execution when the global
 	// agent_sandbox.enabled gate is also true.
 	Sandbox *AgentSandboxOverride `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
