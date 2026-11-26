@@ -74,9 +74,11 @@ const (
 	// colony.db that another process holds (#20103). A Go duration; 0 turns
 	// the retry off (one attempt, as before).
 	hubCustomerStoreLockWaitEnv = "HIVE_HUB_CUSTOMER_STORE_LOCK_WAIT"
-	// hubCustomerStoreLockWaitDefault covers a pod handover: the old hub
-	// pod's graceful shutdown (hubShutdownTimeout) and process exit, with
-	// room for a slow volume.
+	// hubCustomerStoreLockWaitDefault covers a lock that is still held when
+	// the new hub pod boots: the old pod's exit and, on the RWX volume, the
+	// server-side release of its lock, which after an unclean node loss can
+	// take a lock-lease recovery of about 90s. A boot can wait up to this plus
+	// one more hubCustomerStoreLockTimeout attempt.
 	hubCustomerStoreLockWaitDefault = 2 * time.Minute
 	// hubCustomerStoreBackupMode keeps backups owner-only, like colony.db.
 	hubCustomerStoreBackupMode os.FileMode = 0o600

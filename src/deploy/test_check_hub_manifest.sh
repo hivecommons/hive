@@ -71,6 +71,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata: {name: hive-hub}
 spec:
+  strategy: {type: Recreate}
   template:
     spec:
       initContainers:
@@ -87,7 +88,7 @@ items:
 - apiVersion: apps/v1
   kind: Deployment
   metadata: {name: hive-hub}
-  spec: {template: {spec: {containers: [{name: hub}, {name: hive-hub}]}}}
+  spec: {strategy: {type: Recreate}, template: {spec: {containers: [{name: hub}, {name: hive-hub}]}}}
 YAML
 expect "stray container inside a List fails" 1 "$TMP/list.yaml" "unexpected container"
 

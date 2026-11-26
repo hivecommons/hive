@@ -261,14 +261,19 @@ on the JSON. Check the first boot's `hub customer store: boot sync` line for
   (default `2m`; `0` means one attempt), logging
   `hub customer store: colony.db locked by another process; retrying` on each
   try, and stays in `json` only if the lock is still held after that
-  ([#20103](https://github.com/hivecommons/hive/issues/20103)). The open runs
-  before the hub serves HTTP, so the pod is not Ready while it waits: allow
-  for that in the hub's startup or liveness probe.
+  ([#20103](https://github.com/hivecommons/hive/issues/20103)). A boot can
+  wait up to the setting plus one 5-second attempt. The open runs before the
+  hub serves HTTP, so the pod is not Ready while it waits: give the hub a
+  `startupProbe` whose `failureThreshold` times `periodSeconds` is at least
+  135 seconds with the default, or the kubelet may restart it mid-wait.
 - **Run the hub Deployment with `strategy: Recreate`.** With `RollingUpdate`
   the new pod starts while the old one still holds the lock, and the old pod
   only exits once the new one is Ready, so the new pod can never get the lock
-  and runs in `json` for its whole life. `Recreate` stops the old pod first;
-  the boot retry covers the time it takes to exit.
+  and runs in `json` for its whole life. `Recreate` stops the old pod before
+  the new one starts. The boot retry covers a lock that is still held after
+  that, such as the server-side release of a lock on the RWX volume after an
+  unclean node loss, or a stray process holding the file. The cost is a short
+  hub outage on every roll, including hub self-upgrades.
   `src/deploy/check-hub-manifest.py` fails on any other strategy.
 
 ### Ask AI help

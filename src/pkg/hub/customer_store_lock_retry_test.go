@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -37,15 +38,8 @@ func holdHubCustomerStoreLock(t *testing.T) func() {
 	if err != nil {
 		t.Fatalf("hold colony.db lock: %v", err)
 	}
-	released := make(chan struct{})
-	release := func() {
-		select {
-		case <-released:
-		default:
-			close(released)
-			_ = holder.Close()
-		}
-	}
+	var once sync.Once
+	release := func() { once.Do(func() { _ = holder.Close() }) }
 	t.Cleanup(release)
 	return release
 }
@@ -57,10 +51,10 @@ func TestHubCustomerStoreLockReleasedDuringRetryOpensColony(t *testing.T) {
 	fastHubCustomerStoreLockTiming(t, "30s")
 	release := holdHubCustomerStoreLock(t)
 	const holdFor = time.Second
+	start := time.Now()
 	timer := time.AfterFunc(holdFor, release)
 	defer timer.Stop()
 
-	start := time.Now()
 	t.Cleanup(closeHubCustomerStore)
 	got := openHubCustomerStore(context.Background(), nil, hubCustomerStoreColony)
 	if got != hubCustomerStoreColony {
@@ -132,7 +126,9 @@ func TestHubCustomerStoreNonLockErrorIsNotRetried(t *testing.T) {
 	}
 }
 
-// Shutdown during the wait stops the retry instead of holding the boot.
+// A cancelled context ends the wait instead of holding the boot. (The hub's
+// boot context today is context.Background, so in production a SIGTERM during
+// the wait simply ends the process, which holds no lock yet.)
 func TestHubCustomerStoreLockRetryStopsOnCancel(t *testing.T) {
 	defer helperSetupTempDirs(t)()
 	fixtureUsers(t)
