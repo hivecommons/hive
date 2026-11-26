@@ -65,12 +65,13 @@ func (s *HubServer) signHeartbeatResponse(w http.ResponseWriter, resp *Heartbeat
 		s.logger.Warn("heartbeat: credential fence withheld fields from self-service hive",
 			"hive_id", hiveID, "fields", strings.Join(withheld, ","))
 	}
-	seed := s.ssoSigningSeed()
+	now := time.Now()
+	// #20102: the generation set, never the raw master, picks the key.
+	seed := s.ssoSigningSeedForHive(hiveID, now)
 	if seed == "" || hiveID == "" {
 		// No key or no identity: leave the response unsigned (legacy behaviour).
 		return
 	}
-	now := time.Now()
 	resp.SigHiveID = hiveID
 	resp.SigSeq = hbSeq.next(hiveID, now)
 	resp.SigSignedAt = now.Unix()

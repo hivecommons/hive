@@ -1671,7 +1671,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		// Restore the rotation timestamp too, or the cooldown would reset on
 		// every hub roll and stop guarding anything.
 		s.lastKeyRotation = rotatedAt
-		setLiveGenerations(gs, false)
+		installLiveGenerations(gs, secret)
 	case generationsNeverRotated:
 		// Legitimate fallback: keep the provisional legacy set built from
 		// hub-secret.key. This is the state of every hub in the fleet today.
@@ -1682,7 +1682,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		// byte-identical to the pre-F19 legacyGenerationSet(provisionMasterSecret())
 		// whenever HIVE_HUB_SECRET and hub-secret.key agree, which is the whole
 		// fleet today — so this arm is a no-op in effect, by construction.
-		setLiveGenerations(gs, false)
+		installLiveGenerations(gs, secret)
 	case generationsUntrusted:
 		// FAIL CLOSED. Drop the provisional legacy set rather than serve on it.
 		//
@@ -1701,8 +1701,8 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		// So: nil the generation set. Every consumer of it is already
 		// fail-closed on nil by contract — currentGeneration returns
 		// (zero,false), currentSecret returns "", deriveDomainKey returns "" for
-		// an empty master, and acceptableGenerations returns nil — so nothing
-		// mints on a key the hub cannot vouch for. Heartbeat verification and
+		// an empty master, and acceptableGenerations returns nil (signing falls back to
+		// s.hubSecret via mintingSecret, single-master, #20102). Heartbeat verification and
 		// session verification both fall through to their documented
 		// single-master paths (hub_keys.go:287, hub_session_revocation.go:434),
 		// which key off s.hubSecret and are untouched here, so EXISTING SPOKES
