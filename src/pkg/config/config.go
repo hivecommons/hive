@@ -8244,7 +8244,11 @@ func (c *Config) saveLocked() error {
 	// freshly reconciled in-memory config. Installing the atomic overlay first
 	// means any reload triggered by the primary write observes the same agent
 	// layer this Save is about to persist.
-	overlayErr := c.saveDashboardOverlay()
+	// The overlay records the hash of the config file content this save
+	// writes, so a later load can tell an edit of the config file from a
+	// boot-time copy of the same content (hivecommons/hive#20066).
+	dataSum := sumBytes(data)
+	overlayErr := c.saveDashboardOverlayFor(&dataSum)
 
 	// Replace the primary config atomically (temp file + fsync + rename onto
 	// the resolved target) — see writeFileAtomic for why that is safe on the
@@ -8269,7 +8273,6 @@ func (c *Config) saveLocked() error {
 	//
 	// The process write is recorded before the write so the watcher, which
 	// may see the rename before this returns, knows it for our own.
-	dataSum := sumBytes(data)
 	recordProcessWrite(c.SourcePath, dataSum)
 	var srcErr error
 	if err := writeFileAtomic(c.SourcePath, data, sourceConfigMode(c.SourcePath)); err != nil {
@@ -8499,6 +8502,16 @@ func IsKubernetesPod() bool {
 // placeholder ConfigMap seed on the next restart — exactly the durability bug
 // this atomic write prevents.
 func (c *Config) saveDashboardOverlay() error {
+	return c.saveDashboardOverlayFor(nil)
+}
+
+// saveDashboardOverlayFor is saveDashboardOverlay with the hash of the config
+// file content written by the same save. When base is set, the overlay's
+// first line records it (overlayBaseHeader), and the next load lets the
+// overlay's blocks win only while the config file still has that content
+// (hivecommons/hive#20066). A nil base writes no header, so the next load
+// keeps the config file's blocks.
+func (c *Config) saveDashboardOverlayFor(base *contentSum) error {
 	if !IsKubernetesPod() {
 		// Docker/LXC mode: RuntimeConfigFile is already the boot-time
 		// source of truth there, so dashboard saves persist without an
@@ -8523,6 +8536,9 @@ func (c *Config) saveDashboardOverlay() error {
 	if err != nil {
 		log.Printf("[config] warning: failed to marshal dashboard overlay: %v", err)
 		return err
+	}
+	if base != nil {
+		data = append(overlayBaseHeader(*base), data...)
 	}
 	tmpPath := DashboardOverlayFile + ".tmp"
 	// 0600, not 0644: dashboardOverlayBytes only folds the dashboard auth
