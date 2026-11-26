@@ -282,6 +282,19 @@ hivectl governor agent-remove ux-discovery --yes
 hivectl governor hotspots --repo hivecommons/hive   # merge hotspots: files concurrent PRs keep touching (GET /api/hotspots)
 ```
 
+### github token — rotate the personal access token
+
+Owner only, PAT-mode hives only (a GitHub App hive answers 409). The new token is read from `--stdin`, or from a prompt with echo turned off when you run the command in a terminal (a terminal on stdin is always read with echo off, even with `--stdin`). It is never accepted as an argument or flag value: a positional argument or a bad flag on `github token set` fails with a usage error that does not repeat what was typed, and any GitHub-token-shaped value (`ghp_...`, `github_pat_...`, the other `gh?_` forms and the old 40-hex format) is shown as `[REDACTED]` in every hivectl error.
+
+The token is sent only to the configured `--server`: over https, or over plain http only to a loopback address. hivectl never follows a redirect on a request with a body, so a 3xx answer fails instead of carrying the token to another host, and no request follows a redirect from https to plain http. The server verifies the token against the configured GitHub API before anything is saved; a refused token (422) leaves the current one working, and a second attempt within the cooldown is refused with 429. The token is never printed back.
+
+```bash
+hivectl github token status                                  # fingerprint, login, last verified
+pass show hive/github-pat | hivectl github token set --stdin
+hivectl github token set --stdin < /run/secrets/github_pat
+hivectl github token set                                     # prompts; input hidden
+```
+
 ### claim / unclaim / claims — issue claims
 
 ```bash

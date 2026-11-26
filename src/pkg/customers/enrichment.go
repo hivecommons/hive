@@ -103,13 +103,21 @@ type EnrichmentStore struct {
 
 // SetColony wires the colony mirror (the people store's Colony). Call it
 // before the store is shared.
-func (e *EnrichmentStore) SetColony(c *Colony) {
+//
+// In colony-only mode it also reads every person's enrichment from
+// colony.db, since there is no enrichment.json; an error leaves the store
+// empty and is returned for the log.
+func (e *EnrichmentStore) SetColony(c *Colony) error {
 	if e == nil {
-		return
+		return nil
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.colony = c
+	if c.colonyOnly() {
+		return e.loadColonyOnlyLocked(c)
+	}
+	return nil
 }
 
 // OpenEnrichment opens <dir>/enrichment.json. A missing file is empty. A
@@ -285,6 +293,14 @@ func (e *EnrichmentStore) saveLocked(changed map[string]PersonEnrichment, remove
 		return fmt.Errorf("customers: encoding %s: %w", EnrichmentFileName, err)
 	}
 	if bytes.Equal(data, e.saved) {
+		return nil
+	}
+	if e.colony.colonyOnly() {
+		// colony-only: colony.db only, no enrichment.json.
+		if err := e.colony.saveColonyOnlyEnrichment(changed, removed); err != nil {
+			return err
+		}
+		e.saved = data
 		return nil
 	}
 	if err := writeFileAtomic(e.path, ".enrichment-*", data); err != nil {

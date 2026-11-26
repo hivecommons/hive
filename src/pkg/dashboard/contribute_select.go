@@ -239,6 +239,7 @@ func (h *ContributeWSHub) rollbackAssignment(c *ContributorConnection, taskID st
 	c.tokenMintedAt = time.Time{}
 	c.lastLeaseRenew = time.Time{}
 	c.taskAssignedAt = time.Time{}
+	c.taskIssuedAt = time.Time{}
 	c.currentTaskGen = h.nextTaskGen()
 	c.mu.Unlock()
 	h.revokeLease(identityOf(c), taskID)
@@ -1298,6 +1299,7 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	// progress report, so it cannot serve as the start time. Also the stamp
 	// rollbackAssignment hands back to unrecordAssignment.
 	c.taskAssignedAt = assignedAt
+	c.taskIssuedAt = assignedAt
 	c.currentLabels = chosen.labels
 	c.lastIdleReason = ""
 	// The prompt and the credential are not known yet — see below. A stale

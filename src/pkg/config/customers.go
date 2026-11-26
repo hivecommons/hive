@@ -56,7 +56,7 @@ type CustomersConfig struct {
 	// Store picks where person records and enrichment results live on the
 	// hivecommons/colony store (#19855, #19972): "shadow" (the default until
 	// parity is confirmed on the project's own hive, then "colony"), "colony"
-	// or "json". See CustomersStoreMode and
+	// "json" or "colony-only" (opt-in). See CustomersStoreMode and
 	// src/docs/design/colony-customer-data-backend.md.
 	Store string `yaml:"store,omitempty" json:"store,omitempty"`
 }
@@ -78,6 +78,12 @@ const (
 	// nothing. It becomes the default once parity is confirmed on the
 	// project's own hive.
 	CustomersStoreColony = "colony"
+	// CustomersStoreColonyOnly makes colony.db the only store (#19972):
+	// after a verified full write it renames people.json and
+	// enrichment.json to *.migrated and stops writing them. Opt-in, never
+	// the default. Setting colony, shadow or json again restores the JSON
+	// from colony.db on the next boot.
+	CustomersStoreColonyOnly = "colony-only"
 )
 
 // DefaultCustomersStore is the store mode when neither HIVE_CUSTOMERS_STORE
@@ -90,7 +96,7 @@ const DefaultCustomersStore = CustomersStoreShadow
 // not ok; the caller then falls back.
 func ParseCustomersStoreMode(raw string) (string, bool) {
 	switch v := strings.ToLower(strings.TrimSpace(raw)); v {
-	case CustomersStoreJSON, CustomersStoreShadow, CustomersStoreColony:
+	case CustomersStoreJSON, CustomersStoreShadow, CustomersStoreColony, CustomersStoreColonyOnly:
 		return v, true
 	}
 	return "", false
