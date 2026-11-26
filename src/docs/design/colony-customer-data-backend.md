@@ -375,7 +375,7 @@ v0.3.0 (`src/pkg/customers/colony.go`). What it does beyond the steps above:
   `orphans_held=0`, `colony_people=280`, `parity=true`); the project's own
   hive's `shadow` parity is collected by the operator, and gates the spoke move to `colony`. Upgrading from the
   `json` default goes through the boot import and backups above; the tests
-  that hold it are `TestColonyUpgradeFromJSONDefaultStraightToColony` and
+  that hold it are `TestColonyUpgradeFromJSONExplicitColony` (a hive that sets `colony` explicitly) and
   `TestColonyDamagedFileFailsClosed` (spoke store),
   `TestWireCustomersDefaultUpgradeFromJSON` and
   `TestWireCustomersDefaultFallsBackToJSON` (spoke wiring), and

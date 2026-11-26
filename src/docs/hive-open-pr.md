@@ -97,14 +97,17 @@ loop ([#16162](https://github.com/hivecommons/hive/issues/16162)).
 
 When the PR body resolves an issue (`Fixes #N`, `Closes #N`, or
 `Resolves #N`), add the issue-author trailer before the first push with
-`src/scripts/issue-coauthor.sh --amend N` (repeat once per resolved issue).
+`issue-coauthor --amend N` (repeat once per resolved issue). The agent image
+ships the script at `/usr/local/bin/issue-coauthor`; in a checkout of this
+repository without it, run `src/scripts/issue-coauthor.sh --amend N`.
 `issue-coauthor.sh` is the single source of truth for identity resolution: it
 uses the GitHub API, emits the GitHub noreply address form, and skips cases
 where no human credit is needed, such as bot-filed and self-filed issues.
 
 `hive-open-pr` does not rewrite commits or force-push branches, because the
 branch may already have been pushed or be under review. Instead, it asks
-`issue-coauthor.sh` what trailer a closing issue should have and warns when
+`issue-coauthor.sh` (the installed `/usr/local/bin/issue-coauthor` when present,
+otherwise the in-repo copy) what trailer a closing issue should have and warns when
 `HEAD` does not already contain it. Resolution failures warn and the PR request
 continues: missing attribution is worth fixing, but must not block a shipped
 fix. A `Refs #N` mention is deliberately not checked because it does not claim

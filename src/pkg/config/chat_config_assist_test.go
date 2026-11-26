@@ -26,6 +26,27 @@ func TestConfigAssistDefaultsOff(t *testing.T) {
 	}
 }
 
+// #20092: chat.config_assist.model overrides the proposal model and falls
+// back to grounded_answers.model when unset.
+func TestConfigAssistModelFallsBackToGroundedAnswers(t *testing.T) {
+	var c ChatConfig
+	if got := c.ConfigAssistModel(); got != "" {
+		t.Fatalf("unset model = %q, want empty", got)
+	}
+	c.GroundedAnswers.Model = " grounded-model "
+	if got := c.ConfigAssistModel(); got != "grounded-model" {
+		t.Fatalf("fallback model = %q, want grounded-model", got)
+	}
+	c.ConfigAssist.Model = "assist-model"
+	if got := c.ConfigAssistModel(); got != "assist-model" {
+		t.Fatalf("override model = %q, want assist-model", got)
+	}
+	c.ConfigAssist.Model = "   "
+	if got := c.ConfigAssistModel(); got != "grounded-model" {
+		t.Fatalf("blank override = %q, want grounded-model", got)
+	}
+}
+
 // #19979: the toggle written to the dashboard overlay survives reload and the
 // next persist.
 func TestConfigAssistFlagSurvivesReloadAndPersist(t *testing.T) {
