@@ -99,6 +99,10 @@ type prWait struct {
 	// HiveAuthored: the hive opened the PR, so a `/hive decision <text>`
 	// reaches its agent as a change request.
 	HiveAuthored bool
+	// AdoptedInPlace: a contributor's PR the hive adopted in place and owns
+	// (commentDecisionAdopted), so a `/hive decision <text>` reaches the
+	// hive's own fixer.
+	AdoptedInPlace bool
 	// TrustedAuthorMerges is the label that stops the trusted-author lane
 	// when the stage pass recorded the held head as one that lane merges
 	// anyway (its review gate does not enforce, hivecommons/hive#19421);
@@ -145,6 +149,8 @@ func renderPRReplyOptions(w prWait) string {
 	}
 	if w.HiveAuthored {
 		b.WriteString("- `/hive decision <what to change>` sends it back: the hive's agent gets your words as a change request.\n")
+	} else if w.AdoptedInPlace {
+		b.WriteString("- `/hive decision <what to change>`: the hive adopted this PR in place and pushes its branch, so the hive's own fixer pushes the change; nothing is asked of its author.\n")
 	} else {
 		b.WriteString("- To ask for changes, leave a GitHub **Request changes** review. The hive does not push to a PR it did not open.\n")
 	}
@@ -188,6 +194,25 @@ func (c *Client) prWaitFor(ctx context.Context, owner, repo string, issue *gh.Is
 	return w, nil
 }
 
+// replyOptionsAdopted reports whether a `/hive decision` on this PR would
+// reach the hive's own fixer (commentDecisionAdopted). The PR is read only
+// for a contributor's PR whose stage record holds an in-place adoption; an
+// unreadable PR keeps the review-side wording. The caller asks only for a
+// PR whose section is written (parked or held).
+func (c *Client) replyOptionsAdopted(ctx context.Context, owner, repo string, number int, labels []string) bool {
+	if c == nil || c.client == nil || c.prAuthorKind(labels) != authorkind.Clanker || c.hasNeedsHumanLabel(labels) {
+		return false
+	}
+	if rec, ok := stagelabels.Shared().Get(stagelabels.Key(owner+"/"+repo, number)); !ok || !rec.AdoptedInPlace() {
+		return false
+	}
+	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:pr_reply_options"), owner, repo, number)
+	if err != nil {
+		return false
+	}
+	return c.commentDecisionAdopted(ctx, owner, repo, number, strings.TrimSpace(pr.GetHead().GetSHA()), pr)
+}
+
 // syncPRReplyOptions writes or clears the PR's "Your move" section. A PR
 // with nothing to say is written to only when this process wrote its
 // section, or has not looked at it yet.
@@ -195,6 +220,10 @@ func (c *Client) syncPRReplyOptions(ctx context.Context, displayRepo, owner, rep
 	w, err := c.prWaitFor(ctx, owner, repo, issue, labels)
 	if err != nil {
 		return err
+	}
+	if (w.Parked || w.Held) && !w.HiveAuthored {
+		// Read only when the section is written at all.
+		w.AdoptedInPlace = c.replyOptionsAdopted(ctx, owner, repo, issue.GetNumber(), labels)
 	}
 	return c.writePRReplyOptions(ctx, displayRepo, issue, labels, renderPRReplyOptions(w))
 }

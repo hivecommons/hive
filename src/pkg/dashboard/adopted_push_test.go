@@ -28,7 +28,7 @@ func TestAdoptedPushRefusal(t *testing.T) {
 		{name: "capability blocker recorded", f: adoptedPushFacts{Capability: "App lacks workflows permission"}, want: "fixer reported it cannot push: App lacks workflows permission"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := tc.f.refusal()
+			got := tc.f.Refusal()
 			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
 				t.Fatalf("refusal = %q, want %q", got, tc.want)
 			}

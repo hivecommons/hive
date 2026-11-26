@@ -9,9 +9,12 @@ import (
 	"strings"
 	"time"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/authorkind"
+	itemblocker "github.com/hivecommons/hive/pkg/blocker"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -316,14 +319,17 @@ func ParsePRApprovalCommandComment(body string) (command, actor, head string, ok
 // prDecisionTarget is what one open-PR read tells a dashboard decision:
 // the head, whether the hive opened the PR, and — when it did not —
 // whether a contributor's hive did (author/clanker), so a direction has a
-// hive to carry it to.
+// hive to carry it to. adoptedInPlace marks a clanker PR the hive adopted
+// in place and can still push (hiveOwnsAdoptedBranch): the direction is
+// the hive's own fixer's, not the contributor's.
 type prDecisionTarget struct {
-	head         string
-	selfAuthored bool
-	clanker      bool
-	author       string
-	labels       []string
-	bodyDigest   string
+	head           string
+	selfAuthored   bool
+	clanker        bool
+	adoptedInPlace bool
+	author         string
+	labels         []string
+	bodyDigest     string
 }
 
 // SetAuthorKindLabels installs the live governor.labels.author resolver.
@@ -332,6 +338,16 @@ func (c *Client) SetAuthorKindLabels(fn func() authorkind.Names) {
 	if c != nil {
 		c.authorKindLabels = fn
 	}
+}
+
+// prAuthorKind reads a PR's author/<kind> stamp under the live
+// governor.labels.author names (default names when none are installed).
+func (c *Client) prAuthorKind(labels []string) authorkind.Kind {
+	names := authorkind.Names{}
+	if c.authorKindLabels != nil {
+		names = c.authorKindLabels()
+	}
+	return authorkind.FromLabels(labels, names)
 }
 
 func (c *Client) openPullRequestDecisionTarget(ctx context.Context, owner, name string, number int) (prDecisionTarget, error) {
@@ -351,19 +367,129 @@ func (c *Client) openPullRequestDecisionTarget(ctx context.Context, owner, name 
 		t.head = strings.TrimSpace(pr.GetHead().GetSHA())
 	}
 	t.labels = issueLabelNames(pr.Labels)
-	names := authorkind.Names{}
-	if c.authorKindLabels != nil {
-		names = c.authorKindLabels()
-	}
-	kind := authorkind.FromLabels(t.labels, names)
+	kind := c.prAuthorKind(t.labels)
 	t.selfAuthored = c.isHiveAccount(pr.GetUser()) || kind == authorkind.Hive
 	if !t.selfAuthored {
 		// Require the repository's classification stamp here. PR-body
 		// markers are author-controlled hints for the sweep, not sufficient
 		// evidence to accept a dashboard direction on a person's PR.
 		t.clanker = kind == authorkind.Clanker
+		t.adoptedInPlace = t.clanker && c.hiveOwnsAdoptedBranch(ctx, owner, name, number, t.head, pr)
 	}
 	return t, nil
+}
+
+// hiveOwnsAdoptedBranch reports whether the hive adopted repo#number in
+// place and still owns and can push its branch at head, so a maintainer's
+// direction is its own fixer's to carry rather than the contributor's
+// (projectbluefin/utah-packages#1309 was decided "hive's fixer: ..." and
+// then returned to the contributor at 072). It reads the stage store the
+// sweep keeps and the blocker ledger the fixer reports to, and applies
+// adoptedBranchOwned. Anything it cannot confirm keeps the contributor's
+// routing.
+func (c *Client) hiveOwnsAdoptedBranch(ctx context.Context, owner, name string, number int, head string, pr *gh.PullRequest) bool {
+	if c == nil || pr == nil {
+		return false
+	}
+	repo := owner + "/" + name
+	rec, ok := stagelabels.Shared().Get(stagelabels.Key(repo, number))
+	if !ok {
+		return false
+	}
+	headRepo := strings.TrimSpace(pr.GetHead().GetRepo().GetFullName())
+	// A deleted fork (no head repo) reads as a fork nobody can push.
+	push := prstage.AdoptedPushFacts{Fork: headRepo == "" || !strings.EqualFold(headRepo, repo), MaintainerCanModify: pr.GetMaintainerCanModify()}
+	if push.Fork && push.MaintainerCanModify {
+		// The App cannot push a fork whose diff changes .github/workflows/
+		// (projectbluefin/testsuite#1037), and nothing may be recorded about
+		// it yet: list the files as the dashboard's delegate does. A list
+		// that cannot be read or is incomplete is not confirmation.
+		wf, ok := c.prChangesWorkflowPath(ctx, owner, name, number, pr.GetChangedFiles())
+		if !ok {
+			return false
+		}
+		push.WorkflowPath = wf
+	}
+	if e, ok := itemblocker.Shared().Get(repo, number); ok && e.Blocks() && e.Blocker.Kind.IsCapability() {
+		push.Capability = e.Blocker.Kind.Short()
+	}
+	return adoptedBranchOwned(rec, head, push)
+}
+
+// prChangesWorkflowPath reports whether the PR's diff changes a file under
+// .github/workflows/, and whether the whole file list was read (changed is
+// GitHub's changed_files count; a shorter list is not the whole diff).
+func (c *Client) prChangesWorkflowPath(ctx context.Context, owner, name string, number, changed int) (workflow, ok bool) {
+	if c == nil || c.client == nil {
+		return false, false
+	}
+	seen := 0
+	opts := &gh.ListOptions{PerPage: listPerPage}
+	for {
+		page, resp, err := c.client.PullRequests.ListFiles(WithRESTCaller(ctx, "hive:pr_decision_adopted"), owner, name, number, opts)
+		if err != nil {
+			return false, false
+		}
+		for _, f := range page {
+			seen++
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(f.GetFilename())), ".github/workflows/") {
+				return true, true
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return false, seen >= changed
+}
+
+// adoptedBranchOwned is the rule the PR-decision relay routes by: whether
+// the hive adopted a PR in place and still owns and can push its branch at
+// head, so a direction on that head is its own fixer's. push carries the
+// PR's shape (fork, maintainer edits, whether a fork's diff changes
+// .github/workflows/)
+// and any capability blocker; the record's half is filled here. It holds
+// only for an in-place adoption (never a supersession, whose copy PR takes
+// the fixes) at a head the adoption settled on or the hive recorded
+// pushing, with no escalation on that head a decision would not release
+// (prstage.AdoptionEscalationOutlastsDecision) and no push refusal
+// (prstage.AdoptedPushFacts.Refusal, the same rule the dashboard's
+// delegate reads). A head the contributor pushed since the last sweep is
+// not owned. The yielded-head mark is not consulted: a yield clears the
+// adoption itself, and the hive may adopt the same head again.
+func adoptedBranchOwned(rec stagelabels.Record, head string, push prstage.AdoptedPushFacts) bool {
+	head = strings.TrimSpace(head)
+	if head == "" || !rec.AdoptedInPlace() || rec.AdoptedBy > 0 || rec.Superseded() {
+		return false
+	}
+	if head != rec.AdoptedHead && !rec.HivePushedHead(head) {
+		return false
+	}
+	if rec.AdoptionEscalated(head) && prstage.AdoptionEscalationOutlastsDecision(rec.AdoptEscalatedReason) {
+		return false
+	}
+	push.FromRecord(rec, head)
+	return push.Refusal() == ""
+}
+
+// PullRequestDirectionReachesHiveFixer reports whether a direction recorded
+// on repo#number now would go to the hive's own fixer: the answer
+// RecordOperatorPullRequestDecision routes by for a contributor's PR the
+// hive adopted in place (hiveOwnsAdoptedBranch). The delegate reads it
+// before posting, so its comment does not promise the fixer where the
+// relay will route the direction elsewhere or refuse it. A read error is
+// false.
+func (c *Client) PullRequestDirectionReachesHiveFixer(ctx context.Context, repo string, number int) bool {
+	if c == nil || c.client == nil || number <= 0 {
+		return false
+	}
+	owner, name := c.splitRepo(repo)
+	if validateRepoRef(owner, name) != nil {
+		return false
+	}
+	t, err := c.openPullRequestDecisionTarget(ctx, owner, name, number)
+	return err == nil && t.adoptedInPlace
 }
 
 func (c *Client) operatorPRTarget(repo string, number int, actor, what string) (owner, name string, err error) {
@@ -497,7 +623,7 @@ func (c *Client) reportOperatorPullRequestApproval(ctx context.Context, owner, n
 		event.SentinelAcknowledged = c.RecordReviewEvidenceSentinelAck(full, number, head, actor, now())
 	}
 	if event.Recorded {
-		event.Stage = c.applyPRDecisionStage(ctx, owner, name, number, head, actor, prDecisionApprove, selfAuthored)
+		event.Stage = c.applyPRDecisionStage(ctx, owner, name, number, head, actor, prDecisionApprove, selfAuthored, false)
 		c.logPRDecision(full, number, head, actor, prDecisionApprove, event.Stage, false)
 	}
 	prowRejected, err := c.prowRejectedHiveCommands(ctx, owner, name, number)
@@ -579,7 +705,10 @@ func (c *Client) warnOperatorApproval(what, repo string, number int, head string
 // direction is carried to that contributor's hive
 // instead: it stands as a changes-requested review on the head, the PR
 // goes to 072 returned-to-contributor and the contributor nudge delivers
-// the text (hivecommons/hive#15159). A PR a person opened has no hive to
+// the text (hivecommons/hive#15159), unless the hive adopted that PR in
+// place and still owns its branch (hiveOwnsAdoptedBranch): then the hive's
+// own fixer takes the text, the PR stays at 074 adopted-by-hive and the
+// contributor is not addressed. A PR a person opened has no hive to
 // carry it: ErrPullRequestNotHiveAuthored, leave a review instead. The
 // caller is responsible for having verified actor's write access.
 func (c *Client) RecordOperatorPullRequestDecision(ctx context.Context, repo string, number int, actor, decision string, store review.HumanChangeRequestStore) (PullRequestDecisionEvent, error) {
@@ -628,16 +757,20 @@ func (c *Client) RecordOperatorPullRequestDecision(ctx context.Context, repo str
 		return PullRequestDecisionEvent{}, fmt.Errorf("recording dashboard decision on %s/%s#%d: %w", owner, name, number, err)
 	}
 	event := PullRequestDecisionEvent{Repo: owner + "/" + name, Number: number, HeadSHA: head, Actor: actor, Decision: decision, Mode: string(mode), ToContributor: target.author}
-	if selfAuthored {
+	if selfAuthored || target.adoptedInPlace {
 		event.ToContributor = ""
 	}
+	event.AdoptedInPlace = target.adoptedInPlace
 	// The decision answers the park: the labels that asked for it come off
 	// in the same write, or the next label-derived pass re-parks the row
 	// the person just un-parked.
 	event.ParkLabelsLifted = len(c.liftPRDecisionParkLabels(ctx, event.Repo, number, head, labels))
-	stage := c.applyPRDecisionStage(ctx, owner, name, number, head, actor, mode, selfAuthored)
+	stage := c.applyPRDecisionStage(ctx, owner, name, number, head, actor, mode, selfAuthored, target.adoptedInPlace)
 	reply := renderPRDecisionReply(actor, head, mode)
-	if !selfAuthored {
+	switch {
+	case target.adoptedInPlace:
+		reply = renderPRDecisionAdoptedReply(actor, head, decision)
+	case !selfAuthored:
 		reply = renderPRDecisionToContributorHiveReply(actor, head, target.author, decision)
 	}
 	body := reply + "\n\n_Recorded from the hive dashboard._"

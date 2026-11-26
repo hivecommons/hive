@@ -478,3 +478,27 @@ func TestRepoItemApproveResultSurfacesProwRejection(t *testing.T) {
 		t.Fatalf("next = %q, want the OWNERS note", out.Next)
 	}
 }
+
+// projectbluefin/utah-packages#1309: a direction the relay routed to the
+// hive's own fixer (a contributor's PR the hive adopted in place and owns)
+// says the hive's fixer pushes the change, not "the author agent". Without
+// that confirmation the wording is today's: the author agent for the hive's
+// own PR, the contributor's hive when the relay returned it to them.
+func TestRepoItemDecisionDirectionNextNamesWhoPushes(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		facts repoItemApproveFacts
+		want  string
+	}{
+		{"hive's fixer", repoItemApproveFacts{HiveFixer: true}, "The hive adopted this PR, so its own fixer pushes the change; the row moves when the new head lands."},
+		{"author agent", repoItemApproveFacts{}, "The author agent pushes a new head; the row moves when it lands."},
+		{"contributor's hive", repoItemApproveFacts{ToContributor: "clankerdev"}, "Returned to @clankerdev's hive with your direction; the row moves when it pushes a new head."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := repoItemDecisionResultWith("o/r", 1309, "pr", repoItemDecisionDirection, "make CI green", "", "", tc.facts)
+			if got.Next != tc.want {
+				t.Fatalf("Next = %q, want %q", got.Next, tc.want)
+			}
+		})
+	}
+}

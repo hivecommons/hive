@@ -30,6 +30,13 @@ type unparkWireIssue struct {
 	PullRequest *unparkWirePRLink `json:"pull_request,omitempty"`
 	HeadSHA     string            `json:"-"`
 	State       string            `json:"state,omitempty"`
+	// HeadRepo and MaintainerCanModify, when HeadRepo is set, feed the
+	// pulls/{n} head repo and "allow edits by maintainers" (an adopted
+	// fork's pushability).
+	HeadRepo            string `json:"-"`
+	MaintainerCanModify bool   `json:"-"`
+	// Files feeds pulls/{n}/files (an adopted fork's workflow-path check).
+	Files []string `json:"-"`
 	// UpdatedAt is the item's updated_at in the list; empty omits it, which
 	// keeps the sweep's per-item read cache out of the test.
 	UpdatedAt string `json:"updated_at,omitempty"`
@@ -192,6 +199,15 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 			}
 			_ = json.NewEncoder(w).Encode(issue)
 
+		case strings.HasPrefix(path, "pulls/") && strings.HasSuffix(path, "/files") && r.Method == http.MethodGet:
+			var n int
+			fmt.Sscanf(path, "pulls/%d/files", &n)
+			files := []map[string]any{}
+			for _, f := range byNum[n].Files {
+				files = append(files, map[string]any{"filename": f})
+			}
+			_ = json.NewEncoder(w).Encode(files)
+
 		case strings.HasPrefix(path, "pulls/") && r.Method == http.MethodGet:
 			var n int
 			fmt.Sscanf(path, "pulls/%d", &n)
@@ -204,11 +220,16 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 			if state == "" {
 				state = "open"
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			pull := map[string]any{
 				"number": n, "state": state, "title": issue.Title, "body": issue.Body,
 				"user": issue.User, "labels": issue.Labels,
 				"head": map[string]any{"sha": issue.HeadSHA},
-			})
+			}
+			if issue.HeadRepo != "" {
+				pull["head"] = map[string]any{"sha": issue.HeadSHA, "repo": map[string]any{"full_name": issue.HeadRepo}}
+				pull["maintainer_can_modify"] = issue.MaintainerCanModify
+			}
+			_ = json.NewEncoder(w).Encode(pull)
 
 		case strings.HasSuffix(path, "/comments") && r.Method == http.MethodGet:
 			var n int

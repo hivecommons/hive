@@ -77,6 +77,11 @@ func ExpectedEffectWith(d Decision, opts CommentOptions) Effect {
 			IfNot: "A maintainer can merge this PR by hand, re-run the decision, close it as superseded, or send it back for a new commit."}
 	case d.Verdict == VerdictCloseDuplicate, d.Verdict == VerdictCloseSuperseded:
 		return Effect{Waits: true, What: "this item is closed", IfNot: "Close it by hand on GitHub."}
+	case opts.hiveFixerWords(d):
+		// The hive adopted the PR in place: its own fixer pushes the
+		// branch, not the contributor's agent (projectbluefin/utah-packages#1309).
+		return Effect{Waits: true, What: "the hive's fixer pushes a new commit with that change to this PR's branch; nothing is asked of the PR's author",
+			IfNot: "Re-run the decision, give different direction, or close it."}
 	case d.Verdict == VerdictDirection:
 		return Effect{Waits: true, What: "the author agent pushes a new commit with that change",
 			IfNot: "Re-run the decision, give different direction, or close it."}
@@ -119,6 +124,13 @@ type CommentOptions struct {
 	Kind Kind
 	// EffectTimeout is printed as "expected within …"; zero omits it.
 	EffectTimeout time.Duration
+	// HiveFixerConfirmed marks a RuleAdoptedFixer direction on a PR the
+	// PR-decision relay confirmed it carries to the hive's own fixer (the
+	// hive adopted the PR in place and owns its branch). Only then do
+	// "Hive decided" and "What happens next" name the hive's fixer; every
+	// other caller (the stalled follow-up, the dedup answer) keeps the
+	// plain direction wording, which promises no fixer.
+	HiveFixerConfirmed bool
 	// HumanMerges marks a PR on a repo the hive does not merge: its
 	// auto-merge switch is off (config.RepoAutoMergeEnabled — the repo's
 	// setting, or a hive below ACMM L6). A decision that clears the PR then
@@ -127,10 +139,21 @@ type CommentOptions struct {
 	HumanMerges bool
 }
 
+// hiveFixerWords reports whether d's lines name the hive's fixer: a
+// RuleAdoptedFixer direction on a PR the relay confirmed is the fixer's
+// (projectbluefin/utah-packages#1309).
+func (opts CommentOptions) hiveFixerWords(d Decision) bool {
+	return opts.HiveFixerConfirmed && opts.Kind != KindIssue && d.Verdict == VerdictDirection && d.Rule == RuleAdoptedFixer
+}
+
 // PlainWords renders the four operator lines for d.
 func PlainWords(d Decision, opts CommentOptions) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "**Hive decided:** %s.", CapitalizeFirst(ActionPlainOn(d, opts.Kind)))
+	action := ActionPlainOn(d, opts.Kind)
+	if opts.hiveFixerWords(d) {
+		action = "told the hive's fixer what to change"
+	}
+	fmt.Fprintf(&b, "**Hive decided:** %s.", CapitalizeFirst(action))
 	if why := RulePlain(d.Rule); why != "" {
 		fmt.Fprintf(&b, "\n**Why:** %s.", CapitalizeFirst(why))
 	}

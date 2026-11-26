@@ -238,6 +238,10 @@ type PullRequestDecisionEvent struct {
 	// was carried to their hive rather than the hive's own author agent (a
 	// clanker-authored PR, hivecommons/hive#15159); "" for the hive's PRs.
 	ToContributor string
+	// AdoptedInPlace says the PR is a contributor's the hive adopted in
+	// place and still owns (hiveOwnsAdoptedBranch): the hive's own fixer
+	// takes the direction, not the contributor's hive.
+	AdoptedInPlace bool
 	// ParkLabelsLifted counts the park labels (needs-human, the 085 stage
 	// label) the decision took off in the same write.
 	ParkLabelsLifted int

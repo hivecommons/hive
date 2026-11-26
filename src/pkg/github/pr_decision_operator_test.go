@@ -11,8 +11,10 @@ import (
 	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/authorkind"
+	itemblocker "github.com/hivecommons/hive/pkg/blocker"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/sentinel"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 func TestRecordOperatorPullRequestApprovalPostsCommandsOnly(t *testing.T) {
@@ -506,5 +508,216 @@ func TestRecordOperatorPullRequestDecisionCarriesDirectionToContributorHive(t *t
 	}
 	if own := strings.Join(rec.posted[liveDecisionPR], "\n"); !strings.Contains(own, "Decision recorded by @clubanderson") || strings.Contains(own, "'s hive") {
 		t.Fatalf("own-PR reply = %q", own)
+	}
+}
+
+// adoptedClankerPR is projectbluefin/utah-packages#1309's shape: a
+// contributor clanker's PR from a fork that allows maintainer edits, parked
+// at 085 after the hive adopted it in place.
+func adoptedClankerPR(number int, comments ...unparkWireComment) unparkWireIssue {
+	pr := parkedPR(number, "clankerdev", []string{PRNeedsDecisionStageLabel, "author/clanker", "contributor-lane:adopted-by-hive"}, comments...)
+	pr.HeadRepo, pr.MaintainerCanModify = "clankerdev/repo", true
+	return pr
+}
+
+// adoptInPlace records a live in-place adoption of org/repo#number at head
+// in the shared stage store, forgotten when the test ends.
+func adoptInPlace(t *testing.T, number int, head string) (*stagelabels.Store, string) {
+	t.Helper()
+	store := stagelabels.Shared()
+	key := stagelabels.Key("org/repo", number)
+	store.Forget(key)
+	t.Cleanup(func() { store.Forget(key) })
+	store.Observe(key, stagelabels.NeedsDecision, "reviewer-verdict:requires_human")
+	store.MarkAdoptedInPlace(key, head, "contributor-offline", time.Date(2026, 11, 26, 1, 0, 0, 0, time.UTC))
+	return store, key
+}
+
+// TestRecordOperatorPullRequestDecisionAdoptedInPlaceStaysWithHiveFixer:
+// projectbluefin/utah-packages#1309. The delegate decided "hive's fixer:
+// make CI green" on a clanker's PR the hive had adopted in place, and the
+// relay then told the contributor their hive was nudged and wrote 072
+// returned-to-contributor. While the hive owns and can push the branch, the
+// direction is its own fixer's: no contributor named, the stage fact keeps
+// the adoption (074), and the reply says the hive's fixer pushes. A fork
+// the hive declined to re-home, one that no longer allows maintainer edits,
+// a head the contributor pushed since, a supersession and an un-adopted
+// clanker PR all keep the contributor's routing; the hive's own PR is
+// unchanged.
+func TestRecordOperatorPullRequestDecisionAdoptedInPlaceStaysWithHiveFixer(t *testing.T) {
+	const number = 1309
+	direct := func(t *testing.T, pr unparkWireIssue) (PullRequestDecisionEvent, string, *review.HumanChangeRequests, *Client) {
+		t.Helper()
+		c, rec := newUnparkPRClient(t, []unparkWireIssue{pr}, nil)
+		store := review.NewHumanChangeRequests("")
+		event, err := c.RecordOperatorPullRequestDecision(context.Background(), "org/repo", pr.Number, "maintainer", "make CI green", store)
+		if err != nil {
+			t.Fatalf("direction: %v", err)
+		}
+		return event, strings.Join(rec.posted[pr.Number], "\n"), store, c
+	}
+
+	t.Run("adopted in place", func(t *testing.T) {
+		adoptInPlace(t, number, liveDecisionHead)
+		event, posted, store, c := direct(t, adoptedClankerPR(number))
+		if event.ToContributor != "" || !event.AdoptedInPlace || event.Mode != string(prDecisionChangesRequested) {
+			t.Fatalf("event = %+v, want no contributor and the adoption flagged", event)
+		}
+		if got, ok := store.For("org/repo", number, liveDecisionHead); !ok || got.Body != "make CI green" || got.Source != review.HumanChangeRequestSourceDecision {
+			t.Fatalf("stored request = %+v ok=%v", got, ok)
+		}
+		facts := prDecisionFacts(t, c)
+		if len(facts) != 1 || !facts[0].Instruction || !facts[0].AdoptedInPlace || facts[0].SelfAuthored {
+			t.Fatalf("stage facts = %+v, want one in-place-adopted PRDecided", facts)
+		}
+		for _, want := range []string{"Direction recorded by @maintainer", "hive's own fixer", "adopted this PR in place", "> make CI green", prDecisionHeadMarker + liveDecisionHead} {
+			if !strings.Contains(posted, want) {
+				t.Fatalf("reply missing %q:\n%s", want, posted)
+			}
+		}
+		for _, bad := range []string{"@clankerdev", "nudged", "returned to the contributor", "—", "–"} {
+			if strings.Contains(posted, bad) {
+				t.Fatalf("reply carries %q:\n%s", bad, posted)
+			}
+		}
+	})
+
+	t.Run("hive pushed a later head", func(t *testing.T) {
+		store, key := adoptInPlace(t, number, "0ld0ld0ffee0ffee0ffee0ffee0ffee0ffee0ff")
+		store.MarkHivePushedHead(key, liveDecisionHead)
+		event, _, _, c := direct(t, adoptedClankerPR(number))
+		if facts := prDecisionFacts(t, c); event.ToContributor != "" || len(facts) != 1 || !facts[0].AdoptedInPlace {
+			t.Fatalf("a head the hive pushed is still its own: event = %+v facts = %+v", event, facts)
+		}
+	})
+
+	contributorRouted := func(t *testing.T, pr unparkWireIssue) {
+		t.Helper()
+		event, posted, _, c := direct(t, pr)
+		if event.ToContributor != "clankerdev" || event.AdoptedInPlace {
+			t.Fatalf("event = %+v, want the contributor named", event)
+		}
+		if facts := prDecisionFacts(t, c); len(facts) != 1 || facts[0].AdoptedInPlace || facts[0].SelfAuthored || !facts[0].Instruction {
+			t.Fatalf("stage facts = %+v, want the contributor's hand-off", facts)
+		}
+		if !strings.Contains(posted, "@clankerdev's hive") || strings.Contains(posted, "hive's own fixer") {
+			t.Fatalf("reply must address the contributor's hive, got %q", posted)
+		}
+	}
+	t.Run("fork rehome refused", func(t *testing.T) {
+		store, key := adoptInPlace(t, number, liveDecisionHead)
+		store.MarkForkRehomeRefused(key, liveDecisionHead)
+		contributorRouted(t, adoptedClankerPR(number))
+	})
+	t.Run("fork without maintainer edits", func(t *testing.T) {
+		adoptInPlace(t, number, liveDecisionHead)
+		pr := adoptedClankerPR(number)
+		pr.MaintainerCanModify = false
+		contributorRouted(t, pr)
+	})
+	t.Run("fork whose diff changes a workflow, nothing recorded yet", func(t *testing.T) {
+		// projectbluefin/testsuite#1037's shape: maintainer edits allowed,
+		// but the App cannot push a fork that changes .github/workflows/.
+		adoptInPlace(t, number, liveDecisionHead)
+		pr := adoptedClankerPR(number)
+		pr.Files = []string{"src/main.go", ".github/workflows/e2e.yml"}
+		contributorRouted(t, pr)
+	})
+	t.Run("fork whose diff changes no workflow", func(t *testing.T) {
+		adoptInPlace(t, number, liveDecisionHead)
+		pr := adoptedClankerPR(number)
+		pr.Files = []string{"src/main.go", "docs/readme.md"}
+		event, _, _, _ := direct(t, pr)
+		if !event.AdoptedInPlace {
+			t.Fatalf("event = %+v, want the hive's fixer for a fork that changes no workflow", event)
+		}
+	})
+	t.Run("contributor pushed since", func(t *testing.T) {
+		adoptInPlace(t, number, "0ld0ld0ffee0ffee0ffee0ffee0ffee0ffee0ff")
+		contributorRouted(t, adoptedClankerPR(number))
+	})
+	t.Run("supersession", func(t *testing.T) {
+		store, key := adoptInPlace(t, number, liveDecisionHead)
+		store.MarkAdopted(key, liveDecisionHead, 1400, time.Date(2026, 11, 26, 1, 0, 0, 0, time.UTC))
+		contributorRouted(t, adoptedClankerPR(number))
+	})
+	t.Run("not adopted", func(t *testing.T) {
+		stagelabels.Shared().Forget(stagelabels.Key("org/repo", number))
+		contributorRouted(t, adoptedClankerPR(number))
+	})
+	t.Run("re-adopted at the head it yielded", func(t *testing.T) {
+		// The 072 flow can adopt the same head again after a yield: the
+		// sweep pins 074 on it, so the direction must follow.
+		store, key := adoptInPlace(t, number, liveDecisionHead)
+		store.MarkYielded(key, liveDecisionHead)
+		store.MarkAdoptedInPlace(key, liveDecisionHead, "contributor-offline", time.Date(2026, 11, 26, 1, 5, 0, 0, time.UTC))
+		event, _, _, c := direct(t, adoptedClankerPR(number))
+		if facts := prDecisionFacts(t, c); event.ToContributor != "" || !event.AdoptedInPlace || len(facts) != 1 || !facts[0].AdoptedInPlace {
+			t.Fatalf("re-adopted head: event = %+v facts = %+v", event, facts)
+		}
+	})
+	t.Run("idle adoption stall stays the fixer's", func(t *testing.T) {
+		store, key := adoptInPlace(t, number, liveDecisionHead)
+		store.MarkAdoptionEscalated(key, liveDecisionHead, stagelabels.LaneReasonAdoptionStalledPrefix+"check-failing:build")
+		if event, _, _, _ := direct(t, adoptedClankerPR(number)); !event.AdoptedInPlace {
+			t.Fatalf("a decision releases an idle stall: event = %+v", event)
+		}
+	})
+	for _, reason := range []string{
+		stagelabels.LaneReasonAdoptionFixerReverts,
+		stagelabels.LaneReasonAdoptionChildClosedTwice,
+		stagelabels.LaneReasonAdoptionCopyFailed,
+		stagelabels.LaneReasonAdoptionStalledPrefix + "contributor-lane:workflow-path",
+		stagelabels.LaneReasonAdoptionStalledPrefix + "supersede-failed:contributor-offline",
+		stagelabels.LaneReasonAdoptionStalledPrefix + stagelabels.LaneReasonHiveSignoffAttribution,
+		stagelabels.LaneReasonAdoptionStalledPrefix + stagelabels.LaneReasonRebaseFailedTwice,
+	} {
+		t.Run("escalation a decision keeps: "+reason, func(t *testing.T) {
+			store, key := adoptInPlace(t, number, liveDecisionHead)
+			store.MarkAdoptionEscalated(key, liveDecisionHead, reason)
+			contributorRouted(t, adoptedClankerPR(number))
+		})
+	}
+	t.Run("fixer reported a capability blocker", func(t *testing.T) {
+		adoptInPlace(t, number, liveDecisionHead)
+		l := itemblocker.NewLedger("")
+		prev := itemblocker.SetShared(l)
+		t.Cleanup(func() { itemblocker.SetShared(prev) })
+		l.Record("org/repo", number, itemblocker.Blocker{Kind: itemblocker.CapabilityWorkflowsPermission}, "push of e2e.yml rejected")
+		contributorRouted(t, adoptedClankerPR(number))
+	})
+	t.Run("hive-authored unchanged", func(t *testing.T) {
+		adoptInPlace(t, liveDecisionPR, liveDecisionHead)
+		event, posted, _, c := direct(t, hiveParkedPR())
+		if event.ToContributor != "" || !strings.Contains(posted, "Decision recorded by @maintainer") || strings.Contains(posted, "adopted this PR") {
+			t.Fatalf("own PR: event = %+v reply = %q", event, posted)
+		}
+		if facts := prDecisionFacts(t, c); len(facts) != 1 || !facts[0].SelfAuthored || facts[0].AdoptedInPlace {
+			t.Fatalf("own PR stage facts = %+v", facts)
+		}
+	})
+}
+
+// The delegate asks the relay before it posts: the read answers exactly
+// what RecordOperatorPullRequestDecision would route by.
+func TestPullRequestDirectionReachesHiveFixer(t *testing.T) {
+	const number = 1309
+	person := parkedPR(77, "someone", []string{PRNeedsDecisionStageLabel, "author/human"})
+	person.HeadRepo, person.MaintainerCanModify = "org/repo", true
+	c, _ := newUnparkPRClient(t, []unparkWireIssue{adoptedClankerPR(number), person}, nil)
+	adoptInPlace(t, number, liveDecisionHead)
+	if !c.PullRequestDirectionReachesHiveFixer(context.Background(), "org/repo", number) {
+		t.Fatal("owned adopted clanker PR: want the hive's fixer")
+	}
+	adoptInPlace(t, 77, liveDecisionHead)
+	if c.PullRequestDirectionReachesHiveFixer(context.Background(), "org/repo", 77) {
+		t.Fatal("a person's PR adopted in place: the relay refuses it, so no fixer")
+	}
+	stagelabels.Shared().Forget(stagelabels.Key("org/repo", number))
+	if c.PullRequestDirectionReachesHiveFixer(context.Background(), "org/repo", number) {
+		t.Fatal("no adoption record: no fixer")
+	}
+	if c.PullRequestDirectionReachesHiveFixer(context.Background(), "org/repo", 4040) {
+		t.Fatal("missing PR: no fixer")
 	}
 }

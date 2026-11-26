@@ -897,7 +897,7 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 	if in.Kind == delegatedecision.KindPR && in.AdoptedByHive {
 		push.WorkflowPath = in.WorkflowPath
 		recordedAdoptedPush(s.stageStoreOrShared(), repoFull, number, in.HeadSHA, &push)
-		in.AdoptedPushRefused = push.refusal()
+		in.AdoptedPushRefused = push.Refusal()
 	}
 	return in, nil
 }
@@ -1176,6 +1176,12 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 	hiveID := s.delegateHiveID()
 	marker := delegatedecision.Marker(hiveID)
 	commentOpts := s.delegatedCommentOptions(in)
+	if in.Kind == delegatedecision.KindPR && d.Verdict == delegatedecision.VerdictDirection && d.Rule == delegatedecision.RuleAdoptedFixer {
+		// The relay routes by its own ownership check, stricter than
+		// in.AdoptedByHive: the comment promises the hive's fixer only when
+		// the relay will carry the direction to it.
+		commentOpts.HiveFixerConfirmed = client.PullRequestDirectionReachesHiveFixer(ctx, repoFull, number)
+	}
 	comment := delegatedecision.CommentBodyWith(d, hiveID, user, commentOpts)
 	if d.Verdict == delegatedecision.VerdictRefused {
 		return append(notes, "refused: "+d.Rationale), nil
@@ -1249,10 +1255,20 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 					s.noteDelegatedUnpark(repoFull, number)
 				}
 			} else if d.Verdict == delegatedecision.VerdictDirection && (in.HiveAuthored || in.AdoptedByHive) {
-				if _, err := client.RecordOperatorPullRequestDecision(ctx, repoFull, number, user, d.Text, repoItemDecisionChangeRequests()); err != nil && !errors.Is(err, ghpkg.ErrPullRequestNotHiveAuthored) {
+				// The relay reads the adoption from the stage store itself: it
+				// routes to the hive's fixer only while the hive owns and can
+				// push the branch, else to the contributor's hive.
+				if event, err := client.RecordOperatorPullRequestDecision(ctx, repoFull, number, user, d.Text, repoItemDecisionChangeRequests()); err != nil && !errors.Is(err, ghpkg.ErrPullRequestNotHiveAuthored) {
 					return notes, fmt.Errorf("recording PR direction: %w", err)
 				} else if err == nil {
-					notes = append(notes, "direction recorded for the author agent")
+					switch {
+					case event.ToContributor != "":
+						notes = append(notes, "direction recorded for the contributor's hive")
+					case event.AdoptedInPlace:
+						notes = append(notes, "direction recorded for the hive's fixer")
+					default:
+						notes = append(notes, "direction recorded for the author agent")
+					}
 				}
 			}
 		case delegatedecision.ActionApproveReview:

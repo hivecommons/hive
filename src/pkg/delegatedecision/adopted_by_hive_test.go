@@ -3,6 +3,7 @@ package delegatedecision
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // hivecommons/hive#15722: PR #15722 (a clanker's, adopted by the hive in
@@ -75,5 +76,69 @@ func TestDecidePRAdoptedByHiveRoutesToFixer(t *testing.T) {
 	d = Decide(theirs)
 	if d.Rule != RuleReturnToContributor || strings.Contains(d.Text, "CI") || !strings.Contains(d.Text, "rebase") {
 		t.Fatalf("contributor: rule %s text %q", d.Rule, d.Text)
+	}
+}
+
+// projectbluefin/utah-packages#1309: the delegate decided "hive's fixer: ..."
+// on a PR the hive adopted in place, yet its comment read "Told the author
+// agent what to change" and "The author agent pushes a new commit". Once the
+// relay confirmed the direction is the hive's fixer's (HiveFixerConfirmed)
+// both lines name the fixer. Without that confirmation, the stalled
+// follow-up and the dedup answer included, the wording is the plain
+// direction's and promises no fixer; any other direction is unchanged.
+func TestPlainWordsAdoptedFixerNamesTheHivesFixer(t *testing.T) {
+	adopted := Decision{Verdict: VerdictDirection, Rule: RuleAdoptedFixer, Text: "hive's fixer: make CI green on #1309; then it merges", Rationale: "r"}
+	words := PlainWords(adopted, CommentOptions{Kind: KindPR, HiveFixerConfirmed: true})
+	for _, want := range []string{
+		"**Hive decided:** Told the hive's fixer what to change.",
+		"**What happens next:** The hive's fixer pushes a new commit with that change to this PR's branch; nothing is asked of the PR's author.",
+	} {
+		if !strings.Contains(words, want) {
+			t.Errorf("confirmed adopted-fixer words lack %q:\n%s", want, words)
+		}
+	}
+	if strings.Contains(words, "author agent") {
+		t.Errorf("confirmed adopted-fixer words name the author agent:\n%s", words)
+	}
+	if eff := ExpectedEffectWith(adopted, CommentOptions{Kind: KindPR, HiveFixerConfirmed: true}); !eff.Waits || eff.IfNot == "" {
+		t.Errorf("adopted-fixer effect must still be awaited: %+v", eff)
+	}
+
+	// Not confirmed (the relay routed to the contributor, or refused):
+	// no promise of the hive's fixer, in the comment or anywhere else.
+	unconfirmed := PlainWords(adopted, CommentOptions{Kind: KindPR})
+	for _, want := range []string{
+		"**Hive decided:** Told the author agent what to change.",
+		"**What happens next:** The author agent pushes a new commit with that change.",
+	} {
+		if !strings.Contains(unconfirmed, want) {
+			t.Errorf("unconfirmed adopted-fixer words lack %q:\n%s", want, unconfirmed)
+		}
+	}
+	if strings.Contains(unconfirmed, "fixer pushes") || strings.Contains(unconfirmed, "hive's fixer what to change") || strings.Contains(unconfirmed, "nothing is asked") {
+		t.Errorf("unconfirmed adopted-fixer words promise the hive's fixer:\n%s", unconfirmed)
+	}
+	if got := ExpectedEffect(adopted, KindPR).What; got != "the author agent pushes a new commit with that change" {
+		t.Errorf("ExpectedEffect without confirmation = %q", got)
+	}
+	stalled := StalledCommentBody(adopted, KindPR, time.Date(2026, 11, 26, 1, 12, 55, 0, time.UTC), "", nil, "hive-a")
+	if !strings.Contains(stalled, "Hive decided told the author agent what to change at") || strings.Contains(stalled, "fixer pushes") || strings.Contains(stalled, "nothing is asked") {
+		t.Errorf("stalled follow-up promises the hive's fixer:\n%s", stalled)
+	}
+
+	plain := Decision{Verdict: VerdictDirection, Rule: "fix-then-merge", Text: "rebase #8; then it merges", Rationale: "r"}
+	for _, opts := range []CommentOptions{{Kind: KindPR}, {Kind: KindPR, HiveFixerConfirmed: true}} {
+		words = PlainWords(plain, opts)
+		for _, want := range []string{
+			"**Hive decided:** Told the author agent what to change.",
+			"**What happens next:** The author agent pushes a new commit with that change.",
+		} {
+			if !strings.Contains(words, want) {
+				t.Errorf("plain direction words lack %q:\n%s", want, words)
+			}
+		}
+		if strings.Contains(words, "hive's fixer") {
+			t.Errorf("a plain direction names the hive's fixer:\n%s", words)
+		}
 	}
 }
