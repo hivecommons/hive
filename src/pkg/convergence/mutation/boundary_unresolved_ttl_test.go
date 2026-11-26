@@ -12,8 +12,8 @@ import (
 // hivecommons/hive#17693: an issue create left Unknown by an ambiguous
 // response, whose caller only ever calls Execute (no Reconcile/Expire of its
 // own), was refused and reported stuck every cycle for 15h. Past the kind's
-// unresolved TTL the refused call must expire the op to NotApplied, clear the
-// stuck alert and — without running the effect in that call — let the
+// unresolved TTL the refused call must expire the op to NotApplied, report it
+// resolved and - without running the effect in that call - let the
 // caller's next attempt create.
 func TestBoundaryExpiresRefusedUnknownIssueCreatePastTTL(t *testing.T) {
 	b := testBoundary(t, "enforce")
@@ -37,14 +37,15 @@ func TestBoundaryExpiresRefusedUnknownIssueCreatePastTTL(t *testing.T) {
 		t.Fatalf("first execute err = %v", err)
 	}
 
-	// Inside the TTL: refused and reported stuck, still Unknown.
+	// Inside the TTL: refused, still Unknown, and not reported stuck: the
+	// boundary expires it on its own once the TTL passes (#20100).
 	now = now.Add(DefaultStuckAfter)
 	_, err := b.Execute(context.Background(), claim, mustNotRun)
 	if !errors.Is(err, effects.ErrNeedsReconciliation) || errors.Is(err, effects.ErrUnresolvedExpired) {
 		t.Fatalf("inside TTL err = %v, want a plain refusal", err)
 	}
-	if op, _ := b.Executor.Journal.Get(id); op.Status != StatusUnknown || stuck != 1 {
-		t.Fatalf("inside TTL: status=%s stuck=%d, want Unknown and 1", op.Status, stuck)
+	if op, _ := b.Executor.Journal.Get(id); op.Status != StatusUnknown || stuck != 0 {
+		t.Fatalf("inside TTL: status=%s stuck=%d, want Unknown and 0", op.Status, stuck)
 	}
 
 	// Past the TTL: still refused this call, but expired and resolved.
@@ -56,8 +57,8 @@ func TestBoundaryExpiresRefusedUnknownIssueCreatePastTTL(t *testing.T) {
 	if op, _ := b.Executor.Journal.Get(id); op.Status != StatusNotApplied {
 		t.Fatalf("past TTL status = %s, want NotApplied", op.Status)
 	}
-	if stuck != 1 {
-		t.Fatalf("stuck = %d after expiry, want no further report", stuck)
+	if stuck != 0 {
+		t.Fatalf("stuck = %d after expiry, want no report", stuck)
 	}
 	if len(resolved) != 1 || resolved[0] != id {
 		t.Fatalf("resolved = %v, want [%s]", resolved, id)
@@ -72,7 +73,7 @@ func TestBoundaryExpiresRefusedUnknownIssueCreatePastTTL(t *testing.T) {
 	if err != nil || !ran || res.Provenance == "" {
 		t.Fatalf("retry = (%+v, %v, ran=%v), want the create to run", res, err, ran)
 	}
-	if stuck != 1 {
+	if stuck != 0 {
 		t.Fatalf("stuck = %d after successful retry", stuck)
 	}
 }
