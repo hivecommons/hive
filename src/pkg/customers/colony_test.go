@@ -722,8 +722,8 @@ func TestColonyForgottenHiveUserCanReturn(t *testing.T) {
 	}
 }
 
-// A hive upgraded from the json default boots straight into colony mode
-// (#19972), with no shadow release in between: the first boot imports both
+// A hive upgraded from json that sets colony explicitly boots straight into
+// colony mode (#19972), with no shadow boot in between: the first boot imports both
 // files, keeps the .pre-colony copies as they stood, reads the same records
 // (hive-only data included), and a second boot imports nothing again.
 func TestColonyUpgradeFromJSONDefaultStraightToColony(t *testing.T) {

@@ -1,7 +1,8 @@
 # Colony as the customer-data backend
 
-Status: **Accepted; phases 1 to 4 built, P5 cleanup and the default flip to
-`colony` built; `colony-only` not built yet.** P3, the spoke on the colony store, is described in
+Status: **Accepted; phases 1 to 4 built, P5 cleanup built; the hub default is
+`colony`, the spoke default is `shadow` until parity is confirmed on the
+project's own hive; `colony-only` not built yet.** P3, the spoke on the colony store, is described in
 [Spoke implementation (P3)](#spoke-implementation-p3), and what P5 has done so
 far in [P5 status](#p5-status). Tracking issue
 [#19851](https://github.com/hivecommons/hive/issues/19851). Phase 1 (hub
@@ -245,7 +246,8 @@ The same steps apply on the spoke (P3, `customers.store` /
      reads.
    - A parity check after each sweep logs counts only, never values (people,
      facts per rank, mismatches).
-3. **`colony` (the default since #19972).** Reads come from colony, and the
+3. **`colony` (the hub default since #19972; the spoke default once parity is
+   confirmed on the project's own hive).** Reads come from colony, and the
    JSON is still written, so switching back to `json` loses nothing. A
    deployment upgraded from the `json` default runs step 2's import on its
    first boot, with the same backups (`*.pre-colony` on the spoke,
@@ -353,12 +355,14 @@ v0.3.0 (`src/pkg/customers/colony.go`). What it does beyond the steps above:
 - **The default flip**
   ([#19972](https://github.com/hivecommons/hive/issues/19972)). The store
   mode defaults to `colony` on the hub (`HIVE_HUB_CUSTOMER_STORE` unset) and
-  on the spoke (`customers.store` and `HIVE_CUSTOMERS_STORE` unset). Every
-  explicit value, `json` included, keeps working, and a set but unknown value
-  still means `json`. It rests on the hub's `shadow` boot sync
+  to `shadow` on the spoke (`customers.store` and `HIVE_CUSTOMERS_STORE`
+  unset): JSON stays authoritative and colony is written alongside it. The
+  spoke default moves to `colony` once parity is confirmed on the project's
+  own hive. Every explicit value, `json` included, keeps working, and a set
+  but unknown value still means `json`. The hub default rests on its `shadow` boot sync
   (`json_users=280`, `synced=280`, `failed=0`, `skipped=0`,
   `orphans_held=0`, `colony_people=280`, `parity=true`); the project's own
-  hive's `shadow` parity is collected by the operator. Upgrading from the
+  hive's `shadow` parity is collected by the operator, and gates the spoke move to `colony`. Upgrading from the
   `json` default goes through the boot import and backups above; the tests
   that hold it are `TestColonyUpgradeFromJSONDefaultStraightToColony` and
   `TestColonyDamagedFileFailsClosed` (spoke store),
@@ -457,7 +461,7 @@ that #19303 promised.
 | Spoke gitdm | **on when enrichment is enabled** | Sends nothing about anyone; enrichment itself remains off by default. |
 | Spoke devstats, crowd.dev | off | Same reasoning as the hub. crowd.dev is inert until colony#5. |
 | Spoke auto-accept | `off` | Accepting is a decision an owner makes until the owner chooses a policy. |
-| Store mode | `colony` | Since #19972, after the hub's clean `shadow` release. `json` stays valid and is the rollback; a set but unknown value means `json`. `colony-only` is not built yet. |
+| Store mode | hub `colony`, spoke `shadow` | Since #19972: the hub after its clean `shadow` boot sync, the spoke stays on `shadow` until parity is confirmed on the project's own hive, then moves to `colony`. `json` stays valid and is the rollback; a set but unknown value means `json`. `colony-only` is not built yet. |
 
 ## Privacy
 
@@ -568,7 +572,7 @@ works. This section is about what to do with it once it does.
 | `HIVE_HUB_AFFILIATION_COLONY_TIMEOUT` | hub | `2m` (at most `10m`) | P1 |
 | `HIVE_HUB_CUSTOMERS_TRUSTED_HIVES` | hub | empty | P1 PR (#19854) |
 | `HIVE_HUB_CUSTOMER_STORE` | hub | `colony` (was `json` until #19972) | P4, default P5 |
-| `customers.store` / `HIVE_CUSTOMERS_STORE` | spoke | `colony` (was `json` until #19972) | P3, default P5 |
+| `customers.store` / `HIVE_CUSTOMERS_STORE` | spoke | `shadow` (was `json` until #19972; moves to `colony` once parity is confirmed on the project's own hive) | P3, default P5 |
 | `customers.enrichment.auto_accept` / `HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT` | spoke | `off` | P3 |
 | Existing `customers.enrichment.*` | spoke | unchanged until P5 | P5 |
 
@@ -580,7 +584,7 @@ works. This section is about what to do with it once it does.
 | P2 colony store package | [hivecommons/colony#6](https://github.com/hivecommons/colony/issues/6) | nothing | built (colony v0.3.0) |
 | P3 spoke Customers on the colony store, migration, auto-accept | [#19855](https://github.com/hivecommons/hive/issues/19855) | P2 released | built |
 | P4 hub CRM on the colony store, migration, labelled affiliation for trusted hives | [#19856](https://github.com/hivecommons/hive/issues/19856) | P2 released | built |
-| P5 default-on and cleanup | [#19857](https://github.com/hivecommons/hive/issues/19857), default flip [#19972](https://github.com/hivecommons/hive/issues/19972) | P3, P4 | cleanup and default flip built; `colony-only` and `colony export` open in #19972 |
+| P5 default-on and cleanup | [#19857](https://github.com/hivecommons/hive/issues/19857), default flip [#19972](https://github.com/hivecommons/hive/issues/19972) | P3, P4 | cleanup built; hub default `colony`, spoke default `shadow` until parity is confirmed on the project's own hive; `colony-only` and `colony export` open in #19972 |
 | P6 crowd.dev | [#19858](https://github.com/hivecommons/hive/issues/19858) | colony#5 | hive |
 
 The repo-shaping follow-ups above are filed only after this design is

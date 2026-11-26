@@ -40,11 +40,11 @@ import (
 //     transaction, records the source hash and keeps .pre-colony copies.
 //     Every change is written to the JSON and then to colony.db. Reads come
 //     from the JSON. A parity check logs counts only.
-//   - colony (the default): as shadow, but colony.db is authoritative for
-//     what it holds: on boot its records replace the JSON copy, and
-//     enrichment is read from it. The JSON is still written, so switching
-//     back to json loses nothing. A hive upgrading from the json default runs
-//     the shadow import on that boot, with the .pre-colony backups.
+//   - colony: as shadow, but colony.db is authoritative for what it holds:
+//     on boot its records replace the JSON copy, and enrichment is read from
+//     it. The JSON is still written, so switching back to json loses
+//     nothing. It becomes the spoke default once parity is confirmed on the
+//     project's own hive (#19972); the hub default is already colony.
 //
 // The JSON is always written first. A colony write that fails leaves the
 // sync marker stale, so the next boot imports again from the JSON, which is

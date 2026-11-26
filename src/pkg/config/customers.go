@@ -54,8 +54,9 @@ type CustomersConfig struct {
 	// (#19302). Default OFF: it is a periodic network lookup about people.
 	ProfileFill CustomersProfileFillConfig `yaml:"profile_fill,omitempty" json:"profile_fill,omitempty"`
 	// Store picks where person records and enrichment results live on the
-	// hivecommons/colony store (#19855, #19972): "colony" (the default),
-	// "shadow" or "json". See CustomersStoreMode and
+	// hivecommons/colony store (#19855, #19972): "shadow" (the default until
+	// parity is confirmed on the project's own hive, then "colony"), "colony"
+	// or "json". See CustomersStoreMode and
 	// src/docs/design/colony-customer-data-backend.md.
 	Store string `yaml:"store,omitempty" json:"store,omitempty"`
 }
@@ -74,15 +75,16 @@ const (
 	CustomersStoreShadow = "shadow"
 	// CustomersStoreColony reads person records and enrichment from
 	// colony.db and still writes the JSON, so switching back to json loses
-	// nothing. The default since #19972: a hive upgrading from the json
-	// default imports on its next boot (with .pre-colony backups) and falls
-	// back to json when the import fails.
+	// nothing. It becomes the default once parity is confirmed on the
+	// project's own hive.
 	CustomersStoreColony = "colony"
 )
 
 // DefaultCustomersStore is the store mode when neither HIVE_CUSTOMERS_STORE
-// nor customers.store names one.
-const DefaultCustomersStore = CustomersStoreColony
+// nor customers.store names one. It is shadow (JSON stays authoritative and
+// colony is written alongside) until parity is confirmed on the project's own
+// hive; the hub default is colony.
+const DefaultCustomersStore = CustomersStoreShadow
 
 // ParseCustomersStoreMode reads a store mode. An empty or unknown value is
 // not ok; the caller then falls back.
@@ -96,7 +98,7 @@ func ParseCustomersStoreMode(raw string) (string, bool) {
 
 // CustomersStoreMode is the customers store mode: HIVE_CUSTOMERS_STORE when
 // it names a known mode, then customers.store, then DefaultCustomersStore
-// (colony). A value that is set but unknown (a typo, or a mode from a newer
+// (shadow). A value that is set but unknown (a typo, or a mode from a newer
 // release) fails closed to json rather than to the default, so a mistyped
 // rollback can never move a hive onto colony.
 func (c *Config) CustomersStoreMode() string {

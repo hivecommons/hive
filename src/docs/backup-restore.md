@@ -337,7 +337,7 @@ On Docker and LXC the entrypoint treats `/data` as the boot-time source of truth
 - `gh-app-key*.pem`, the GitHub App private keys;
 - `beads/`, the agent work ledger;
 - `customers/`, the Customers people store: `people.json`, `enrichment.json`
-  and, with `customers.store` `colony` (the default) or `shadow`, `colony.db` with its
+  and, with `customers.store` `shadow` (the default) or `colony`, `colony.db` with its
   `colony-sync.json` marker and the `*.pre-colony` copies taken before the
   first import. The downloadable spoke backup does not carry them; a backup of
   the whole volume does. A person forgotten after a volume backup is still in
