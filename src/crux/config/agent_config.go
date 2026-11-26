@@ -213,13 +213,14 @@ type AgentConfig struct {
 	// contributor relay) already honor the same choice via
 	// AGENT_REASONING_EFFORT; this field is the in-config analogue for
 	// manager-launched agents.
-	ReasoningEffort string `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
-	BeadsDir        string `yaml:"beads_dir" json:"beads_dir,omitempty"`
-	Enabled         bool   `yaml:"enabled" json:"enabled,omitempty"`
-	Replicas        int    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
-	ReplicaOf       string `yaml:"-" json:"replicaOf,omitempty"`
-	ReplicaIndex    int    `yaml:"-" json:"replicaIndex,omitempty"`
-	ReplicaCount    int    `yaml:"-" json:"replicaCount,omitempty"`
+	ReasoningEffort  string `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
+	MaxContextTokens int    `yaml:"max_context_tokens,omitempty" json:"max_context_tokens,omitempty"` // inference-routed model's window for the Claude CLI; 0 = discover (see crux/agent/inference_context_window.go)
+	BeadsDir         string `yaml:"beads_dir" json:"beads_dir,omitempty"`
+	Enabled          bool   `yaml:"enabled" json:"enabled,omitempty"`
+	Replicas         int    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
+	ReplicaOf        string `yaml:"-" json:"replicaOf,omitempty"`
+	ReplicaIndex     int    `yaml:"-" json:"replicaIndex,omitempty"`
+	ReplicaCount     int    `yaml:"-" json:"replicaCount,omitempty"`
 	// ReviewHeads derives one reviewer agent per entry and replica from this
 	// (base) agent, each with its own backend/model: the swarm's model
 	// "heads" (hivecommons/hive#13542). With split perspectives every

@@ -206,26 +206,52 @@ func TestRunEndToEnd(t *testing.T) {
 }
 
 func TestRunNotReadyAndErrors(t *testing.T) {
-	// A hub that never answers keeps /readyz at 503.
-	cfg := Config{Listen: freeAddr(t), HealthListen: freeAddr(t), HubURL: "http://127.0.0.1:1", HubTokenFile: "/nonexistent",
-		MaxConnections: 1, Limits: DefaultLimits()}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- Run(ctx, cfg, slog.New(slog.DiscardHandler)) }()
-	code := func() (int, bool) {
-		resp, err := http.Get("http://" + cfg.HealthListen + "/readyz")
-		if err != nil {
-			return 0, false
+	// A hub that never answers keeps /readyz at 503. freeAddr releases its port
+	// before Run binds it, so another process can take it in between; when Run
+	// exits early on a bind error, retry on fresh addresses instead of flaking.
+	var got int
+	for attempt := 0; ; attempt++ {
+		cfg := Config{Listen: freeAddr(t), HealthListen: freeAddr(t), HubURL: "http://127.0.0.1:1", HubTokenFile: "/nonexistent",
+			MaxConnections: 1, Limits: DefaultLimits()}
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() { done <- Run(ctx, cfg, slog.New(slog.DiscardHandler)) }()
+		deadline := time.Now().Add(10 * time.Second)
+		early := false
+		for !early {
+			resp, err := http.Get("http://" + cfg.HealthListen + "/readyz")
+			if err == nil {
+				_ = resp.Body.Close()
+				got = resp.StatusCode
+				break
+			}
+			select {
+			case runErr := <-done:
+				if runErr == nil || attempt >= 4 {
+					cancel()
+					t.Fatalf("run exited before health endpoint came up: %v", runErr)
+				}
+				early = true
+			case <-time.After(10 * time.Millisecond):
+			}
+			if time.Now().After(deadline) {
+				cancel()
+				t.Fatal("health endpoint never came up")
+			}
 		}
-		_ = resp.Body.Close()
-		return resp.StatusCode, true
-	}
-	if got := testutil.EventuallyValue(t, 10*time.Second, code, "health endpoint up"); got != http.StatusServiceUnavailable {
-		t.Fatalf("readyz %d", got)
-	}
-	cancel()
-	if err := <-done; err != nil {
-		t.Fatal(err)
+		if early {
+			cancel()
+			continue
+		}
+		if got != http.StatusServiceUnavailable {
+			cancel()
+			t.Fatalf("readyz %d", got)
+		}
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatal(err)
+		}
+		break
 	}
 
 	if err := Run(context.Background(), Config{Listen: "256.0.0.1:x", HealthListen: freeAddr(t), MaxConnections: 1}, slog.New(slog.DiscardHandler)); err == nil {
