@@ -85,7 +85,7 @@ func assertHeadlessTurnsPersists(t *testing.T, merged *Config) {
 	if !ok {
 		t.Fatalf("agent ci-maintainer missing after load: %v", merged.Agents)
 	}
-	if !a.HeadlessTurns {
+	if !a.HeadlessTurnsEnabled() {
 		t.Fatalf("headless_turns: true dropped by a dashboard overlay that never set it (#19902)")
 	}
 	if !a.Paused {
@@ -134,7 +134,28 @@ func TestLoadWithDashboardOverlay_HeadlessTurnsOffByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadWithDashboardOverlay: %v", err)
 	}
-	if merged.Agents["ci-maintainer"].HeadlessTurns {
+	if merged.Agents["ci-maintainer"].HeadlessTurnsEnabled() {
 		t.Errorf("headless_turns turned on with no layer setting it")
+	}
+}
+
+// The dashboard's off writes an explicit `headless_turns: false` to the
+// overlay, but it cannot rewrite the read-only ConfigMap seed. That false
+// must beat the seed's opt-in rather than read as unset.
+func TestLoadWithDashboardOverlay_OverlayHeadlessTurnsFalseBeatsSeed(t *testing.T) {
+	seedPath := writeHeadlessTurnsFixture(t, true, false, false)
+	data, err := os.ReadFile(DashboardOverlayFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(DashboardOverlayFile, append(data, []byte("    headless_turns: false\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := LoadWithDashboardOverlay(seedPath)
+	if err != nil {
+		t.Fatalf("LoadWithDashboardOverlay: %v", err)
+	}
+	if merged.Agents["ci-maintainer"].HeadlessTurnsEnabled() {
+		t.Errorf("overlay headless_turns: false lost to the seed's true")
 	}
 }

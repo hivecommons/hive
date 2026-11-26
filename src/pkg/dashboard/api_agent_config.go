@@ -187,7 +187,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"jevMode":          agentCfg.JevMode,
 			"jevReady":         s.deps.Config.JevReady(),
 			"explainMode":      agentCfg.ExplainMode,
-			"headlessTurns":    agentCfg.HeadlessTurns,
+			"headlessTurns":    agentCfg.HeadlessTurnsEnabled(),
 			"sandboxSubstrate": agentSandboxSubstrateOrEmpty(agentCfg),
 			"sandboxEnabled":   agentCfg.Sandbox != nil && agentCfg.Sandbox.Enabled != nil && *agentCfg.Sandbox.Enabled,
 			"sandboxEffective": agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
@@ -783,8 +783,10 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	headlessTurnsChanged := false
 	if v, ok := body["headlessTurns"]; ok {
 		if b, ok := v.(bool); ok {
-			headlessTurnsChanged = agentCfg.HeadlessTurns != b
-			agentCfg.HeadlessTurns = b
+			headlessTurnsChanged = agentCfg.HeadlessTurnsEnabled() != b
+			// Stored as an explicit pointer, false included, so an "off"
+			// saved to the overlay beats a seed opt-in on the next load.
+			agentCfg.HeadlessTurns = &b
 		}
 	}
 	if v, ok := body["explainMode"]; ok {
@@ -1020,7 +1022,7 @@ var agentGeneralAuditFields = []struct {
 	{"cavemanMode", func(a config.AgentConfig) string { return a.CavemanMode }},
 	{"jevMode", func(a config.AgentConfig) string { return a.JevMode }},
 	{"explainMode", func(a config.AgentConfig) string { return a.ExplainMode }},
-	{"headlessTurns", func(a config.AgentConfig) string { return strconv.FormatBool(a.HeadlessTurns) }},
+	{"headlessTurns", func(a config.AgentConfig) string { return strconv.FormatBool(a.HeadlessTurnsEnabled()) }},
 }
 
 // generalAuditDetail records every listed field the write changed with its

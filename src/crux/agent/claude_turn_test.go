@@ -340,7 +340,7 @@ func TestParseClaudeTurnArgs(t *testing.T) {
 func TestAgentUsesClaudeHeadless(t *testing.T) {
 	m := &Manager{}
 	mk := func(headless bool, launchCmd string) *AgentProcess {
-		return &AgentProcess{Config: config.AgentConfig{HeadlessTurns: headless, LaunchCmd: launchCmd}}
+		return &AgentProcess{Config: config.AgentConfig{HeadlessTurns: &headless, LaunchCmd: launchCmd}}
 	}
 	cases := []struct {
 		name    string
@@ -456,7 +456,7 @@ func TestDeliverKickLocked_ClaudeHeadlessRoutesToTurnRunner(t *testing.T) {
 	for _, clear := range []bool{false, true} {
 		m, agent, _ := kickLogTestManager(t, "")
 		agent.Config.Backend = "litellm"
-		agent.Config.HeadlessTurns = true
+		agent.Config.HeadlessTurns = boolPtrHT(true)
 		agent.Config.ClearOnKick = clear
 		agent.claudeHeadlessTurnCmd = "'claude' '--model' 'qwen'"
 		t.Cleanup(func() { _ = os.Remove(filepath.Join(agentStateDir, ".hive-claude-prompt-"+agent.Name+".txt")) })
@@ -500,7 +500,7 @@ func TestDeliverKickLocked_ClaudeHeadlessRoutesToTurnRunner(t *testing.T) {
 func TestDeliverKickLocked_ClaudeHeadlessFollowsPaneAfterLiveToggleOff(t *testing.T) {
 	m, agent, _ := kickLogTestManager(t, "")
 	agent.Config.Backend = "litellm"
-	agent.Config.HeadlessTurns = false
+	agent.Config.HeadlessTurns = boolPtrHT(false)
 	agent.Config.ClearOnKick = true
 	agent.claudeHeadlessTurnCmd = "'claude' '--model' 'qwen'"
 	t.Cleanup(func() { _ = os.Remove(filepath.Join(agentStateDir, ".hive-claude-prompt-"+agent.Name+".txt")) })
@@ -539,7 +539,7 @@ func TestDeliverKickLocked_ClaudeHeadlessFollowsPaneAfterLiveToggleOff(t *testin
 func TestDeliverKickLocked_ClaudeHeadlessRefusesUnbuiltCommand(t *testing.T) {
 	m, agent, _ := kickLogTestManager(t, "")
 	agent.Config.Backend = "litellm"
-	agent.Config.HeadlessTurns = true
+	agent.Config.HeadlessTurns = boolPtrHT(true)
 	termSeams(m).captureVisiblePane = func(*AgentProcess) string { return claudeHeadlessReadyMarker + "> " }
 	var typed []string
 	termSeams(m).sendKeys = func(_ *AgentProcess, keys ...string) { typed = append(typed, keys...) }
@@ -580,3 +580,5 @@ func TestPaneShapeMatchesHeadless(t *testing.T) {
 		}
 	}
 }
+
+func boolPtrHT(b bool) *bool { return &b }

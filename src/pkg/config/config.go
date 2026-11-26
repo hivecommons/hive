@@ -6553,8 +6553,9 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// and the per-agent file together. A hand edit to the config file's
 	// agents.<name> block was dropped on every boot because the overlay's
 	// older entry for the agent, silent on the key, replaced it whole. It is a
-	// plain bool, so only an opt-in is carried; turning it off goes through
-	// the dashboard, which writes false to every layer.
+	// pointer for the same reason as converse: an overlay `false` (the
+	// dashboard's off) must beat a seed `true` the dashboard cannot rewrite,
+	// so only a nil overlay value takes the lower layer's.
 	for name, oa := range overlay.Agents {
 		base, ok := cfg.Agents[name]
 		if !ok {
@@ -6565,8 +6566,8 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 			oa.Converse = base.Converse
 			changed = true
 		}
-		if !oa.HeadlessTurns && base.HeadlessTurns {
-			oa.HeadlessTurns = true
+		if oa.HeadlessTurns == nil && base.HeadlessTurns != nil {
+			oa.HeadlessTurns = base.HeadlessTurns
 			changed = true
 		}
 		if changed {
@@ -6588,9 +6589,10 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// per-agent file never switched an agent on a Kubernetes spoke. Not the
 	// whole entry: an explicit overlay `converse: false` deliberately beats
 	// the file (#7503), and pack-reconciled fields live in the overlay.
-	// `paused: false` and `headless_turns: false` in a file are
-	// indistinguishable from unset, so only a pause or an opt-in is carried;
-	// undo either through the dashboard, which writes both layers.
+	// `paused: false` in a file is indistinguishable from unset, so only a
+	// pause is carried; unpause through the dashboard, which writes both
+	// layers. `headless_turns` is a pointer, so the file's explicit value,
+	// true or false, is carried and an absent key leaves the overlay's.
 	if cfg.Data.AgentsDir != "" {
 		if files, ferr := LoadAgentOverrides(cfg.Data.AgentsDir); ferr == nil {
 			for name, fa := range files {
@@ -6605,8 +6607,8 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 				if fa.Sandbox != nil {
 					a.Sandbox = fa.Sandbox
 				}
-				if fa.HeadlessTurns {
-					a.HeadlessTurns = true
+				if fa.HeadlessTurns != nil {
+					a.HeadlessTurns = fa.HeadlessTurns
 				}
 				cfg.Agents[name] = a
 			}

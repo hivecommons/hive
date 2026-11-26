@@ -49,7 +49,7 @@ func TestAgentConfigGeneral_HeadlessTurns(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadAgentOverrides: %v", err)
 		}
-		return files["scanner"].HeadlessTurns
+		return files["scanner"].HeadlessTurnsEnabled()
 	}
 
 	if g := readGeneral(); g["headlessTurns"] != false {
@@ -58,7 +58,7 @@ func TestAgentConfigGeneral_HeadlessTurns(t *testing.T) {
 	base := restarts()
 
 	put(true)
-	if !s.deps.Config.Agents["scanner"].HeadlessTurns {
+	if !s.deps.Config.Agents["scanner"].HeadlessTurnsEnabled() {
 		t.Fatal("headlessTurns: true not applied to the config")
 	}
 	if !fileHeadless() {
@@ -77,7 +77,7 @@ func TestAgentConfigGeneral_HeadlessTurns(t *testing.T) {
 	}
 
 	put(false)
-	if s.deps.Config.Agents["scanner"].HeadlessTurns {
+	if s.deps.Config.Agents["scanner"].HeadlessTurnsEnabled() {
 		t.Error("headlessTurns: false not applied to the config")
 	}
 	if fileHeadless() {
