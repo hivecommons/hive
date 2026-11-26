@@ -123,7 +123,7 @@ var cardBandDefs = map[string]cardBandDef{
 		rule: "Add the admission label to let agents work on it, or close it."},
 	cardBandTurnOther: {label: "Other reason", group: cardGroupYourTurn, hideZero: true,
 		rule:   "Needs a person for a known reason that has no band of its own; the export's card_reason names it.",
-		prRule: "Needs a person for a known reason that has no band of its own, such as a red base branch, nobody to fix it, a dependency-bot PR still red after the hand-off time, or a bot's red or conflicting PR labelled needs-human; the export's card_reason names it."},
+		prRule: "Needs a person for a known reason that has no band of its own, such as a red base branch, nobody to fix it, a dependency-bot PR still red after the hand-off time, a bot's red or conflicting PR labelled needs-human, or a required check GitHub still shows unfinished though its job finished; the export's card_reason names it."},
 	cardBandCheckFinished: {label: "Check if finished", group: cardGroupYourTurn, hideZero: true,
 		rule: "Several PRs merged or were closed on it and it is still open. Close it if it is done, or add " + churnTriagedMarker + " so agents keep going."},
 	cardBandToClose: {label: "Yours to close", group: cardGroupYourTurn,
@@ -492,7 +492,10 @@ func cardOwnershipBand(o *Ownership, kind string) (OverviewCardBand, bool) {
 // approve releases it; on a PR the hive opened, a /hive decision reply or a
 // changes-requested review answers it too). Another bot's PR the review
 // returned for changes (bot_pr_review_changes) is Other: there is nothing to
-// review, only to close it or wait for the bot. A verb the card does not
+// review, only to close it or wait for the bot. A PR whose required check
+// GitHub still reports unfinished after its job finished
+// (ci_reporting_stalled) is Other too: a person re-runs the job, there is
+// nothing to review. A verb the card does not
 // know is Other, never dropped: every your-turn decision is in the Your turn
 // group.
 func cardTurnBand(verb, reasonCode, kind string) string {
@@ -510,7 +513,7 @@ func cardTurnBand(verb, reasonCode, kind string) string {
 				return cardBandHandMerge
 			case OwnershipReasonReviewRequiresHuman:
 				return cardBandDecide
-			case OwnershipReasonBotPRReviewChanges:
+			case OwnershipReasonBotPRReviewChanges, OwnershipReasonCIReportingStalled:
 				return cardBandTurnOther
 			}
 		}

@@ -1347,7 +1347,16 @@ requires fresh consistency observations again.
 
 **Automatic recovery is not implemented or enabled.** A confirmed stall exposes
 owner action: inspect the exact workflow's current attempt and logs before one
-affected-workflow rerun. Do not rerun all CI or rebase to hide reporting failure.
+affected-workflow rerun. When the contributor lane refuses the merge relay on
+a confirmed stall, the merge classifier attaches the stalled observation the CI
+evaluation recorded for that exact head to the verdict (`ci_reporting_stall`),
+and the dashboard puts the ask in the your-turn inbox (`ci_reporting_stalled`),
+on the Overview card's Other reason row and in the Activity monitor's Waiting
+on you list, naming the check, run and attempt and the `gh run rerun` command
+for the job. It reads only that observation, never reason text. Hive-authored,
+trusted-bot and trusted-author PRs do not take this path. That is display only:
+the stage, the gates and the verdict's bucket, state and reason are unchanged,
+and the hive still re-runs nothing. Do not rerun all CI or rebase to hide reporting failure.
 The existing filesystem mutation ledger only serializes users sharing that
 filesystem; shared-CI post-effect comment markers are not atomic cross-hive
 claims. Future recovery must prove a pre-mutation episode claim and enforced

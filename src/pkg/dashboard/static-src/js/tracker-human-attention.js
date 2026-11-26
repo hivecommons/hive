@@ -78,7 +78,10 @@
     function stageTrackerHumanAttentionLine(item, subRows) {
       const a = stageTrackerHumanAttentionOf(item) || stageTrackerNeedsHumanAsk(item);
       if (!a) return '';
-      const reason = stageTrackerNeedsHumanReasonText(item, String(a.reason || '').trim() || 'Human decision required; reason unavailable', !!(a.synthetic && a.question));
+      // A CI reporting stall's reason ends with the rerun command, so the
+      // row keeps all of it, not only its first sentence.
+      const ciStall = !!(item.needs_human_why && item.needs_human_why.source === 'ci-reporting-stalled');
+      const reason = stageTrackerNeedsHumanReasonText(item, String(a.reason || '').trim() || 'Human decision required; reason unavailable', !!(a.synthetic && a.question) || ciStall);
       const parts = ['Needs human: ' + reason];
       if (a.owner) parts.push('next move: @' + a.owner);
       if (a.asked_by) parts.push((a.synthetic ? 'asked by ' : 'requested by ') + a.asked_by);

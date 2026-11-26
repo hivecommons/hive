@@ -474,6 +474,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		finish(&it, pr.Labels, labelStage(pr.Labels), rec, ok, pr.Draft)
 		stageTrackerSetFinisher(&it, decisions, pr.Draft)
+		stageTrackerSetCIReportingStalled(&it, decisions)
 		if it.Stage == stagelabels.ReturnedToContributor.Number() && it.AuthorKind == authorKindClanker {
 			var requesters []string
 			if pr.Protection != nil {
