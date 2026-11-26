@@ -172,6 +172,31 @@ func TestForgejoCreateIssueLabelFailureKeepsRef(t *testing.T) {
 	}
 }
 
+func TestForgejoCreateIssueReportsDroppedLabel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/labels"):
+			_, _ = w.Write([]byte(`[{"name":"bug"}]`))
+		default:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"number": 42, "html_url": "u"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	f := newTestForgejo(t, srv)
+
+	ref, err := f.(IssueCreator).CreateIssue(context.Background(), "widgets", "T", "", []string{"bug", "ready-for-review"})
+	if !errors.Is(err, ErrLabelsNotApplied) {
+		t.Fatalf("err = %v, want ErrLabelsNotApplied", err)
+	}
+	if !strings.Contains(err.Error(), "ready-for-review") || strings.Contains(err.Error(), "bug,") {
+		t.Errorf("err = %v, want it to name only the dropped label", err)
+	}
+	if ref.Number != 42 {
+		t.Errorf("ref = %+v", ref)
+	}
+}
+
 func TestForgejoCreateIssueRefusals(t *testing.T) {
 	fake := newFakeForgejoWrites()
 	fake.createFail = true

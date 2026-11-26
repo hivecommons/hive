@@ -556,6 +556,19 @@ func TestGiteaAddLabels(t *testing.T) {
 	}
 }
 
+func TestGiteaAddLabelsReportsDroppedNames(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"name":"kind/bug"}]`))
+	}))
+	defer srv.Close()
+	f := newTestGitea(t, srv.URL, "hivecommons")
+
+	err := f.AddLabels(context.Background(), "hive", 7, []string{"kind/bug", "no-such-label"})
+	if err == nil || !strings.Contains(err.Error(), "no-such-label") {
+		t.Fatalf("err = %v, want it to name no-such-label", err)
+	}
+}
+
 func TestGiteaRemoveLabel(t *testing.T) {
 	var gotMethod, gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
