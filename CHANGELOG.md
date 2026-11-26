@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.373.3)
+
+### Fixed
+
+- Codex rotation no longer treats an environment API key as a Codex login unless the auth mode is explicitly API-key; legacy auth-file keys are preserved and ambiguous or ChatGPT logins are held ([#19943](https://github.com/hivecommons/hive/issues/19943)).
+- The `ioscan classifier failed open` warning for a genuine classifier backend error now tells operators to check the endpoint is reachable and healthy instead of to configure an endpoint that is already set ([#19988](https://github.com/hivecommons/hive/issues/19988)).
+
 ## 2026-11-26 (v5.373.2)
 
 ### Fixed
