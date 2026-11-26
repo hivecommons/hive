@@ -1025,35 +1025,44 @@ func codexAuthFilePath() string {
 	return filepath.Join(home, ".codex", "auth.json")
 }
 
-// codexAPIKeyLogin reports whether this host's Codex login is an API key and
-// not a ChatGPT subscription (hivecommons/hive#19932). Any ChatGPT token in
-// auth.json means a subscription login, whose failed probe stays a real
-// failure and holds. An auth.json that cannot be parsed also returns false,
-// so an unreadable login never admits. Otherwise an API key in the
-// environment, or in auth.json (written by `codex login --with-api-key`),
-// marks API-key mode.
+// codexFileAuthModeAPIKey is the auth_mode Codex itself writes to auth.json
+// for an API-key login. Codex serializes its AuthMode enum with serde
+// rename_all = "lowercase", so ApiKey becomes "apikey" (and Chatgpt
+// "chatgpt"); see AuthDotJson in openai/codex codex-rs/login/src/auth/storage.rs.
+// It differs from hive's own published AuthModeAPIKey ("api_key").
+const codexFileAuthModeAPIKey = "apikey"
+
+// codexAPIKeyLogin requires evidence of an API-key login. An environment key
+// alone cannot rule out a ChatGPT login stored in the system keyring.
 func codexAPIKeyLogin() bool {
-	fileKey := false
-	if path := codexAuthFilePath(); path != "" {
-		if b, err := os.ReadFile(path); err == nil {
-			var data map[string]any
-			if json.Unmarshal(b, &data) != nil {
+	path := codexAuthFilePath()
+	if path == "" {
+		return false
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var data map[string]any
+	if json.Unmarshal(b, &data) != nil || data == nil {
+		return false
+	}
+	mode, _ := data["auth_mode"].(string)
+	if mode != "" && mode != codexFileAuthModeAPIKey {
+		return false
+	}
+	if tokens, ok := data["tokens"].(map[string]any); ok {
+		for _, key := range []string{"access_token", "refresh_token", "id_token"} {
+			if v, ok := tokens[key].(string); ok && strings.TrimSpace(v) != "" {
 				return false
-			}
-			if tokens, ok := data["tokens"].(map[string]any); ok {
-				for _, key := range []string{"access_token", "refresh_token", "id_token"} {
-					if v, ok := tokens[key].(string); ok && strings.TrimSpace(v) != "" {
-						return false
-					}
-				}
-			}
-			if v, ok := data["OPENAI_API_KEY"].(string); ok && strings.TrimSpace(v) != "" {
-				fileKey = true
 			}
 		}
 	}
-	if fileKey {
+	if v, ok := data["OPENAI_API_KEY"].(string); ok && strings.TrimSpace(v) != "" {
 		return true
+	}
+	if mode != codexFileAuthModeAPIKey {
+		return false
 	}
 	for _, name := range codexAPIKeyEnvVars {
 		if strings.TrimSpace(os.Getenv(name)) != "" {
