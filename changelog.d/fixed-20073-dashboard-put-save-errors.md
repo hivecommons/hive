@@ -1,0 +1,1 @@
+- Dashboard: saving the Labels or Features settings now reports an error (409 when the config changed on disk, 500 otherwise) when the config save fails, instead of answering 200 for a change that only lived in memory and was lost on restart; a failed Labels save also puts the previous settings back ([#20073](https://github.com/hivecommons/hive/issues/20073)).
