@@ -3,6 +3,7 @@ package customers
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -734,5 +735,133 @@ func TestColonyOnlyClearsAfterAFailedVerify(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, FileName)); err != nil {
 		t.Errorf("people.json touched: %v", err)
+	}
+}
+
+func TestColonyIdentityProvenanceMapping(t *testing.T) {
+	for in, want := range map[float64]float64{-1: 0, 2: 1, 0.42: 0.42} {
+		got := colonyIdentity(Identity{Kind: KindGitHub, Value: "x", Confidence: in, Manual: true, By: "owner"}, cstore.KindGitHub, "x", cstore.LocalityShareable)
+		if got.Score != want || !got.Manual || got.By != "owner" {
+			t.Errorf("confidence %v mapped to %+v", in, got)
+		}
+	}
+	nan := colonyIdentity(Identity{Confidence: math.NaN()}, cstore.KindGitHub, "x", cstore.LocalityShareable)
+	if nan.Score != 0 {
+		t.Errorf("NaN confidence mapped to score %v", nan.Score)
+	}
+	p := Person{ID: "p_b", Identities: []Identity{
+		{Kind: KindGitHub, Value: "dup"}, {Kind: KindGitHub, Value: "DUP"}, {Kind: KindGitHub, Value: "gone"},
+		{Kind: KindDiscord, Value: "chat"}, {Kind: KindGitHub, Value: "mine"},
+	}}
+	owners := map[string]string{
+		colonyClassKey(cstore.KindGitHub, "dup"):  "p_a",
+		colonyClassKey(cstore.KindGitHub, "gone"): "p_a",
+		colonyClassKey(cstore.KindGitHub, "mine"): "p_b",
+	}
+	forgotten := func(_ IdentityKind, v string) bool { return v == "gone" }
+	held := colonyHeldIdentities(p, owners, forgotten)
+	if len(held) != 1 || held[0].Value != "dup" || held[0].Locality != cstore.LocalityLocalOnly {
+		t.Errorf("held = %+v, want only the other owner's login, once, local_only", held)
+	}
+	if colonyHeldIdentities(p, nil, forgotten) != nil {
+		t.Error("held identities without an owner map")
+	}
+}
+
+func TestColonyOnlyClosedStoreHelpers(t *testing.T) {
+	var none *Colony
+	if none.colonyOnly() {
+		t.Error("a nil Colony is colony-only")
+	}
+	c := &Colony{mode: StoreColonyOnly, dirty: map[string]bool{}}
+	if err := c.dropColonyOnlyDocLocked(); err != nil {
+		t.Error(err)
+	}
+	if err := c.clearColonyOnlyLocked(); err != nil {
+		t.Error(err)
+	}
+	if err := c.saveColonyOnlyEnrichment(map[string]PersonEnrichment{"p_x": {}}, nil); err == nil {
+		t.Error("an enrichment save with no store succeeded")
+	}
+	dir := t.TempDir()
+	if has, err := colonyHasDoc(dir, time.Now); err != nil || has {
+		t.Errorf("no colony.db: %v, %v", has, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ColonyFileName), []byte("not a bolt file"), storeFileMode); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := colonyHasDoc(dir, time.Now); err == nil {
+		t.Error("a damaged colony.db reported no document")
+	}
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(`{"version":1}`), storeFileMode); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := AttachColony(s, StoreColonyOnly, nil); err == nil {
+		_ = c.Close()
+		t.Error("colony-only attached beside a damaged colony.db")
+	}
+	if _, err := os.Stat(filepath.Join(dir, FileName)); err != nil {
+		t.Errorf("people.json moved after a failed attach: %v", err)
+	}
+}
+
+// An enrichment.json that cannot be read stops the boot before anything is
+// migrated: nothing is renamed, and the wiring falls back.
+func TestColonyOnlyUnreadableEnrichmentStaysColony(t *testing.T) {
+	dir := fixtureDir(t)
+	ep := filepath.Join(dir, EnrichmentFileName)
+	if err := os.Remove(ep); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(ep, storeDirMode); err != nil {
+		t.Fatal(err)
+	}
+	clk := newClock()
+	s, err := Open(dir, clk.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := AttachColony(s, StoreColonyOnly, nil); err == nil {
+		_ = c.Close()
+		t.Fatal("colony-only attached with an unreadable enrichment.json")
+	}
+	if _, err := os.Stat(filepath.Join(dir, FileName)); err != nil {
+		t.Errorf("people.json renamed although the migration did not run: %v", err)
+	}
+}
+
+// Enrichment for an id that is not a person stays in the migrated file and
+// does not block the migration.
+func TestColonyOnlyEnrichmentOrphanKeptInMigratedFile(t *testing.T) {
+	dir := fixtureDir(t)
+	ep := filepath.Join(dir, EnrichmentFileName)
+	var f enrichmentFile
+	if err := json.Unmarshal(readFile(t, ep), &f); err != nil {
+		t.Fatal(err)
+	}
+	f.People["p_orphan00000"] = PersonEnrichment{Affiliations: []EnrichedAffiliation{{Org: "Orphan Org", Source: EnrichSourceGitdm}}}
+	data, _ := json.Marshal(f)
+	if err := os.WriteFile(ep, data, storeFileMode); err != nil {
+		t.Fatal(err)
+	}
+	b := bootColony(t, dir, StoreColonyOnly, newClock())
+	if b.colony.Mode() != StoreColonyOnly {
+		t.Fatalf("mode = %s, want colony-only", b.colony.Mode())
+	}
+	if ids := backupIDsIn(t, filepath.Join(dir, EnrichmentFileName+MigratedSuffix)); !slices.Contains(ids, "p_orphan00000") {
+		t.Error("the orphan entry is not kept in the migrated file")
+	}
+	if _, ok := b.enrich.Get("p_orphan00000"); ok {
+		t.Error("an orphan entry was loaded as enrichment")
+	}
+	if err := b.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExportColony(dir, filepath.Join(dir, FileName+MigratedSuffix), true); err == nil {
+		t.Error("export into a path that is a file succeeded")
 	}
 }
