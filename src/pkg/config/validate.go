@@ -393,7 +393,7 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		if !ValidateCadenceScope(agent.CadenceScope) {
 			return fmt.Errorf("agent %s: invalid cadence_scope %q (must be aggregate or per_repo)", name, agent.CadenceScope)
 		}
-		if err := validateAutoCompactWindowTokens(agent.AutoCompactWindowTokens); err != nil {
+		if err := ValidateAutoCompactWindowTokens(agent.AutoCompactWindowTokens); err != nil {
 			return fmt.Errorf("agent %s: %w", label, err)
 		}
 		if agent.ContinuousCooldown < 0 {
@@ -440,7 +440,8 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	return nil
 }
 
-func validateAutoCompactWindowTokens(tokens int) error {
+// ValidateAutoCompactWindowTokens checks the optional Claude compaction window.
+func ValidateAutoCompactWindowTokens(tokens int) error {
 	if tokens != 0 && tokens < 100000 {
 		return fmt.Errorf("auto_compact_window_tokens must be 0 (unset) or at least 100000")
 	}

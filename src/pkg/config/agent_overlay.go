@@ -226,7 +226,7 @@ func (c *Config) validateAgentOverlay(name string, agent AgentConfig) error {
 	if !ValidateExplainMode(agent.ExplainMode) {
 		return fmt.Errorf("invalid explain_mode %q (must be off, brief, or full, or empty to inherit %s)", agent.ExplainMode, ExplainModeEnvVar)
 	}
-	if err := validateAutoCompactWindowTokens(agent.AutoCompactWindowTokens); err != nil {
+	if err := ValidateAutoCompactWindowTokens(agent.AutoCompactWindowTokens); err != nil {
 		return err
 	}
 	if err := ValidateKickTemplateName(agent.KickTemplate); err != nil {
