@@ -47,8 +47,11 @@ func (m *Manager) SetGatewayBackendChecker(fn func(backend string) bool) {
 }
 
 // SetInferenceContextWindowLookup injects the inference proxy's per-agent
-// context-window lookup (see Manager.inferenceContextWindow). Lock-free so it
-// is safe from any lock context.
+// lookup of the context window it knows for an agent's route (0 = unknown) and
+// the route's model, so the launch env can tell the Claude CLI its real window
+// (hivecommons/hive#19913). Stored atomically for the same reason as
+// isGatewayBackend: agentEnvPairs reads it with m.mu held. Never set when the
+// proxy runs in another process; then only max_context_tokens applies.
 func (m *Manager) SetInferenceContextWindowLookup(fn func(agentName string) (window int, model string)) {
 	m.inferenceContextWindow.Store(&fn)
 }

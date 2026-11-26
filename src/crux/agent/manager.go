@@ -736,15 +736,8 @@ type Manager struct {
 	// — the process never reaches MarkReady, /api/health stays "starting", and
 	// the startup probe kills the pod (a cluster-wide crash-loop we hit live).
 	// An atomic read is lock-free and safe from any lock context.
-	isGatewayBackend atomic.Pointer[func(backend string) bool]
-
-	// inferenceContextWindow returns the context window the inference proxy
-	// knows for an agent's route (0 = unknown) and the route's model, so the launch env can tell
-	// the Claude CLI its real window (hivecommons/hive#19913). Atomic for the
-	// same reason as isGatewayBackend: it is read from agentEnvPairs, which
-	// runs with m.mu held. Nil when the proxy runs in another process; then
-	// only the agent's max_context_tokens setting applies.
-	inferenceContextWindow atomic.Pointer[func(agentName string) (window int, model string)]
+	isGatewayBackend       atomic.Pointer[func(backend string) bool]
+	inferenceContextWindow atomic.Pointer[func(agentName string) (window int, model string)] // see SetInferenceContextWindowLookup
 
 	// persistPauseCallback, when set, persists an agent's paused state to
 	// the on-disk config so it survives restarts. Nil in tests / bare setups.
