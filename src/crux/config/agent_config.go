@@ -313,8 +313,14 @@ type AgentConfig struct {
 	// default" (HIVE_EXPLAIN_MODE), while "off" is an explicit per-agent
 	// opt-OUT that survives an operator turning explanation on fleet-wide.
 	// Valid values: "" | off | brief | full — see ExplainMode* constants.
-	ExplainMode   string `yaml:"explain_mode,omitempty" json:"explain_mode,omitempty"`
-	HeadlessTurns bool   `yaml:"headless_turns,omitempty" json:"headless_turns,omitempty"` // one claude -p per kick on translator routes; see agent/claude_headless.go (#19902)
+	ExplainMode string `yaml:"explain_mode,omitempty" json:"explain_mode,omitempty"`
+	// HeadlessTurns runs one `claude -p` per kick on translator routes; see
+	// agent/claude_headless.go (#19902). A pointer, like Converse, so an
+	// explicit `false` written by the dashboard stays distinguishable from
+	// "unset" across the overlay merge and can turn the mode off over a seed
+	// (ConfigMap) opt-in the dashboard cannot rewrite. Read it through
+	// HeadlessTurnsEnabled.
+	HeadlessTurns *bool `yaml:"headless_turns,omitempty" json:"headless_turns,omitempty"`
 	// Sandbox opts this agent into phase-1 sandbox execution when the global
 	// agent_sandbox.enabled gate is also true.
 	Sandbox *AgentSandboxOverride `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
@@ -694,4 +700,10 @@ type ProviderBudgetConfig struct {
 	// of day, not at midnight — #4294), so hive never predicts one; it just
 	// retries cheaply until the provider serves again.
 	ProbeIntervalS int `yaml:"probe_interval_s,omitempty" json:"probe_interval_s,omitempty"`
+}
+
+// HeadlessTurnsEnabled reports whether the agent opted into headless_turns;
+// nil (unset) means off.
+func (a AgentConfig) HeadlessTurnsEnabled() bool {
+	return a.HeadlessTurns != nil && *a.HeadlessTurns
 }

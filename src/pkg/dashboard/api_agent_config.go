@@ -187,6 +187,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"jevMode":          agentCfg.JevMode,
 			"jevReady":         s.deps.Config.JevReady(),
 			"explainMode":      agentCfg.ExplainMode,
+			"headlessTurns":    agentCfg.HeadlessTurnsEnabled(),
 			"sandboxSubstrate": agentSandboxSubstrateOrEmpty(agentCfg),
 			"sandboxEnabled":   agentCfg.Sandbox != nil && agentCfg.Sandbox.Enabled != nil && *agentCfg.Sandbox.Enabled,
 			"sandboxEffective": agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
@@ -774,6 +775,20 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			agentCfg.JevMode = s
 		}
 	}
+	// agents.<key>.headless_turns (#19902): one `claude -p` per kick on a
+	// translator route instead of a resident interactive CLI. The pane's
+	// shape is fixed at launch, so a change restarts the agent below like
+	// jev_mode. Saved to the config file, the dashboard overlay and the
+	// per-agent file together, so every reload layer agrees.
+	headlessTurnsChanged := false
+	if v, ok := body["headlessTurns"]; ok {
+		if b, ok := v.(bool); ok {
+			headlessTurnsChanged = agentCfg.HeadlessTurnsEnabled() != b
+			// Stored as an explicit pointer, false included, so an "off"
+			// saved to the overlay beats a seed opt-in on the next load.
+			agentCfg.HeadlessTurns = &b
+		}
+	}
 	if v, ok := body["explainMode"]; ok {
 		if s, ok := v.(string); ok {
 			s = sanitizeString(s)
@@ -959,9 +974,9 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			s.logger.Warn("failed to apply backend from config dialog", "agent", name, "error", err)
 		}
 	}
-	if modelChanged || backendChanged || jevModeChanged {
+	if modelChanged || backendChanged || jevModeChanged || headlessTurnsChanged {
 		if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
-			s.logger.Warn("restart after config-dialog model/backend/jev_mode change failed", "agent", name, "error", err)
+			s.logger.Warn("restart after config-dialog model/backend/jev_mode/headless_turns change failed", "agent", name, "error", err)
 		}
 	}
 
@@ -1007,6 +1022,7 @@ var agentGeneralAuditFields = []struct {
 	{"cavemanMode", func(a config.AgentConfig) string { return a.CavemanMode }},
 	{"jevMode", func(a config.AgentConfig) string { return a.JevMode }},
 	{"explainMode", func(a config.AgentConfig) string { return a.ExplainMode }},
+	{"headlessTurns", func(a config.AgentConfig) string { return strconv.FormatBool(a.HeadlessTurnsEnabled()) }},
 }
 
 // generalAuditDetail records every listed field the write changed with its

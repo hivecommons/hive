@@ -31,7 +31,7 @@ const claudeSessionFileVar = "HIVE_CLAUDE_SESSION_FILE"
 // line; it is rebuilt on every launch pass, the surviving-pane path included,
 // so a hub restart keeps it.
 func (m *Manager) agentUsesClaudeHeadless(backend string, agent *AgentProcess) bool {
-	if agent == nil || !agent.Config.HeadlessTurns || !m.routableBackend(backend) {
+	if agent == nil || !agent.Config.HeadlessTurnsEnabled() || !m.routableBackend(backend) {
 		return false
 	}
 	cmd, _ := effectiveLaunchCmd(agent, backend)
