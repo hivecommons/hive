@@ -3320,6 +3320,9 @@ func (c *Client) QueuePRAutoMergeWithNoteResultAtHead(ctx context.Context, repo 
 			"agent", queuedBy, "label", blocked)
 		return res, fmt.Errorf("approving PR: %s label blocks Hive approval and auto-merge", blocked)
 	}
+	if err := c.GateChangesRequested(ctx, full, number, ChangesRequestedGateActionApprove, PRAuditPathQueue); err != nil {
+		return res, fmt.Errorf("approving PR: %w", err)
+	}
 	label := c.AutoMergeLabel()
 	if err := c.ensureLabel(ctx, owner, repoName, label); err != nil {
 		return res, fmt.Errorf("ensuring %s label: %w", label, err)
@@ -3642,6 +3645,13 @@ func (c *Client) addLabelsObserved(ctx context.Context, repo string, number int,
 		return nil
 	}
 	owner, repoName := c.splitRepo(repo)
+	// `lgtm` / `approved` (or the configured auto-merge label) approves a
+	// PR for merging: an open change request refuses it (#20067).
+	if c.approvalLabels(labels) {
+		if err := c.GateChangesRequested(ctx, owner+"/"+repoName, number, ChangesRequestedGateActionLabel, PRAuditPathRelay); err != nil {
+			return err
+		}
+	}
 	claim := effects.Claim{
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindLabelMutation,

@@ -89,6 +89,9 @@ type repoItemDecisionMock struct {
 	// checkRunsCalls counts every GET /check-runs.
 	checkRunsFailures int
 	checkRunsCalls    int
+	// prReviews is what GET /pulls/8/reviews answers (empty = no reviews):
+	// the open change-request gate of hivecommons/hive#20067.
+	prReviews string
 }
 
 func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
@@ -192,6 +195,10 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			m.merges = append(m.merges, body)
 			_, _ = io.WriteString(w, `{"sha":"0ddba11","merged":true,"message":"Pull Request successfully merged"}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(path, "/pulls/8/reviews"):
+			if m.prReviews != "" {
+				_, _ = io.WriteString(w, m.prReviews)
+				return
+			}
 			_, _ = io.WriteString(w, `[]`)
 		case r.Method == http.MethodPost && strings.HasSuffix(path, "/pulls/8/reviews"):
 			var body map[string]any

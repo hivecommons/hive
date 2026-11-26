@@ -187,6 +187,9 @@ func (c *Engine) trySweepQueuedPR(ctx context.Context, displayRepo, owner, repo 
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
+		if reason, ok := changesRequestedSkipReason(err); ok {
+			return AutoMergeSweepEvent{}, reason, nil
+		}
 		if c.requiredChecksExpected(attempt, err) {
 			return AutoMergeSweepEvent{}, autoMergeReasonChecksExpected, nil
 		}
@@ -613,6 +616,12 @@ func mergeAPIErrorNotApplied(err error) error {
 // brackets it with a merge attempt (hivecommons/hive#15245) so the tracker
 // shows "Merging" for the call's duration and a refusal's reason after.
 func (c *Engine) executeMergeEffect(ctx context.Context, claim effects.Claim, owner, repo string, number int, head string, merge func(context.Context) (effects.Result, error)) (effects.Result, error) {
+	// The last word before any engine merge: an open change request from a
+	// writer refuses it, read now rather than from the sweep's snapshot
+	// (hivecommons/hive#20067). Callers map the refusal onto a skip reason.
+	if err := c.gateChangesRequested(ctx, owner, repo, number, hgithub.ChangesRequestedGateActionMerge); err != nil {
+		return effects.Result{}, err
+	}
 	original := merge
 	merge = func(ctx context.Context) (effects.Result, error) {
 		if err := hgithub.VerifyDestinationMerge(ctx, c.gh, owner, repo, number, head); err != nil {

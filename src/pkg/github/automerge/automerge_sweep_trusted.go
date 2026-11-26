@@ -318,6 +318,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
+		if reason, ok := changesRequestedSkipReason(err); ok {
+			return AutoMergeSweepEvent{}, reason, nil
+		}
 		if c.requiredChecksExpected(attempt, err) {
 			if !branchUpdateAllowed {
 				return AutoMergeSweepEvent{}, autoMergeReasonChecksExpected, nil
@@ -792,6 +795,9 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
+		if reason, ok := changesRequestedSkipReason(err); ok {
+			return AutoMergeSweepEvent{}, reason, nil
+		}
 		if c.requiredChecksExpected(attempt, err) {
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", pr)
 		}

@@ -19,6 +19,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/effects"
 	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/reviewgate"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -271,7 +272,8 @@ func (s *Sweeper) tryMerge(ctx context.Context, api forge.SweepAPI, repo string,
 		if errors.Is(err, forge.ErrAlreadyMerged) {
 			return effects.Result{Provenance: pr.HeadSHA}, nil
 		}
-		if errors.Is(err, forge.ErrConflict) || errors.Is(err, forge.ErrNotMergeable) || errors.Is(err, forge.ErrHoldActive) {
+		if errors.Is(err, forge.ErrConflict) || errors.Is(err, forge.ErrNotMergeable) || errors.Is(err, forge.ErrHoldActive) ||
+			errors.Is(err, reviewgate.ErrChangesRequested) {
 			return effects.Result{}, effects.NotApplied(err)
 		}
 		return effects.Result{Provenance: pr.HeadSHA}, err
@@ -286,6 +288,12 @@ func (s *Sweeper) tryMerge(ctx context.Context, api forge.SweepAPI, repo string,
 		return skip("forge-refused")
 	case errors.Is(err, forge.ErrHoldActive):
 		return skip("held")
+	case errors.Is(err, reviewgate.ErrUnreadable):
+		return skip("review-read-failed")
+	case errors.Is(err, reviewgate.ErrChangesRequested):
+		// A writer's open change request (#20067): the merge waits until
+		// that reviewer approves or the review is dismissed.
+		return skip("changes-requested")
 	case errors.Is(err, effects.ErrDenied):
 		return skip("mutation-denied")
 	}

@@ -134,6 +134,11 @@ type repoItemDecisionRequest struct {
 	To string `json:"to,omitempty"`
 	// Reply with decision "model-reply" is the workflow model's verb.
 	Reply string `json:"reply,omitempty"`
+	// OverrideReason lets an approve / merge-now / queue-merge decision
+	// proceed past a writer's open change request (hivecommons/hive#20067).
+	// It is honoured only after the dashboard has shown the open change
+	// requests, and it is audited with them.
+	OverrideReason string `json:"override_reason,omitempty"`
 }
 
 // parseRepoItemSupersededBy resolves a "superseded by" reference the way an
@@ -413,6 +418,18 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 	}
 	gh := s.deps.GHClient
 	numStr := strconv.Itoa(number)
+
+	// An approve or merge decision states a writer's open change request
+	// first and goes through only with an audited override reason (#20067).
+	if itemType == "pr" && repoItemDecisionGatesChangeRequests(decision) {
+		if decision != repoItemDecisionApprove && !repoItemMergeDecisionAllowed(r) {
+			jsonError(w, "merger or owner access required to merge or queue a pull request", http.StatusForbidden)
+			return
+		}
+		if !s.clearChangeRequestsForDecision(ctx, w, repoFull, number, user, decision, body.OverrideReason) {
+			return
+		}
+	}
 
 	switch decision {
 	case repoItemDecisionApprove, repoItemDecisionDirection:

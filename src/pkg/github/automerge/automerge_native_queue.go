@@ -301,6 +301,17 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 			return nativeQueueReasonMethod, fmt.Errorf("mixed authorship requires a merge commit; queue uses %s", method)
 		}
 	}
+	// An open change request keeps the PR out of the queue, and the
+	// withdraw reason it returns takes the hive's own entry back out
+	// (hivecommons/hive#20067).
+	if owner, name, ok := strings.Cut(claim.Repo, "/"); ok {
+		if err := c.gateChangesRequested(ctx, owner, name, pr.GetNumber(), hgithub.ChangesRequestedGateActionEnqueue); err != nil {
+			if reason, ok := changesRequestedSkipReason(err); ok {
+				return reason, nil
+			}
+			return nativeQueueReasonRead, err
+		}
+	}
 	if !state.IsInMergeQueue {
 		if c.integrationAdmission != nil {
 			reason, err := c.integrationAdmission(ctx, claim.Repo, pr)
