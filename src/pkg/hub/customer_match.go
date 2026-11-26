@@ -86,9 +86,9 @@ func (s *HubServer) customerMatchKeys(hiveID string) []string {
 }
 
 // customerMatchLogin is the one identifier matched in v1: the primary github:
-// identity. A LinkedGitHubLogin is not matched because no hub flow proves it
-// (nothing writes it after a GitHub OAuth check), and the design requires that
-// proof first. Email is never matched in v1.
+// identity. A LinkedGitHubLogin is not matched: even a link proven by the
+// GitHub OAuth link step (github_link.go, #19992) is kept out of customer
+// matching until that design decides to use it. Email is never matched in v1.
 func customerMatchLogin(u *SaaSUser) string {
 	provider, subject, ok := parseCanonical(userCanonicalID(u))
 	if !ok || provider != legacyProvider {

@@ -757,6 +757,21 @@ only when neither is configured.
 
 With two or more providers configured, `/login` renders a provider picker; with exactly one it redirects straight into it. A provider with a client id but missing/invalid issuer is **silently skipped** so it cannot take down login for the others — check the `hub login enabled providers=` startup log line when a button is missing.
 
+#### Linking a GitHub login to an OIDC sign-in
+
+A person signed in through an OIDC provider can link the GitHub login they control ([#19992](https://github.com/hivecommons/hive/issues/19992)). It needs `HIVE_HUB_OAUTH_CLIENT_ID`/`_CLIENT_SECRET`, because the person proves the GitHub side by completing GitHub OAuth from their own hub session: `POST /api/auth/github-link/start` (optional form field `login`, which the GitHub account must match). The callback refuses the link when the signed-in hub identity changed since the start, when GitHub returns a different account, or when the login is already linked to another hub user.
+
+- Nobody else can create a link. A hub admin can only remove one (`POST /api/admin/users/github-link` with `action: unlink`), and the person can remove their own (`POST /api/auth/github-link/unlink`).
+- The hub forwards a proven link to a spoke in the SSO handoff. The spoke uses it only for contributor features keyed by GitHub login (the contribute page, invites, label interests, dossier), so the person gets exactly the contributor access that login already has there.
+- The link never changes the person's spoke role, and the merge engine never reads it. A linked owner's PRs count as owner-authored only when `dashboard.authorized_users` already lists that GitHub login as an owner.
+- A spoke owner can revoke a link on that spoke with `POST /api/auth/github-link/revoke` and `{"identity": "<provider>:<subject>"}`. A later proof on the hub restores it.
+- Link, unlink, refusals and revocations are audited (hub `audit: github ...` log lines; spoke `github_link_session`, `github_link_revoked`, `github_link_refused`).
+- A hub-proxied spoke reads the visitor from the hub's injected header, not an SSO session, and does not use the link yet.
+- The `login` field is required, so GitHub cannot silently link whichever account the browser is signed in to. The state cookie has the `__Host-` prefix, so the link flow needs an HTTPS hub.
+- A spoke honours a link on a session for 12 hours after the SSO handoff that attached it, and refuses a hub proof older than 90 days (a GitHub login can be renamed and re-registered), so an unlink on the hub reaches existing spoke sessions on their next handoff and a link must be proven again periodically.
+- An admin using "View as user" never carries that user's link into an SSO handoff.
+- Every spoke the person opens from the hub learns the link, because linking is the person's own request to use the GitHub login there.
+
 ## Kubernetes downward API and platform variables
 
 | Variable | Required | Default | Purpose |

@@ -73,6 +73,7 @@ func (s *HubServer) registerOAuth() {
 	s.mux.HandleFunc("GET /api/auth/callback", s.handleOAuthCallback)
 	s.mux.HandleFunc("GET /api/auth/user", s.handleAuthUser)
 	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+	s.registerGitHubLinkRoutes()
 
 	names := make([]string, 0, s.authProviders.Count())
 	for _, p := range s.authProviders.Providers() {
@@ -737,6 +738,15 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	code := r.URL.Query().Get("code")
 	if code == "" {
 		http.Error(w, "missing code", http.StatusBadRequest)
+		return
+	}
+
+	// A GitHub link step (github_link.go, #19992) shares this callback. It is
+	// routed off first and verified against its own host-only state cookie;
+	// the sign-in path below never sees a link state, so it can never
+	// complete one as a GitHub login.
+	if isGitHubLinkState(r) {
+		s.handleGitHubLinkCallback(w, r, code)
 		return
 	}
 
