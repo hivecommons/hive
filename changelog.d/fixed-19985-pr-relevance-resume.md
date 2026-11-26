@@ -1,0 +1,1 @@
+- The check that stops an older, unrelated contributor PR from counting as a task's work now also applies after the relay reconnects mid-task (the task lease keeps when the task was issued), and an issue reference that names another repository no longer counts (#19985).

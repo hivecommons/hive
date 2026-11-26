@@ -1,6 +1,8 @@
 package dashboard
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,13 +91,65 @@ func TestUnrelatedReportedPR_KeepsRelatedOrUnknown(t *testing.T) {
 
 // Issue numbers are matched whole: #4 is not #42, and branch fix-420 is not 42.
 func TestPRTextReferencesIssue_WholeNumber(t *testing.T) {
-	if prTextReferencesIssue(ghpkg.PRVerification{Body: "Fixes #420 and #4", HeadRef: "fix-420"}, 42) {
+	if prTextReferencesIssue(ghpkg.PRVerification{Body: "Fixes #420 and #4", HeadRef: "fix-420"}, "o/r", 42) {
 		t.Fatal("#420 / fix-420 must not reference #42")
 	}
-	if !prTextReferencesIssue(ghpkg.PRVerification{Body: "Fixes #42"}, 42) {
+	if !prTextReferencesIssue(ghpkg.PRVerification{Body: "Fixes #42"}, "o/r", 42) {
 		t.Fatal("#42 at end of text must reference #42")
 	}
-	if !prTextReferencesIssue(ghpkg.PRVerification{HeadRef: "42-fix"}, 42) {
+	if !prTextReferencesIssue(ghpkg.PRVerification{HeadRef: "42-fix"}, "o/r", 42) {
 		t.Fatal("branch starting with the number must reference it")
+	}
+}
+
+// A reference to the same number in another repository is not this issue.
+func TestPRTextReferencesIssue_OtherRepoDoesNotCount(t *testing.T) {
+	for _, body := range []string{"Fixes other/repo#42", "see https://github.com/other/repo/issues/42"} {
+		if prTextReferencesIssue(ghpkg.PRVerification{Body: body}, "o/r", 42) {
+			t.Errorf("%q must not reference o/r#42", body)
+		}
+	}
+	for _, body := range []string{"Fixes o/r#42", "Fixes O/R#42", "https://github.com/o/r/issues/42", "(#42)", "#42"} {
+		if !prTextReferencesIssue(ghpkg.PRVerification{Body: body}, "o/r", 42) {
+			t.Errorf("%q must reference o/r#42", body)
+		}
+	}
+	if prTextReferencesIssue(ghpkg.PRVerification{Body: "path/to#42"}, "o/r", 42) {
+		t.Error("an owner/repo#N that is not the task repo must not count")
+	}
+}
+
+// The issue time survives a re-record of the same task and a persist/load
+// round trip, so a resumed task still gets the relevance check.
+func TestTaskLease_IssuedAtSurvivesRerecordAndReload(t *testing.T) {
+	h := &ContributeWSHub{logger: covBLogger()}
+	first := time.Date(2026, 11, 26, 4, 0, 0, 0, time.UTC)
+	if err := h.recordLease("alice", "t1", "o/r", 42, "trusted", 1, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.recordLease("alice", "t1", "o/r", 42, "trusted", 2, first.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	h.leaseMu.Lock()
+	got := h.leases[leaseKey("alice", "t1")].issuedAt
+	h.leaseMu.Unlock()
+	if !got.Equal(first) {
+		t.Fatalf("issuedAt after re-record = %v, want %v", got, first)
+	}
+	if err := h.recordLease("alice", "t2", "o/r", 43, "trusted", 1, first.Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	h.leaseMu.Lock()
+	got = h.leases[leaseKey("alice", "t2")].issuedAt
+	h.leaseMu.Unlock()
+	if !got.Equal(first.Add(2 * time.Hour)) {
+		t.Fatalf("a new task must get its own issuedAt, got %v", got)
+	}
+	raw, err := json.Marshal(persistedLease{TaskID: "t1", IssuedAt: first})
+	if err != nil || !strings.Contains(string(raw), `"issued_at"`) {
+		t.Fatalf("persisted lease = %s, %v", raw, err)
+	}
+	if raw, _ := json.Marshal(persistedLease{TaskID: "t1"}); strings.Contains(string(raw), "issued_at") {
+		t.Fatalf("zero issuedAt must be omitted: %s", raw)
 	}
 }
