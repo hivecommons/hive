@@ -139,3 +139,19 @@ forgejo:
 		})
 	}
 }
+
+// The optional forgejo.login names the hive's own Forgejo user so the sweeps
+// skip the GET /user lookup a repository-limited token cannot make (#19994).
+func TestForgejoLoginFromYAML(t *testing.T) {
+	const doc = `
+forgejo:
+  login: hive-bot
+`
+	var cfg Config
+	if err := yaml.Unmarshal([]byte(doc), &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg.Forgejo.Login != "hive-bot" {
+		t.Errorf("forgejo.login = %q, want %q", cfg.Forgejo.Login, "hive-bot")
+	}
+}

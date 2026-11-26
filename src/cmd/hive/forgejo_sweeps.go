@@ -54,7 +54,11 @@ func forgejoSweepAPIForRepo(cfg *config.Config, repo string) (forge.SweepAPI, er
 	if strings.TrimSpace(token) == "" {
 		return nil, fmt.Errorf("%s is empty", source)
 	}
-	return newForgejoSweepAPI(token, forge.Options{BaseURL: cfg.ForgeURLForRepo(repo), Org: cfg.Project.Org})
+	return newForgejoSweepAPI(token, forge.Options{
+		BaseURL: cfg.ForgeURLForRepo(repo),
+		Org:     cfg.Project.Org,
+		Login:   cfg.Forgejo.Login,
+	})
 }
 
 // forgejoSweeperFor builds one pass's sweeper from cfg. Only repos whose kind
