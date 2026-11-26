@@ -306,7 +306,7 @@ func TestColonyForgetErasesEverywhere(t *testing.T) {
 			}
 		}
 	}
-	if !bytes.Contains(mustRead(t, filepath.Join(dir, FileName+PreColonySuffix)), []byte(fixBea)) {
+	if !strings.Contains(mustRead(t, filepath.Join(dir, FileName+PreColonySuffix)), fixBea) {
 		t.Fatal("forget removed someone else from the backup")
 	}
 	// Re-adding the forgotten person's login does not bring them back in
@@ -317,15 +317,6 @@ func TestColonyForgetErasesEverywhere(t *testing.T) {
 	if !errors.Is(err, cstore.ErrTombstoned) {
 		t.Fatalf("a forgotten identity was re-added: %v", err)
 	}
-}
-
-func mustRead(t *testing.T, path string) []byte {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return data
 }
 
 // In json mode an earlier run's colony.db is not written, except that a
@@ -348,7 +339,7 @@ func TestColonyForgetInJSONMode(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, name := range []string{ColonyFileName, FileName + PreColonySuffix} {
-		if bytes.Contains(mustRead(t, filepath.Join(dir, name)), []byte("bea.sample@gmail.com")) {
+		if strings.Contains(mustRead(t, filepath.Join(dir, name)), "bea.sample@gmail.com") {
 			t.Fatalf("%s still holds the forgotten person after a json-mode forget", name)
 		}
 	}
@@ -445,7 +436,7 @@ func TestColonyModeReadsColony(t *testing.T) {
 	if p.Profile.Organization.Source != SourceHub || p.Profile.Organization.Rule != ProfileSourceHubEmailDomain {
 		t.Fatalf("hub organization after the read = %+v", p.Profile.Organization)
 	}
-	if !strings.Contains(string(mustRead(t, filepath.Join(dir, FileName))), "Beatrix Sample") {
+	if !strings.Contains(mustRead(t, filepath.Join(dir, FileName)), "Beatrix Sample") {
 		t.Fatal("the colony read was not written back to people.json")
 	}
 	if par, _ := c.store.ColonyParity(); par.Mismatches != 0 {
@@ -559,7 +550,7 @@ func TestColonyDamagedFileFailsClosed(t *testing.T) {
 	if s.Colony() != nil {
 		t.Fatal("the store kept a colony mirror after a failed attach")
 	}
-	if got := mustRead(t, filepath.Join(dir, ColonyFileName)); !bytes.Equal(got, garbage) {
+	if got := mustRead(t, filepath.Join(dir, ColonyFileName)); got != string(garbage) {
 		t.Fatal("a failed attach rewrote colony.db")
 	}
 	if _, err := s.SetName(fixAda, "Ada E."); err != nil {
