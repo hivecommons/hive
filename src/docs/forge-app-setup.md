@@ -258,6 +258,22 @@ so it needs `write:repository` and `write:issue`; the live end-to-end run in
 `write:repository,write:issue,read:user,read:organization`. An unset
 `token_env` variable fails with an error that names it.
 
+The close-on-merge sweep first identifies the token's own user
+through `GET /user`, which needs the `read:user` scope. A token limited to
+specific repositories cannot carry `read:user`; Forgejo then answers that
+call with 403 and the sweep skips the repo ([#19994](https://github.com/hivecommons/hive/issues/19994)).
+The automerge sweep does not look up the token's user, so it is not affected
+by this. There are two ways out: either keep `read:user` on an all-repositories
+token, or name the hive's own Forgejo username in `forgejo.login` so the
+close-on-merge sweep skips the lookup and uses it directly. The login is not a
+secret:
+
+```yaml
+forgejo:
+  forgejo_url: https://forgejo.example.com
+  login: hive-bot
+```
+
 #### Rotate the signing key
 
 The key file is read at every mint, so replacing it rotates the key. Forgejo

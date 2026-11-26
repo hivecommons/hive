@@ -108,10 +108,14 @@ func forgeForRepo(cfg *config.Config, repo string, ghClient *github.Client, logg
 		logger.Error("forge token unset; no writer built", "forge", kind, "repo", repo, "error", err)
 		return nil
 	}
-	f, err := forge.NewForge(kind, token, forge.Options{
+	opts := forge.Options{
 		BaseURL: baseURL,
 		Org:     cfg.Project.Org,
-	})
+	}
+	if kind == forge.KindForgejo {
+		opts.Login = cfg.Forgejo.Login
+	}
+	f, err := forge.NewForge(kind, token, opts)
 	if err != nil {
 		logger.Warn("forge adapter unavailable; falling back to the GitHub client",
 			"forge", kind, "repo", repo, "token_source", tokenSource, "error", err)
@@ -197,10 +201,14 @@ func forgeMergerForRepo(cfg *config.Config, repo string) (forge.Merger, error) {
 	if err := requireForgeToken(kind, source, token); err != nil {
 		return nil, err
 	}
-	return newForgeMerger(kind, token, forge.Options{
+	opts := forge.Options{
 		BaseURL: cfg.ForgeURLForRepo(repo),
 		Org:     cfg.Project.Org,
-	})
+	}
+	if kind == forge.KindForgejo {
+		opts.Login = cfg.Forgejo.Login
+	}
+	return newForgeMerger(kind, token, opts)
 }
 
 // forgeMergeSelector is the merge relay's per-repo forge router: a repo whose
