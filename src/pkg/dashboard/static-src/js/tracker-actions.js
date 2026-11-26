@@ -1606,7 +1606,7 @@
           if (r.status === 409 && data && data.needs_override_reason === true && typeof hivePrompt === 'function') {
             const reason = await hivePrompt({ title: 'Open change request on ' + stageTrackerRefOf(it), label: data.error || 'This pull request has an open change request.', placeholder: 'Reason for proceeding anyway', confirmLabel: 'Override and continue', validate: v => v ? true : 'A reason is required to override.' });
             if (!reason) throw new Error(data.error || 'open change request');
-            r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({}, req.body, { override_reason: reason })) });
+            r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({}, req.body, { override_reason: reason, override_review_ids: (data.change_requests || []).map(c => c.review_id) })) });
             data = await r.json().catch(() => ({}));
           }
           if (!r.ok) throw new Error(stageTrackerActionError(r.status, data));

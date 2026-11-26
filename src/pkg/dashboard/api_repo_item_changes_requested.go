@@ -16,7 +16,8 @@ import (
 // now and Queue merge decisions are the one place that may proceed anyway,
 // and only like this: the first click is answered 409 with the open change
 // requests named (reviewer and review ID), and the decision goes through
-// only when it is sent again with override_reason. The override covers
+// only when it is sent again with override_reason and override_review_ids
+// naming every change request still open (a newer one answers 409 again). The override covers
 // exactly the change requests the operator was shown, is audited with the
 // reason, and every gated path that honours it audits it again. "Let hive
 // decide" is the hive's decision, not the operator's, so it never overrides.
@@ -53,6 +54,21 @@ type repoItemChangesRequestedResponse struct {
 	NeedsOverrideReason bool `json:"needs_override_reason"`
 }
 
+// changeRequestsShown reports whether every open change request is one the
+// operator was shown (its review ID is in shown).
+func changeRequestsShown(blocks []ghpkg.ChangeRequestBlock, shown []int64) bool {
+	seen := make(map[int64]bool, len(shown))
+	for _, id := range shown {
+		seen[id] = true
+	}
+	for _, b := range blocks {
+		if !seen[b.ReviewID] {
+			return false
+		}
+	}
+	return true
+}
+
 // repoItemDecisionGatesChangeRequests reports whether decision on a PR ends
 // in an approval or a merge, and so must clear the change-request gate.
 func repoItemDecisionGatesChangeRequests(decision string) bool {
@@ -68,7 +84,7 @@ func repoItemDecisionGatesChangeRequests(decision string) bool {
 // change request, or the operator sent an override reason, which is recorded
 // and audited. Otherwise it has answered the request (409 naming the open
 // change requests, or 502 when they could not be read) and returns false.
-func (s *Server) clearChangeRequestsForDecision(ctx context.Context, w http.ResponseWriter, repoFull string, number int, user, decision, reason string) bool {
+func (s *Server) clearChangeRequestsForDecision(ctx context.Context, w http.ResponseWriter, repoFull string, number int, user, decision, reason string, shown []int64) bool {
 	gh := s.deps.GHClient
 	blocks, err := gh.OpenChangeRequests(ctx, repoFull, number)
 	if err != nil {
@@ -80,7 +96,7 @@ func (s *Server) clearChangeRequestsForDecision(ctx context.Context, w http.Resp
 	}
 	numStr := strconv.Itoa(number)
 	reason = strings.TrimSpace(reason)
-	if reason == "" {
+	if reason == "" || !changeRequestsShown(blocks, shown) {
 		s.audit.LogRecord(user, auditRepoItemDecisionChangesRequestedBlocked, auditDetail("repo", repoFull, "number", numStr, "decision", decision,
 			"reviewers", ghpkg.ChangeRequestReviewers(blocks), "review_ids", ghpkg.ChangeRequestReviewIDs(blocks)), "", repoFull, number)
 		out := repoItemChangesRequestedResponse{

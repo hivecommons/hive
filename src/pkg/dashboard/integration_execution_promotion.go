@@ -260,6 +260,13 @@ func (s *Server) executionPromotionGuard(ctx context.Context, store *integration
 	if current == nil {
 		return fmt.Errorf("normal live policy refused exact promotion: %s", reason)
 	}
+	// The promotion lands every member by a ref update, outside the merge
+	// primitives: each one clears the open change-request gate (#20067).
+	for _, m := range proof.Subject.Members {
+		if err := s.deps.GHClient.GateChangesRequested(ctx, scope.Repo, m.PR, ghpkg.ChangesRequestedGateActionMerge, ghpkg.ChangesRequestedGatePathIntegration); err != nil {
+			return err
+		}
+	}
 	if err := s.executionLiveAuthority(ctx, cfg, scope, protection); err != nil {
 		return err
 	}

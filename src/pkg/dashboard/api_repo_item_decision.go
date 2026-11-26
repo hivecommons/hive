@@ -139,6 +139,9 @@ type repoItemDecisionRequest struct {
 	// It is honoured only after the dashboard has shown the open change
 	// requests, and it is audited with them.
 	OverrideReason string `json:"override_reason,omitempty"`
+	// OverrideReviewIDs are the change requests the 409 showed. An override
+	// covers only those: one posted since answers 409 again.
+	OverrideReviewIDs []int64 `json:"override_review_ids,omitempty"`
 }
 
 // parseRepoItemSupersededBy resolves a "superseded by" reference the way an
@@ -426,7 +429,7 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 			jsonError(w, "merger or owner access required to merge or queue a pull request", http.StatusForbidden)
 			return
 		}
-		if !s.clearChangeRequestsForDecision(ctx, w, repoFull, number, user, decision, body.OverrideReason) {
+		if !s.clearChangeRequestsForDecision(ctx, w, repoFull, number, user, decision, body.OverrideReason, body.OverrideReviewIDs) {
 			return
 		}
 	}

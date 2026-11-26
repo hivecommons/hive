@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/reviewgate"
 )
 
@@ -19,6 +20,10 @@ const (
 	ChangesRequestedGateActionLabel   = "label"
 	ChangesRequestedGateActionEnqueue = "enqueue"
 )
+
+// ChangesRequestedGatePathIntegration is the audit path= of an integration
+// execution promotion, which lands its members by a ref update.
+const ChangesRequestedGatePathIntegration = "integration"
 
 // AuditActionChangesRequestedGate records every gated attempt: outcome=
 // blocked (an open change request stopped it), overridden (an operator's
@@ -53,6 +58,20 @@ var openChangeRequestsCheck = reviewgate.CheckGitHub
 // gate fails closed. Every refusal and every override is logged and audited
 // with the reviewer and the review ID.
 func (c *Client) GateChangesRequested(ctx context.Context, repo string, number int, action, path string) error {
+	return c.gateChangesRequested(ctx, repo, number, action, path, changesRequestedGateOptions{allowOverride: true})
+}
+
+// changesRequestedGateOptions shapes one gated attempt.
+type changesRequestedGateOptions struct {
+	// allowOverride honours an operator's recorded override. Paths that act
+	// on an agent's own request (the label relay, the review swarm) never do.
+	allowOverride bool
+	// supersedesOwn drops the hive's own change requests: the approval about
+	// to be posted from that identity is what supersedes them on GitHub.
+	supersedesOwn bool
+}
+
+func (c *Client) gateChangesRequested(ctx context.Context, repo string, number int, action, path string, opts changesRequestedGateOptions) error {
 	if c == nil || c.client == nil || number <= 0 {
 		return nil
 	}
@@ -63,7 +82,19 @@ func (c *Client) GateChangesRequested(ctx context.Context, repo string, number i
 		c.RecordChangesRequestedGate(full, number, action, path, reviewgate.Decision{}, err)
 		return &reviewgate.BlockedError{Repo: full, Number: number, Cause: err}
 	}
-	d := reviewgate.Decide(full, number, blocks)
+	if opts.supersedesOwn {
+		kept := blocks[:0]
+		for _, b := range blocks {
+			if !c.IsHiveAuthorLogin(b.Reviewer) && !c.isHiveAccount(&gh.User{Login: gh.Ptr(b.Reviewer)}) {
+				kept = append(kept, b)
+			}
+		}
+		blocks = kept
+	}
+	d := reviewgate.Decision{Blocks: blocks}
+	if opts.allowOverride {
+		d = reviewgate.Decide(full, number, blocks)
+	}
 	if len(d.Blocks) == 0 {
 		return nil
 	}
@@ -138,7 +169,7 @@ func (c *Client) GateApprovalLabels(ctx context.Context, repo string, number int
 	if c == nil || !c.approvalLabels(labels) {
 		return nil
 	}
-	return c.gateApprovalLabelWrite(ctx, repo, number)
+	return c.gateApprovalLabelWriteWith(ctx, repo, number, changesRequestedGateOptions{})
 }
 
 // gateApprovalLabelWrite is what an `lgtm` / `approved` write must clear:
@@ -147,6 +178,12 @@ func (c *Client) GateApprovalLabels(ctx context.Context, repo string, number int
 // path that acknowledges it) and an open change request. Writing either
 // label hands the PR to Tide, which does not know about either.
 func (c *Client) gateApprovalLabelWrite(ctx context.Context, repo string, number int) error {
+	return c.gateApprovalLabelWriteWith(ctx, repo, number, changesRequestedGateOptions{allowOverride: true})
+}
+
+// gateApprovalLabelWriteWith is gateApprovalLabelWrite with the gate's
+// options: the agents' label relay never honours an operator override.
+func (c *Client) gateApprovalLabelWriteWith(ctx context.Context, repo string, number int, opts changesRequestedGateOptions) error {
 	if c == nil || c.client == nil || number <= 0 {
 		return nil
 	}
@@ -163,7 +200,7 @@ func (c *Client) gateApprovalLabelWrite(ctx context.Context, repo string, number
 			return fmt.Errorf("approval label on %s#%d: %s label blocks Hive approval and auto-merge", full, number, blocked)
 		}
 	}
-	return c.GateChangesRequested(ctx, full, number, ChangesRequestedGateActionLabel, PRAuditPathRelay)
+	return c.gateChangesRequested(ctx, full, number, ChangesRequestedGateActionLabel, PRAuditPathRelay, opts)
 }
 
 // The dashboard reaches the gate through pkg/github only (its import

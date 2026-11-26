@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/factcheck"
 	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/reviewgate"
 )
 
 // ReviewRequestDir is where agents drop PR-review requests. An agent that wants
@@ -470,7 +471,14 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	// (hivecommons/hive#20067): an open change request from a writer turns
 	// it into the same suppressed verdict or COMMENT a sentinel label does.
 	if apiEvent == "APPROVE" {
-		if gateErr := c.GateChangesRequested(ctx, req.Repo, req.Number, ChangesRequestedGateActionApprove, PRAuditPathRelay); gateErr != nil {
+		if gateErr := c.gateChangesRequested(ctx, req.Repo, req.Number, ChangesRequestedGateActionApprove, PRAuditPathRelay,
+			changesRequestedGateOptions{supersedesOwn: true}); gateErr != nil {
+			if errors.Is(gateErr, reviewgate.ErrUnreadable) {
+				// A failed review read is transient: retry the request
+				// rather than downgrade the verdict for good.
+				c.retryOrQuarantineReview(path, req, gateErr, nowFn)
+				return
+			}
 			if strings.TrimSpace(req.Body) == "" {
 				c.recordReviewEvidence(ctx, req, nil, nil, nowFn())
 				c.writeReviewResult(path, ReviewResponse{

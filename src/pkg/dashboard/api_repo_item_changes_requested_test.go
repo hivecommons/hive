@@ -51,7 +51,7 @@ func TestRepoItemDecisionOverrideWithReason(t *testing.T) {
 	t.Cleanup(func() { github.ClearChangesRequestedOverride("testorg/testrepo", 8) })
 	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/090-ready-for-human-merge"}, prReviews: openChangeRequestReviews}
 	srv := newRepoItemDecisionServer(t, mock)
-	w := postRepoItemDecisionAs(t, srv, 8, "writer", "merger", `{"decision":"merge-now","type":"pr","override_reason":"reviewer agreed on the call; follow-up filed"}`)
+	w := postRepoItemDecisionAs(t, srv, 8, "writer", "merger", `{"decision":"merge-now","type":"pr","override_reason":"reviewer agreed on the call; follow-up filed","override_review_ids":[42]}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d body = %s, want 200", w.Code, w.Body.String())
 	}
@@ -81,5 +81,28 @@ func TestRepoItemDecisionNoChangeRequestUnchanged(t *testing.T) {
 	}
 	if actions := decisionAuditActions(srv); slices.Contains(actions, auditRepoItemDecisionChangesRequestedBlocked) || slices.Contains(actions, auditRepoItemDecisionChangesRequestedOverride) {
 		t.Fatalf("audit = %v, want no change-request entries", actions)
+	}
+}
+
+// TestRepoItemDecisionOverrideMustNameEveryOpenChangeRequest: a reason
+// without the review IDs the operator was shown, or naming only older ones,
+// answers 409 again and merges nothing.
+func TestRepoItemDecisionOverrideMustNameEveryOpenChangeRequest(t *testing.T) {
+	t.Cleanup(func() { github.ClearChangesRequestedOverride("testorg/testrepo", 8) })
+	for name, body := range map[string]string{
+		"no ids":    `{"decision":"merge-now","type":"pr","override_reason":"ok"}`,
+		"stale ids": `{"decision":"merge-now","type":"pr","override_reason":"ok","override_review_ids":[41]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/090-ready-for-human-merge"}, prReviews: openChangeRequestReviews}
+			srv := newRepoItemDecisionServer(t, mock)
+			w := postRepoItemDecisionAs(t, srv, 8, "writer", "merger", body)
+			if w.Code != http.StatusConflict {
+				t.Fatalf("code = %d body = %s, want 409", w.Code, w.Body.String())
+			}
+			if len(mock.merges) != 0 {
+				t.Fatalf("merges = %v, want none", mock.merges)
+			}
+		})
 	}
 }

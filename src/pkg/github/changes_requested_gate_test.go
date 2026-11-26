@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -356,5 +357,66 @@ func TestSentinelAlertBlocksApprovalLabelWrites(t *testing.T) {
 	f.mu.Unlock()
 	if err := c.AddLabels(context.Background(), "o/r", 7, []string{"lgtm"}); err != nil {
 		t.Fatalf("AddLabels(lgtm) without sentinel: %v", err)
+	}
+}
+
+// The swarm's approval supersedes the hive's own change request: a
+// REQUEST_CHANGES the App posted earlier does not deadlock its approval.
+func TestReviewSwarmApprovalSupersedesOwnChangeRequest(t *testing.T) {
+	realChangesRequestedGate(t)
+	f := &crFake{
+		reviews: []map[string]any{crReview(42, "hive-app[bot]", "CHANGES_REQUESTED", 5)},
+		perms:   map[string]string{"hive-app[bot]": "write"},
+	}
+	srv := f.serve(t)
+	c := reviewTestClient(t, srv.URL)
+	c.SetAppBotLogin("hive-app[bot]")
+	dir := withReviewDir(t)
+	if _, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 7, Event: "approve", Agent: "reviewer"}); err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessReviewRequestsOnce(context.Background())
+	if f.count(&f.approvals) != 1 {
+		t.Fatalf("approvals = %d, want the App's approval posted over its own change request", f.count(&f.approvals))
+	}
+}
+
+// A failed review read leaves the swarm's approval request for a retry
+// instead of downgrading the verdict for good.
+func TestReviewSwarmApprovalRetriesUnreadableReviews(t *testing.T) {
+	realChangesRequestedGate(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/o/r/pulls/7/reviews" && r.Method == http.MethodGet:
+			http.Error(w, "down", http.StatusInternalServerError)
+		case r.Method == http.MethodPost:
+			t.Errorf("POST %s with unreadable reviews", r.URL.Path)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := reviewTestClient(t, srv.URL)
+	dir := withReviewDir(t)
+	reqPath, err := WriteReviewRequest(dir, ReviewRequest{Repo: "o/r", Number: 7, Event: "approve", Agent: "reviewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.ProcessReviewRequestsOnce(context.Background())
+	if _, err := os.Stat(reqPath); err != nil {
+		t.Fatalf("request file gone after an unreadable gate (%v); want it kept for a retry", err)
+	}
+}
+
+// The agents' label relay never honours an operator override.
+func TestLabelRelayIgnoresOperatorOverride(t *testing.T) {
+	f := openChangeRequest()
+	c, _ := crClient(t, f)
+	t.Cleanup(func() { reviewgate.ClearOverride("o/r", 7) })
+	if _, err := reviewgate.RecordOverride("o/r", 7, "owner", "why", []reviewgate.Block{{Reviewer: "maint", ReviewID: 42}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.GateApprovalLabels(context.Background(), "o/r", 7, []string{"lgtm"}); !errors.Is(err, reviewgate.ErrChangesRequested) {
+		t.Fatalf("relay gate = %v, want the change request to block despite the override", err)
 	}
 }

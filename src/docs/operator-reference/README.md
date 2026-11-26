@@ -647,11 +647,14 @@ closed) and the next pass retries. Each gated attempt is audited as
 `approve`, `merge-now` and `queue-merge` from the dashboard first answer
 409 (`status: changes-requested`, `needs_override_reason: true`) naming each
 open change request. The dashboard then asks you for a reason; resending the
-decision with `override_reason` records an override for exactly those
-change requests (audited as `repo_item_decision_changes_requested_override`
-with the reason, and again as `outcome=overridden` by each path it lets
-through). A new change request is not covered, and an override lapses after
-24 hours or a hive restart.
+decision with `override_reason` and `override_review_ids` (the change
+requests it showed) records an override for exactly those change requests
+(audited as `repo_item_decision_changes_requested_override` with the reason,
+and again as `outcome=overridden` by each path it lets through). A change
+request posted since the 409 answers 409 again, and an override lapses after
+24 hours or a hive restart. The agents' label relay and the review swarm's
+approval never honour an override. The hive's own earlier change request
+does not block its own approval, which supersedes it on GitHub.
 
 **Approve is the trust override for that head
 ([#15136](https://github.com/hivecommons/hive/issues/15136)).** Before, an

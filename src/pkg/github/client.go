@@ -3320,7 +3320,8 @@ func (c *Client) QueuePRAutoMergeWithNoteResultAtHead(ctx context.Context, repo 
 			"agent", queuedBy, "label", blocked)
 		return res, fmt.Errorf("approving PR: %s label blocks Hive approval and auto-merge", blocked)
 	}
-	if err := c.GateChangesRequested(ctx, full, number, ChangesRequestedGateActionApprove, PRAuditPathQueue); err != nil {
+	if err := c.gateChangesRequested(ctx, full, number, ChangesRequestedGateActionApprove, PRAuditPathQueue,
+		changesRequestedGateOptions{allowOverride: true, supersedesOwn: true}); err != nil {
 		return res, fmt.Errorf("approving PR: %w", err)
 	}
 	label := c.AutoMergeLabel()
