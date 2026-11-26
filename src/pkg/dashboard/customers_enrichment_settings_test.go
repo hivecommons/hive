@@ -62,8 +62,8 @@ func readEnrichmentFeatures(t *testing.T, s *Server) enrichmentFeatures {
 }
 
 // TestGovernorFeatures_CustomersEnrichmentRoundTrip covers
-// customers.enrichment.*: gitdm defaults on but enrichment defaults off, a non-owner is refused,
-// the owner's values persist and are reported back with their effective
+// customers.enrichment.*: gitdm defaults on but enrichment defaults off;
+// a non-owner is refused, and the owner's values persist with their effective
 // value, an unrelated PUT leaves them alone, a provider follows its parents,
 // and the env overrides win.
 func TestGovernorFeatures_CustomersEnrichmentRoundTrip(t *testing.T) {
