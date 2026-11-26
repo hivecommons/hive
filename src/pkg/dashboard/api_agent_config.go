@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -397,6 +399,11 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	if !requireOwnerRole(w, r) {
 		return
 	}
+
+	// Held from the first read of the current values through the save, so a
+	// concurrent section write cannot interleave with this one.
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
@@ -939,15 +946,69 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	s.auditFromRequest(r, "config_agent_general", auditDetail("section", "general"), name)
+	s.auditFromRequest(r, "config_agent_general", generalAuditDetail(prevAgents[name], agentCfg), name)
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
+}
+
+// agentGeneralAuditFields are the scalar general-section fields whose before
+// and after values the config_agent_general audit line records, keyed by the
+// request body field that sets them. List and nested fields (repos, keywords,
+// sandbox, prompt and definition sources) are not valued here.
+var agentGeneralAuditFields = []struct {
+	key string
+	get func(config.AgentConfig) string
+}{
+	{"enabled", func(a config.AgentConfig) string { return strconv.FormatBool(a.Enabled) }},
+	{"onDemand", func(a config.AgentConfig) string { return strconv.FormatBool(a.OnDemand) }},
+	{"clearOnKick", func(a config.AgentConfig) string { return strconv.FormatBool(a.ClearOnKick) }},
+	{"continuous", func(a config.AgentConfig) string { return strconv.FormatBool(a.Continuous) }},
+	{"continuousCooldown", func(a config.AgentConfig) string { return a.ContinuousCooldown.String() }},
+	{"continuousBudgetPct", func(a config.AgentConfig) string { return strconv.Itoa(a.ContinuousBudgetPct) }},
+	{"displayName", func(a config.AgentConfig) string { return a.DisplayName }},
+	{"description", func(a config.AgentConfig) string { return a.Description }},
+	{"launchCmd", func(a config.AgentConfig) string { return a.LaunchCmd }},
+	{"bobSessionLabel", func(a config.AgentConfig) string { return a.Bob.SessionLabel }},
+	{"staleTimeout", func(a config.AgentConfig) string { return strconv.Itoa(a.StaleTimeout) }},
+	{"replicas", func(a config.AgentConfig) string { return strconv.Itoa(a.Replicas) }},
+	{"restartStrategy", func(a config.AgentConfig) string { return a.RestartStrategy }},
+	{"cliPinned", func(a config.AgentConfig) string { return strconv.FormatBool(a.CLIPinned) }},
+	{"model", func(a config.AgentConfig) string { return a.Model }},
+	{"cliPinValue", func(a config.AgentConfig) string { return a.Backend }},
+	{"emoji", func(a config.AgentConfig) string { return a.Emoji }},
+	{"color", func(a config.AgentConfig) string { return a.Color }},
+	{"sortOrder", func(a config.AgentConfig) string { return strconv.Itoa(a.SortOrder) }},
+	{"beadRole", func(a config.AgentConfig) string { return a.BeadRole }},
+	{"role", func(a config.AgentConfig) string { return a.Role }},
+	{"kickTemplate", func(a config.AgentConfig) string { return a.KickTemplate }},
+	{"mode", func(a config.AgentConfig) string { return a.Mode }},
+	{"cavemanMode", func(a config.AgentConfig) string { return a.CavemanMode }},
+	{"jevMode", func(a config.AgentConfig) string { return a.JevMode }},
+	{"explainMode", func(a config.AgentConfig) string { return a.ExplainMode }},
+}
+
+// generalAuditDetail records every listed field the write changed with its
+// before and after value, so a change made in the dialog can be undone from
+// the audit log alone (#19788).
+func generalAuditDetail(before, after config.AgentConfig) string {
+	kv := []string{"section", "general"}
+	for _, f := range agentGeneralAuditFields {
+		if b, a := f.get(before), f.get(after); b != a {
+			kv = append(kv, f.key, auditChange(b, a))
+		}
+	}
+	return auditDetail(kv...)
 }
 
 func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
 	}
+
+	// Held from the first read of the current values through the save, so a
+	// concurrent section write cannot interleave with this one.
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
@@ -961,35 +1022,11 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Validate every mode before changing any of them, so a bad later entry
-	// cannot leave earlier modes changed in memory (#19847).
 	gov := &s.deps.Config.Governor
-	cadences := make(map[string]config.Cadence, len(body))
-	for modeName, raw := range body {
-		if _, ok := gov.Modes[modeName]; !ok {
-			jsonError(w, fmt.Sprintf("unknown governor mode %q", modeName), http.StatusBadRequest)
-			return
-		}
-		var seconds int64
-		var cadence config.Cadence
-		if err := json.Unmarshal(raw, &seconds); err == nil {
-			if seconds <= 0 {
-				cadence = "pause"
-			} else {
-				cadence = config.Cadence(formatCadenceDuration(seconds))
-			}
-		} else if err := json.Unmarshal(raw, &cadence); err != nil {
-			jsonError(w, "invalid cadence for "+modeName+": must be seconds, interval string, or schedule object", http.StatusBadRequest)
-			return
-		}
-		if err := cadence.Validate(); err != nil {
-			jsonError(w, "invalid cadence for "+modeName+": "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		if cadence.Mode() == config.CadenceModeInterval && cadence.IsPaused() {
-			cadence = "pause"
-		}
-		cadences[modeName] = cadence
+	cadences, err := validateCadencesBody(gov, body)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// Each edited mode gets a fresh Cadences map rather than a write into the
@@ -1018,7 +1055,7 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "cadences not saved: "+err.Error(), status)
 		return
 	}
-	s.auditFromRequest(r, "config_agent_cadences", auditDetail("section", "cadences"), name)
+	s.auditFromRequest(r, "config_agent_cadences", cadencesAuditDetail(name, prevModes, cadences), name)
 	// The rebuild kicked here is asynchronous, so the browser's post-save
 	// GET /api/status can be served the CACHED pre-mutation snapshot and
 	// repaint the OLD cadence — the operator then waits for a later broadcast
@@ -1029,6 +1066,64 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 	// jsonResponse rather than okResponse: the latter is typed map[string]string
 	// and cannot carry the numeric floor. "ok" is preserved for callers.
 	jsonResponse(w, map[string]any{"ok": true, "status": "updated", "agent": name, "minStatusSeq": floor})
+}
+
+// validateCadencesBody validates every mode of a cadences write before any of
+// them is applied, so a bad later entry cannot leave earlier modes changed in
+// memory (#19847). It returns the normalised cadence per mode and changes no
+// shared state. Every error is a 400.
+func validateCadencesBody(gov *config.GovernorConfig, body map[string]json.RawMessage) (map[string]config.Cadence, error) {
+	cadences := make(map[string]config.Cadence, len(body))
+	for modeName, raw := range body {
+		if _, ok := gov.Modes[modeName]; !ok {
+			return nil, fmt.Errorf("unknown governor mode %q", modeName)
+		}
+		var seconds int64
+		var cadence config.Cadence
+		if err := json.Unmarshal(raw, &seconds); err == nil {
+			if seconds <= 0 {
+				cadence = "pause"
+			} else {
+				cadence = config.Cadence(formatCadenceDuration(seconds))
+			}
+		} else if err := json.Unmarshal(raw, &cadence); err != nil {
+			return nil, errors.New("invalid cadence for " + modeName + ": must be seconds, interval string, or schedule object")
+		}
+		if err := cadence.Validate(); err != nil {
+			return nil, errors.New("invalid cadence for " + modeName + ": " + err.Error())
+		}
+		if cadence.Mode() == config.CadenceModeInterval && cadence.IsPaused() {
+			cadence = "pause"
+		}
+		cadences[modeName] = cadence
+	}
+	return cadences, nil
+}
+
+// auditUnset stands in for a value that was not set, in before/after audit
+// details.
+const auditUnset = "(unset)"
+
+// auditChange formats one before/after pair for an audit detail.
+func auditChange(before, after string) string {
+	if before == "" {
+		before = auditUnset
+	}
+	if after == "" {
+		after = auditUnset
+	}
+	return before + " -> " + after
+}
+
+// cadencesAuditDetail records each written mode with agent name's cadence
+// before and after the write, in mode order, so a change can be undone from
+// the audit log alone (#19788).
+func cadencesAuditDetail(name string, prevModes map[string]config.ModeConfig, cadences map[string]config.Cadence) string {
+	kv := []string{"section", "cadences"}
+	for _, mode := range slices.Sorted(maps.Keys(cadences)) {
+		kv = append(kv, mode, auditChange(string(prevModes[mode].Cadences[name]), string(cadences[mode])))
+	}
+	return auditDetail(kv...)
 }
 
 // cloneCadenceOwners deep-copies the governor's cadence ownership markers so a
@@ -1044,32 +1139,34 @@ func cloneCadenceOwners(owners map[string]map[string]string) map[string]map[stri
 	return out
 }
 
-func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request) {
-	if !requireOwnerRole(w, r) {
-		return
-	}
+// agentModelsBody is the PUT /api/config/agent/{name}/models request.
+type agentModelsBody struct {
+	Backend string `json:"backend"`
+	Model   string `json:"model"`
+	// A pointer so "clear the effort" (explicit "") and "leave it
+	// unchanged" (field absent) stay distinguishable: Backend/Model
+	// above treat "" as unchanged, but empty is a meaningful effort
+	// value (the backend's own default).
+	ReasoningEffort *string `json:"reasoning_effort"`
+}
 
-	name := r.PathValue("name")
-	var body struct {
-		Backend string `json:"backend"`
-		Model   string `json:"model"`
-		// A pointer so "clear the effort" (explicit "") and "leave it
-		// unchanged" (field absent) stay distinguishable — Backend/Model
-		// above treat "" as unchanged, but empty is a meaningful effort
-		// value (the backend's own default).
-		ReasoningEffort *string `json:"reasoning_effort"`
-	}
-	if err := decodeBody(r, &body); err != nil {
-		jsonError(w, "invalid body", http.StatusBadRequest)
-		return
-	}
+// agentModelsUpdate is a validated models write: the agent config to store,
+// and the backend and model the agent launches with before and after it, live
+// overrides included. A caller that checks a change (the chat proposal check,
+// #19788) sees exactly the values the endpoint applies.
+type agentModelsUpdate struct {
+	Cfg                                         config.AgentConfig
+	PrevBackend, PrevModel                      string
+	EffectiveBackend, EffectiveModel            string
+	ModelWarning                                string
+	ModelChanged, BackendChanged, EffortChanged bool
+}
 
-	agentCfg, ok := s.deps.Config.Agents[name]
-	if !ok {
-		jsonError(w, "agent not found", http.StatusNotFound)
-		return
-	}
-
+// validateModelsBody validates a models write for agent name in full and
+// returns the normalised result. It changes no shared state: the returned
+// config is a copy, and the handler stores it only after every check passed.
+// Every error is a 400.
+func (s *Server) validateModelsBody(name string, agentCfg config.AgentConfig, body agentModelsBody) (agentModelsUpdate, error) {
 	// What the agent LAUNCHES with is not agentCfg alone: launchInTmux
 	// prefers a live ModelOverride/BackendOverride (set by the card
 	// dropdowns via /api/model and /api/switch, by a pin, or by the
@@ -1085,8 +1182,7 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 			prevBackend = proc.BackendOverride
 		}
 	}
-	effectiveBackend, effectiveModel := prevBackend, prevModel
-	modelChanged, backendChanged, effortChanged := false, false, false
+	u := agentModelsUpdate{PrevBackend: prevBackend, PrevModel: prevModel, EffectiveBackend: prevBackend, EffectiveModel: prevModel}
 
 	// Operator edits claim ownership so the pack apply that runs on every
 	// restart cannot reconcile the choice back to the pack default.
@@ -1097,35 +1193,34 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		// the failure surfaces hours later as "unknown backend: <x>" on the
 		// kick path, with the agent silently never launching.
 		if err := s.deps.Config.Governor.ValidateBackend(backend); err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
-			return
+			return agentModelsUpdate{}, err
 		}
 		if !s.deps.Config.BackendAllowed(backend) {
-			jsonError(w, fmt.Sprintf("backend %q is disabled on this spoke by the backends allow/deny list in hive.yaml", backend), http.StatusBadRequest)
-			return
+			return agentModelsUpdate{}, fmt.Errorf("backend %q is disabled on this spoke by the backends allow/deny list in hive.yaml", backend)
 		}
 		agentCfg.Backend = backend
 		agentCfg.BackendOwner = config.FieldOwnerOperator
 		s.reconcileLaunchCmdForBackend(name, &agentCfg)
-		effectiveBackend = agentCfg.Backend
-		backendChanged = backend != prevBackend
+		u.EffectiveBackend = agentCfg.Backend
+		u.BackendChanged = backend != prevBackend
 	}
 	if body.Model != "" {
 		agentCfg.Model = sanitizeString(body.Model)
 		agentCfg.ModelOwner = config.FieldOwnerOperator
-		effectiveModel = agentCfg.Model
+		u.EffectiveModel = agentCfg.Model
 	}
 	// A Claude id in the other CLI's convention, whether sent in this request
 	// or carried over by a backend change, is stored in this backend's
 	// spelling (claude-sonnet-5-5 on claude, claude-sonnet-5.5 on copilot),
 	// with a warning. Each CLI rejects the other's spelling.
-	normalizedModel, modelWarning := canonicalizeModelForBackend(name, effectiveBackend, effectiveModel)
+	normalizedModel, modelWarning := canonicalizeModelForBackend(name, u.EffectiveBackend, u.EffectiveModel)
 	if modelWarning != "" {
 		agentCfg.Model = normalizedModel
 		agentCfg.ModelOwner = config.FieldOwnerOperator
-		effectiveModel = normalizedModel
+		u.EffectiveModel = normalizedModel
 	}
-	modelChanged = effectiveModel != prevModel
+	u.ModelWarning = modelWarning
+	u.ModelChanged = u.EffectiveModel != prevModel
 	if body.ReasoningEffort != nil {
 		effort := sanitizeString(*body.ReasoningEffort)
 		// Same set-time rejection rationale as ValidateBackend above: an
@@ -1133,13 +1228,46 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		// a broken launch command. Validated against the backend/model the
 		// agent will actually launch with, including values set in this
 		// same request. omp is per-model, not backend-wide.
-		if err := s.validateAgentReasoningEffort(effectiveBackend, effectiveModel, effort); err != nil {
-			jsonError(w, err.Error(), http.StatusBadRequest)
-			return
+		if err := s.validateAgentReasoningEffort(u.EffectiveBackend, u.EffectiveModel, effort); err != nil {
+			return agentModelsUpdate{}, err
 		}
-		effortChanged = effort != agentCfg.ReasoningEffort
+		u.EffortChanged = effort != agentCfg.ReasoningEffort
 		agentCfg.ReasoningEffort = effort
 	}
+	u.Cfg = agentCfg
+	return u, nil
+}
+
+func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+
+	name := r.PathValue("name")
+	var body agentModelsBody
+	if err := decodeBody(r, &body); err != nil {
+		jsonError(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+
+	// Held from the first read of the current values through the save, so a
+	// concurrent section write cannot interleave with this one.
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
+
+	agentCfg, ok := s.deps.Config.Agents[name]
+	if !ok {
+		jsonError(w, "agent not found", http.StatusNotFound)
+		return
+	}
+
+	u, err := s.validateModelsBody(name, agentCfg, body)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	agentCfg = u.Cfg
+	modelChanged, backendChanged, effortChanged, modelWarning := u.ModelChanged, u.BackendChanged, u.EffortChanged, u.ModelWarning
 	prevCfg := s.deps.Config.Agents[name]
 	s.deps.Config.Agents[name] = agentCfg
 
@@ -1353,6 +1481,9 @@ func (s *Server) handleAgentConfigChannels(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
+
 	name := r.PathValue("name")
 	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
@@ -1387,6 +1518,9 @@ func (s *Server) handleAgentConfigTools(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
+
 	name := r.PathValue("name")
 	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
@@ -1411,6 +1545,9 @@ func (s *Server) handleAgentConfigConnections(w http.ResponseWriter, r *http.Req
 	if !requireOwnerRole(w, r) {
 		return
 	}
+
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 
 	name := r.PathValue("name")
 	agentCfg, ok := s.deps.Config.Agents[name]
@@ -1663,6 +1800,9 @@ func (s *Server) handleAgentPromptSave(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
 	}
+
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {

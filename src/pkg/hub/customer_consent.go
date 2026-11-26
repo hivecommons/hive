@@ -123,6 +123,7 @@ func (s *HubServer) handleListCustomerConsents(w http.ResponseWriter, r *http.Re
 		s.customerConsentError(w, err)
 		return
 	}
+	crmOverlayConsents(user, records)
 	now := time.Now()
 	hives := make([]customerConsentHive, 0, len(user.Hives))
 	for id, role := range user.Hives {

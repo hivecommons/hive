@@ -6,9 +6,9 @@ contributions to CNCF projects. Hive uses the
 [hivecommons/colony](https://github.com/hivecommons/colony) resolver for the
 lookups.
 
-**Everything here is off by default.** With every switch off a hive behaves
-exactly as it does without the feature: no file is downloaded, no lookup is
-made and nothing extra is stored or shown.
+**Enrichment is off by default.** When an owner turns it on, gitdm is on
+unless explicitly disabled; devstats and crowd.dev remain off. With enrichment
+off, no file is downloaded, no lookup is made and nothing extra is stored or shown.
 
 ## Sources
 
@@ -57,11 +57,22 @@ it stands down when the hive's API budget asks optional work to wait.
 
 ## How results are used
 
-- **Affiliation is only ever a suggestion.** A gitdm or crowd.dev affiliation is
-  offered in the person's details with the existing Accept and Dismiss buttons
-  and a chip naming the source and the dates. Nothing overwrites an
-  organization: a value set by hand and a value the person shared from the hub
-  always win, and accepting is a decision an owner makes.
+- **Affiliation is a suggestion unless an owner picks a policy.** A gitdm or
+  crowd.dev affiliation is offered in the person's details with the existing
+  Accept and Dismiss buttons and a chip naming the source and the dates. A value
+  set by hand and a value the person shared from the hub always win. With the
+  auto-accept policy (below) left at its default, `off`, accepting is always a
+  decision an owner makes.
+- **Auto-accept (`customers.enrichment.auto_accept`, default `off`).** With
+  `gitdm_high`, a gitdm affiliation matched by GitHub login (confidence high)
+  and current today fills the organization when it is empty or holds an earlier
+  auto-accepted value. It never replaces a value a person set or cleared, a
+  value from the hub, or the company on the person's own public forge profile,
+  which is their own statement. An email-only match (confidence medium) is never
+  accepted. The field is labelled "auto-accepted from cncf/gitdm" and has a
+  Dismiss button; dismissing clears it and the value is not accepted again.
+  Each auto-accept writes a `customer_enrichment` audit line with the person id
+  and provider `gitdm_auto_accept`.
 - **Activity is read-only.** devstats activity appears as a "Public
   contributions" block in the person's details, with external links.
 - **Only confirmed customers are looked up.** A suggested person is never
@@ -76,7 +87,12 @@ it stands down when the hive's API budget asks optional work to wait.
 
 Enrichment results are kept in `/data/customers/enrichment.json` (mode 0600),
 keyed by person id with the source and fetch time of each fact. The file can be
-deleted at any time; it is rebuilt from the sources.
+deleted at any time; it is rebuilt from the sources. With `customers.store`
+`shadow` or `colony` they are also written to `/data/customers/colony.db` as
+suggested enrichment facts: the current gitdm affiliation (source
+`colony:gitdm`, with its confidence and the identity it matched) and one
+`activity:<project>` count per devstats project (source `colony:devstats`). See
+[the colony store](design/colony-customer-data-backend.md#spoke-implementation-p3).
 
 ## Settings
 
@@ -87,12 +103,14 @@ the one above it on, and the whole block needs Customers on.
 | hive.yaml key | Default | Environment override | Meaning |
 |---|---|---|---|
 | `customers.enrichment.enabled` | `false` | `HIVE_CUSTOMERS_ENRICHMENT_ENABLED` | Master switch |
-| `customers.enrichment.gitdm.enabled` | `false` | `HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED` | gitdm source |
+| `customers.enrichment.gitdm.enabled` | `true` | `HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED` | gitdm source (requires enrichment on) |
 | `customers.enrichment.gitdm.refresh_interval` | `24h` | `HIVE_CUSTOMERS_ENRICHMENT_GITDM_REFRESH_INTERVAL` | How often the public gitdm files are downloaded again (a Go duration, at least `1h`) |
 | `customers.enrichment.devstats.enabled` | `false` | `HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_ENABLED` | devstats source |
 | `customers.enrichment.devstats.hourly_limit` | `30` | `HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_HOURLY_LIMIT` | devstats lookups all people may make in one hour (at most `120`) |
 | `customers.enrichment.crowddev.enabled` | `false` | `HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_ENABLED` | crowd.dev source |
+| `customers.enrichment.auto_accept` | `off` | `HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT` | Auto-accept policy: `off` or `gitdm_high`. Off whenever gitdm is off; an unknown value means `off` (Settings refuses one). Settings shows it as **Auto-accept gitdm affiliations** under Enrichment sources |
 | `customers.enrichment.crowddev.token_file` | `/data/secrets/customers_crowddev_token` | `HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN_FILE` | Keystore-sealed crowd.dev API token. `HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN` supplies the token directly and wins over the file |
+| `customers.store` | `json` | `HIVE_CUSTOMERS_STORE` | Where person records and enrichment results live: `json`, `shadow` or `colony` (see [the colony store](design/colony-customer-data-backend.md#migration)). Read at startup. Settings shows it as **Customer record store**, below Enrichment sources, and refuses an unknown value |
 
 The crowd.dev token is never stored in hive.yaml. Settings saves it through the
 owner-only `POST /api/customers/enrichment/settings`, which seals it into the

@@ -63,7 +63,9 @@ func reviewHeadAgentNames(baseAgents map[string]AgentConfig) (map[string]string,
 // base (so it shares the base's cadence, prompt and scope, and is stripped on
 // save) and ReviewHead with its head key. Settings that only make sense for
 // the base's own backend (launch command, reasoning effort) are dropped when
-// the head runs a different backend, and the head carries no review_models
+// the head runs a different backend, max_context_tokens (a property of the
+// base's model, hivecommons/hive#19913) is dropped when the head runs a
+// different model, and the head carries no review_models
 // pool or review_heads of its own: the head IS the model.
 func expandReviewHeads(base string, agent AgentConfig) []AgentConfig {
 	var out []AgentConfig
@@ -78,6 +80,9 @@ func expandReviewHeads(base string, agent AgentConfig) []AgentConfig {
 			if !strings.EqualFold(strings.TrimSpace(h.Backend), strings.TrimSpace(agent.Backend)) {
 				derived.LaunchCmd = ""
 				derived.ReasoningEffort = ""
+			}
+			if strings.TrimSpace(h.Model) != strings.TrimSpace(agent.Model) {
+				derived.MaxContextTokens = 0
 			}
 			derived.Backend = strings.TrimSpace(h.Backend)
 			derived.Model = strings.TrimSpace(h.Model)

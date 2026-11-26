@@ -168,8 +168,9 @@ func (s *HubServer) customerMatchIndexFor(hiveID string, keys []string, now time
 		if err != nil {
 			continue
 		}
-		c, ok := records[hiveID]
-		if !ok || c.discardable(now) || c.WithdrawnAt != nil && c.DeliveredFields == nil {
+		// Colony can only narrow a record (crmOverlayConsents), so a record
+		// the file already excludes is skipped before the user is loaded.
+		if c, ok := records[hiveID]; !ok || c.discardable(now) || c.WithdrawnAt != nil && c.DeliveredFields == nil {
 			continue
 		}
 		user := loadSaaSUser(strings.TrimSuffix(entry.Name(), ".json"))
@@ -177,6 +178,10 @@ func (s *HubServer) customerMatchIndexFor(hiveID string, keys []string, now time
 			continue
 		}
 		if p, err := customerConsentPath(user); err != nil || p != path {
+			continue
+		}
+		crmOverlayConsents(user, records)
+		if c := records[hiveID]; c.discardable(now) || c.WithdrawnAt != nil && c.DeliveredFields == nil {
 			continue
 		}
 		login := customerMatchLogin(user)
@@ -223,12 +228,16 @@ type customerMatchRequest struct {
 }
 
 type customerMatchEntry struct {
-	MatchHash    string   `json:"match_hash"`
-	Rev          string   `json:"rev,omitempty"`
-	RealName     string   `json:"real_name,omitempty"`
-	Organization string   `json:"organization,omitempty"`
-	Country      string   `json:"country,omitempty"`
-	Cleared      []string `json:"cleared,omitempty"`
+	MatchHash    string `json:"match_hash"`
+	Rev          string `json:"rev,omitempty"`
+	RealName     string `json:"real_name,omitempty"`
+	Organization string `json:"organization,omitempty"`
+	Country      string `json:"country,omitempty"`
+	// Affiliation is the hub-derived affiliation from public github.com
+	// data, a separate field from Organization so a hive can tell a
+	// derivation from a statement (#19856). Labeled answers only.
+	Affiliation string   `json:"affiliation,omitempty"`
+	Cleared     []string `json:"cleared,omitempty"`
 	// Sources labels each value by who put it on the hub record
 	// (customerMatchSource*). Sent only to a hive that asked for labels.
 	Sources map[string]string `json:"sources,omitempty"`
@@ -274,9 +283,14 @@ func customerMatchShareable(c customerConsent, user *SaaSUser) (customerMatchEnt
 
 func customerMatchRev(e customerMatchEntry) string {
 	material := "real_name\x00" + e.RealName + "\x00organization\x00" + e.Organization + "\x00country\x00" + e.Country
+	// Affiliation, like the labels, changes the rev only when present, so an
+	// answer without one keeps the rev it always had.
+	if e.Affiliation != "" {
+		material += "\x00affiliation\x00" + e.Affiliation
+	}
 	// Labels change the rev only when present, so a consent-only answer keeps
 	// the rev it always had.
-	for _, name := range []string{"real_name", "organization", "country"} {
+	for _, name := range []string{"real_name", "organization", "country", customerMatchFieldAffiliation} {
 		if src := e.Sources[name]; src != "" {
 			material += "\x00source:" + name + "\x00" + src
 		}
@@ -306,6 +320,8 @@ type pendingCustomerMatch struct {
 	// count only and never stamped (there may be no consent record).
 	sent   customerConsentFields
 	public customerConsentFields
+	// affiliation is set when the labeled answer carries an affiliation.
+	affiliation bool
 }
 
 // fitCustomerMatches keeps entries, in order, while the encoded response
@@ -424,18 +440,21 @@ func (s *HubServer) handleCustomerMatch(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			continue
 		}
-		c, hasConsent := records[hiveID]
-		if !hasConsent && !labels {
+		if _, hasConsent := records[hiveID]; !hasConsent && !labels {
 			continue
 		}
 		user := loadSaaSUser(strings.TrimSuffix(filepath.Base(path), ".json"))
+		crmOverlayConsents(user, records)
+		c, hasConsent := records[hiveID]
 		var entry customerMatchEntry
 		var sent, public customerConsentFields
+		affiliation := false
 		if hasConsent && customerMatchEffective(c, user, hiveID) {
 			entry, sent = customerMatchShareable(c, user)
 		}
 		if labels {
 			entry, public = customerMatchPublic(entry, user, hiveID, orgDomains, sent)
+			entry, affiliation = customerMatchAffiliation(entry, user, hiveID)
 		}
 		// cleared: fields this hive was sent before that do not cross now.
 		if d := c.DeliveredFields; hasConsent && d != nil {
@@ -445,14 +464,14 @@ func (s *HubServer) handleCustomerMatch(w http.ResponseWriter, r *http.Request) 
 				Country:      d.Country && !sent.Country && !public.Country,
 			}.names()
 		}
-		if sent == (customerConsentFields{}) && public == (customerConsentFields{}) && len(entry.Cleared) == 0 {
+		if sent == (customerConsentFields{}) && public == (customerConsentFields{}) && !affiliation && len(entry.Cleared) == 0 {
 			continue // silent, like an unknown person
 		}
 		entry.MatchHash = h
-		if sent != (customerConsentFields{}) || public != (customerConsentFields{}) {
+		if sent != (customerConsentFields{}) || public != (customerConsentFields{}) || affiliation {
 			entry.Rev = customerMatchRev(entry)
 		}
-		pending = append(pending, pendingCustomerMatch{entry: entry, path: path, sent: sent, public: public})
+		pending = append(pending, pendingCustomerMatch{entry: entry, path: path, sent: sent, public: public, affiliation: affiliation})
 	}
 	pending, truncated := fitCustomerMatches(pending, maxCustomerMatchResponse)
 
@@ -463,7 +482,7 @@ func (s *HubServer) handleCustomerMatch(w http.ResponseWriter, r *http.Request) 
 		if len(p.entry.Cleared) > 0 {
 			cleared++
 		}
-		if p.public != (customerConsentFields{}) {
+		if p.public != (customerConsentFields{}) || p.affiliation {
 			public++
 		}
 		if p.sent == (customerConsentFields{}) {

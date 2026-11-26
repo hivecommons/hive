@@ -10,7 +10,7 @@ On each governor kick, the supervisor follows its configured policy template and
 
 - Monitors all configured agents for stalls, rate limits, login problems, and other anomalies.
 - Reads recent bead activity and compares it with each agent's `stale_timeout` when that field is configured.
-- Uses the internal kick/orchestration path to prompt agents that need to run.
+- Reports stale or stuck agents in an advisory bead. It does not kick agents: the governor does that on each agent's cadence.
 - Coordinates agent lanes so duplicate or conflicting work is surfaced early.
 - Delegates code, issue, pull request, and repository analysis to specialist agents.
 - Produces sweep reports and health assessments for the dashboard/operator.
@@ -26,7 +26,7 @@ The governor and supervisor are different layers:
 | Scheduler | Governor (Go binary) | Evaluates queue depth on a timer. Selects idle, quiet, busy, or surge mode. Applies configured agent cadences, including `pause` and time-of-day/cron cadence objects. Controls *when* agents are kicked. |
 | Orchestrator | Supervisor (AI agent) | Reviews agent health and bead activity, detects stalls, coordinates lane boundaries, and routes work to specialist agents. Controls *what operational guidance* agents receive. |
 
-The governor can kick the supervisor like any other enabled agent. In the ACMM packs, the supervisor then performs a health sweep and may kick or redirect workers through the internal orchestration path.
+The governor can kick the supervisor like any other enabled agent. In the ACMM packs, the supervisor then performs a health sweep and reports what it finds. The governor, not the supervisor, kicks the workers. Agents have no kick route: `POST /api/kick/{agent}` is owner-only, because a kick types text into the target agent's CLI ([#6557](https://github.com/hivecommons/hive/issues/6557)), so the supervisor policy tells it not to look for one ([#19891](https://github.com/hivecommons/hive/issues/19891)).
 
 ## When to enable the supervisor
 
@@ -67,7 +67,8 @@ They currently contain the same no-GitHub advisory rules. The built-in ACMM pack
 Both templates enforce:
 
 - No `gh` commands, GitHub API calls, or issue/PR reads.
-- Internal orchestration only: kick agents, monitor health, read beads, and coordinate the pipeline.
+- Internal orchestration only: monitor health, read beads, and coordinate the pipeline. The supervisor reports; the governor kicks.
+- No kicking: no dashboard kick API, `hive` binary, `pluk-send`, or tmux. A stale or stuck agent goes into one advisory bead with the agent name and the evidence.
 - No GitHub-referencing beads with `--external-ref "gh-*"`.
 - Delegation of analysis and code actions to specialist agents.
 
@@ -75,7 +76,7 @@ The ACMM mode remains advisory for the supervisor at every level. `${GH_AUTH}` i
 
 ## How the supervisor interacts with other agents
 
-The supervisor checks each agent's health inputs, including recent bead activity, configured stale timeouts, and visible session state. When it finds a problem, it reports the problem and uses the internal kick/orchestration path where appropriate.
+The supervisor checks each agent's health inputs, including recent bead activity, configured stale timeouts, and visible session state. When it finds a problem, it records it in an advisory bead and stops. It does not kick, restart, or type into another agent's session.
 
 Some ACMM pack descriptions refer to restarts or self-healing at higher levels. In current policy, the supervisor still remains no-GitHub and delegates code or repository actions; runtime restart behavior is controlled by agent configuration such as `restart_strategy`, not by GitHub access.
 

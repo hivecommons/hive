@@ -46,9 +46,17 @@ const (
 	closeMarkerFormat = "<!-- hive-close-on-merge pr=%d -->"
 )
 
-// writeAccess are the Forgejo permission levels that may release a merge or
-// author a pull request whose closing keywords the sweep honours.
+// writeAccess are the Forgejo permission levels that may author a pull
+// request whose closing keywords the sweep honours.
 var writeAccess = map[string]bool{"write": true, "admin": true, "owner": true}
+
+// releaseAccess are the levels that may release a merge with the automerge
+// label. It adds forge.PermissionAssignable, the answer when the hive's
+// Forgejo user has write but not admin and Forgejo refuses the permission
+// API (#19914): the timeline already shows the labeller added a label to the
+// pull request, which Forgejo allows only with write on pull requests. The
+// close-on-merge author check has no such evidence and keeps writeAccess.
+var releaseAccess = map[string]bool{"write": true, "admin": true, "owner": true, forge.PermissionAssignable: true}
 
 // closingRefRe matches a same-repository closing keyword ("Fixes #12").
 // Forgejo's keywords are close, closes, closed, fix, fixes, fixed, resolve,
@@ -236,7 +244,7 @@ func (s *Sweeper) tryMerge(ctx context.Context, api forge.SweepAPI, repo string,
 	if err != nil {
 		return skip("permission-read-failed")
 	}
-	if !writeAccess[perm] {
+	if !releaseAccess[perm] {
 		return skip("labeler-lacks-write")
 	}
 	state, total, err := api.CombinedStatus(ctx, repo, pr.HeadSHA)

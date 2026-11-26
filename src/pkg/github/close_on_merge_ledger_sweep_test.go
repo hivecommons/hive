@@ -22,6 +22,8 @@ type ledgerSweepFixture struct {
 	hits map[string]int
 	// issueStatus, when non-zero, fails every issue GET with that status.
 	issueStatus int
+	// prKeyword, when set, replaces "Fixes" in every PR body.
+	prKeyword string
 }
 
 func newLedgerSweepFixture(t *testing.T, open ...int) *ledgerSweepFixture {
@@ -63,8 +65,12 @@ func (f *ledgerSweepFixture) server() *httptest.Server {
 		n, _ := strconvAtoi(parts5(path))
 		switch {
 		case r.Method == "GET" && strings.Contains(path, "/pulls/"):
+			keyword := "Fixes"
+			if f.prKeyword != "" {
+				keyword = f.prKeyword
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"number": n, "title": "fix", "body": "Fixes #" + parts5(path), "merged": true,
+				"number": n, "title": "fix", "body": keyword + " #" + parts5(path), "merged": true,
 				"merged_at": "2026-10-09T12:00:00Z", "merge_commit_sha": "abcdef0123456789",
 				"user": map[string]string{"login": "hive[bot]"},
 				"head": map[string]string{"ref": "scanner/fix", "sha": "headsha"},
@@ -404,5 +410,34 @@ func TestCloseOnMergeClaimHelpers(t *testing.T) {
 	}
 	if o.now().IsZero() {
 		t.Fatal("nil clock returned zero")
+	}
+}
+
+// TestCloseOnMergeLedgerSweepRefsOnlyClaimStaysOpen is #19956: the ledger
+// holds a strong claim linking the merged PR to the issue, but the PR body
+// only says Refs. The issue stays open, the verdict is refs_only, and it
+// settles the claim so later sweeps spend no API call on it.
+func TestCloseOnMergeLedgerSweepRefsOnlyClaimStaysOpen(t *testing.T) {
+	defer resetPRDetailCacheForTest(nil, 0)()
+	f := newLedgerSweepFixture(t, 7)
+	f.prKeyword = "Refs"
+	srv := f.server()
+	defer srv.Close()
+	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), nil)
+	merged := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+	if err := ledger.Record(mergedLedgerClaim(7, merged)); err != nil {
+		t.Fatal(err)
+	}
+	c := newTestClient(t, srv, "o", []string{"r"})
+	now := merged.Add(time.Hour)
+	sweep := c.CloseOnMergeLedgerSweep(context.Background(), ledger, CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}, Now: func() time.Time { return now }})
+	if len(sweep.Results) != 1 || sweep.Results[0].Action != CloseOnMergeSkipped || sweep.Results[0].Reason != "refs_only" || !sweep.Results[0].WrongRefs {
+		t.Fatalf("sweep = %+v, want one skipped/refs_only", sweep)
+	}
+	if got := f.count("patch") + f.count("post"); got != 0 {
+		t.Fatalf("refs-only claim wrote to the issue %d times, want 0", got)
+	}
+	if sweep.Marked != 1 {
+		t.Fatalf("refs_only verdict did not settle the claim: %+v", sweep)
 	}
 }

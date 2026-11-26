@@ -90,7 +90,7 @@ func (f *giteaForge) CreateIssue(ctx context.Context, repo, title, body string, 
 	ref := IssueRef{Number: out.Number, URL: out.HTMLURL}
 	labels = config.WithOriginLabel(labels, config.OriginSourceForge)
 	if err := f.AddLabels(ctx, repo, ref.Number, labels); err != nil { // writeback:solicited labels of the issue the caller is creating
-		return ref, fmt.Errorf("%w: issue %s/%s#%d: %v", ErrLabelsNotApplied, owner, name, ref.Number, err)
+		return ref, fmt.Errorf("%w: issue %s/%s#%d: %w", ErrLabelsNotApplied, owner, name, ref.Number, err)
 	}
 	return ref, nil
 }
@@ -166,7 +166,7 @@ func (f *giteaForge) CreateChangeRequest(ctx context.Context, repo string, spec 
 	}
 	ref := ChangeRequestRef{Number: out.Number, URL: out.HTMLURL}
 	if err := f.AddLabels(ctx, repo, ref.Number, spec.Labels); err != nil { // writeback:solicited labels of the pull request the caller is opening
-		return ref, fmt.Errorf("%w: pull request %s#%d: %v", ErrLabelsNotApplied, slug, ref.Number, err)
+		return ref, fmt.Errorf("%w: pull request %s#%d: %w", ErrLabelsNotApplied, slug, ref.Number, err)
 	}
 	return ref, nil
 }
@@ -193,7 +193,7 @@ func (f *giteaForge) doWriteJSON(ctx context.Context, method, endpoint string, p
 
 	data, readErr := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("%s API %s returned status %d: %s", f.label, endpoint, resp.StatusCode, truncate(string(data), 200))
+		return &giteaStatusError{label: f.label, endpoint: endpoint, status: resp.StatusCode, body: truncate(string(data), 200)}
 	}
 	if readErr != nil {
 		return fmt.Errorf("reading body from %s: %w", endpoint, readErr)

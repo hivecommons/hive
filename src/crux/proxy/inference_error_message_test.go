@@ -18,6 +18,22 @@ func TestInferenceBackendErrorMessage(t *testing.T) {
 	}
 }
 
+func TestInferenceContextLengthErrorMessage(t *testing.T) {
+	body := []byte(`{"error":{"message":"` + strings.Repeat("x", 250) + `","code":"context_length_exceeded"}}`)
+	got := inferenceBackendErrorMessage(400, body, "", "")
+	if !strings.HasPrefix(got, "inference backend returned 400: prompt is too long: ") {
+		t.Fatalf("context error lost its recognizable message: %q", got)
+	}
+	if inferenceContextLengthError(500, body) {
+		t.Fatal("server errors must not be classified as context overflows")
+	}
+	for _, text := range []string{"PROMPT IS TOO LONG", "maximum context length"} {
+		if !inferenceContextLengthError(422, []byte(text)) {
+			t.Errorf("did not recognize %q", text)
+		}
+	}
+}
+
 func TestInferenceBackendUnreachableMessage(t *testing.T) {
 	got := inferenceBackendUnreachableMessage(errors.New("boom"), "http://gw:8000/v1/chat/completions")
 	if got != "inference backend unreachable: boom (upstream: http://gw:8000/v1/chat/completions)" {

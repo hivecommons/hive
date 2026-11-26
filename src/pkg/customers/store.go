@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -68,6 +69,20 @@ type Store struct {
 	// saved is the bytes last written, so an unchanged store is not
 	// rewritten.
 	saved []byte
+	// colony mirrors every change into colony.db (customers.store shadow or
+	// colony); nil in json mode. See colony.go.
+	colony *Colony
+	// pendingForget holds, during one change, the people Forget removed and
+	// the tombstones it wrote for them, so the colony half forgets rather
+	// than keeps a merged-away record.
+	pendingForget map[string][]string
+}
+
+// Colony is the colony mirror, or nil in json mode.
+func (s *Store) Colony() *Colony {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.colony
 }
 
 // Open opens <dir>/people.json, creating dir if needed. A missing file is
@@ -203,17 +218,45 @@ func (s *Store) restoreLocked(sn snapshot) {
 func (s *Store) change(fn func() error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer func() { s.pendingForget = nil }()
 	sn := s.snapshotLocked()
 	if err := fn(); err != nil {
 		s.restoreLocked(sn)
 		return err
 	}
 	s.reindexLocked()
+	before := s.saved
 	if err := s.saveLocked(); err != nil {
 		s.restoreLocked(sn)
 		return err
 	}
+	if s.colony != nil && !bytes.Equal(before, s.saved) {
+		// people.json is written first and stays the rollback copy; the
+		// colony write follows.
+		changed, gone := s.diffLocked(sn)
+		s.colony.mirrorPeople(changed, gone, s.pendingForget, s.saved, s.forgottenLocked)
+	}
 	return nil
+}
+
+// diffLocked lists the people whose colony-held part changed since sn, and
+// the ids that left the store.
+func (s *Store) diffLocked(sn snapshot) (changed []Person, gone []string) {
+	for id, p := range s.people {
+		old, ok := sn.people[id]
+		if ok && old.Status == p.Status && reflect.DeepEqual(old.Identities, p.Identities) && reflect.DeepEqual(old.Profile, p.Profile) {
+			continue
+		}
+		changed = append(changed, clonePerson(p))
+	}
+	for id := range sn.people {
+		if _, ok := s.people[id]; !ok {
+			gone = append(gone, id)
+		}
+	}
+	sort.Slice(changed, func(i, j int) bool { return changed[i].ID < changed[j].ID })
+	sort.Strings(gone)
+	return changed, gone
 }
 
 // changePerson applies fn to one person and saves.
@@ -606,6 +649,11 @@ func (s *Store) DismissAffiliation(id, value string) (Person, error) {
 		return Person{}, fmt.Errorf("%w: empty affiliation", ErrInvalid)
 	}
 	return s.changePerson(id, func(p *Person) error {
+		// Dismissing an auto-accepted organization clears it as well.
+		if org := p.Profile.Organization; org.Source == SourceAuto && org.Rule == AffiliationAutoAcceptedGitdm &&
+			strings.ToLower(org.Value) == key {
+			p.Profile.Organization = ProfileField{}
+		}
 		if affiliationDismissed(p.Profile, key) {
 			return nil
 		}
@@ -715,6 +763,11 @@ func (s *Store) ApplyProfileFill(id string, values map[string]ProfileFillValue, 
 				v = ""
 			}
 			owned := f.Source == SourceAuto && IsForgeProfileRule(f.Rule) && answered[f.Rule]
+			if f.Source == SourceAuto && f.Rule == AffiliationAutoAcceptedGitdm && strings.TrimSpace(values[name].Value) != "" {
+				// The person's own forge company outranks an auto-accepted
+				// gitdm value.
+				*f = ProfileField{}
+			}
 			switch {
 			case v != "" && (f.Value == "" || owned):
 				if f.Value == v && f.Rule == nv.Source && f.Login == nv.Login {
@@ -745,6 +798,36 @@ func (s *Store) ApplyProfileFill(id string, values map[string]ProfileFillValue, 
 	return p, changed, err
 }
 
+// errNoChange makes change roll back a pass that found nothing to write, so
+// the file is not rewritten.
+var errNoChange = errors.New("customers: nothing changed")
+
+// AutoAcceptAffiliation applies the gitdm_high auto-accept policy to one
+// person: it writes the candidate AutoAcceptCandidate picks from enriched
+// into the organization, as an automatic value labelled
+// AffiliationAutoAcceptedGitdm. The rules are checked again under the lock,
+// so an edit made since the caller read the person wins. It reports whether
+// it wrote anything.
+func (s *Store) AutoAcceptAffiliation(id string, enriched []EnrichedAffiliation) (bool, error) {
+	changed := false
+	_, err := s.changePerson(id, func(p *Person) error {
+		if p.Status != StatusCustomer {
+			return errNoChange
+		}
+		cur, ok := AutoAcceptCandidate(*p, enriched, s.now())
+		if !ok {
+			return errNoChange
+		}
+		p.Profile.Organization = ProfileField{Value: cur.Org, Source: SourceAuto, Rule: AffiliationAutoAcceptedGitdm, At: s.now().UTC()}
+		changed = true
+		return nil
+	})
+	if errors.Is(err, errNoChange) {
+		err = nil
+	}
+	return changed, err
+}
+
 // ClearProfileFetched forgets the last profile-fill lookup of every customer,
 // so the next passes refresh everyone ("Refresh from profiles" for all). It
 // returns how many records it cleared.
@@ -770,33 +853,66 @@ func (s *Store) ClearProfileFetched() (int, error) {
 // person is what was deleted; the caller removes their edges. Hive-user
 // identities and names are not tombstoned: a dashboard user who signs in
 // again gets a fresh, empty profile.
+//
+// The person also leaves colony.db and the .pre-colony backups, in every
+// store mode (#19855): in shadow and colony mode through the mirror, in json
+// mode by opening colony.db only if an earlier run left one.
 func (s *Store) Forget(id string) (Person, error) {
 	var out Person
+	var tombs []string
+	var forgets map[string][]string
 	err := s.change(func() error {
 		p, ok := s.people[id]
 		if !ok {
 			return ErrNotFound
 		}
 		out = clonePerson(p)
-		for _, i := range p.Identities {
+		tomb := func(i Identity) {
 			if i.Kind == KindName || i.Kind == KindHiveUser || i.Claimed {
-				continue
+				return
 			}
-			s.tombs[s.tombstoneHash(i.Key())] = true
+			h := s.tombstoneHash(i.Key())
+			s.tombs[h] = true
+			tombs = append(tombs, h)
+		}
+		for _, i := range p.Identities {
+			tomb(i)
 		}
 		for _, m := range p.MergedFrom {
 			for _, i := range m.Person.Identities {
-				if i.Kind == KindName || i.Kind == KindHiveUser || i.Claimed {
-					continue
-				}
-				s.tombs[s.tombstoneHash(i.Key())] = true
+				tomb(i)
 			}
 		}
 		delete(s.people, id)
 		s.dropRefsLocked(id)
+		// Everyone merged into the person goes with them: their records
+		// sit in MergedFrom here and, emptied, in colony.db.
+		s.pendingForget = map[string][]string{id: tombs}
+		var merged func(p Person)
+		merged = func(p Person) {
+			for _, m := range p.MergedFrom {
+				s.pendingForget[m.Person.ID] = nil
+				merged(m.Person)
+			}
+		}
+		merged(p)
+		forgets = make(map[string][]string, len(s.pendingForget))
+		for k := range s.pendingForget {
+			forgets[k] = nil
+		}
+		forgets[id] = tombs
 		return nil
 	})
-	return out, err
+	if err != nil {
+		return out, err
+	}
+	if s.Colony() == nil {
+		// json mode. A colony.db or backup it cannot reach is recorded and
+		// retried; people.json has forgotten the person either way, so
+		// the forget does not fail here.
+		_ = ForgetOffline(filepath.Dir(s.path), forgets, s.now)
+	}
+	return out, nil
 }
 
 // dropRefsLocked removes the pins and hints that mention an id.

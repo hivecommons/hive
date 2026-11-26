@@ -1370,6 +1370,8 @@ func (b *boot) wireBootClosures() {
 			RemergeDerivedReferenceRepos: b.remergeLastDerivedReferenceRepos,
 			OwnerIdentity:                b.ownerIdentityStore(),
 			OwnerIdentityChanged:         b.ownerIdentityChanged,
+			VerifyGitHubToken:            b.verifyRotatedGitHubToken,
+			ApplyGitHubToken:             b.applyRotatedGitHubToken,
 			RepoAgents:                   b.repoAgents,
 			CheckRemoteWriteIdentity:     b.checkRemoteWriteIdentity,
 			RemoteWriteIdentityChanged:   b.remoteWriteIdentityChanged,
@@ -2456,10 +2458,12 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// (hivecommons/hive#19670), with the same manager authorizers. The relay
 	// idles on each scan unless every repo is off GitHub, so a reload either
 	// way hands the queues to the right relays. It stops with b.ctx, which
-	// is all shutdown needs, so its done channel is not joined.
+	// is all shutdown needs, so its done channel is not joined. It also
+	// serves push-branch requests with the manager's push authorizer, and
+	// answers review and merge requests with a reason (#19916).
 	if deps.startForgeRequestRelay != nil {
 		_ = deps.startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
-			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger))
+			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger).withPushRelay(b.agentMgr.AuthorizePushBranch).withPushAudit(b.recordWriteAudit))
 	}
 	// Forgejo repos (#19671): the GitHub sweeps above skip them (RepoOnGitHub),
 	// so they get their own sweeps, which need no GitHub client. A gitea config
@@ -4656,6 +4660,9 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 				deps.clearInferenceRoute(b.githubProxy, agentName)
 			},
 		)
+		if deps.installContextWindowLookup != nil {
+			deps.installContextWindowLookup(b.agentMgr, b.githubProxy)
+		}
 
 		deps.startProxy(b.githubProxy, b.logger)
 		b.wireSandboxGitHubReadRelay()
