@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.373.4)
+
+### Changed
+
+- Customers enrichment now enables local gitdm by default, downloading the public cncf/gitdm files when enrichment is enabled. To opt out, set `customers.enrichment.gitdm.enabled: false` or `HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED=false` ([#19972](https://github.com/hivecommons/hive/issues/19972)).
+
 ## 2026-11-26 (v5.373.3)
 
 ### Fixed
