@@ -128,3 +128,27 @@ func TestMainExitsConnectionWhenServerUnreachable(t *testing.T) {
 		t.Errorf("stderr missing Error: prefix:\n%s", out)
 	}
 }
+
+// Whatever the mistake, a GitHub-token-shaped argument never reaches stderr:
+// cobra's "unknown command" error at the root quotes it verbatim, so main
+// redacts every error it prints, and `github token set` never repeats an
+// argument or flag value at all.
+func TestMainNeverEchoesTokenShapedArguments(t *testing.T) {
+	const token = "ghp_mainLevelSecret42"
+	for name, args := range map[string][]string{
+		"root unknown command": {token},
+		"nested unknown":       {"github", token},
+		"set positional":       {"github", "token", "set", token},
+		"set flag value":       {"github", "token", "set", "--stdin=" + token},
+		"set unknown flag":     {"github", "token", "set", "--" + token},
+		"server flag value":    {"--server", token, "github", "token", "status"},
+		"fine-grained pat":     {"github_pat_11AAAAAAA0_mainLevelSecret42"},
+	} {
+		// `hivectl github <x>` prints the group's help (exit 0), so only the
+		// echo is asserted, not the exit code.
+		_, out := runMainHelper(t, args...)
+		if strings.Contains(out, "mainLevelSecret42") {
+			t.Errorf("%s: the token was echoed:\n%s", name, out)
+		}
+	}
+}

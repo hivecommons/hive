@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -151,6 +152,24 @@ func refuseBodyRedirects(_ *http.Request, via []*http.Request) error {
 		return errors.New("stopped after 10 redirects")
 	}
 	return nil
+}
+
+// RequireSecureTransport refuses a plain http:// server unless it is
+// loopback. Callers that send a credential in the request body (`github token
+// set`) check it first, so the credential never crosses a network in clear
+// text. "localhost" and loopback IP literals count as loopback.
+func (c *Client) RequireSecureTransport() error {
+	if c.baseURL.Scheme == "https" {
+		return nil
+	}
+	host := c.baseURL.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return errors.New("refusing to send a credential over plain http to a non-loopback server; use an https:// --server")
 }
 
 func (c *Client) Do(ctx context.Context, method, apiPath string, query url.Values, body any) (any, error) {

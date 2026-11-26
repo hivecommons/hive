@@ -57,8 +57,9 @@ func NewRootCommand(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	root.SetOut(out)
 	root.SetErr(errOut)
 	// Flag parsing failures are user mistakes; surface them with the usage exit code.
+	// The message is redacted because pflag quotes the offending value.
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
-		return &usageError{message: err.Error()}
+		return &usageError{message: RedactTokens(err.Error())}
 	})
 	root.PersistentFlags().StringVar(&options.server, "server", "http://127.0.0.1:3001", "Hive dashboard API base URL")
 	root.PersistentFlags().StringVar(&options.tokenEnv, "token-env", "HIVE_DASHBOARD_TOKEN", "environment variable containing the dashboard token")
@@ -151,7 +152,8 @@ func (e *commandEnv) attachSession(client *hivectl.Client) {
 func wrapArgs(validator cobra.PositionalArgs) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if err := validator(cmd, args); err != nil {
-			return &usageError{message: err.Error()}
+			// cobra's validators quote the arguments; never repeat a token.
+			return &usageError{message: RedactTokens(err.Error())}
 		}
 		return nil
 	}

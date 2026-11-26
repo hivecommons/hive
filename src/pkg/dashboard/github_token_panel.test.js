@@ -48,7 +48,7 @@ const setup = ({ status, put }) => {
   const doc = { createElement: makeEl };
   const fetchStub = async (url, opts) => { calls.push({ url, opts, body: JSON.parse(opts.body) }); return put(); };
   const render = new Function('document', 'fetch', 'showToast', '_inceptionAuthHeaders', 'saveErrorMessage', 'formatDashboardDateTime',
-    fnSrc('referenceRepoNode') + '\n' + fnSrc('renderGitHubTokenPanel') + '\nreturn renderGitHubTokenPanel;')(
+    fnSrc('referenceRepoNode') + '\n' + fnSrc('githubTokenForbiddenText') + '\n' + fnSrc('renderGitHubTokenPanel') + '\nreturn renderGitHubTokenPanel;')(
     doc, fetchStub, (m, k) => toasts.push([m, k]), () => ({}), async res => res.errorMessage, v => new Date(v).toISOString());
   const host = makeEl('div');
   render(host, status, () => { reloads++; });
@@ -65,7 +65,9 @@ test('a PAT hive shows fingerprint, login and last verified, with a masked input
   assert.match(state, /octo/);
   assert.match(state, /last verified/);
   assert.strictEqual(input(host).type, 'password');
-  assert.strictEqual(input(host).autocomplete, 'new-password');
+  assert.strictEqual(input(host).autocomplete, 'off');
+  assert.strictEqual(input(host).attrs['data-1p-ignore'], 'true');
+  assert.strictEqual(input(host).attrs['data-lpignore'], 'true');
 });
 
 test('an App hive draws nothing', () => {
@@ -111,4 +113,49 @@ test('an empty input is refused client-side without a request', async () => {
   await button(host).fire('click');
   assert.strictEqual(calls.length, 0);
   assert.match(statusLine(host).textContent, /Enter the new token/);
+});
+
+test('a 403 on save names the owner requirement, keeps the server reason and never shows the token', async () => {
+  const { host, toasts, reloads } = setup({
+    status: { mode: 'pat', configured: true, fingerprint: 'aaaaaaaaaaaa' },
+    put: () => ({ ok: false, status: 403, errorMessage: 'owner verification proof is missing' }),
+  });
+  input(host).value = 'ghp_forbidden';
+  await button(host).fire('click');
+  assert.strictEqual(statusLine(host).textContent, 'Only the hive owner can view or rotate the GitHub token. owner verification proof is missing');
+  assert.match(statusLine(host).className, /text-danger/);
+  assert.doesNotMatch(host.textContent, /ghp_forbidden/);
+  assert.strictEqual(button(host).disabled, false);
+  assert.strictEqual(reloads(), 0);
+  assert.strictEqual(toasts.length, 0);
+});
+
+// loadGitHubTokenPanel on a 403 used to draw nothing; it now explains why.
+const loadPanel = async (res) => {
+  const host = makeEl('div');
+  const doc = { createElement: makeEl, getElementById: id => (id === 'forge-pat-host' ? host : null) };
+  const load = new Function('document', 'fetch', 'showToast', '_inceptionAuthHeaders', 'saveErrorMessage', 'formatDashboardDateTime',
+    fnSrc('referenceRepoNode') + '\n' + fnSrc('githubTokenForbiddenText') + '\n' + fnSrc('renderGitHubTokenPanel') + '\n' +
+    fnSrc('loadGitHubTokenPanel') + '\nreturn loadGitHubTokenPanel;')(
+    doc, async () => res, () => {}, () => ({}), async r => r.errorMessage, v => v);
+  await load();
+  return host;
+};
+
+test('a 403 on load explains that only the owner can see the panel, with the server reason', async () => {
+  const host = await loadPanel({ ok: false, status: 403, errorMessage: 'your permissions on this hive are read-only' });
+  const note = host.find(n => String(n.className).includes('cfg-github-token-denied'))[0];
+  assert.ok(note, 'a denied note is drawn');
+  assert.strictEqual(note.textContent, 'Only the hive owner can view or rotate the GitHub token. your permissions on this hive are read-only');
+  assert.strictEqual(host.find(n => n.tag === 'input').length, 0, 'no token field for a non-owner');
+});
+
+test('githubTokenForbiddenText without a reason is just the owner sentence', () => {
+  const text = new Function(fnSrc('githubTokenForbiddenText') + '\nreturn githubTokenForbiddenText;')();
+  assert.strictEqual(text(''), 'Only the hive owner can view or rotate the GitHub token.');
+});
+
+test('a 200 on load draws the panel', async () => {
+  const host = await loadPanel({ ok: true, status: 200, json: async () => ({ mode: 'pat', configured: false }) });
+  assert.strictEqual(host.find(n => n.tag === 'input').length, 1);
 });

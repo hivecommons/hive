@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -73,5 +74,64 @@ func TestClientFollowsGetRedirectsWithLimit(t *testing.T) {
 	}
 	if n := loops.Load(); n != 10 {
 		t.Fatalf("redirect loop made %d requests, want 10", n)
+	}
+}
+
+// A credential is sent over https, or over plain http only to loopback.
+func TestRequireSecureTransport(t *testing.T) {
+	t.Parallel()
+	for server, wantOK := range map[string]bool{
+		"https://hive.example.com":    true,
+		"https://10.0.0.5:3001":       true,
+		"http://127.0.0.1:3001":       true,
+		"http://127.8.9.10":           true,
+		"http://[::1]:3001":           true,
+		"http://localhost:3001":       true,
+		"http://LocalHost":            true,
+		"http://hive.example.com":     false,
+		"http://10.0.0.5:3001":        false,
+		"http://localhost.evil.test":  false,
+		"http://127.0.0.1.evil.test/": false,
+	} {
+		client, err := NewClient(server, "", 5*time.Second)
+		if err != nil {
+			t.Fatalf("%s: %v", server, err)
+		}
+		if err := client.RequireSecureTransport(); (err == nil) != wantOK {
+			t.Errorf("%s: RequireSecureTransport() = %v, want ok=%v", server, err, wantOK)
+		}
+	}
+}
+
+// No redirect status carries a PUT body onward, including 301/302/303 (which
+// net/http would turn into a GET) and 308, and the target is never contacted.
+func TestClientRefusesEveryRedirectForBodyRequests(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{
+		http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect,
+	} {
+		var hits atomic.Int32
+		target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
+		origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target.URL+"/api/github-token", status)
+		}))
+		client, err := NewClient(origin.URL, "", 5*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = client.Do(context.Background(), http.MethodPut, "/api/github-token", nil, map[string]string{"token": "ghp_redirect"})
+		origin.Close()
+		target.Close()
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != status {
+			t.Fatalf("status %d: err = %v, want APIError %d", status, err, status)
+		}
+		if strings.Contains(err.Error(), "ghp_redirect") {
+			t.Fatalf("status %d: error echoes the body: %v", status, err)
+		}
+		if n := hits.Load(); n != 0 {
+			t.Fatalf("status %d: redirect target received %d request(s)", status, n)
+		}
 	}
 }

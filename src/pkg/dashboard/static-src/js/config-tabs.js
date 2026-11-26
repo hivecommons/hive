@@ -1949,13 +1949,25 @@
       if (!host) return;
       try {
         const res = await fetch('/api/github-token', { headers: _inceptionAuthHeaders() });
-        if (res.status === 403) return; /* not the owner: nothing to show or edit */
+        if (res.status === 403) {
+          /* Not the owner, or the owner proof is missing: say so instead of
+             leaving a silent gap, with the server's reason when it gives one. */
+          host.textContent = '';
+          host.appendChild(referenceRepoNode('div', 'fs-sm text-muted cfg-github-token-denied', githubTokenForbiddenText(await saveErrorMessage(res))));
+          return;
+        }
         if (!res.ok) throw new Error(await saveErrorMessage(res));
         renderGitHubTokenPanel(host, await res.json(), loadGitHubTokenPanel);
       } catch (e) {
         host.textContent = '';
         host.appendChild(referenceRepoNode('div', 'fs-sm text-danger', 'Failed to load the GitHub token status: ' + e.message));
       }
+    }
+
+    /* The 403 wording for the PAT panel: who may rotate the token, then the
+       server's own reason (saveErrorMessage falls back to read-only advice). */
+    function githubTokenForbiddenText(reason) {
+      return 'Only the hive owner can view or rotate the GitHub token.' + (reason ? ' ' + reason : '');
     }
 
     function renderGitHubTokenPanel(host, st, onDone) {
@@ -1977,7 +1989,11 @@
       const row = referenceRepoNode('div', 'config-list-item cfg-github-token-row');
       const input = referenceRepoNode('input', 'cfg-github-token-input');
       input.type = 'password';
-      input.autocomplete = 'new-password';
+      /* off, not new-password: a password manager should neither offer to
+         generate a value here nor save the PAT. */
+      input.autocomplete = 'off';
+      input.setAttribute('data-1p-ignore', 'true');
+      input.setAttribute('data-lpignore', 'true');
       input.placeholder = 'New personal access token';
       input.setAttribute('aria-label', 'New GitHub personal access token');
       const btn = referenceRepoNode('button', 'hv-btn btn-primary btn-sm', 'Verify and save');
@@ -1993,8 +2009,10 @@
           const res = await fetch('/api/github-token', { method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify({ token: token }) });
           if (!res.ok) {
             /* 422 token refused, 429 cooling down after a refusal, 409 on an App-mode install:
-               the server's reason is shown and the current token stays. */
-            throw new Error(await saveErrorMessage(res));
+               the server's reason is shown and the current token stays. A 403 says who may
+               rotate it before the reason. */
+            const reason = await saveErrorMessage(res);
+            throw new Error(res.status === 403 ? githubTokenForbiddenText(reason) : reason);
           }
           const d = await res.json();
           input.value = '';
