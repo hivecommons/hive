@@ -225,6 +225,14 @@ func (s *Store) change(fn func() error) error {
 		return err
 	}
 	s.reindexLocked()
+	if s.colony.colonyOnly() {
+		// colony-only: one colony transaction, and no people.json.
+		if err := s.saveColonyOnlyLocked(sn); err != nil {
+			s.restoreLocked(sn)
+			return err
+		}
+		return nil
+	}
 	before := s.saved
 	if err := s.saveLocked(); err != nil {
 		s.restoreLocked(sn)
