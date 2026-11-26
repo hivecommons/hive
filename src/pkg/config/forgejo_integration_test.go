@@ -21,6 +21,11 @@ func TestForgejoIntegrationValidate(t *testing.T) {
 	if err := validIntegration().Validate(); err != nil {
 		t.Fatalf("valid block: %v", err)
 	}
+	withREST := validIntegration()
+	withREST.RESTAudience = "aud-rest"
+	if err := withREST.Validate(); err != nil {
+		t.Fatalf("rest_audience: %v", err)
+	}
 	withSlash := validIntegration()
 	withSlash.Issuer = "https://keys.example.com/"
 	if err := withSlash.Validate(); err != nil || withSlash.IssuerOrigin() != "https://keys.example.com" {
@@ -37,6 +42,8 @@ func TestForgejoIntegrationValidate(t *testing.T) {
 		"no audiences":     func(c *ForgejoIntegrationConfig) { c.Audiences = nil },
 		"unknown tier":     func(c *ForgejoIntegrationConfig) { c.Audiences["admin"] = "aud" },
 		"blank audience":   func(c *ForgejoIntegrationConfig) { c.Audiences["advisor"] = " " },
+		"blank rest aud":   func(c *ForgejoIntegrationConfig) { c.RESTAudience = " " },
+		"rest aud = tier":  func(c *ForgejoIntegrationConfig) { c.RESTAudience = " " + c.Audiences["advisor"] + " " },
 	} {
 		c := validIntegration()
 		mutate(c)

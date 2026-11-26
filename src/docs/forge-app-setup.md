@@ -227,11 +227,46 @@ forgejo:
 
 1. Generate the RSA key (2048 bits or more), and publish the two files that
    `hive forge key-list --issuer https://keys.example.com --key /etc/hive/forgejo-jwt.pem --out DIR`
-   writes at the issuer, over https.
+   writes at the issuer, over https (see
+   [Host the key list](#host-the-key-list)). The key host must be live
+   before step 2.
 2. For each tier, run
-   `forgejo admin user create-authorized-integration --issuer https://keys.example.com --scope <scope> --repo <owner/repo> --claim-eq sub=hive:<tier>`.
+
+   ```sh
+   forgejo admin user create-authorized-integration --username <hive user> --name hive-<tier> \
+     --issuer https://keys.example.com --scope <scope> \
+     --repo <owner/repo1> --repo <owner/repo2> --claim-eq sub=hive:<tier>
+   ```
+
+   `--username` is the Forgejo user the integration acts as, the hive's
+   user, and `--name` is a label for the integration. Forgejo requires both.
    Pass `--scope` and `--repo` explicitly, because both default to `all`.
+   Give one `--repo` flag per repository: Forgejo does not split a value at
+   commas, so `--repo owner/app,owner/lib` fails with `invalid repo name`.
+   The `--repo` flags replace the default `all`, so the integration refuses
+   any repository you did not list.
+
+   Forgejo fetches `<issuer>/.well-known/openid-configuration` and the key
+   list it names when you create the integration, before it saves anything.
+   If the command fails with `invalid issuer`, fix the key host before you
+   continue. This is the only end-to-end check of the key host before the
+   first clone.
 3. Copy each integration's audience under `audiences`, keyed by tier.
+
+If the issuer host resolves to a private or loopback address, Forgejo refuses
+it by default, and step 2 fails with `authorized_integration can only call
+allowed HTTP servers (check your authorized_integration.ALLOWED_DOMAINS
+setting)`. Set the issuer host in Forgejo's `app.ini`:
+
+```ini
+[authorized_integration]
+ALLOWED_DOMAINS = keys.example.com
+```
+
+Setting `ALLOWED_DOMAINS` replaces the default, which allows every external
+host and no private one, so Forgejo then fetches only from the hosts you
+list. `ALLOW_LOCALNETWORKS = true` instead allows every private and loopback
+address.
 
 A tier with no audience gets the closest less-privileged tier that has one,
 and never a more-privileged one. A tier with none cannot clone or push. The
@@ -245,15 +280,16 @@ group-readable key under any other group, because agent UIDs share group
 `node` (GID 1000), and refuses any key that others can read. A key kept under
 `/data/secrets` is sealed in place by the keystore at boot and still loads
 afterwards. `hive validate` reports a `key_file` that does not exist or
-cannot be read.
+cannot be read. It never contacts the issuer and does not compare the
+published key list with `key_file`, so `config OK` does not mean a clone will
+work: a key host that is down or serves the wrong key shows up only as
+`Authentication failed` on the first clone or push.
 
-`forgejo.integration` covers git clone and push only. Work discovery, the
-issue and pull request relays, merges and both sweeps still call the Forgejo
-REST API with the access token from `forgejo.token_env` or
-`forgejo.token_file`, so keep that token set
-([#19920](https://github.com/hivecommons/hive/issues/19920) tracks moving
-REST to the JWTs too). The hive writes labels, comments and merges with it,
-so it needs `write:repository` and `write:issue`; the live end-to-end run in
+By default `forgejo.integration` covers git clone and push only. Work
+discovery, the issue and pull request relays, merges and both sweeps call the
+Forgejo REST API with the access token from `forgejo.token_env` or
+`forgejo.token_file`. The hive writes labels, comments and merges with it, so
+it needs `write:repository` and `write:issue`; the live end-to-end run in
 [#19909](https://github.com/hivecommons/hive/issues/19909) used
 `write:repository,write:issue,read:user,read:organization`. An unset
 `token_env` variable fails with an error that names it.
@@ -274,17 +310,64 @@ forgejo:
   login: hive-bot
 ```
 
+To move the REST calls to a short-lived token as well, create one more
+authorized integration for the hive's own identity and put its audience under
+`rest_audience`:
+
+```sh
+forgejo admin user create-authorized-integration --username <hive user> --name hive-rest \
+  --issuer https://keys.example.com \
+  --scope write:repository,write:issue,read:user,read:organization \
+  --repo <owner/repo1> --repo <owner/repo2> --claim-eq sub=hive:rest
+```
+
+```yaml
+forgejo:
+  integration:
+    rest_audience: "<audience>"   # REST integration, sub=hive:rest
+```
+
+With `rest_audience` set, every REST client the hive builds sends a one-hour
+JWT with `sub` `hive:rest` for that integration, minted again 10 minutes
+before it expires, and REST no longer reads the access token. Without it,
+REST keeps using the access token, so existing configs are unchanged
+([#19920](https://github.com/hivecommons/hive/issues/19920)). A failed mint,
+for example an unreadable key file, builds no REST client and names
+`rest_audience` in the error; it does not fall back to the access token.
+
+- The REST integration needs the same scopes as the access token above, and
+  it must cover every repository the hive works on, as each tier's
+  integration does.
+- Forgejo acts on a JWT as the user that owns the integration. The
+  close-on-merge sweep reads that user through `GET /user`, or takes it from
+  `forgejo.login`, and trusts closing keywords from it, and the hive's
+  issues, comments and merges are made as it. Pass the hive's own Forgejo
+  user, the same user the access token belonged to, as `--username`, and
+  keep `read:user` in the scope unless `forgejo.login` is set.
+- `rest_audience` is set beside at least one tier audience, and it must
+  differ from every tier audience; `hive validate` refuses a repeated one.
+- The REST token is reused until shortly before it expires, but a change to
+  the key file's size or modification time drops it, so the rotation below
+  applies to REST as well.
+- The Forgejo automerge sweep reads the collaborator permission endpoint,
+  the sweeps read the issue timeline, and the close-on-merge sweep reads
+  `GET /user`. None of these has been verified against an integration JWT
+  yet ([#19914](https://github.com/hivecommons/hive/issues/19914)), so keep
+  the access token available until they are.
+
 #### Rotate the signing key
 
 The key file is read at every mint, so replacing it rotates the key. Forgejo
-caches the key list for about 10 minutes, and does not fetch it again when a
-token names a key ID it does not know. A token signed with a key that is not
-yet in Forgejo's cached copy is refused, and the clone or push fails with
+caches the key list for `[authorized_integration] CACHE_TTL` in its
+`app.ini`, 10 minutes by default, and does not fetch it again when a token
+names a key ID it does not know. A token signed with a key that is not yet in
+Forgejo's cached copy is refused, and the clone or push fails with
 `Authentication failed`. Rotate in this order:
 
 1. Publish a key list with both the old and the new key:
    `hive forge key-list --issuer https://keys.example.com --key old.pem --key new.pem --out DIR`.
-2. Wait more than 10 minutes, so Forgejo fetches the new list.
+2. Wait longer than Forgejo's `CACHE_TTL` (more than 10 minutes by default),
+   so Forgejo fetches the new list.
 3. Point `key_file` at the new key, or replace the file in place.
 4. One hour after step 3, when the last token signed with the old key has
    expired, publish the key list with the new key only.
@@ -292,10 +375,57 @@ yet in Forgejo's cached copy is refused, and the clone or push fails with
 #### The key host is a git dependency
 
 Forgejo keeps no stale copy of the key list. If the host that serves it at
-`issuer` is unreachable for longer than the cache window, about 10 minutes,
-Forgejo refuses every JWT, and every clone and push on a Forgejo repo fails
-until the host is back. Run the key host with the same availability you expect
-from git.
+`issuer` is unreachable for longer than the cache window (`CACHE_TTL`, 10
+minutes by default), Forgejo refuses every JWT, and every clone and push on a
+Forgejo repo fails until the host is back. Run the key host with the same
+availability you expect from git.
+
+#### Host the key list
+
+Any https web server can serve the two files `hive forge key-list` writes.
+Forgejo is strict about how it fetches them, and each of these rules fails
+only as `invalid issuer` when you create the integration, or as
+`Authentication failed` on a clone:
+
+- The issuer is an https origin with no path, so the files sit at the root of
+  the host: `/.well-known/openid-configuration` and `/jwks.json`. Forgejo
+  refuses any scheme but https, and the certificate must be one Forgejo
+  trusts.
+- Forgejo follows no redirects. Serve both paths directly, with no login
+  page, no `http` to `https` redirect and no trailing-slash redirect in front
+  of them.
+- `jwks_uri` in the discovery document must be on the issuer's host.
+  `hive forge key-list` writes it that way; do not move `jwks.json` to
+  another host.
+- Forgejo reads at most 16 KiB of each response. The files `hive forge
+  key-list` writes for two keys are under 2 KiB.
+- A host on a private address needs `ALLOWED_DOMAINS`, as described above.
+
+For example, with nginx, and `DIR` the directory you passed to `--out`:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name keys.example.com;
+    ssl_certificate     /etc/ssl/keys.example.com.crt;
+    ssl_certificate_key /etc/ssl/keys.example.com.key;
+    root DIR;
+    location = /.well-known/openid-configuration { default_type application/json; }
+    location = /jwks.json { default_type application/json; }
+    location / { return 404; }
+}
+```
+
+Check the host from a machine on Forgejo's network before you create the
+integration. Both requests must answer 200 with JSON, and no redirect:
+
+```sh
+curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' https://keys.example.com/.well-known/openid-configuration
+curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' https://keys.example.com/jwks.json
+```
+
+([#19996](https://github.com/hivecommons/hive/issues/19996) asks whether
+the spoke should serve the key list itself.)
 
 ### Do not confuse `project.forge` with `github.forge`
 
