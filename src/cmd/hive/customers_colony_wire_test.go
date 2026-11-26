@@ -163,7 +163,7 @@ func TestWireCustomersDefaultFallsBackToJSON(t *testing.T) {
 	if got, err := svc.svc.Store().Get(p.ID); err != nil || got.Name != "Bea Example" {
 		t.Fatalf("json fallback read = %+v, %v", got, err)
 	}
-	if data, _ := os.ReadFile(filepath.Join(data, customers.ColonyFileName)); string(data) != string(garbage) {
+	if left, _ := os.ReadFile(filepath.Join(data, customers.ColonyFileName)); string(left) != string(garbage) {
 		t.Fatal("the fallback rewrote colony.db")
 	}
 }
