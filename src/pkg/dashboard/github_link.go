@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -39,7 +40,34 @@ const (
 	auditGitHubLinkSession = "github_link_session"
 	auditGitHubLinkRevoked = "github_link_revoked"
 	auditGitHubLinkRefused = "github_link_refused"
+
+	// sessionGitHubLinkTTL is how long a session honours a link after the
+	// SSO handoff that attached it. A hub unlink, or a proof the hub no
+	// longer forwards, takes effect on existing sessions within this window.
+	sessionGitHubLinkTTL = 12 * time.Hour
+	// githubLinkMaxProofAge is the oldest hub proof a spoke accepts. A GitHub
+	// login can be renamed and re-registered by someone else, so a proof
+	// must be renewed on the hub after this long.
+	githubLinkMaxProofAge = 90 * 24 * time.Hour
 )
+
+// contributorIDLikeRE matches the hive's own contributor ids ("c-" and 12
+// hex digits). findContributor also matches by id, so a GitHub login of that
+// shape could reach another contributor's profile; such a login is never
+// attached as a link.
+var contributorIDLikeRE = regexp.MustCompile(`^c-[0-9a-f]{12}$`)
+
+// activeGitHubLogin is the session's link while it is still within
+// sessionGitHubLinkTTL of being attached, else "".
+func (sess *userSession) activeGitHubLogin(now time.Time) string {
+	if sess == nil || sess.GitHubLogin == "" {
+		return ""
+	}
+	if sess.GitHubLinkSetAt.IsZero() || now.Sub(sess.GitHubLinkSetAt) > sessionGitHubLinkTTL {
+		return ""
+	}
+	return sess.GitHubLogin
+}
 
 // githubLinkRevocation records an owner's revoke of one identity's link.
 // A later proof on the hub (a LinkedAt after RevokedAt) restores it.
@@ -47,6 +75,10 @@ type githubLinkRevocation struct {
 	Login     string    `json:"login"`
 	RevokedAt time.Time `json:"revoked_at"`
 	By        string    `json:"by"`
+	// LinkedAt is the hub proof time of the revoked link, when a live
+	// session carried it. A later proof must be strictly newer than it; both
+	// are hub-clock times, so spoke clock skew cannot restore a revoked link.
+	LinkedAt time.Time `json:"linked_at,omitzero"`
 }
 
 // githubLinkRevocations is the spoke's revocation list, keyed by identity.
@@ -100,6 +132,9 @@ func (s *Server) githubLinkRevoked(identity, login string, linkedAt time.Time) b
 	if !ok || (e.Login != "" && !strings.EqualFold(e.Login, login)) {
 		return false
 	}
+	if !e.LinkedAt.IsZero() {
+		return !linkedAt.After(e.LinkedAt)
+	}
 	return !linkedAt.After(e.RevokedAt)
 }
 
@@ -134,10 +169,14 @@ func (s *Server) sessionGitHubLink(username string, link spoke.SSOGitHubLink) st
 	if login == "" || link.LinkedAt.IsZero() {
 		return ""
 	}
-	if !strings.Contains(username, ":") {
+	provider, _, ok := strings.Cut(username, ":")
+	if !ok || provider == "" || strings.EqualFold(provider, "github") {
 		return ""
 	}
-	if !validGitHubUsername(login) {
+	if !validGitHubUsername(login) || contributorIDLikeRE.MatchString(strings.ToLower(login)) {
+		return ""
+	}
+	if time.Since(link.LinkedAt) > githubLinkMaxProofAge {
 		return ""
 	}
 	if s.githubLinkRevoked(username, login, link.LinkedAt) {
@@ -148,7 +187,7 @@ func (s *Server) sessionGitHubLink(username string, link spoke.SSOGitHubLink) st
 
 // createUserSessionWithGitHubLogin is createUserSession recording a proven
 // GitHub login link on the session.
-func (s *Server) createUserSessionWithGitHubLogin(username, role, githubLogin string) string {
+func (s *Server) createUserSessionWithGitHubLogin(username, role, githubLogin string, linkedAt time.Time) string {
 	id := s.createUserSession(username, role)
 	if id == "" || githubLogin == "" {
 		return id
@@ -156,6 +195,8 @@ func (s *Server) createUserSessionWithGitHubLogin(username, role, githubLogin st
 	s.sessionMu.Lock()
 	if sess := s.userSessions[id]; sess != nil {
 		sess.GitHubLogin = githubLogin
+		sess.GitHubLinkedAt = linkedAt
+		sess.GitHubLinkSetAt = time.Now()
 		s.persistSessionsLocked()
 	}
 	s.sessionMu.Unlock()
@@ -208,8 +249,8 @@ func (s *Server) handleGitHubLinkRevoke(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "identity is required", http.StatusBadRequest)
 		return
 	}
-	login := s.liveSessionGitHubLogin(identity)
-	if err := s.recordGitHubLinkRevocation(identity, githubLinkRevocation{Login: login, RevokedAt: time.Now().UTC(), By: requestUser(r)}); err != nil {
+	login, linkedAt := s.liveSessionGitHubLink(identity)
+	if err := s.recordGitHubLinkRevocation(identity, githubLinkRevocation{Login: login, LinkedAt: linkedAt, RevokedAt: time.Now().UTC(), By: requestUser(r)}); err != nil {
 		jsonError(w, "could not save the revocation: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -218,16 +259,19 @@ func (s *Server) handleGitHubLinkRevoke(w http.ResponseWriter, r *http.Request) 
 	jsonResponse(w, map[string]interface{}{"ok": true, "identity": identity, "login": login, "sessions_cleared": cleared})
 }
 
-// liveSessionGitHubLogin is the GitHub login a live session of identity
-// carries, or "".
-func (s *Server) liveSessionGitHubLogin(identity string) string {
+// liveSessionGitHubLink is the GitHub login, and its newest hub proof time,
+// that a live session of identity carries, or "".
+func (s *Server) liveSessionGitHubLink(identity string) (string, time.Time) {
 	s.sessionMu.RLock()
 	defer s.sessionMu.RUnlock()
 	now := time.Now()
+	login, linkedAt := "", time.Time{}
 	for _, sess := range s.userSessions {
 		if sess != nil && sess.Username == identity && sess.GitHubLogin != "" && now.Before(sess.ExpiresAt) {
-			return sess.GitHubLogin
+			if login == "" || sess.GitHubLinkedAt.After(linkedAt) {
+				login, linkedAt = sess.GitHubLogin, sess.GitHubLinkedAt
+			}
 		}
 	}
-	return ""
+	return login, linkedAt
 }

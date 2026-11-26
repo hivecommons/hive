@@ -562,8 +562,8 @@ func (s *Server) resolveViewerUsername(r *http.Request) string {
 	if sess := s.sessionFromRequest(r); sess != nil {
 		// A proven GitHub login link (#19992) is who this person is for
 		// contributor features, which are keyed by GitHub login.
-		if sess.GitHubLogin != "" {
-			return sess.GitHubLogin
+		if login := sess.activeGitHubLogin(time.Now()); login != "" {
+			return login
 		}
 		return sess.Username
 	}

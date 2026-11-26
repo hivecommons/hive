@@ -393,7 +393,7 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 	// A GitHub login the person proved on the hub (#19992) rides on the
 	// session for contributor features only; the role above is unaffected.
 	githubLogin := s.sessionGitHubLink(username, ssoID.GitHubLink)
-	sid := s.createUserSessionWithGitHubLogin(username, role, githubLogin)
+	sid := s.createUserSessionWithGitHubLogin(username, role, githubLogin, ssoID.GitHubLink.LinkedAt)
 	if sid == "" {
 		writeSSOError(w, r, http.StatusInternalServerError, ssoErrSessionFailed,
 			"The hive could not create a login session for you.",

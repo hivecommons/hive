@@ -767,6 +767,10 @@ A person signed in through an OIDC provider can link the GitHub login they contr
 - A spoke owner can revoke a link on that spoke with `POST /api/auth/github-link/revoke` and `{"identity": "<provider>:<subject>"}`. A later proof on the hub restores it.
 - Link, unlink, refusals and revocations are audited (hub `audit: github ...` log lines; spoke `github_link_session`, `github_link_revoked`, `github_link_refused`).
 - A hub-proxied spoke reads the visitor from the hub's injected header, not an SSO session, and does not use the link yet.
+- The `login` field is required, so GitHub cannot silently link whichever account the browser is signed in to. The state cookie has the `__Host-` prefix, so the link flow needs an HTTPS hub.
+- A spoke honours a link on a session for 12 hours after the SSO handoff that attached it, and refuses a hub proof older than 90 days (a GitHub login can be renamed and re-registered), so an unlink on the hub reaches existing spoke sessions on their next handoff and a link must be proven again periodically.
+- An admin using "View as user" never carries that user's link into an SSO handoff.
+- Every spoke the person opens from the hub learns the link, because linking is the person's own request to use the GitHub login there.
 
 ## Kubernetes downward API and platform variables
 

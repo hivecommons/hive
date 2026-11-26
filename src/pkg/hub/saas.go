@@ -171,8 +171,10 @@ type SaaSUser struct {
 	//   Email        the provider email claim (display only; NEVER the key — subs
 	//                are stable, emails are reassignable).
 	//   LinkedGitHubLogin  an OPTIONAL attached GitHub identity for a non-GitHub
-	//                primary who needs user-scoped GitHub calls (contributor
-	//                reissue). Never required to own a hive — the App does the
+	//                primary. Written by the GitHub OAuth link step
+	//                (github_link.go, #19992), which also sets
+	//                LinkedGitHubProvenAt; only a proven value is forwarded to
+	//                spokes. Never required to own a hive — the App does the
 	//                GitHub work.
 	CanonicalID       string `json:"canonical_id,omitempty"`
 	Provider          string `json:"provider,omitempty"`

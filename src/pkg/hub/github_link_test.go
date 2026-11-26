@@ -190,7 +190,7 @@ func TestGitHubLink_MismatchedOAuthIdentityIsRefused(t *testing.T) {
 func TestGitHubLink_DifferentSessionAtCallbackIsRefused(t *testing.T) {
 	s := linkTestHub(t)
 	fakeGitHub(t, "mallory-gh")
-	nonce, _ := startLink(t, s, linkTestOtherUser, "")
+	nonce, _ := startLink(t, s, linkTestOtherUser, "mallory-gh")
 	rec := callback(t, s, linkTestOIDCUser, nonce)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("callback in another session = %d, want 403", rec.Code)
@@ -202,7 +202,7 @@ func TestGitHubLink_DifferentSessionAtCallbackIsRefused(t *testing.T) {
 		t.Fatal("starter got linked although the callback ran elsewhere")
 	}
 	// No session at all is refused too.
-	nonce, _ = startLink(t, s, linkTestOtherUser, "")
+	nonce, _ = startLink(t, s, linkTestOtherUser, "mallory-gh")
 	if rec := callback(t, s, "", nonce); rec.Code != http.StatusForbidden {
 		t.Fatalf("callback with no session = %d, want 403", rec.Code)
 	}
@@ -221,7 +221,7 @@ func TestGitHubLink_LoginAlreadyLinkedElsewhereIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	fakeGitHub(t, "alice-gh")
-	nonce, _ := startLink(t, s, linkTestOIDCUser, "")
+	nonce, _ := startLink(t, s, linkTestOIDCUser, "alice-gh")
 	if rec := callback(t, s, linkTestOIDCUser, nonce); rec.Code != http.StatusConflict {
 		t.Fatalf("already linked elsewhere = %d, want 409", rec.Code)
 	}
@@ -230,7 +230,10 @@ func TestGitHubLink_LoginAlreadyLinkedElsewhereIsRefused(t *testing.T) {
 func TestGitHubLink_StartRefusals(t *testing.T) {
 	s := linkTestHub(t)
 	mkUser(t, "octocat")
-	if _, rec := startLink(t, s, "octocat", ""); rec.Code != http.StatusBadRequest {
+	if _, rec := startLink(t, s, linkTestOIDCUser, ""); rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing login = %d, want 400", rec.Code)
+	}
+	if _, rec := startLink(t, s, "octocat", "octocat"); rec.Code != http.StatusBadRequest {
 		t.Fatalf("GitHub sign-in start = %d, want 400", rec.Code)
 	}
 	if _, rec := startLink(t, s, linkTestOIDCUser, "bad login!"); rec.Code != http.StatusBadRequest {
@@ -359,7 +362,7 @@ func TestPendingGitHubLinks_ExpireAndCap(t *testing.T) {
 func TestGitHubLink_SignInStateCookieDoesNotSatisfyLinkState(t *testing.T) {
 	s := linkTestHub(t)
 	fakeGitHub(t, "alice-gh")
-	nonce, _ := startLink(t, s, linkTestOIDCUser, "")
+	nonce, _ := startLink(t, s, linkTestOIDCUser, "alice-gh")
 	state := url.QueryEscape(nonce + oauthStateSeparator + githubLinkStateProvider + oauthStateSeparator)
 	req := httptest.NewRequest(http.MethodGet, "/api/auth/callback?code=abc&state="+state, nil)
 	req.AddCookie(&http.Cookie{Name: oauthStateCookieName, Value: nonce})
@@ -379,5 +382,34 @@ func TestGitHubLink_SignInStateCookieDoesNotSatisfyLinkState(t *testing.T) {
 	}
 	if loadSaaSUser("alice-gh") != nil {
 		t.Fatal("link state fell through to the GitHub sign-in path")
+	}
+}
+
+// An admin viewing as a linked user does not carry that user's link into an
+// SSO handoff; the user's own handoff does.
+func TestGitHubLink_ImpersonatingAdminGetsNoLink(t *testing.T) {
+	s := linkTestHub(t)
+	u := loadSaaSUser(linkTestOIDCUser)
+	u.LinkedGitHubLogin, u.LinkedGitHubProvenAt = "alice-gh", time.Now()
+	if err := saveSaaSUser(u); err != nil {
+		t.Fatal(err)
+	}
+	own := httptest.NewRequest(http.MethodGet, "/api/saas/hives/h/open", nil)
+	own.AddCookie(testAuthCookie(linkTestOIDCUser))
+	if link := s.ssoGitHubLinkForRequest(own, linkTestOIDCUser); link.Login != "alice-gh" {
+		t.Fatalf("own handoff link = %+v", link)
+	}
+	imp := mintImpersonateCookieValueForGeneration(s.keyGenerations, canonicalizeLegacy(linkTestOwner), linkTestOIDCUser, time.Now())
+	if imp == "" {
+		t.Fatal("could not mint impersonation cookie")
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/saas/hives/h/open", nil)
+	req.AddCookie(testAuthCookie(linkTestOwner))
+	req.AddCookie(&http.Cookie{Name: impersonateCookieName, Value: imp})
+	if eff, _, imping := s.resolveIdentity(req); !imping || !canonicalEqual(eff, linkTestOIDCUser) {
+		t.Fatalf("test setup: not impersonating (%q, %v)", eff, imping)
+	}
+	if link := s.ssoGitHubLinkForRequest(req, linkTestOIDCUser); link.Login != "" {
+		t.Fatalf("impersonating admin got the victim's link: %+v", link)
 	}
 }

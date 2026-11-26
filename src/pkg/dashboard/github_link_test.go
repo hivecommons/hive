@@ -110,6 +110,9 @@ func TestSessionGitHubLink_Filters(t *testing.T) {
 		{"no time", linkOIDCUser, spoke.SSOGitHubLink{Login: linkGitHub}, ""},
 		{"invalid login", linkOIDCUser, spoke.SSOGitHubLink{Login: "bad login", LinkedAt: now}, ""},
 		{"github identity", "octo-owner", spoke.SSOGitHubLink{Login: linkGitHub, LinkedAt: now}, ""},
+		{"canonical github identity", "github:octo-owner", spoke.SSOGitHubLink{Login: linkGitHub, LinkedAt: now}, ""},
+		{"contributor-id-shaped login", linkOIDCUser, spoke.SSOGitHubLink{Login: "c-0123456789ab", LinkedAt: now}, ""},
+		{"proof too old", linkOIDCUser, spoke.SSOGitHubLink{Login: linkGitHub, LinkedAt: now.Add(-githubLinkMaxProofAge - time.Hour)}, ""},
 	}
 	for _, tc := range cases {
 		if got := s.sessionGitHubLink(tc.username, tc.link); got != tc.want {
@@ -166,7 +169,7 @@ func TestGitHubLinkRevoke_OwnerOnlyAndValidated(t *testing.T) {
 // newer proof arrives.
 func TestGitHubLinkRevoke_ClearsSessionsUntilReproven(t *testing.T) {
 	s := linkSSOServer(t)
-	proven := time.Now().Add(-time.Hour)
+	proven := time.Now().Add(-time.Hour).Truncate(time.Second)
 	w := ssoGet(t, s, "token="+linkedSSOToken(t, linkOIDCUser, spoke.SSOGitHubLink{Login: linkGitHub, LinkedAt: proven}))
 	cookie := sessionCookie(w)
 
@@ -227,7 +230,7 @@ func TestGitHubLinkRevocations_InMemoryWithoutStore(t *testing.T) {
 	if !s.githubLinkRevoked(linkOIDCUser, linkGitHub, time.Now().Add(-time.Minute)) {
 		t.Fatal("in-memory revocation not honoured")
 	}
-	if got := s.createUserSessionWithGitHubLogin(linkOIDCUser, config.RoleRead, ""); got == "" {
+	if got := s.createUserSessionWithGitHubLogin(linkOIDCUser, config.RoleRead, "", time.Time{}); got == "" {
 		t.Fatal("session without link not created")
 	}
 }
@@ -246,3 +249,45 @@ func readAuditTail(t *testing.T, s *Server) string {
 }
 
 const auditTailEntries = 50
+
+// A session honours its link only for sessionGitHubLinkTTL after the SSO
+// handoff that attached it, so a hub unlink reaches it on the next handoff.
+func TestGitHubLinkSession_LinkExpiresWithinTTL(t *testing.T) {
+	now := time.Now()
+	sess := &userSession{Username: linkOIDCUser, GitHubLogin: linkGitHub, GitHubLinkSetAt: now}
+	if got := sess.activeGitHubLogin(now.Add(time.Minute)); got != linkGitHub {
+		t.Fatalf("fresh link = %q", got)
+	}
+	if got := sess.activeGitHubLogin(now.Add(sessionGitHubLinkTTL + time.Minute)); got != "" {
+		t.Fatalf("stale link still honoured: %q", got)
+	}
+	if got := (&userSession{GitHubLogin: linkGitHub}).activeGitHubLogin(now); got != "" {
+		t.Fatal("a link with no attach time must not be honoured")
+	}
+	var nilSess *userSession
+	if nilSess.activeGitHubLogin(now) != "" {
+		t.Fatal("nil session")
+	}
+}
+
+// A revoke records the hub proof time it revokes, so a hub clock running
+// ahead of the spoke cannot bring the same proof back, while a genuinely
+// newer proof can.
+func TestGitHubLinkRevoke_ComparesHubProofTimesNotClocks(t *testing.T) {
+	s := linkSSOServer(t)
+	// The hub clock is an hour ahead of the spoke: its proof time is in the
+	// spoke's future.
+	proof := time.Now().Add(time.Hour).Truncate(time.Second)
+	ssoGet(t, s, "token="+linkedSSOToken(t, linkOIDCUser, spoke.SSOGitHubLink{Login: linkGitHub, LinkedAt: proof}))
+	if w := revokeReq(t, s, `{"identity":"`+linkOIDCUser+`"}`, true); w.Code != http.StatusOK {
+		t.Fatalf("revoke = %d", w.Code)
+	}
+	w := ssoGet(t, s, "token="+linkedSSOToken(t, linkOIDCUser, spoke.SSOGitHubLink{Login: linkGitHub, LinkedAt: proof}))
+	if sess := sessionFor(t, s, w); sess.GitHubLogin != "" {
+		t.Fatal("the revoked proof came back because the hub clock is ahead")
+	}
+	w = ssoGet(t, s, "token="+linkedSSOToken(t, linkOIDCUser, spoke.SSOGitHubLink{Login: linkGitHub, LinkedAt: proof.Add(time.Second)}))
+	if sess := sessionFor(t, s, w); sess.GitHubLogin != linkGitHub || !sess.GitHubLinkedAt.Equal(proof.Add(time.Second)) {
+		t.Fatalf("a newer proof must restore the link: %+v", sess)
+	}
+}

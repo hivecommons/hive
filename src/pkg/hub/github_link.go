@@ -74,6 +74,10 @@ type pendingGitHubLink struct {
 	Expires       time.Time
 }
 
+// githubLinkWriteMu serializes the "linked elsewhere" check with the save, so
+// two hub users proving the same GitHub account cannot both link it.
+var githubLinkWriteMu sync.Mutex
+
 var (
 	pendingGitHubLinksMu sync.Mutex
 	pendingGitHubLinks   = map[string]pendingGitHubLink{}
@@ -162,9 +166,11 @@ func (s *HubServer) handleGitHubLinkStart(w http.ResponseWriter, r *http.Request
 		http.Error(w, `{"error":"GitHub sign-in is not configured on this hub"}`, http.StatusServiceUnavailable)
 		return
 	}
+	// The login is required, so GitHub silently signing the browser in as
+	// some other account it already holds can never link that account.
 	expected := strings.TrimSpace(r.FormValue("login"))
-	if expected != "" && !isValidName(expected) {
-		http.Error(w, `{"error":"invalid GitHub login"}`, http.StatusBadRequest)
+	if expected == "" || !isValidName(expected) {
+		http.Error(w, `{"error":"a valid GitHub login to link is required"}`, http.StatusBadRequest)
 		return
 	}
 	nonce, err := oauthStateNonce()
@@ -276,7 +282,7 @@ func (s *HubServer) completeGitHubLink(w http.ResponseWriter, r *http.Request, n
 	if !ok {
 		return // exchangeGitHubLogin wrote the error
 	}
-	if pending.ExpectedLogin != "" && !strings.EqualFold(login, pending.ExpectedLogin) {
+	if !strings.EqualFold(login, pending.ExpectedLogin) {
 		s.logger.Warn("audit: github link refused", "reason", "GitHub account does not match the requested login",
 			"user", caller, "requested", pending.ExpectedLogin, "github", login)
 		http.Error(w, "GitHub signed you in as a different account than the one you asked to link", http.StatusForbidden)
@@ -284,13 +290,17 @@ func (s *HubServer) completeGitHubLink(w http.ResponseWriter, r *http.Request, n
 	}
 	u := loadSaaSUser(caller)
 	if u == nil {
+		s.logger.Warn("audit: github link refused", "reason", "unknown user", "user", caller)
 		http.Error(w, "unknown user; sign in again", http.StatusUnauthorized)
 		return
 	}
 	if u.Blocked {
+		s.logger.Warn("audit: github link refused", "reason", "account blocked", "user", caller)
 		http.Error(w, "account blocked", http.StatusForbidden)
 		return
 	}
+	githubLinkWriteMu.Lock()
+	defer githubLinkWriteMu.Unlock()
 	if holder := githubLoginLinkedElsewhere(login, u); holder != "" {
 		s.logger.Warn("audit: github link refused", "reason", "login already linked to another hub user",
 			"user", caller, "github", login, "holder", holder)
@@ -413,4 +423,14 @@ func ssoGitHubLink(username string) spoke.SSOGitHubLink {
 		return spoke.SSOGitHubLink{}
 	}
 	return spoke.SSOGitHubLink{Login: login, LinkedAt: u.LinkedGitHubProvenAt}
+}
+
+// ssoGitHubLinkForRequest is ssoGitHubLink for the request's SSO handoff. An
+// admin viewing as another user ("View as user") never carries that user's
+// link to a spoke.
+func (s *HubServer) ssoGitHubLinkForRequest(r *http.Request, username string) spoke.SSOGitHubLink {
+	if _, _, impersonating := s.resolveIdentity(r); impersonating {
+		return spoke.SSOGitHubLink{}
+	}
+	return ssoGitHubLink(username)
 }
