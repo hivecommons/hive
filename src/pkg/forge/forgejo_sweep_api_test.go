@@ -231,8 +231,8 @@ func TestForgejoPermissionForWriteAccessHive(t *testing.T) {
 		"GET " + repoAPI + "/assignees":                         `[{"login":"hive-bot"},{"login":"FjAdmin"},{"login":""}]`,
 	})
 	ctx := context.Background()
-	if perm, err := api.Permission(ctx, "widgets", "fjadmin"); err != nil || perm != "write" {
-		t.Errorf("labeller on the assignee list: Permission = %q %v, want write", perm, err)
+	if perm, err := api.Permission(ctx, "widgets", "fjadmin"); err != nil || perm != PermissionAssignable {
+		t.Errorf("labeller on the assignee list: Permission = %q %v, want %q", perm, err, PermissionAssignable)
 	}
 	if perm, err := api.Permission(ctx, "widgets", "reader"); err != nil || perm != "none" {
 		t.Errorf("labeller missing from the assignee list: Permission = %q %v, want none", perm, err)

@@ -29,7 +29,8 @@ Forgejo is a self-hosted software forge: Git hosting, issues, pull requests, pac
 Each links to the issue that tracks it. [#19909](https://github.com/hivecommons/hive/issues/19909) lists them all.
 
 - Short-lived, per-tier Forgejo credentials cover git clone and push ([#19682](https://github.com/hivecommons/hive/pull/19682), [#19760](https://github.com/hivecommons/hive/pull/19760)). REST calls still use the `token_env` access token ([#19920](https://github.com/hivecommons/hive/issues/19920)). See [Forge setup](../forge-app-setup.md#forgejo-git-credentials-one-short-lived-token-per-tier).
-- A forge-only hive starts no push-branch, review or merge request relay ([#19916](https://github.com/hivecommons/hive/issues/19916)).
+- A forge-only hive serves push-branch requests. It answers review and merge requests with a reason instead of serving them ([#19916](https://github.com/hivecommons/hive/issues/19916)).
+- When the hive's Forgejo user has write but not admin access, Forgejo refuses the permission API for other users. The automerge sweep then reads the repo's assignee list, and a labeller on that list may release a merge. The list also holds members of a team with write on any one unit, or with read on pull requests. The close-on-merge sweep does not accept the assignee list: it honours closing keywords only from the hive's own user or an author whose permission it can read as write ([#19914](https://github.com/hivecommons/hive/issues/19914)).
 
 The hub's get-started flow provisions hosted hives on GitHub and GitHub Enterprise only. A Forgejo repository URL is refused there for now.
 

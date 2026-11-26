@@ -32,7 +32,8 @@ type SweepAPI interface {
 	// removed it, or no event names it.
 	LabelLastAdded(ctx context.Context, repo string, number int, label string) (add LabelAdd, ok bool, err error)
 	// Permission returns login's access to repo: "none", "read", "write",
-	// "admin" or "owner".
+	// "admin" or "owner", or PermissionAssignable when Forgejo refuses the
+	// permission API and the login is on the repo's assignee list.
 	Permission(ctx context.Context, repo, login string) (string, error)
 	// RecentlyMergedPulls lists the most recently updated closed pull
 	// requests that were merged, newest first, at most limit of them.
@@ -222,21 +223,23 @@ func (f *forgejoForge) IssueReopened(ctx context.Context, repo string, number in
 	return reopened, nil
 }
 
-// Permission levels Permission returns when it answers from the assignee
-// list instead of the permission API.
-const (
-	permissionWrite = "write"
-	permissionNone  = "none"
-)
+// PermissionAssignable is what Permission returns, instead of "write", for a
+// login on the repo's assignee list when Forgejo refuses the permission API
+// (#19914). Forgejo's list also holds members of a team with write on any
+// one unit (the wiki or issues only, say) or with read on pull requests, so
+// it is weaker than "write": a caller decides whether it is enough.
+const PermissionAssignable = "assignable"
+
+// permissionNone is what Permission returns for a login missing from the
+// assignee list.
+const permissionNone = "none"
 
 // Permission reads login's access through
 // GET /repos/{owner}/{repo}/collaborators/{login}/permission. Forgejo answers
 // that call about another user only for a site admin or a repo admin, and
 // returns 403 to a caller with write access (#19914). On that 403 the
 // answer comes from GET /repos/{owner}/{repo}/assignees, which any repo
-// reader may call and which lists the active users with write access
-// (direct collaborators, and members of a team with write on any unit or
-// with access to pull requests): a login on it is "write", one missing from
+// reader may call: a login on it is PermissionAssignable, one missing from
 // it "none". The list never says "admin" or "owner", and it leaves out a
 // site admin with no access of their own to the repo.
 func (f *forgejoForge) Permission(ctx context.Context, repo, login string) (string, error) {
@@ -256,7 +259,7 @@ func (f *forgejoForge) Permission(ctx context.Context, repo, login string) (stri
 	}
 	for _, u := range assignees {
 		if u.Login != "" && strings.EqualFold(u.Login, login) {
-			return permissionWrite, nil
+			return PermissionAssignable, nil
 		}
 	}
 	return permissionNone, nil

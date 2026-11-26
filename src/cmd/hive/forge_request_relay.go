@@ -160,15 +160,17 @@ func (r *forgeRequestRelay) scanOnce(ctx context.Context) {
 	if cfg := r.cfg(); cfg == nil || !cfg.AllReposOffGitHub() {
 		return
 	}
+	// Pushes first: an agent that drops a push and then a PR for the same
+	// branch in one tick gets the branch published before the PR is opened.
+	r.ensureQueueDirs()
+	for _, path := range pendingRequestFiles(r.pushDir) {
+		r.handlePushBranch(ctx, path)
+	}
 	for _, path := range pendingRequestFiles(r.prDir) {
 		r.handlePR(ctx, path)
 	}
 	for _, path := range pendingRequestFiles(r.issueDir) {
 		r.handleIssue(ctx, path)
-	}
-	r.ensureQueueDirs()
-	for _, path := range pendingRequestFiles(r.pushDir) {
-		r.handlePushBranch(ctx, path)
 	}
 	for _, path := range pendingRequestFiles(r.reviewDir) {
 		r.handleReviewRequest(path)
@@ -325,7 +327,7 @@ func (r *forgeRequestRelay) handlePR(ctx context.Context, path string) {
 		Base:   req.Base,
 		Title:  prosefilter.SanitizeTitle(req.Title),
 		Body:   prosefilter.Sanitize(req.Body),
-		Labels: []string{github.ReadyForReviewLabelName()},
+		Labels: []string{cfg.Governor.Labels.ReadyForReviewLabelOrDefault()},
 	})
 	if err != nil && !errors.Is(err, forge.ErrLabelsNotApplied) {
 		fail(err.Error())

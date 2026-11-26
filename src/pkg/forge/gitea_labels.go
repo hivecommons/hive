@@ -63,7 +63,9 @@ func (f *giteaForge) AddLabels(ctx context.Context, repo string, number int, lab
 
 	ids, err := f.repoLabelIDs(ctx, owner, name, missing)
 	if err != nil {
-		return fmt.Errorf("%s: add labels to %s: %w: %s: %v", f.label, slug, ErrLabelsMissing, strings.Join(missing, ", "), err)
+		// The underlying error keeps its status, so a 5xx or 429 while
+		// listing or creating labels is retried like any other.
+		return fmt.Errorf("%s: add labels to %s: applying %s: %w", f.label, slug, strings.Join(missing, ", "), err)
 	}
 	refs := make([]any, 0, len(ids))
 	for _, id := range ids {

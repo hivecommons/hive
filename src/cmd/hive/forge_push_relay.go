@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/config"
@@ -46,6 +47,12 @@ const forgePushRelayTier = pushbroker.DefaultTier
 // in its result.
 const forgePushOutputLines = 3
 
+// forgePushExecTimeout bounds one git command of the push relay. Push
+// requests are served on the same goroutine as the PR and issue queues, so a
+// git that never returns (a stalled remote, or a proxy the agent set in its
+// checkout's git config) must not stall every queue.
+const forgePushExecTimeout = 5 * time.Minute
+
 // forgeRelayReviewUnsupported and forgeRelayMergeUnsupported are the reasons a
 // forge-only hive gives for the request kinds it does not serve.
 const (
@@ -58,6 +65,8 @@ const (
 // the environment (pushbroker.PushEnv) before env is appended. It is a
 // variable so tests run without a git binary or network.
 var forgePushExec = func(ctx context.Context, dir string, env []string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, forgePushExecTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(pushbroker.PushEnv(os.Environ()), env...)
@@ -149,6 +158,12 @@ func (r *forgeRequestRelay) handlePushBranch(ctx context.Context, path string) {
 		return
 	}
 	cfg := r.cfg()
+	// The lane write allowlist (write_surface.allowlist) applies here as on
+	// the GitHub push watcher: it needs no GitHub data.
+	if !cfg.AgentMayWrite(req.Agent, github.WriteOpPushBranch) {
+		deny(github.WriteAllowlistReason(req.Agent, github.WriteOpPushBranch))
+		return
+	}
 	if reason := repoRefusal(cfg, req.Agent, req.Repo); reason != "" {
 		reject(reason)
 		return

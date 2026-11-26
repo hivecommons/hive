@@ -202,13 +202,14 @@ func TestGiteaAddLabelsReportsLabelStillMissing(t *testing.T) {
 }
 
 // A token that may not create labels: the error names the label and keeps
-// the forge's status.
+// the forge's status, so the relay classifies it as it does any forge error
+// (a 4xx is final, a 5xx or 429 is retried).
 func TestGiteaAddLabelsCreateRefused(t *testing.T) {
 	repo := &fakeLabelRepo{repoLabels: map[int64]string{}, createStatus: http.StatusForbidden}
 	f := newLabelTestForge(t, repo)
 	err := f.AddLabels(context.Background(), "widgets", 7, []string{github.DefaultReadyForReviewLabel})
-	if !errors.Is(err, ErrLabelsMissing) || !strings.Contains(err.Error(), "returned status 403") {
-		t.Fatalf("err = %v, want ErrLabelsMissing with the 403", err)
+	if err == nil || errors.Is(err, ErrLabelsMissing) || !isGiteaStatus(err, http.StatusForbidden) || !strings.Contains(err.Error(), github.DefaultReadyForReviewLabel) {
+		t.Fatalf("err = %v, want the 403 with its status (not ErrLabelsMissing) naming the label", err)
 	}
 }
 
@@ -244,8 +245,8 @@ func TestForgejoCreateChangeRequestNotHeldIsReported(t *testing.T) {
 	ref, err := f.(ChangeRequestCreator).CreateChangeRequest(context.Background(), "widgets", ChangeRequestSpec{
 		Head: "fix-1", Base: "main", Title: "t", Body: "b", Labels: []string{github.DefaultReadyForReviewLabel},
 	})
-	if !errors.Is(err, ErrLabelsNotApplied) || !errors.Is(err, ErrLabelsMissing) {
-		t.Fatalf("err = %v, want ErrLabelsNotApplied wrapping ErrLabelsMissing", err)
+	if !errors.Is(err, ErrLabelsNotApplied) || !isGiteaStatus(err, http.StatusForbidden) {
+		t.Fatalf("err = %v, want ErrLabelsNotApplied wrapping the refused create", err)
 	}
 	if ref.Number != 4 {
 		t.Errorf("ref = %+v, want the opened PR", ref)
@@ -259,5 +260,26 @@ func TestIsGiteaStatus(t *testing.T) {
 	}
 	if got := err.Error(); got != "wrapped: forgejo API /x returned status 403: no" {
 		t.Errorf("text = %q, want the adapter's usual status text", got)
+	}
+}
+
+// A 5xx while listing labels keeps its status, so the relay retries it.
+func TestGiteaAddLabelsLookupFailureKeepsStatus(t *testing.T) {
+	const repo = "/api/v1/repos/acme/widgets"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == repo+"/issues/7/labels" {
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	f, err := newGiteaFamilyForge(KindForgejo, "fj", Options{BaseURL: srv.URL, Org: "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = f.AddLabels(context.Background(), "widgets", 7, []string{"bug"})
+	if !isGiteaStatus(err, http.StatusBadGateway) || errors.Is(err, ErrLabelsMissing) {
+		t.Fatalf("err = %v, want the 502 with its status, not ErrLabelsMissing", err)
 	}
 }

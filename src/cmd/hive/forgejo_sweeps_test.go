@@ -263,3 +263,16 @@ func TestForgejoAutoMergeHonoursReadyForReview(t *testing.T) {
 		}
 	}
 }
+
+// A renamed ready_for_review label blocks on a forge-only hive, where no
+// GitHub client installs the configured gate names into pkg/github.
+func TestForgejoAutoMergeHonoursRenamedReadyForReview(t *testing.T) {
+	t.Setenv(testForgejoTokenEnv, "fj-secret")
+	stubForgejoSweepAPI(t, &gatedPullAPI{labels: []string{"lgtm", "needs-human-review"}}, nil)
+	cfg := forgejoSweepTestConfig()
+	cfg.Governor.Labels.ReadyForReview = "needs-human-review"
+	out := forgejoSweeperFor(cfg, forgejoSweepDeps{}).AutoMerge(context.Background())
+	if len(out) != 1 || out[0].Merged || out[0].Reason != "blocked-by-label:needs-human-review" {
+		t.Errorf("outcomes = %+v, want the PR blocked by the renamed gate label", out)
+	}
+}

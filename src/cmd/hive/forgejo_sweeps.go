@@ -73,7 +73,10 @@ func forgejoSweeperFor(cfg *config.Config, deps forgejoSweepDeps) *forgesweep.Sw
 	// PR relay holds every PR it opens with ready-for-review, and a person
 	// releases it by removing the label (#19912). The defaults stay in the
 	// list after a rename, so a label applied under the old name still holds.
+	// The configured names are read from cfg too: on a forge-only hive no
+	// GitHub client installs them into pkg/github.
 	blocking = append(blocking, github.HiveGateLabels()...)
+	blocking = append(blocking, cfg.Governor.Labels.ReadyForReviewLabelOrDefault())
 	blocking = append(blocking, github.DefaultReadyForReviewLabel, github.DefaultDecisionNeededLabel)
 	blocking = append(blocking, cfg.Governor.Labels.Exempt...)
 	s := &forgesweep.Sweeper{

@@ -134,6 +134,9 @@ func TestForgeRelayPushRefusals(t *testing.T) {
 		"wrong agent":    {func(_ *pushHarness, r *github.PushBranchRequest) { r.Agent = "intruder" }, ".denied", "authorization denied"},
 		"nil authz":      {func(h *pushHarness, _ *github.PushBranchRequest) { h.relay.pushAuthz = nil }, ".denied", "fail closed"},
 		"unmanaged repo": {func(_ *pushHarness, r *github.PushBranchRequest) { r.Repo = "other" }, ".rejected", "not managed"},
+		"lane allowlist": {func(h *pushHarness, _ *github.PushBranchRequest) {
+			h.cfg.WriteSurface.Allowlist = map[string][]string{"worker": {github.WriteOpComment}}
+		}, ".denied", "write allowlist"},
 		"paused repo": {func(h *pushHarness, _ *github.PushBranchRequest) {
 			h.cfg.Project.PausedRepos = []config.RepoPause{{Repo: "widgets"}}
 		}, ".rejected", "push rejected"},
