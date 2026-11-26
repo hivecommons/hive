@@ -256,7 +256,25 @@ on the JSON. Check the first boot's `hub customer store: boot sync` line for
   the hive drops it at its 72-hour refresh expiry. A person who cleared their
   organization on the hub gets no derived affiliation either.
 - **Single writer.** bbolt takes a file lock, so the hub stays one replica on
-  its PVC. A lock held for more than 5 seconds at boot leaves the hub in `json`.
+  its PVC. When another process holds the lock at boot, the hub retries the
+  open with doubling backoff for up to `HIVE_HUB_CUSTOMER_STORE_LOCK_WAIT`
+  (default `2m`; `0` means one attempt), logging
+  `hub customer store: colony.db locked by another process; retrying` on each
+  try, and stays in `json` only if the lock is still held after that
+  ([#20103](https://github.com/hivecommons/hive/issues/20103)). A boot can
+  wait up to the setting plus one 5-second attempt. The open runs before the
+  hub serves HTTP, so the pod is not Ready while it waits: give the hub a
+  `startupProbe` whose `failureThreshold` times `periodSeconds` is at least
+  135 seconds with the default, or the kubelet may restart it mid-wait.
+- **Run the hub Deployment with `strategy: Recreate`.** With `RollingUpdate`
+  the new pod starts while the old one still holds the lock, and the old pod
+  only exits once the new one is Ready, so the new pod can never get the lock
+  and runs in `json` for its whole life. `Recreate` stops the old pod before
+  the new one starts. The boot retry covers a lock that is still held after
+  that, such as the server-side release of a lock on the RWX volume after an
+  unclean node loss, or a stray process holding the file. The cost is a short
+  hub outage on every roll, including hub self-upgrades.
+  `src/deploy/check-hub-manifest.py` fails on any other strategy.
 
 ### Ask AI help
 
@@ -635,6 +653,6 @@ The hub's own container is named `hub` and it is the only container in the Deplo
 kubectl -n hive-hub get deploy hive-hub -o yaml | python3 src/deploy/check-hub-manifest.py -
 ```
 
-Cluster-side cleanup that cannot be done from the repo: remove any stray `hive-hub` container from the running Deployment, move the two secrets into a Secret, and rotate both values. The check also rejects a secret env fed from a ConfigMap or field and looks at initContainers.
+Cluster-side cleanup that cannot be done from the repo: remove any stray `hive-hub` container from the running Deployment, move the two secrets into a Secret, and rotate both values. The check also rejects a secret env fed from a ConfigMap or field and looks at initContainers, and it fails a Deployment whose `spec.strategy.type` is not `Recreate` (an unset strategy is Kubernetes' `RollingUpdate`), because a rolling update leaves the new pod unable to take `colony.db`'s lock (see [Hub CRM on the colony store](#hub-crm-on-the-colony-store)). Switching the live Deployment is an operator step: `kubectl -n hive-hub patch deploy hive-hub --type merge -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'`.
 
 The hub also checks itself: before each self-upgrade `set image`, it reads its own Deployment's container names and logs `hub deployment has unexpected containers` (with `unexpected=<names>`) when anything besides `hub` is present. The warning never blocks the upgrade.

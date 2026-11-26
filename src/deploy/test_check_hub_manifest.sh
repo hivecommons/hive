@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Tests check-hub-manifest.py (#19344, #19345): the hub Deployment must have
-# exactly the expected containers and no literal secret env values.
+# Tests check-hub-manifest.py (#19344, #19345, #20103): the hub Deployment must
+# have exactly the expected containers, no literal secret env values, and the
+# Recreate strategy.
 # Run: bash src/deploy/test_check_hub_manifest.sh
 set -uo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,6 +26,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata: {name: hive-hub}
 spec:
+  strategy: {type: Recreate}
   template:
     spec:
       containers:
@@ -58,11 +60,18 @@ expect "configMapKeyRef for a secret fails" 1 "$TMP/cm.yaml" "without valueFrom.
 mk "$TMP/nosrc.yaml" "" "        - name: HIVE_NPS_RELAY_PULL_SECRET"
 expect "secret env with no source fails" 1 "$TMP/nosrc.yaml" "HIVE_NPS_RELAY_PULL_SECRET"
 
+sed 's/type: Recreate/type: RollingUpdate/' "$TMP/good.yaml" > "$TMP/rolling.yaml"
+expect "RollingUpdate strategy fails" 1 "$TMP/rolling.yaml" "strategy 'RollingUpdate'"
+
+grep -v 'strategy:' "$TMP/good.yaml" > "$TMP/nostrategy.yaml"
+expect "unset strategy (RollingUpdate default) fails" 1 "$TMP/nostrategy.yaml" "strategy 'RollingUpdate'"
+
 cat > "$TMP/init.yaml" <<'YAML'
 apiVersion: apps/v1
 kind: Deployment
 metadata: {name: hive-hub}
 spec:
+  strategy: {type: Recreate}
   template:
     spec:
       initContainers:
@@ -79,7 +88,7 @@ items:
 - apiVersion: apps/v1
   kind: Deployment
   metadata: {name: hive-hub}
-  spec: {template: {spec: {containers: [{name: hub}, {name: hive-hub}]}}}
+  spec: {strategy: {type: Recreate}, template: {spec: {containers: [{name: hub}, {name: hive-hub}]}}}
 YAML
 expect "stray container inside a List fails" 1 "$TMP/list.yaml" "unexpected container"
 
