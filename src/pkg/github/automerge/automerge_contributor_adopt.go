@@ -17,6 +17,7 @@ import (
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
@@ -2634,6 +2635,141 @@ type adoptionEscape struct {
 	// Escalated means the PR is a stage-085 item for Reason, not a 074 one.
 	Escalated bool
 	Reason    string
+	// AuthorsTurn means a person returned this head to its author and the
+	// hive cannot push it (a fork it declined to re-home): the author's
+	// 071/072 stands over the 074 pin until the 072 dwell from the
+	// decision ends (adoptionDecisionOnHead).
+	AuthorsTurn bool
+	// Released means a person's decision on the head cleared the
+	// escalation recorded for it this sweep: callers re-read the record.
+	Released bool
+}
+
+// adoptionDecisionOnHead is the person's return of obs's head to work, a
+// recorded `/hive decision <direction>` (dashboard direction, delegated
+// decision) or a hand-placed return label on exactly this head, made after
+// the hive last took the PR over (rec.AdoptedAt: every adoption and every
+// supersede attempt, the fork re-home refusal included, stamps it first).
+// A direction given before the takeover was answered by the takeover
+// itself, so it never suppresses the escalation the takeover leads to. A
+// bare approval is not a return and a GitHub review is not a routing
+// decision: both keep the head's own stall clock. The adoption stall
+// re-measures from the decision's time, so the decision itself never reads
+// as the stall that parked the PR.
+func (c *Engine) adoptionDecisionOnHead(obs stageObservation, rec stagelabels.Record) (review.HumanChangeRequest, bool) {
+	if c == nil || c.humanChangeRequests == nil || obs.HeadSHA == "" {
+		return review.HumanChangeRequest{}, false
+	}
+	req, ok := review.DecisionAnswerFor(c.humanChangeRequests, obs.Owner+"/"+obs.Repo, obs.Number, obs.HeadSHA)
+	if !ok || req.RecordedAt.IsZero() || req.IsApproval() || (req.Source != review.HumanChangeRequestSourceDecision && req.Source != review.HumanChangeRequestSourceStageLabel) {
+		return review.HumanChangeRequest{}, false
+	}
+	if !req.RecordedAt.After(rec.AdoptedAt) {
+		return review.HumanChangeRequest{}, false
+	}
+	return req, true
+}
+
+// adoptionDecisionHolds reports whether a person's return at decidedAt is
+// still inside the 072 dwell at now: the author's turn it gave is not a
+// stall yet. A zero or negative dwell holds, as escalateUnadoptableFork
+// reads it: a 072 that never stalls never hands the head back to a person.
+func adoptionDecisionHolds(decidedAt time.Time, policy StageLabelPolicy, now time.Time) bool {
+	if decidedAt.IsZero() {
+		return false
+	}
+	wait := stagelabels.Dwell(stagelabels.ReturnedToContributor, policy.Dwell)
+	return wait <= 0 || now.Sub(decidedAt) < wait
+}
+
+// AdoptionDecisionLapsedMarker opens the note posted when a person's return
+// of an escalated adopted head had its full dwell with nothing pushed and
+// the same stall parks the PR again: the escalation note on that head
+// already explained the stall, so without this one the PR reads as if the
+// decision had never been seen.
+const AdoptionDecisionLapsedMarker = "<!-- hive:adoption-decision-lapsed"
+
+// adoptionDecisionLapsedComment is that note. It names the person without a
+// mention: the maintainer is the one asked to look, not pinged twice.
+func adoptionDecisionLapsedComment(obs stageObservation, reason string, decision review.HumanChangeRequest, waited time.Duration) string {
+	var b strings.Builder
+	b.WriteString(adoptionDecisionLapsedLine(obs, reason, decision, waited))
+	fmt.Fprintf(&b, "\n\nMoving to `%s` so a person decides again: the hive is not waiting on anyone now.", stagelabels.NeedsDecision.Label())
+	return b.String()
+}
+
+// adoptionDecisionLapsedLine is the marker and the sentence naming whose
+// decision lapsed; a fresh stall note carries it as its own last paragraph
+// when the stall it explains is the decision's lapse (withAdoptionDecisionLapse).
+func adoptionDecisionLapsedLine(obs stageObservation, reason string, decision review.HumanChangeRequest, waited time.Duration) string {
+	who := strings.TrimPrefix(strings.TrimSpace(decision.Actor), "@")
+	if who == "" {
+		who = "a maintainer"
+	}
+	return fmt.Sprintf("%s head=%s reason=%s decided_at=%s -->\nThe decision %s recorded on %s for head `%s` had its full %s with no new commit, and `%s` still holds.",
+		AdoptionDecisionLapsedMarker, obs.HeadSHA, reason, decision.RecordedAt.UTC().Format(time.RFC3339), who, decision.RecordedAt.UTC().Format("2006-01-02 15:04 UTC"), shortSHA(obs.HeadSHA), formatSat(waited), reason)
+}
+
+// adoptionDecisionLapsed reports whether decision, a person's return of
+// obs's head, had the full dwell reason's stall is held for and its lapse
+// is not yet noted on the head.
+func adoptionDecisionLapsed(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, reason string, decision review.HumanChangeRequest, now time.Time) bool {
+	if decision.RecordedAt.IsZero() || rec.AdoptionDecisionLapseNoted(obs.HeadSHA, decision.RecordedAt) {
+		return false
+	}
+	dwell, floored := adoptionDecisionLapseDwell(reason, policy)
+	return floored && now.Sub(decision.RecordedAt) >= dwell
+}
+
+// withAdoptionDecisionLapse appends the lapse paragraph to a fresh stall
+// note when decision lapsed, so one comment both explains the stall and
+// says whose decision it follows; it reports whether it did. The caller
+// marks the lapse noted once the post is accepted.
+func withAdoptionDecisionLapse(body string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, reason string, decision review.HumanChangeRequest, now time.Time) (string, bool) {
+	if !adoptionDecisionLapsed(obs, rec, policy, reason, decision, now) {
+		return body, false
+	}
+	return body + "\n\n" + adoptionDecisionLapsedLine(obs, reason, decision, now.Sub(decision.RecordedAt)), true
+}
+
+// adoptionDecisionLapseDwell is the dwell a person's return holds reason's
+// stall for (the 072 dwell for a refused fork re-home, the 074 dwell for an
+// idle head), and false for a stall the decision does not hold or a 072
+// that never stalls (adoptionDecisionHolds).
+func adoptionDecisionLapseDwell(reason string, policy StageLabelPolicy) (time.Duration, bool) {
+	switch {
+	case reason == stagelabels.LaneReasonAdoptionStalledPrefix+adoptStallForkRehomeRefused:
+		wait := stagelabels.Dwell(stagelabels.ReturnedToContributor, policy.Dwell)
+		return wait, wait > 0
+	case strings.HasPrefix(reason, stagelabels.LaneReasonAdoptionStalledPrefix+"supersede-failed:"),
+		reason == stagelabels.LaneReasonAdoptionStalledPrefix+stagelabels.LaneReasonHiveSignoffAttribution,
+		reason == stagelabels.LaneReasonAdoptionStalledPrefix+stagelabels.LaneReasonRebaseFailedTwice,
+		!strings.HasPrefix(reason, stagelabels.LaneReasonAdoptionStalledPrefix):
+		return 0, false
+	}
+	return stagelabels.Dwell(stagelabels.AdoptedByHive, policy.Dwell), true
+}
+
+// noteAdoptionDecisionLapsed posts adoptionDecisionLapsedComment once per
+// (head, decision) when an escalation whose note already went out on the
+// head comes back after a person's return lapsed. Recorded only once
+// GitHub accepted the post, so a failed one is retried. Returns the
+// comments posted.
+func (c *Engine) noteAdoptionDecisionLapsed(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, reason string, decision review.HumanChangeRequest, now time.Time) (int, error) {
+	if !adoptionDecisionLapsed(obs, rec, policy, reason, decision, now) {
+		// No decision, one already noted, a stall the decision does not
+		// hold (a supersede that opened nothing, the hive's own sign-off)
+		// or one still inside its dwell: nothing about the decision lapsed.
+		return 0, nil
+	}
+	body := c.withStageMoveFact(ctx, obs, adoptionDecisionLapsedComment(obs, reason, decision, now.Sub(decision.RecordedAt)))
+	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+		c.warn("stage labels: decision-lapsed note failed", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "error", err)
+		return 0, err
+	}
+	store.MarkAdoptionDecisionLapseNoted(key, obs.HeadSHA, decision.RecordedAt)
+	c.info("stage labels: a person's return of the adopted head lapsed; back to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "decided_at", decision.RecordedAt, "by", decision.Actor)
+	return 1, nil
 }
 
 // postAdoptionEscalationNote posts body as the 085 note for reason on the
@@ -2722,9 +2858,19 @@ func adoptionForkGuardOnly(obs stageObservation) bool {
 // stamped (pre-hivecommons/hive#13040) is not stale: AdoptedAt may predate
 // the head by days; escapeStalledAdoption stamps it first.
 func adoptionStale(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time) bool {
+	return adoptionStaleFrom(obs, rec, policy, now, time.Time{})
+}
+
+// adoptionStaleFrom is adoptionStale with the clock starting no earlier
+// than floor: a person's decision on the head (adoptionDecisionOnHead)
+// starts a fresh dwell, so the head's age before it is not a stall.
+func adoptionStaleFrom(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now, floor time.Time) bool {
 	since := rec.AdoptedHeadSince()
 	if since.IsZero() || obs.HeadSHA == "" || obs.HeadSHA != rec.AdoptedHead || rec.AdoptedHeadClockUnset() {
 		return false
+	}
+	if floor.After(since) {
+		since = floor
 	}
 	if adoptionCIPending(obs) {
 		return false
@@ -2775,6 +2921,15 @@ func adoptedHeadSignoffUnfixable(obs stageObservation, rec stagelabels.Record) b
 // is exhausted (rebaseExhausted: every attempt pushed a dirty head or timed
 // out with no push; hivecommons/hive#16023).
 func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time, rebaseExhausted bool) string {
+	return inPlaceRehomeReasonFrom(obs, rec, policy, now, rebaseExhausted, time.Time{})
+}
+
+// inPlaceRehomeReasonFrom is inPlaceRehomeReason with the 074 dwell starting
+// no earlier than decidedAt, a person's return of the head
+// (adoptionDecisionOnHead): the pass after their direction does not
+// re-home a head they just gave the hive's fixer, as the stall does not
+// escalate it.
+func inPlaceRehomeReasonFrom(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time, rebaseExhausted bool, decidedAt time.Time) string {
 	if !rec.AdoptedInPlace() || obs.HeadSHA == "" || obs.HeadSHA != rec.AdoptedHead || adoptedHeadDCORed(obs, rec) || adoptionBlocked(obs.Labels) != "" || verdictNeedsHuman(obs.Detail) {
 		return ""
 	}
@@ -2793,11 +2948,11 @@ func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy St
 		return AdoptReasonSignoffRehome
 	}
 	if humanConflictReasons[obs.Reason] || humanConflictReasons[obs.LaneReason] || hasLabelFold(obs.Labels, "needs-rebase") {
-		if rebaseExhausted || adoptionStale(obs, rec, policy, now) {
+		if rebaseExhausted || adoptionStaleFrom(obs, rec, policy, now, decidedAt) {
 			return AdoptReasonRebaseRehome
 		}
 	}
-	if verdictBlocks(obs.Detail) && adoptionStale(obs, rec, policy, now) {
+	if verdictBlocks(obs.Detail) && adoptionStaleFrom(obs, rec, policy, now, decidedAt) {
 		return AdoptReasonInPlaceStalled
 	}
 	return ""
@@ -2809,13 +2964,17 @@ func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy St
 // superseder is progress; an optional check alone is not a blocker unless
 // the repo's auto-merge is off (adoptionOptionalCheckOnly).
 func adoptionStalledReason(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time) string {
-	return adoptionStalledReasonWith(obs, rec, policy, now, false)
+	return adoptionStalledReasonWith(obs, rec, policy, now, false, time.Time{})
 }
 
 // adoptionStalledReasonWith is adoptionStalledReason with the copy's
 // rebase-resolve verdict: an exhausted episode on a still-conflicting copy
 // (hivecommons/hive#15307) is the one stall a live superseder can carry.
-func adoptionStalledReasonWith(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time, copyRebaseExhausted bool) string {
+// decidedAt is a person's return of the head (adoptionDecisionOnHead), or
+// zero: the person has routed the head, so a refused fork re-home stalls
+// only after the 072 dwell from the decision, and an idle head only after
+// the 074 dwell from it, never on the head's age alone.
+func adoptionStalledReasonWith(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time, copyRebaseExhausted bool, decidedAt time.Time) string {
 	if obs.HeadSHA == "" {
 		return ""
 	}
@@ -2826,6 +2985,11 @@ func adoptionStalledReasonWith(obs stageObservation, rec stagelabels.Record, pol
 		return ""
 	}
 	if rec.ForkRehomeRefused(obs.HeadSHA) {
+		if adoptionDecisionHolds(decidedAt, policy, now) {
+			// The refusal still stops the hive pushing, but it is the
+			// author's turn the person gave, not a stall yet.
+			return ""
+		}
 		return stagelabels.LaneReasonAdoptionStalledPrefix + adoptStallForkRehomeRefused
 	}
 	if rec.AdoptionAttemptedNothingOpened(obs.HeadSHA) {
@@ -2834,7 +2998,7 @@ func adoptionStalledReasonWith(obs stageObservation, rec stagelabels.Record, pol
 	if adoptedHeadSignoffUnfixable(obs, rec) && !hiveAuthoredPR(obs, policy, "") {
 		return stagelabels.LaneReasonAdoptionStalledPrefix + stagelabels.LaneReasonHiveSignoffAttribution
 	}
-	if adoptionOptionalCheckOnly(obs) || !adoptionStale(obs, rec, policy, now) {
+	if adoptionOptionalCheckOnly(obs) || !adoptionStaleFrom(obs, rec, policy, now, decidedAt) {
 		return ""
 	}
 	return stagelabels.LaneReasonAdoptionStalledPrefix + nonEmpty(obs.Reason, obs.LaneReason)
@@ -2859,7 +3023,15 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 		c.info("stage labels: adopted head had no clock; starting the 074 dwell from this sweep", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "adopted_at", rec.AdoptedAt)
 		rec, _ = store.Get(key)
 	}
-	rehomeReason := inPlaceRehomeReason(obs, rec, policy, now, c.inPlaceRebaseExhausted(obs, rec))
+	// A person's return of this head re-starts the stall clock: the
+	// escalation it answered is released below, and only a new head or a
+	// full dwell from the decision escalates or re-homes again. Read per
+	// record: a takeover recorded this pass (MarkAdopted) outdates it.
+	decisionFor := func(rec stagelabels.Record) review.HumanChangeRequest {
+		d, _ := c.adoptionDecisionOnHead(obs, rec)
+		return d
+	}
+	rehomeReason := inPlaceRehomeReasonFrom(obs, rec, policy, now, c.inPlaceRebaseExhausted(obs, rec), decisionFor(rec).RecordedAt)
 	if rehomeReason == AdoptReasonSignoffRehome && hiveAuthoredPR(obs, policy, c.transport.AppBotLogin()) {
 		rehomeReason = ""
 	}
@@ -2874,7 +3046,7 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 	}
 	copyExhausted := c.adoptionCopyRebaseExhausted(obs, rec)
 	stalledReason := func(rec stagelabels.Record) string {
-		return adoptionStalledReasonWith(obs, rec, policy, now, copyExhausted)
+		return adoptionStalledReasonWith(obs, rec, policy, now, copyExhausted, decisionFor(rec).RecordedAt)
 	}
 	if rehomeReason == "" && stalledReason(rec) != "" {
 		// Before a red head is handed to a person, try the recovery a
@@ -2913,11 +3085,14 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 			stalled = stalledReason(rec)
 		}
 		if stalled != "" && stalled == rec.AdoptEscalatedReason && rec.AdoptionEscalationNoted(obs.HeadSHA, stalled) {
-			return adoptionEscape{Escalated: true, Reason: stalled}, 0, nil
+			// Still parked on the same stall. A person's return that already
+			// had its full dwell is told it lapsed (once per decision).
+			n, err := c.noteAdoptionDecisionLapsed(ctx, store, key, obs, rec, policy, stalled, decisionFor(rec), now)
+			return adoptionEscape{Escalated: true, Reason: stalled}, n, err
 		}
 		if stalled == "" {
 			store.ClearAdoptionEscalation(key)
-			c.info("stage labels: adoption escalation reason cleared; back to adopted-by-hive", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "was", rec.AdoptEscalatedReason, "lane_reason", nonEmpty(obs.Reason, obs.LaneReason), "merge_commit", obs.Detail.MergeCommit)
+			c.info("stage labels: adoption escalation reason cleared; back to adopted-by-hive", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "was", rec.AdoptEscalatedReason, "lane_reason", nonEmpty(obs.Reason, obs.LaneReason), "merge_commit", obs.Detail.MergeCommit, "decided_at", decisionFor(rec).RecordedAt)
 			rec, _ = store.Get(key)
 		}
 		// Otherwise the escalation holds but its note never posted, or the
@@ -2973,14 +3148,24 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 	}
 	reason = stalledReason(rec)
 	if reason == "" {
-		return adoptionEscape{}, comments, firstErr
+		// A head the hive cannot push that a person sent back to its
+		// author is the author's for the 072 dwell from the decision: the
+		// refusal is a fact about pushing, not about who acts next.
+		esc := adoptionEscape{AuthorsTurn: rec.ForkRehomeRefused(obs.HeadSHA) && adoptionDecisionHolds(decisionFor(rec).RecordedAt, policy, now)}
+		return esc, comments, firstErr
 	}
 	noted := rec.AdoptionEscalationNoted(obs.HeadSHA, reason)
 	store.MarkAdoptionEscalated(key, obs.HeadSHA, reason)
 	c.info("stage labels: adopted PR sits with nothing the hive can push; escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "head_since", rec.AdoptedHeadSince(), "noted", noted)
 	if noted {
 		// The blocker flapped back to a reason already noted on this head:
-		// re-escalate silently.
+		// re-escalate silently, unless a person's return of the head had
+		// its full dwell in between: that lapse is news to them.
+		n, err := c.noteAdoptionDecisionLapsed(ctx, store, key, obs, rec, policy, reason, decisionFor(rec), now)
+		comments += n
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
 		return adoptionEscape{Escalated: true, Reason: reason}, comments, firstErr
 	}
 	if adoptedHeadSignoffUnfixable(obs, rec) {
@@ -2991,11 +3176,18 @@ func (c *Engine) escapeStalledAdoption(ctx context.Context, store *stagelabels.S
 	if rec.ForkRehomeRefused(obs.HeadSHA) {
 		block = c.forkUpdateBlockFor(ctx, obs)
 	}
-	body := adoptionStalledComment(obs, rec, reason, now.Sub(rec.AdoptedHeadSince()), block)
+	// A stall new to this head that follows a person's lapsed return (the
+	// lane now reads the decision's own changes request) says both in one
+	// note: the next pass's lapse check then finds it noted.
+	decision := decisionFor(rec)
+	body, lapsed := withAdoptionDecisionLapse(adoptionStalledComment(obs, rec, reason, now.Sub(rec.AdoptedHeadSince()), block), obs, rec, policy, reason, decision, now)
 	n, err := c.postAdoptionEscalationNote(ctx, store, key, obs, reason, body, "stage labels: adoption escalation note failed")
 	comments += n
 	if err != nil && firstErr == nil {
 		firstErr = err
+	}
+	if lapsed && err == nil && n > 0 {
+		store.MarkAdoptionDecisionLapseNoted(key, obs.HeadSHA, decision.RecordedAt)
 	}
 	return adoptionEscape{Escalated: true, Reason: reason}, comments, firstErr
 }
@@ -3015,17 +3207,46 @@ func (c *Engine) escalateUnadoptableFork(ctx context.Context, store *stagelabels
 	}
 	start := rec.NudgeStart()
 	wait := stagelabels.Dwell(stagelabels.ReturnedToContributor, policy.Dwell)
-	if start.IsZero() || wait <= 0 || now.Sub(start) < wait {
+	reason := stagelabels.LaneReasonAdoptionStalledPrefix + adoptStallForkRehomeRefused
+	// since is when the author's turn began: the nudge, or a person's
+	// return of the head after it. start stays the nudge's.
+	since := start
+	decision, decided := c.adoptionDecisionOnHead(obs, rec)
+	if decided && !start.IsZero() && decision.RecordedAt.After(start) {
+		// A person routed this head after the nudge: the author's 072
+		// dwell runs from that decision, and an escalation it answered
+		// is released rather than re-parking the PR on the same head.
+		since = decision.RecordedAt
+		if (wait <= 0 || now.Sub(since) < wait) && rec.AdoptionEscalated(obs.HeadSHA) && rec.AdoptEscalatedReason == reason {
+			store.ClearAdoptionEscalation(key)
+			c.info("stage labels: fork escalation answered by a decision on this head; back with its author", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "was", rec.AdoptEscalatedReason, "decided_at", decision.RecordedAt, "nudged_at", start)
+			return adoptionEscape{Released: true}, 0, nil
+		}
+	} else {
+		decided = false
+	}
+	if since.IsZero() || wait <= 0 || now.Sub(since) < wait {
 		return adoptionEscape{}, 0, nil
 	}
-	reason := stagelabels.LaneReasonAdoptionStalledPrefix + adoptStallForkRehomeRefused
 	esc := adoptionEscape{Escalated: true, Reason: reason}
 	noted := rec.AdoptionEscalationNoted(obs.HeadSHA, reason)
 	store.MarkAdoptionEscalated(key, obs.HeadSHA, reason)
 	if noted {
-		return esc, 0, nil
+		if !decided {
+			return esc, 0, nil
+		}
+		n, err := c.noteAdoptionDecisionLapsed(ctx, store, key, obs, rec, policy, reason, decision, now)
+		return esc, n, err
 	}
 	c.info("stage labels: fork PR the hive cannot adopt waited past the 072 dwell; escalating to needs-decision", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "head_repo", obs.HeadRepo, "nudged_at", start, "lane_reason", nonEmpty(obs.LaneReason, obs.Reason))
-	n, err := c.postAdoptionEscalationNote(ctx, store, key, obs, reason, forkNotAdoptedComment(obs, reason, now.Sub(start), c.forkUpdateBlockFor(ctx, obs)), "stage labels: fork escalation note failed")
+	body := forkNotAdoptedComment(obs, reason, now.Sub(start), c.forkUpdateBlockFor(ctx, obs))
+	lapsed := false
+	if decided {
+		body, lapsed = withAdoptionDecisionLapse(body, obs, rec, policy, reason, decision, now)
+	}
+	n, err := c.postAdoptionEscalationNote(ctx, store, key, obs, reason, body, "stage labels: fork escalation note failed")
+	if lapsed && err == nil && n > 0 {
+		store.MarkAdoptionDecisionLapseNoted(key, obs.HeadSHA, decision.RecordedAt)
+	}
 	return esc, n, err
 }

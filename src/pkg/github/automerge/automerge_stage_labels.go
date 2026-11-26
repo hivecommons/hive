@@ -594,7 +594,7 @@ func (c *Engine) stageReconciler(store *stagelabels.Store) (stageengine.Reconcil
 // sentinel alert keeps the park (YieldsToAdoptionFor).
 func (c *Engine) restageAfterAdoption(ctx context.Context, reconciler stageengine.Reconciler, store *stagelabels.Store, p prStagePending) error {
 	rec, ok := store.Get(p.key)
-	if !ok || reconciler == nil || p.facts.PR == nil || p.facts.PR.Pass == nil || !rec.AdoptionLive(p.obs.HeadSHA) {
+	if !ok || reconciler == nil || p.facts.PR == nil || p.facts.PR.Pass == nil || !rec.AdoptionLive(p.obs.HeadSHA) || p.adoptionYielded {
 		return nil
 	}
 	if p.want.Stage == stagelabels.AdoptedByHive || !p.want.Stage.YieldsToAdoptionFor(p.facts.PR.Pass.Route) {
@@ -637,6 +637,9 @@ type prStagePending struct {
 	// owned: the deciding lane held an owned opinion, so it becomes the
 	// stage's owner once the write lands (stageOwnerHolds).
 	owned bool
+	// adoptionYielded: the pass gave a live adoption's head back to its
+	// author on a person's decision; restageAfterAdoption leaves it there.
+	adoptionYielded bool
 }
 
 // removeNonStageLabel takes one non-hive label off a PR (the stray
@@ -1350,6 +1353,10 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		// The record this pass starts from; the split reads it to keep an
 		// agent's 072 on a pass that lost the head's verdict.
 		prevRec, hadPrev := store.Get(key)
+		// adoptionYielded: a live adoption gave way to the author's turn a
+		// person gave this head (adoptionEscape.AuthorsTurn); the post-write
+		// re-stage must not pin it back to 074.
+		adoptionYielded := false
 		if hadPrev {
 			pass.Prior = &stageengine.PriorStage{Stage: prevRec.Stage, Reason: prevRec.Reason, ActivityHead: prevRec.ActivityHead, AdmittedHead: prevRec.AdmittedHead, AuthorUpdateOwedHead: prevRec.AuthorUpdateOwedHead}
 		}
@@ -1672,6 +1679,24 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					verdict.Rank = stageRankOwned
 					obs.Reason = esc.Reason
 					pass.EscalationReason = esc.Reason
+				} else if author := fixingStage(obs); esc.AuthorsTurn && (author == stagelabels.ReturnedToContributor || author == stagelabels.NeedsAuthor) {
+					// A person sent a head the hive cannot push back to its
+					// author: the author's 071/072 stands, whatever stage the
+					// lane read this pass, not a 074 claiming the hive is
+					// finishing it, until the 072 dwell from the decision
+					// ends and the stall escalates again
+					// (stageengine.PRPassFacts.AuthorsTurn).
+					// The reason is the decision's changes request, not the
+					// lane's reading of the moment: CI rerunning on the head
+					// must not flip the nudge's reason class every pass.
+					verdict.Stage = author
+					verdict.Rank = stageRankOwned
+					verdict.Reason = autoMergeReasonHumanChangesRequested
+					obs.Reason = autoMergeReasonHumanChangesRequested
+					pass.AdoptionLive = false
+					pass.AuthorsTurn = true
+					adoptionYielded = true
+					prevRec, _ = store.Get(key)
 				}
 			}
 			if hadPrev && verdict.Stage == stagelabels.ReturnedToContributor && !prevRec.AdoptionLive(obs.HeadSHA) && prevRec.ForkRehomeRefused(obs.HeadSHA) {
@@ -1687,6 +1712,8 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					verdict.Rank = stageRankOwned
 					obs.Reason = esc.Reason
 					pass.ForkEscalationReason = esc.Reason
+				} else if esc.Released {
+					prevRec, _ = store.Get(key)
 				}
 			}
 			if hadPrev && stageengine.HoldsEscalation(verdict) && prevRec.AdoptionEscalated(obs.HeadSHA) && (prevRec.AdoptionLive(obs.HeadSHA) || prevRec.ForkRehomeRefused(obs.HeadSHA)) {
@@ -1913,7 +1940,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		pass.AuthorKind = obs.AuthorKind
 		pass.Stalled, pass.KindLabels = want.Stalled, want.KindLabels
 		facts.PR.Pass = pass
-		pending = append(pending, prStagePending{obs: obs, key: key, role: role, want: want, tr: tr, facts: facts, mergeCommit: mergeCommitStats, owned: verdict.Rank >= stageRankOwned})
+		pending = append(pending, prStagePending{obs: obs, key: key, role: role, want: want, tr: tr, facts: facts, mergeCommit: mergeCommitStats, owned: verdict.Rank >= stageRankOwned, adoptionYielded: adoptionYielded})
 	}
 	// The write: one ReconcileBatch for the pass. The reconciler re-reads
 	// each PR before writing so a stage another writer placed since the
