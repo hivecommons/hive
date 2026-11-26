@@ -268,7 +268,7 @@ func TestHubCustomerStoreBootSyncIdempotent(t *testing.T) {
 	}
 	// Each change makes a new backup; only the newest few are kept.
 	for i := 0; i < hubCustomerStoreBackupsKept+1; i++ {
-		st = useHubCustomerStore(t, hubCustomerStoreShadow)
+		useHubCustomerStore(t, hubCustomerStoreShadow)
 		u := loadSaaSUser("bob-example")
 		u.Notes = "synthetic note " + strings.Repeat("x", i+1)
 		if err := saveSaaSUser(u); err != nil {

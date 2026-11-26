@@ -81,7 +81,7 @@ func customerConsentPath(u *SaaSUser) (string, error) {
 
 func readCustomerConsents(path string) (map[string]customerConsent, error) {
 	records := make(map[string]customerConsent)
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G703 -- callers pass customerConsentPath (customerConsentDir plus the base name of a validated user file) or a directory entry of customerConsentDir
 	if errors.Is(err, os.ErrNotExist) {
 		return records, nil
 	}

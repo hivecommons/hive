@@ -389,7 +389,12 @@ func listHubUserFiles() ([]hubUserFile, error) {
 // colony-mode overlay: the sync must mirror the JSON, and must not open a
 // store read inside the import's write transaction.
 func readHubUserForSync(path string) (*SaaSUser, error) {
-	data, err := os.ReadFile(path)
+	// Only a file directly inside the users directory is ever read.
+	path = filepath.Clean(path)
+	if filepath.Dir(path) != filepath.Clean(saasUsersDir) || !strings.HasSuffix(path, ".json") {
+		return nil, fs.ErrInvalid
+	}
+	data, err := os.ReadFile(path) // #nosec G703 -- confined above to a .json file directly inside saasUsersDir
 	if err != nil {
 		return nil, err
 	}
