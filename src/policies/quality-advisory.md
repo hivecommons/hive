@@ -31,7 +31,7 @@ test problem. Check these before diagnosing any single PR:
    flakiness. Record one `[<lane>] CI runner capacity` bead with the queue
    depth, oldest queued age, and busy/total counts (your mode files no
    issues). Do not ask for re-runs into a full queue.
-3. **Merge order before merge.** Before repairing or re-running a PR, find
+3. **Merge order before merge.** Before judging a red PR, find
    out whether another open PR on the same base touches the same files:
    `git fetch origin pull/<N>/head:pr-<N>` for each sibling, then
    `git merge-tree --write-tree --name-only <this-head> <sibling-head>`
@@ -49,14 +49,14 @@ test problem. Check these before diagnosing any single PR:
    second full CI run, cancels the one in flight, and sends the owner back to
    the start. If you cannot tell whether the gate applies, assume it does.
    Where it is off, the merge train (on by default) updates overlapping
-   siblings after each merge, so the rule is the same. Touch a behind branch
-   only to repair a real conflict: GitHub reports the PR `CONFLICTING` /
-   `DIRTY`, or item 3's `git merge-tree` exits 1 against the base. Never call
-   `gh api -X PUT repos/<owner/repo>/pulls/<N>/update-branch` on a PR that
-   is only behind; on a conflict it returns `422` anyway, so report it under
-   item 3 and follow your lane's conflict rules. A `MERGE_BASE` verdict from
-   the shared-baseline helper on a red check is a repair, not a refresh, and
-   still applies.
+   siblings after each merge, so the rule is the same. Only a real conflict
+   is worth a bead: GitHub reports the PR `CONFLICTING` / `DIRTY`, or item
+   3's `git merge-tree` exits 1 against the base. A branch that is only
+   behind is not. Never call
+   `gh api -X PUT repos/<owner/repo>/pulls/<N>/update-branch`: your mode
+   cannot write to a PR branch. A `MERGE_BASE` verdict from the
+   shared-baseline helper on a red check means the branch needs its base
+   merged in, which is the PR author's repair: record it in the PR's bead.
 5. **Throughput fixes worth proposing.** When a repository's CI is slow, look
    for these and record each one as its own bead (your mode opens no PRs): a
    missing `concurrency` group with

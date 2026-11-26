@@ -10,6 +10,7 @@ import (
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/policies"
 )
 
 // modeKickTemplate is a minimal policy so the only write instructions in the
@@ -240,5 +241,125 @@ func TestMergeOnGreenTextHoldsRedTeamAtL6(t *testing.T) {
 	}
 	if s.hiveHoldsAgentPRs("scanner") {
 		t.Error("an ordinary L6 agent is not held")
+	}
+}
+
+// The FIX-BEFORE-NEW seam as the kick renders it (redPRFixSection, not the
+// formatter alone) follows the hold gate (#20044).
+func TestRedPRFixSectionFollowsHoldGate(t *testing.T) {
+	label := "`" + github.ReadyForReviewLabelName() + "`"
+	for _, tc := range []struct {
+		level int
+		held  bool
+	}{{4, true}, {6, false}} {
+		s := modeKickScheduler(t, "ISSUES_AND_PRS", tc.level)
+		if err := os.WriteFile(ciFailingPath, []byte(redPRFixture), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		section := s.redPRFixSection("scanner")
+		if !strings.Contains(section, "FIX-BEFORE-NEW") {
+			t.Fatalf("L%d: fixture rendered no fix-before-new section:\n%s", tc.level, section)
+		}
+		promises := strings.Contains(section, redPRFixMergeAfterGreenDefault)
+		if tc.held && (promises || !strings.Contains(section, label)) {
+			t.Errorf("L%d: held seam must name %s and not promise a merge on green:\n%s", tc.level, label, section)
+		}
+		if !tc.held && (!promises || strings.Contains(section, label)) {
+			t.Errorf("L%d: the sweep merges green PRs here:\n%s", tc.level, section)
+		}
+	}
+}
+
+// The relays read `mode:` only (Manager.agentMode); a `tools:` block does not
+// change what they allow, so it must not change the seam text either.
+func TestKickWriteModeIgnoresToolsLikeTheRelay(t *testing.T) {
+	s := modeKickScheduler(t, "ADVISORY", 4)
+	agent := s.cfg.Agents["scanner"]
+	agent.Tools = &config.ToolsConfig{}
+	s.cfg.Agents["scanner"] = agent
+	if got := s.kickWriteMode("scanner"); got != crux.ModeAdvisory {
+		t.Fatalf("kickWriteMode = %v, want ADVISORY (the configured mode the relay checks)", got)
+	}
+}
+
+// ${GH_AUTH} must not teach PR opening to an agent whose mode cannot push
+// (#20039); a pushing agent keeps the full block.
+func TestGHAuthForModeDropsPRStepsBelowPush(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		full bool
+	}{{"ADVISORY", false}, {"ISSUES_ONLY", false}, {"ISSUES_AND_PRS", true}, {"ISSUES_PRS_MERGE", true}} {
+		s := modeKickScheduler(t, tc.mode, 4)
+		got := s.ghAuthInstructionsFor("scanner")
+		if tc.full {
+			if got != s.ghAuthInstructions() {
+				t.Errorf("%s: a pushing agent must get the full block", tc.mode)
+			}
+			continue
+		}
+		for _, banned := range []string{"To OPEN A PULL REQUEST", "hive-open-pr --repo", "PR title rule", "git push / git fetch"} {
+			if strings.Contains(got, banned) {
+				t.Errorf("%s: ${GH_AUTH} still carries %q:\n%s", tc.mode, banned, got)
+			}
+		}
+		for _, want := range []string{"## Project Authentication", ghAuthNoPushNote, ghAuthGhCLIBulletStart} {
+			if !strings.Contains(got, want) {
+				t.Errorf("%s: ${GH_AUTH} lost %q:\n%s", tc.mode, want, got)
+			}
+		}
+	}
+	// The cut points must exist in the full block, or the cut silently stops.
+	full := modeKickScheduler(t, "ISSUES_AND_PRS", 4).ghAuthInstructions()
+	if strings.Index(full, ghAuthPRBulletStart) < 0 || strings.Index(full, ghAuthGhCLIBulletStart) < strings.Index(full, ghAuthPRBulletStart) {
+		t.Fatal("ghAuthInstructions no longer has the bullets ghAuthInstructionsFor cuts")
+	}
+}
+
+// #20042: every PR-capable pack template, with ${GH_AUTH} expanded, states the
+// PR-title rule exactly once, and that rule is the one in ${GH_AUTH}.
+func TestPRTitleRuleAppearsOnceInRenderedPackTemplates(t *testing.T) {
+	const ghAuthRule = "title\n  the PR the way the TARGET repository titles PRs"
+	checked := 0
+	for _, pack := range config.ACMMPacks() {
+		for _, a := range pack.Agents {
+			mode, ok := crux.ParseAgentMode(a.Mode)
+			if !ok || !mode.CanPush() || a.KickTemplate == "" {
+				continue
+			}
+			raw, err := policies.DefaultPolicies.ReadFile("defaults/" + a.KickTemplate)
+			if err != nil || !strings.Contains(string(raw), "${GH_AUTH}") {
+				continue
+			}
+			s := modeKickScheduler(t, a.Mode, pack.Level)
+			rendered := strings.ReplaceAll(string(raw), "${GH_AUTH}", s.ghAuthInstructionsFor("scanner"))
+			checked++
+			if n := strings.Count(rendered, ghAuthRule); n != 1 {
+				t.Errorf("L%d %s: ${GH_AUTH} title rule appears %d times, want 1", pack.Level, a.KickTemplate, n)
+			}
+			if n := strings.Count(strings.ToLower(rendered), "titles prs"); n != 1 {
+				t.Errorf("L%d %s: %d PR-title rules in the rendered kick, want exactly 1", pack.Level, a.KickTemplate, n)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no PR-capable pack template expands ${GH_AUTH}")
+	}
+}
+
+// #20042: the ${GH_AUTH} prose about emoji says what the relay does. The relay
+// never adds an emoji and corrects a wrong one.
+func TestGHAuthTitleProseMatchesRelay(t *testing.T) {
+	block := modeKickScheduler(t, "ISSUES_AND_PRS", 4).ghAuthInstructions()
+	if !strings.Contains(block, "The hive never adds an\n  emoji") {
+		t.Fatalf("${GH_AUTH} must say the hive never adds an emoji:\n%s", block)
+	}
+	if got := github.NormalizePRTitleEmoji("docs: explain foo"); got != "docs: explain foo" {
+		t.Fatalf("premise changed: the relay now adds an emoji (%q); update ${GH_AUTH}", got)
+	}
+	if got := github.NormalizePRTitleEmoji("📝 proposal: x"); got != "📖 proposal: x" {
+		t.Fatalf("premise changed: the relay no longer corrects a wrong emoji (%q); update ${GH_AUTH}", got)
+	}
+	if !strings.Contains(block, `("📝 proposal:" →`) {
+		t.Errorf("${GH_AUTH} lost the corrected-emoji example:\n%s", block)
 	}
 }

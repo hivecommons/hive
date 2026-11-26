@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/github"
@@ -57,13 +58,58 @@ const governorWorkSourceRuleNoGitHub = "This kick lists no PRs or issues, and yo
 // (crux/agent/manager_modes.go agentMode). An unset ACMM level resolves as the
 // default table's lowest tier, which is what the manager does too.
 func (s *Scheduler) kickWriteMode(agentName string) crux.AgentMode {
-	if configured := s.agentEffectiveMode(agentName); configured != "" {
+	if configured := s.configuredAgentMode(agentName); configured != "" {
 		if parsed, ok := crux.ParseAgentMode(configured); ok {
 			return parsed
 		}
 	}
 	return crux.DefaultAgentMode(agentName, s.cfg.ACMMLevelOrZero())
 }
+
+// configuredAgentMode is the agent's `mode:` exactly as the agent manager
+// reads it (Manager.agentMode): the configured string, with no tools-derived
+// override, because the relays and the .hive-mode file ignore `tools:` too.
+func (s *Scheduler) configuredAgentMode(agentName string) string {
+	if s.cfg == nil {
+		return ""
+	}
+	agentCfg, ok := s.cfg.Agents[agentName]
+	if !ok {
+		agentCfg, ok = s.cfg.Agents[s.cfg.BaseAgentName(agentName)]
+	}
+	if !ok {
+		return ""
+	}
+	return agentCfg.Mode
+}
+
+// ghAuthNoPushNote replaces the PR-opening and push guidance of ${GH_AUTH}
+// for an agent whose mode cannot push (#20039): the push and PR relays refuse
+// it, so telling it how to open a PR only invites refused calls.
+const ghAuthNoPushNote = "- Your mode cannot push or open PRs: the push and PR relays refuse it. Do not run `hive-open-pr`, `gh pr create` or `git push`.\n"
+
+// ghAuthInstructionsFor is ghAuthInstructions for one agent's mode. A mode that
+// can push gets the full block; a lower mode gets it without the PR-opening,
+// PR-title and push bullets.
+func (s *Scheduler) ghAuthInstructionsFor(agentName string) string {
+	block := s.ghAuthInstructions()
+	if s.kickWriteMode(agentName).CanPush() {
+		return block
+	}
+	start := strings.Index(block, ghAuthPRBulletStart)
+	end := strings.Index(block, ghAuthGhCLIBulletStart)
+	if start < 0 || end <= start {
+		return block
+	}
+	return block[:start] + ghAuthNoPushNote + block[end:]
+}
+
+// The bullets of ghAuthInstructions that ghAuthInstructionsFor cuts for an
+// agent that cannot push: from the PR-opening bullet up to the gh CLI bullet.
+const (
+	ghAuthPRBulletStart    = "- To OPEN A PULL REQUEST"
+	ghAuthGhCLIBulletStart = "- gh CLI:"
+)
 
 // isNoGitHubAgent reports whether the agent is the ADVISORY supervisor, whose
 // shipped policies forbid every GitHub call. Hive has no per-agent "no GitHub"

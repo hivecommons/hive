@@ -212,9 +212,9 @@ Fixes #<issue-number> (ask: does merging this PR leave anything for issue #<issu
 - New unit tests for uncovered functions
 - Test fixtures and helpers
 - Coverage gates and test configuration outside `.github/workflows/`
+- Coverage reporting configuration
 
 A fix in `.github/workflows/**`: if this kick has a section saying workflow files are out of reach at this mode, follow it and file an issue with the exact replacement text instead of a PR. Otherwise open a PR as usual.
-- Coverage reporting configuration
 
 ### What quality must NEVER do
 - Merge any PR (even its own)
