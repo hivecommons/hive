@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/forgesweep"
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -65,6 +66,8 @@ func forgejoSweeperFor(cfg *config.Config, deps forgejoSweepDeps) *forgesweep.Sw
 		return nil
 	}
 	blocking := []string{forgejoHoldLabel, cfg.Sentinel.LabelOrDefault(), cfg.Governor.Labels.DecisionNeededLabelOrDefault()}
+	// ready-for-review is the PR relay's hold: a person removes it to release the PR.
+	blocking = append(blocking, github.HiveGateLabels()...)
 	blocking = append(blocking, cfg.Governor.Labels.Exempt...)
 	s := &forgesweep.Sweeper{
 		Repos:            repos,

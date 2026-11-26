@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -118,7 +119,7 @@ func TestForgejoSweeperFor(t *testing.T) {
 		t.Errorf("sweeper = %+v", s)
 	}
 	joined := strings.Join(s.BlockingLabels, ",")
-	for _, want := range []string{forgejoHoldLabel, cfg.Sentinel.LabelOrDefault(), cfg.Governor.Labels.DecisionNeededLabelOrDefault(), "meta-tracker"} {
+	for _, want := range []string{forgejoHoldLabel, cfg.Sentinel.LabelOrDefault(), cfg.Governor.Labels.DecisionNeededLabelOrDefault(), github.ReadyForReviewLabelName(), "meta-tracker"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("BlockingLabels %v lacks %q", s.BlockingLabels, want)
 		}

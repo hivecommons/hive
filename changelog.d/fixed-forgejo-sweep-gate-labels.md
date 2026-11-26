@@ -1,0 +1,1 @@
+- The Forgejo automerge sweep no longer merges a pull request that still carries the ready-for-review label.
