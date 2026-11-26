@@ -279,6 +279,12 @@ func TestParseMarkdownFacts_BoldBullets(t *testing.T) {
 	if facts[0].Title != "Bold Title" {
 		t.Errorf("title = %q", facts[0].Title)
 	}
+	if got := facts[0].Body; got != "trailing body text\ncontinuation line" {
+		t.Errorf("first bullet body = %q", got)
+	}
+	if got := facts[1].Body; got != "body two" {
+		t.Errorf("final bullet body = %q", got)
+	}
 }
 
 func TestParseMarkdownFacts_NoHeadings(t *testing.T) {
