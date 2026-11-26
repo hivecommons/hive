@@ -31131,6 +31131,52 @@
         }
       }
     },
+    "/api/chat/config-proposals/{id}/decline": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Dismiss a chat config proposal",
+        "description": "Dismisses a pending Hive Chat config assist proposal (RFC #19788 phase 3a). Only the owner who requested it can dismiss it. Audited as chat_config_declined. Requires owner role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Proposal id from the chat reply's config_proposal"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Proposal dismissed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "404": {
+            "description": "Proposal not found, expired, or requested by another user"
+          }
+        }
+      }
+    },
     "/api/config/authorized-users": {
       "get": {
         "tags": [
