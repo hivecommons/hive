@@ -204,7 +204,10 @@ project:
 
 Git clone and push on a Forgejo repo send a token only to that repo's forge
 host. By default the token is the `forgejo.token_env` access token, the one
-every agent tier shares, and it never expires. Set `forgejo.integration` to
+every agent tier shares, and it never expires. The read-only tiers (advisor
+and shared-uid-read) can then push with it, and hive logs a warning at boot
+and shows it in the dashboard's forge settings while this is the case. Set
+`forgejo.integration` to
 have hive sign a one-hour JWT for each push and clone instead. Forgejo's
 authorized integrations accept these tokens, and each tier gets its own
 integration, the Forgejo analogue of a GitHub App installation token:

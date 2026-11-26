@@ -1189,6 +1189,7 @@
             <div class="config-field"><label>Forgejo URL ${yamlHint('forgejo.forgejo_url')} ${settingHelpMark('settings', 'features', 'Forgejo URL', `Forgejo instance root, e.g. https://codeberg.org. There is no default; it is required for the Forgejo forge.`)}</label><input type="text" value="${esc(f.forgejoUrl || '')}" placeholder="https://forgejo.example.com" data-change-action="markDirty" data-arg0="features" data-arg1="forgejoUrl" data-arg-types="s,s,w"></div>
             <div class="config-field"><label>Forgejo token env var ${yamlHint('forgejo.token_env')} ${settingHelpMark('settings', 'features', 'Forgejo token env var', `The NAME of the environment variable holding the Forgejo token, never the token itself.`)}</label><input type="text" value="${esc(f.forgejoTokenEnv || '')}" placeholder="${esc(platformDefaults.forgejoTokenEnv || 'FORGEJO_TOKEN')}" autocomplete="off" spellcheck="false" data-change-action="markDirty" data-arg0="features" data-arg1="forgejoTokenEnv" data-arg-types="s,s,w"></div>
           </div>
+          ${f.forgejoSharedTokenWarning ? `<div class="config-help config-toggle-note-warn" data-testid="forgejo-shared-token-warning">${esc(f.forgejoSharedTokenWarning)}</div>` : ''}
           <div class="config-help">Requires restart: the forge client is built at boot.</div>
         </div>
 

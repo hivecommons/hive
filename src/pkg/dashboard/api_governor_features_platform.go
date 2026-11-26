@@ -442,6 +442,11 @@ func featuresPlatformResponse(cfg *config.Config) map[string]interface{} {
 		"gitlabUrl":       cfg.GitLab.URL,
 		"gitlabTokenEnv":  cfg.GitLab.TokenEnv,
 
+		// Read-only (#19917): set when Forgejo repos have no
+		// forgejo.integration, so every token tier pushes with the one write
+		// token. The dialog shows it under the Forgejo fields.
+		"forgejoSharedTokenWarning": cfg.ForgejoSharedWriteTokenWarning(),
+
 		"mintKeyPath":       cfg.Mint.KeyPath,
 		"mintMaxTtlSeconds": cfg.Mint.MaxTTLSeconds,
 
