@@ -203,6 +203,8 @@ func (s *Server) claimAgentFieldOwnership(name, model, backend string) {
 	if s.deps == nil || s.deps.Config == nil {
 		return
 	}
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 	ac, ok := s.deps.Config.Agents[name]
 	if !ok {
 		return
@@ -280,6 +282,8 @@ func (s *Server) claimAgentPauseOwnership(name string) {
 	if s.deps == nil || s.deps.Config == nil {
 		return
 	}
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 	ac, ok := s.deps.Config.Agents[name]
 	if !ok || ac.PauseIsOperatorOwned() {
 		return
@@ -563,6 +567,8 @@ func (s *Server) handleEffortSet(w http.ResponseWriter, r *http.Request) {
 		effort = ""
 	}
 
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)

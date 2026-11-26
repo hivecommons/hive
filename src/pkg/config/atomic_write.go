@@ -34,6 +34,12 @@ import (
 // only applies on create). The fallback path chmods explicitly for the same
 // reason.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	return writeFileAtomicTracked(path, data, mode, nil)
+}
+
+// onWrite records the bytes installed even if the bind-mount fallback fails
+// after truncating the file.
+func writeFileAtomicTracked(path string, data []byte, mode os.FileMode, onWrite func([]byte)) error {
 	target := path
 	if resolved, err := filepath.EvalSymlinks(path); err == nil {
 		target = resolved
@@ -73,10 +79,13 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		cleanup()
 		// Bind-mounted single file (or any filesystem that refuses the
 		// rename): keep the inode and write in place, as Save always did.
-		if inPlaceErr := writeFileInPlace(target, data, mode); inPlaceErr != nil {
+		if inPlaceErr := writeFileInPlaceTracked(target, data, mode, onWrite); inPlaceErr != nil {
 			return fmt.Errorf("renaming %s onto %s: %w (in-place fallback also failed: %v)", tmpPath, target, err, inPlaceErr)
 		}
 		return nil
+	}
+	if onWrite != nil {
+		onWrite(data)
 	}
 	syncDir(dir)
 	return nil
@@ -85,11 +94,19 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 // writeFileInPlace is the pre-#17862 O_TRUNC write, kept only as the fallback
 // for targets that cannot be renamed over. It is NOT crash-safe.
 func writeFileInPlace(target string, data []byte, mode os.FileMode) error {
+	return writeFileInPlaceTracked(target, data, mode, nil)
+}
+
+func writeFileInPlaceTracked(target string, data []byte, mode os.FileMode, onWrite func([]byte)) error {
 	f, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		return err
 	}
-	if _, err := f.Write(data); err != nil {
+	n, err := f.Write(data)
+	if onWrite != nil {
+		onWrite(data[:n])
+	}
+	if err != nil {
 		_ = f.Close()
 		return err
 	}

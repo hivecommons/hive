@@ -1,9 +1,12 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadAgentOverrides_Empty(t *testing.T) {
@@ -90,6 +93,139 @@ func TestSaveAndLoadAgentFile(t *testing.T) {
 	}
 	if !loaded.Managed {
 		t.Error("loaded agent should have Managed=true")
+	}
+}
+
+func TestLoadRecoversStagedAgentImport(t *testing.T) {
+	const name = "imported-worker"
+	for _, layer := range []string{"primary", "dashboard overlay"} {
+		t.Run(layer, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("KUBERNETES_SERVICE_HOST", "")
+			t.Cleanup(SetSATokenFileForTest(filepath.Join(dir, "no-token")))
+			if layer == "dashboard overlay" {
+				t.Setenv("KUBERNETES_SERVICE_HOST", "127.0.0.1")
+				oldOverlay := DashboardOverlayFile
+				DashboardOverlayFile = filepath.Join(dir, "dashboard.yaml")
+				t.Cleanup(func() { DashboardOverlayFile = oldOverlay })
+			}
+			base := minimalValidYAML("testorg", "ghp_test")
+			dataDir := fmt.Sprintf("\ndata:\n  agents_dir: %q\n", dir)
+			source := writeTempConfig(t, base+dataDir+"removed_agents: [imported-worker]\n")
+			if err := os.Chtimes(source, time.Unix(1_700_000_000, 0), time.Unix(1_700_000_000, 0)); err != nil {
+				t.Fatal(err)
+			}
+			// A failed earlier removal can leave an overlay on disk.
+			if err := SaveAgentFile(dir, name, AgentConfig{Backend: "claude", DisplayName: "Old worker", Paused: true}); err != nil {
+				t.Fatal(err)
+			}
+			staged := filepath.Join(dir, name+".yaml"+agentImportPendingSuffix)
+			if err := os.WriteFile(staged, []byte("backend: copilot\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadWithDashboardOverlay(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := cfg.Agents[name]; ok || !cfg.IsAgentRemoved(name) {
+				t.Fatal("loading a staged import alone changed the roster")
+			}
+			committed := base + "  imported-worker:\n    backend: copilot\n    display_name: New worker\n    pause_owner: operator\n" + dataDir +
+				"removed_agents: []\ngovernor:\n  modes:\n    idle:\n      imported-worker: 4h\n  cadence_owners:\n    idle:\n      imported-worker: operator\n"
+			committedPath := source
+			if layer == "dashboard overlay" {
+				committedPath = DashboardOverlayFile
+			}
+			if err := os.WriteFile(committedPath, []byte(committed), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if layer == "dashboard overlay" {
+				// A remount can write a fresh copy of the old seed after the save.
+				remountTime := time.Now().Add(time.Hour)
+				if err := os.Chtimes(source, remountTime, remountTime); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg, err = LoadWithDashboardOverlay(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.Agents[name]; !got.Managed || got.DisplayName != "New worker" || got.Paused || cfg.IsAgentRemoved(name) {
+				t.Fatalf("agent after recovery = %+v, removed = %t", got, cfg.IsAgentRemoved(name))
+			}
+			if got := cfg.Governor.Modes["idle"].Cadences[name]; got != "4h" {
+				t.Fatalf("cadence after recovery = %q, want 4h", got)
+			}
+		})
+	}
+}
+
+func TestSaveImportedAgentRejectsProtectedDashboardOverlay(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "127.0.0.1")
+	for _, overlay := range []string{"governor: [", "governor: incompatible\n"} {
+		t.Run(overlay, func(t *testing.T) {
+			dir := t.TempDir()
+			oldOverlay, oldRuntime := DashboardOverlayFile, RuntimeConfigFile
+			DashboardOverlayFile = filepath.Join(dir, "dashboard.yaml")
+			RuntimeConfigFile = filepath.Join(dir, "runtime.yaml")
+			t.Cleanup(func() { DashboardOverlayFile, RuntimeConfigFile = oldOverlay, oldRuntime })
+			if err := os.WriteFile(DashboardOverlayFile, []byte(overlay), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			agentsDir := filepath.Join(dir, "agents")
+			source := writeTempConfig(t, minimalValidYAML("testorg", "ghp_test")+fmt.Sprintf("\ndata:\n  agents_dir: %q\n", agentsDir))
+			cfg, err := LoadWithDashboardOverlay(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = cfg.SaveImportedAgent("writer", AgentConfig{Backend: "copilot"}, map[string]Cadence{"idle": "4h"}, "", "")
+			if !errors.Is(err, ErrImportAgentOverlay) {
+				t.Fatalf("import error = %v, want protected overlay error", err)
+			}
+			if got, err := os.ReadFile(DashboardOverlayFile); err != nil || string(got) != overlay {
+				t.Fatalf("dashboard overlay = %q, %v", got, err)
+			}
+			for _, path := range []string{RuntimeConfigFile, filepath.Join(agentsDir, "writer.yaml"), filepath.Join(agentsDir, "writer.yaml"+agentImportPendingSuffix)} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Errorf("file %s after refused import: %v, want no file", path, err)
+				}
+			}
+		})
+	}
+}
+
+func TestReloadReadBeforeImportCannotReplaceIt(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("KUBERNETES_SERVICE_HOST", "")
+	t.Cleanup(SetSATokenFileForTest(filepath.Join(dir, "no-token")))
+	oldRuntime := RuntimeConfigFile
+	RuntimeConfigFile = filepath.Join(dir, "runtime.yaml")
+	t.Cleanup(func() { RuntimeConfigFile = oldRuntime })
+	source := writeTempConfig(t, minimalValidYAML("testorg", "ghp_test")+fmt.Sprintf("\ndata:\n  agents_dir: %q\n", dir))
+	cfg, err := LoadWithDashboardOverlay(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, err := LoadWithDashboardOverlay(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := AgentConfig{Backend: "copilot", PauseOwner: FieldOwnerOperator}
+	if err := cfg.SaveImportedAgent("writer", agent, map[string]Cadence{"idle": "4h"}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ReplaceFromReload(stale) {
+		t.Fatal("reload from before the import replaced it")
+	}
+	fresh, err := LoadWithDashboardOverlay(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ReplaceFromReload(fresh) {
+		t.Fatal("reload from after the import was rejected")
+	}
+	if got := cfg.Governor.Modes["idle"].Cadences["writer"]; got != "4h" {
+		t.Fatalf("reloaded writer cadence = %q, want 4h", got)
 	}
 }
 

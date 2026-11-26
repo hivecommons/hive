@@ -33,10 +33,14 @@ func (c *Config) Snapshot() (*Config, error) {
 	return &out, nil
 }
 
-// ReplaceFromReload installs a loaded config without racing config saves or
-// readers of the live write-back policy.
-func (c *Config) ReplaceFromReload(next *Config) {
+// ReplaceFromReload installs a loaded config unless an agent import committed
+// after the reload read its files.
+func (c *Config) ReplaceFromReload(next *Config) bool {
 	saveMu.Lock()
 	defer saveMu.Unlock()
+	if next.agentImportGeneration < c.agentImportGeneration {
+		return false
+	}
 	*c = *next
+	return true
 }

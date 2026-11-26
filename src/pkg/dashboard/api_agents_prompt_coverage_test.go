@@ -67,6 +67,29 @@ func TestCovAP_BakePromptSource_FetchOnceRuns(t *testing.T) {
 	}
 }
 
+func TestAgentPromptSourceUpdatesImportedOverride(t *testing.T) {
+	s, deps, _ := apServerWithGH(t)
+	enableAllowlist(deps)
+	pinPromptTemplateDirs(t, t.TempDir(), t.TempDir())
+	definition := "kind: AgentDefinition\nmetadata: {name: worker}\nspec:\n  promptTemplate: Original prompt.\n"
+	if rec := doPost(s, "/api/agents/import", map[string]any{"source": "paste", "content": definition}); rec.Code != http.StatusOK {
+		t.Fatalf("import: %d %s", rec.Code, rec.Body.String())
+	}
+	rec := doPut(s, "/api/config/agent/worker/prompt", map[string]any{
+		"promptSource": map[string]any{"owner": "myorg", "repo": "repo1", "path": "PROMPT.md"},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("replace prompt: %d %s", rec.Code, rec.Body.String())
+	}
+	const want = "| Organization | ACMM |\n|---|---|\n| Org1 | acmm |\n| Org2 | none |\n"
+	if got := s.loadPromptTemplateRaw("worker"); got != want {
+		t.Fatalf("active prompt = %q, want %q", got, want)
+	}
+	if deps.Config.Agents["worker"].PromptSource != nil {
+		t.Fatal("one-shot prompt unexpectedly kept a link")
+	}
+}
+
 // ---- handleAgentPromptSave prompt-source branches ----
 
 func TestCovAP_PromptSave_AgentNotFound(t *testing.T) {

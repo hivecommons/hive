@@ -402,21 +402,8 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		if err := ValidateKickTemplateName(agent.KickTemplate); err != nil {
 			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.SourceFile()), err)
 		}
-		if err := ValidateBobDisplayName(agent.BobDisplayName); err != nil {
-			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.SourceFile()), err)
-		}
-		if err := ValidateBobSessionLabel("bob.session_label", strings.TrimSpace(agent.Bob.SessionLabel)); err != nil {
-			return fmt.Errorf("agent %s: %w", agentSourceLabel(name, agent.SourceFile()), err)
-		}
-		bobSessionLabel := strings.TrimSpace(agent.Bob.SessionLabel)
-		if bobSessionLabel == "" {
-			bobSessionLabel = strings.TrimSpace(agent.BobDisplayName)
-		}
-		if bobSessionLabel == "" && strings.TrimSpace(c.Governor.Bob.SessionPrefix) != "" {
-			bobSessionLabel = strings.TrimSpace(c.Governor.Bob.SessionPrefix) + name
-		}
-		if len(bobSessionLabel) > MaxBobSessionLabelLen {
-			return fmt.Errorf("agent %s: bob session label %q is longer than %d characters", agentSourceLabel(name, agent.SourceFile()), bobSessionLabel, MaxBobSessionLabelLen)
+		if err := c.validateAgentBobSessionLabel(name, agent); err != nil {
+			return fmt.Errorf("agent %s: %w", label, err)
 		}
 		if err := validateChannels(name, agent.Channels); err != nil {
 			return err
@@ -433,6 +420,26 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		if err := validateAgentSpecRef(name, agent.AgentSpec); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (c *Config) validateAgentBobSessionLabel(name string, agent AgentConfig) error {
+	if err := ValidateBobDisplayName(agent.BobDisplayName); err != nil {
+		return err
+	}
+	label := strings.TrimSpace(agent.Bob.SessionLabel)
+	if err := ValidateBobSessionLabel("bob.session_label", label); err != nil {
+		return err
+	}
+	if label == "" {
+		label = strings.TrimSpace(agent.BobDisplayName)
+	}
+	if prefix := strings.TrimSpace(c.Governor.Bob.SessionPrefix); label == "" && prefix != "" {
+		label = prefix + name
+	}
+	if len(label) > MaxBobSessionLabelLen {
+		return fmt.Errorf("bob session label %q is longer than %d characters", label, MaxBobSessionLabelLen)
 	}
 	return nil
 }

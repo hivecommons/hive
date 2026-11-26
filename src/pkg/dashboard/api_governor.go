@@ -496,6 +496,8 @@ func (s *Server) handleGovernorThresholds(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 	for modeName, threshold := range body {
 		if mode, ok := s.deps.Config.Governor.Modes[modeName]; ok {
 			mode.Threshold = threshold
@@ -636,6 +638,8 @@ func (s *Server) handleGovernorCadenceTemplates(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 	agentSet := make(map[string]bool)
 	updatedAgents := make(map[string]bool)
 	if s.deps != nil && s.deps.Config != nil {
@@ -2752,6 +2756,8 @@ func (s *Server) handleGovernorAddAgent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 	if _, exists := s.deps.Config.Agents[body.Name]; exists {
 		jsonError(w, "agent already exists", http.StatusConflict)
 		return
@@ -2804,6 +2810,8 @@ func (s *Server) handleGovernorRemoveAgent(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 	name := r.PathValue("name")
 	if _, ok := s.deps.Config.Agents[name]; !ok {
 		jsonError(w, "agent not found", http.StatusNotFound)

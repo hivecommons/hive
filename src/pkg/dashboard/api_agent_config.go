@@ -1029,30 +1029,24 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Each edited mode gets a fresh Cadences map rather than a write into the
-	// shared one, so restoring the previous ModeConfig values undoes the edit.
-	prevModes := make(map[string]config.ModeConfig, len(cadences))
-	prevOwners := cloneCadenceOwners(gov.CadenceOwners)
-	for modeName, cadence := range cadences {
-		mode := gov.Modes[modeName]
-		prevModes[modeName] = mode
-		next := make(map[string]config.Cadence, len(mode.Cadences)+1)
-		maps.Copy(next, mode.Cadences)
-		next[name] = cadence
-		mode.Cadences = next
-		gov.Modes[modeName] = mode
-		// Operator edits claim ownership so the pack apply that runs on every
-		// restart (and on steady-state re-applies) cannot reconcile the cadence
-		// back to the pack default — the same contract model/backend edits
-		// already have (#5632).
-		gov.ClaimCadenceOwnership(modeName, name)
+	if len(cadences) > 0 {
+		if err := config.ValidateCadenceAgentName(name); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
-
-	if status, err := s.saveConfigStrict(); err != nil {
-		maps.Copy(gov.Modes, prevModes)
-		gov.CadenceOwners = prevOwners
-		s.logger.Error("failed to persist config after cadence update", "agent", name, "error", err)
-		jsonError(w, "cadences not saved: "+err.Error(), status)
+	if s.deps.Config.SourcePath == "" {
+		jsonError(w, "cadences not saved: "+errNoConfigSource.Error(), http.StatusConflict)
+		return
+	}
+	var prevModes map[string]config.ModeConfig
+	if err := s.saveConfigWith(func() error {
+		var err error
+		prevModes, err = s.deps.Config.SaveAgentCadences(name, cadences)
+		return err
+	}); err != nil {
+		s.logger.Error("failed to persist agent cadences", "agent", name, "error", err)
+		jsonError(w, "cadences not saved: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.auditFromRequest(r, "config_agent_cadences", cadencesAuditDetail(name, prevModes, cadences), name)
@@ -1124,19 +1118,6 @@ func cadencesAuditDetail(name string, prevModes map[string]config.ModeConfig, ca
 		kv = append(kv, mode, auditChange(string(prevModes[mode].Cadences[name]), string(cadences[mode])))
 	}
 	return auditDetail(kv...)
-}
-
-// cloneCadenceOwners deep-copies the governor's cadence ownership markers so a
-// failed cadence save can restore them.
-func cloneCadenceOwners(owners map[string]map[string]string) map[string]map[string]string {
-	if owners == nil {
-		return nil
-	}
-	out := make(map[string]map[string]string, len(owners))
-	for mode, agents := range owners {
-		out[mode] = maps.Clone(agents)
-	}
-	return out
 }
 
 // agentModelsBody is the PUT /api/config/agent/{name}/models request.

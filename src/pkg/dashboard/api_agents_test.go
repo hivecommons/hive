@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/pkg/config"
+	"gopkg.in/yaml.v3"
 )
 
 // ---------- agentDefinition JSON serialization ----------
@@ -596,6 +597,175 @@ spec:
 	agentFile := filepath.Join(dir, "imported-worker.yaml")
 	if _, err := os.Stat(agentFile); os.IsNotExist(err) {
 		t.Errorf("expected agent file at %s", agentFile)
+	}
+}
+
+const workerWithCadences = "kind: AgentDefinition\nmetadata: {name: worker}\nspec:\n  cadences: {%s}\n"
+
+func TestHandleAgentImport_Cadences(t *testing.T) {
+	s, deps := apiServer(t)
+	cfg := deps.Config
+	cfg.Data.AgentsDir = t.TempDir()
+	writableConfig(t, cfg)
+	dir := t.TempDir()
+	oldRuntime, oldOverlay := config.RuntimeConfigFile, config.DashboardOverlayFile
+	config.RuntimeConfigFile = filepath.Join(dir, "hive.yaml.runtime")
+	config.DashboardOverlayFile = filepath.Join(dir, "hive.yaml.dashboard")
+	t.Cleanup(func() { config.RuntimeConfigFile, config.DashboardOverlayFile = oldRuntime, oldOverlay })
+	delete(cfg.Governor.Modes, "surge")
+	pinPromptTemplateDirs(t, t.TempDir(), t.TempDir())
+	promptPath := filepath.Join(promptTemplateOverrideDir, "worker.md")
+	if err := os.WriteFile(promptPath, []byte("old prompt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	definition := fmt.Sprintf(workerWithCadences, "idle: 4h, surge: off") + "  promptTemplate: Run the checks.\n"
+	body := map[string]any{"source": "paste", "content": definition, "preview": true}
+	before := snapshotAgentConfig(deps, "worker")
+	if rec := doPost(s, "/api/agents/import", body); rec.Code != http.StatusOK {
+		t.Fatalf("preview: %d %s", rec.Code, rec.Body.String())
+	}
+	assertAgentConfigUnchanged(t, deps, "worker", before)
+	if data, err := os.ReadFile(promptPath); err != nil || string(data) != "old prompt" {
+		t.Fatalf("prompt after preview = %q, %v", data, err)
+	}
+
+	body["preview"] = false
+	if rec := doPost(s, "/api/agents/import", body); rec.Code != http.StatusOK {
+		t.Fatalf("import: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := deps.Governor.GetState().Cadences["worker"].Interval; got != 4*time.Hour {
+		t.Errorf("live idle interval = %s, want 4h", got)
+	}
+	if got := s.loadPromptTemplateRaw("worker"); got != "Run the checks." {
+		t.Errorf("imported prompt = %q, want updated override", got)
+	}
+	data, err := os.ReadFile(cfg.SourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved struct{ Governor config.GovernorConfig }
+	if err := yaml.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	for _, gov := range []*config.GovernorConfig{&cfg.Governor, &saved.Governor} {
+		for mode, want := range map[string]config.Cadence{"idle": "4h", "surge": "off"} {
+			if got := gov.Modes[mode].Cadences["worker"]; got != want || !gov.CadenceIsOperatorOwned(mode, "worker") {
+				t.Errorf("%s cadence = %q, want operator-owned %q", mode, got, want)
+			}
+		}
+		if _, ok := gov.Modes["busy"].Cadences["worker"]; ok || gov.Modes["idle"].Cadences["scanner"] != "15m" {
+			t.Error("import changed an unspecified cadence")
+		}
+	}
+}
+
+func TestHandleAgentImport_CadenceSaveFailure(t *testing.T) {
+	s, deps := apiServer(t)
+	cfg := deps.Config
+	cfg.Data.AgentsDir = t.TempDir()
+	cfg.RemovedAgents = []string{"worker"}
+	unwritableConfig(t, cfg)
+	t.Setenv("KUBERNETES_SERVICE_HOST", "127.0.0.1")
+	dir := t.TempDir()
+	config.DashboardOverlayFile = filepath.Join(dir, "dashboard.yaml")
+	const previousDashboard = "removed_agents: [worker]\n"
+	if err := os.WriteFile(config.DashboardOverlayFile, []byte(previousDashboard), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalMtime := time.Unix(1_700_000_000, 0)
+	if err := os.Chtimes(config.DashboardOverlayFile, originalMtime, originalMtime); err != nil {
+		t.Fatal(err)
+	}
+	pinPromptTemplateDirs(t, t.TempDir(), t.TempDir())
+	// A tombstoned agent may still have an overlay from its earlier incarnation.
+	path := filepath.Join(cfg.Data.AgentsDir, "worker.yaml")
+	const previous = "display_name: previous\n"
+	if err := os.WriteFile(path, []byte(previous), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotAgentConfig(deps, "worker")
+	definition := fmt.Sprintf(workerWithCadences, "idle: 4h") + "  promptTemplate: Work from the queue.\n"
+	body := map[string]any{"source": "paste", "content": definition}
+	if rec := doPost(s, "/api/agents/import", body); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("failed save: %d %s", rec.Code, rec.Body.String())
+	}
+	assertAgentConfigUnchanged(t, deps, "worker", before)
+	if data, err := os.ReadFile(path); err != nil || string(data) != previous {
+		t.Fatalf("overlay after failed save = %q, %v", data, err)
+	}
+	if data, err := os.ReadFile(config.DashboardOverlayFile); err != nil || string(data) != previousDashboard {
+		t.Fatalf("dashboard overlay after failed save = %q, %v", data, err)
+	}
+	info, err := os.Stat(config.DashboardOverlayFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(originalMtime) {
+		t.Fatalf("dashboard overlay mtime = %s, want %s", info.ModTime(), originalMtime)
+	}
+	if _, err := os.Stat(filepath.Join(promptTemplateOverrideDir, "worker.md")); !os.IsNotExist(err) {
+		t.Fatalf("prompt after failed save: %v, want no file", err)
+	}
+	if _, ok := cfg.Agents["worker"]; ok || !slices.Contains(cfg.RemovedAgents, "worker") {
+		t.Fatal("failed import re-added a deleted agent")
+	}
+	writableConfig(t, cfg)
+	config.RuntimeConfigFile = filepath.Join(dir, "runtime.yaml")
+	if rec := doPost(s, "/api/agents/import", body); rec.Code != http.StatusOK {
+		t.Fatalf("retry: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleAgentImport_InvalidCadences(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Data.AgentsDir = t.TempDir()
+	before := snapshotAgentConfig(deps, "worker")
+	for mode, value := range map[string]string{"unknown": "4h", "idle": "tomorrow"} {
+		content := fmt.Sprintf(workerWithCadences, mode+": "+value)
+		for _, preview := range []bool{true, false} {
+			body := map[string]any{"source": "paste", "preview": preview, "content": content}
+			if rec := doPost(s, "/api/agents/import", body); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), mode) {
+				t.Errorf("mode %q, preview %t: %d %s", mode, preview, rec.Code, rec.Body.String())
+			}
+		}
+	}
+	assertAgentConfigUnchanged(t, deps, "worker", before)
+	body := map[string]any{"source": "paste", "content": "kind: AgentDefinition\nmetadata: {name: threshold}\nspec:\n  cadences: {idle: off}\n"}
+	if rec := doPost(s, "/api/agents/import", body); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "reserved") {
+		t.Errorf("reserved cadence name: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHandleAgentImport_RejectsInvalidAgentBeforeSaving(t *testing.T) {
+	s, deps := apiServer(t)
+	cfg := deps.Config
+	cfg.Data.AgentsDir = t.TempDir()
+	writableConfig(t, cfg)
+	pinPromptTemplateDirs(t, t.TempDir(), t.TempDir())
+	definition := fmt.Sprintf(workerWithCadences, "idle: 4h") +
+		"  channels: [{type: webhook}]\n  promptTemplate: Run the checks.\n"
+	before := snapshotAgentConfig(deps, "worker")
+	for _, preview := range []bool{true, false} {
+		rec := doPost(s, "/api/agents/import", map[string]any{"source": "paste", "content": definition, "preview": preview})
+		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "channel") {
+			t.Fatalf("invalid channel, preview %t: %d %s", preview, rec.Code, rec.Body.String())
+		}
+	}
+	assertAgentConfigUnchanged(t, deps, "worker", before)
+	cfg.Governor.Bob.SessionPrefix = "team-"
+	longName := strings.Repeat("a", config.MaxBobSessionLabelLen-1)
+	definition = strings.Replace(fmt.Sprintf(workerWithCadences, "idle: 4h"), "name: worker", "name: "+longName, 1)
+	rec := doPost(s, "/api/agents/import", map[string]any{"source": "paste", "content": definition})
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "bob session label") {
+		t.Fatalf("invalid Bob session label: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, created := cfg.Agents[longName]; created {
+		t.Fatal("agent with invalid Bob session label was created")
+	}
+	for _, path := range []string{cfg.SourcePath, filepath.Join(cfg.Data.AgentsDir, "worker.yaml"), filepath.Join(promptTemplateOverrideDir, "worker.md")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("file %s after rejected import: %v, want no file", path, err)
+		}
 	}
 }
 

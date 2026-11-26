@@ -352,6 +352,8 @@ func (s *Server) handleAgentVariableUpsert(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "config not loaded", http.StatusInternalServerError)
 		return
 	}
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 	agent := r.PathValue("name")
 	agentCfg, ok := s.deps.Config.Agents[agent]
 	if !ok {
@@ -391,6 +393,8 @@ func (s *Server) handleAgentVariableDelete(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "config not loaded", http.StatusInternalServerError)
 		return
 	}
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 	agent := r.PathValue("name")
 	agentCfg, ok := s.deps.Config.Agents[agent]
 	if !ok {
