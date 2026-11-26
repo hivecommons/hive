@@ -1,1 +1,0 @@
-- Remove pull requests from the native merge queue again: the dequeue mutation now sends the pull request as `id`, the field GitHub's `DequeuePullRequestInput` expects, so merge queue gate reconciliation no longer fails on every dequeue.
