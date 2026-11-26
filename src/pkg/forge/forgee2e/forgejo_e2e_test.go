@@ -173,7 +173,7 @@ func TestForgejoHiveCycle(t *testing.T) {
 	// 3. Push through the real broker: remote pinned to the forge, the token
 	// offered only to the forge's origin by the URL-scoped helper.
 	minted := 0
-	minter := pushbroker.StaticTokenMinter{Token: func() string { minted++; return token }}
+	minter := pushbroker.StaticTokenMinter{Token: func() (string, error) { minted++; return token, nil }}
 	broker := &pushbroker.Broker{
 		Workspace:     work,
 		Branch:        branch,

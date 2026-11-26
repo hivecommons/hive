@@ -81,7 +81,18 @@ func (f *fakeForgejoWrites) server(t *testing.T) *httptest.Server {
 				_, _ = w.Write([]byte(`{"message":"label not found"}`))
 				return
 			}
-			_, _ = w.Write([]byte(`[]`))
+			var req struct {
+				Labels []string `json:"labels"`
+			}
+			if calls := f.calls(r.Method + " " + r.URL.Path); len(calls) > 0 {
+				data, _ := json.Marshal(calls[len(calls)-1])
+				_ = json.Unmarshal(data, &req)
+			}
+			applied := []map[string]string{}
+			for _, l := range req.Labels {
+				applied = append(applied, map[string]string{"name": l})
+			}
+			_ = json.NewEncoder(w).Encode(applied)
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -158,6 +169,31 @@ func TestForgejoCreateIssueLabelFailureKeepsRef(t *testing.T) {
 	}
 	if ref.Number != 42 {
 		t.Errorf("ref = %+v, want the created issue so the caller does not file twice", ref)
+	}
+}
+
+func TestForgejoCreateIssueReportsDroppedLabel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/labels"):
+			_, _ = w.Write([]byte(`[{"name":"bug"}]`))
+		default:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"number": 42, "html_url": "u"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	f := newTestForgejo(t, srv)
+
+	ref, err := f.(IssueCreator).CreateIssue(context.Background(), "widgets", "T", "", []string{"bug", "ready-for-review"})
+	if !errors.Is(err, ErrLabelsNotApplied) {
+		t.Fatalf("err = %v, want ErrLabelsNotApplied", err)
+	}
+	if !strings.Contains(err.Error(), "ready-for-review") || strings.Contains(err.Error(), "bug,") {
+		t.Errorf("err = %v, want it to name only the dropped label", err)
+	}
+	if ref.Number != 42 {
+		t.Errorf("ref = %+v", ref)
 	}
 }
 

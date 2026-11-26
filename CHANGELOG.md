@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.369.5)
+
+### Fixed
+
+- Preserve follow-up drafts typed in a session while an earlier send is being queued.
+
 ## 2026-11-25 (v5.369.4)
 
 ### Fixed
