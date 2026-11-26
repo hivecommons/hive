@@ -351,9 +351,20 @@ for example an unreadable key file, builds no REST client and names
   applies to REST as well.
 - The Forgejo automerge sweep reads the collaborator permission endpoint,
   the sweeps read the issue timeline, and the close-on-merge sweep reads
-  `GET /user`. None of these has been verified against an integration JWT
-  yet ([#19914](https://github.com/hivecommons/hive/issues/19914)), so keep
-  the access token available until they are.
+  `GET /user` ([#19914](https://github.com/hivecommons/hive/issues/19914)).
+  The nightly Forgejo JWT lane (`.github/workflows/forgejo-jwt.yml`) calls
+  each of them on Forgejo 17 with a JWT for a `sub=hive:rest` integration
+  created as above, logs the status, and fails on an answer the hive does
+  not handle ([#19920](https://github.com/hivecommons/hive/issues/19920)):
+  - The issue timeline must answer 200; the sweeps have no fallback for it.
+  - A 403 from the collaborator permission endpoint makes the automerge
+    sweep read the repo's assignee list instead, as it does for an access
+    token with write but not admin access. The lane checks that list
+    answers 200.
+  - A 403 from `GET /user` makes the close-on-merge sweep use
+    `forgejo.login`. Without `forgejo.login` the sweep skips the repo with
+    an error that names `forgejo.login`. If Forgejo refuses `read:user` on
+    an integration limited to repositories, set `forgejo.login`.
 
 #### Rotate the signing key
 

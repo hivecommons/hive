@@ -350,6 +350,12 @@ func (f *forgejoForge) Self(ctx context.Context) (string, error) {
 			return f.login, nil
 		}
 	}
+	if err != nil && isGiteaStatus(err, http.StatusForbidden) {
+		// A repo-limited access token or an integration JWT
+		// (forgejo.integration.rest_audience) without read:user lands here
+		// (#19994, #19920); forgejo.login is the way out.
+		return "", fmt.Errorf("%s: read token user: %w; set forgejo.login to the hive's own Forgejo username when its token or REST integration cannot read GET /user", f.label, err)
+	}
 	if err != nil {
 		return "", fmt.Errorf("%s: read token user: %w", f.label, err)
 	}
