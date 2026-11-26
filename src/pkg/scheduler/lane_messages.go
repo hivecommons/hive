@@ -85,7 +85,7 @@ func (s *Scheduler) buildScannerMessage(issues []github.Issue, actionable *githu
 			if runes := []rune(title); len(runes) > maxPRTitleRunes {
 				title = string(runes[:maxPRTitleRunes])
 			}
-			annotation, _ := s.enforceTextFrom(prKickAnnotation(pr, "scanner"), prSource(pr))
+			annotation, _ := s.enforceTextFrom(prKickAnnotation(pr, "scanner")+dependencyBotAnnotation(pr, s.cfg.Project.Org), prSource(pr))
 			b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s %s\n", pr.Repo, pr.Number, pr.Author, forkAnnotation(pr), annotation, title))
 		}
 	}
@@ -714,7 +714,7 @@ func (s *Scheduler) buildCIFailingListForAgent(agent string, keep func(repo stri
 	// GitHub's default "allow edits by maintainers" never becomes a push
 	// instruction, and the CI-Repair step 4 "push a fixup commit to the PR
 	// branch" is never aimed at a branch that only exists in someone's fork.
-	var pushable, forks []ciFailingRow
+	var pushable, forks, depBots []ciFailingRow
 	var busy []busyRedPR
 	busyCheck := s.busyBranchChecker(agent)
 	for _, pr := range payload.Items {
@@ -722,6 +722,10 @@ func (s *Scheduler) buildCIFailingListForAgent(agent string, keep func(repo stri
 			forks = append(forks, pr)
 		} else if pr.ReachableAction == "comment-only" {
 			forks = append(forks, pr)
+		} else if dependencyBotBranchRow(pr.HeadRef, pr.Author, pr.AppAuthored, pr.Adopted) {
+			// Pushable, but the branch is a dependency bot's: it rebases
+			// the branch itself (dependency_bot_branch.go).
+			depBots = append(depBots, pr)
 		} else if why := busyCheck(busyBranchRow{Repo: pr.Repo, Number: pr.Number, Issues: pr.Issues, AppAuthored: pr.AppAuthored, Adopted: pr.Adopted, HeadPushedAt: pr.HeadPushedAt, Own: ownRepairRow(pr.Agent, agent, pr.TrustedAuthor, pr.ReroutedFrom)}); why != "" {
 			// hivecommons/hive#18488: pushable, but someone else is on
 			// the branch right now.
@@ -753,6 +757,11 @@ func (s *Scheduler) buildCIFailingListForAgent(agent string, keep func(repo stri
 				head += ":" + pr.HeadRef
 			}
 			origin = fmt.Sprintf(" [adopted fork: %s — push to the contributor's branch, never to a same-named base branch]", head)
+		} else if pr.Adopted && github.DependencyBotBranch(pr.HeadRef, pr.Author) {
+			// The policy's one exception to leaving a dependency bot's
+			// branch alone: an adoption or an operator's rebase-then-merge
+			// made this rebase the hive's (dependency_bot_branch.go).
+			origin = " [ADOPTED dependency-bot branch: the hive owns this repair, push as listed]"
 		}
 		b.WriteString(fmt.Sprintf("  #%d %s by @%s (sha:%s)%s%s — %s\n", pr.Number, pr.Repo, pr.Author, pr.HeadSHA, origin, heldMarker(pr.Held), pr.Title))
 		if pr.FromFork {
@@ -775,6 +784,21 @@ func (s *Scheduler) buildCIFailingListForAgent(agent string, keep func(repo stri
 				checks = " — failing: " + strings.Join(pr.FailingChecks, ", ")
 			}
 			b.WriteString(fmt.Sprintf("  #%d %s [busy: %s — suggest, do not push] — %s%s\n", pr.Number, pr.Repo, pr.Why, pr.Title, checks))
+		}
+	}
+	if len(depBots) > 0 {
+		b.WriteString(fmt.Sprintf("DEPENDENCY-BOT BRANCHES (%d - a dependency bot owns these branches; comment only, do not push or merge the base in):\n", len(depBots)))
+		b.WriteString("  " + dependencyBotBranchInstruction + "\n")
+		for i, pr := range depBots {
+			if i >= limit {
+				b.WriteString(prListOverflowLine(len(depBots)-i, limit))
+				break
+			}
+			checks := ""
+			if len(pr.FailingChecks) > 0 {
+				checks = " - failing: " + strings.Join(pr.FailingChecks, ", ")
+			}
+			b.WriteString(fmt.Sprintf("  #%d %s (sha:%s) [dependency bot: %s - comment only, do not push] - %s%s\n", pr.Number, pr.Repo, pr.HeadSHA, dependencyBotOwner(pr.HeadRef, pr.Author), pr.Title, checks))
 		}
 	}
 	if len(deferred) > 0 {
