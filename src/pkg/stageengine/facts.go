@@ -355,6 +355,14 @@ type PRPassFacts struct {
 	// held that escalation against a weak opinion (HoldsEscalation).
 	AdoptionLive     bool
 	EscalationReason string
+	// AuthorsTurn is set when a person returned a live adoption's head to
+	// its author and the hive cannot push it (a fork it declined to
+	// re-home): every stage that would yield to the adoption reads the
+	// author's fixing stage (071/072) instead, so the PR holds one stage
+	// for the 072 dwell from the decision whatever the lane read, with the
+	// decision's reason (human-changes-requested). It is set only with
+	// AdoptionLive false.
+	AuthorsTurn bool
 	// ForkEscalationReason is set when a fork PR the hive declined to adopt
 	// waited at 072 past the stage dwell and the pass moved it to 085, or
 	// held that escalation against a weak opinion.

@@ -256,6 +256,30 @@ func TestWriteMergeEligible_TrustedDependencyBotConflictIsNotHiveRebaseWork(t *t
 	}
 }
 
+// An operator's dashboard Approve on a conflicting PR opens a requested
+// rebase episode. On a dependency bot's branch it is still not the fixer's
+// work, consistent with trustedAuthorRebasePR: the bot rebases its own
+// branch, and a fixer push would stop it doing so for good. The same request
+// on an ordinary branch is routed as before.
+func TestWriteMergeEligible_RequestedRebaseSkipsDependencyBotBranch(t *testing.T) {
+	store := useMemoryRebaseAttempts(t)
+	cfg := &config.Config{}
+	now := time.Now()
+	pr := github.PullRequest{Number: 1471, Repo: "hive", Author: "mergeraptor[bot]", HeadSHA: "abc1471",
+		HeadRef: "renovate/human-merge-paths-actions", HeadRepo: "hivecommons/hive", BaseRef: "v5",
+		Mergeable: github.MergeableNo, MergeableState: "dirty", CIStatus: "pending", Labels: []string{"needs-rebase"}}
+	store.Request("hivecommons/hive", 1471, "abc1471", "writer", now)
+	_, failing := runWriteMergeEligible(t, []github.PullRequest{pr}, mergeEligibleInputs{org: "hivecommons", cfg: cfg})
+	if len(failing) != 0 {
+		t.Fatalf("ci_failing = %+v, want nothing for a requested rebase of a dependency bot's branch", failing)
+	}
+	pr.Author, pr.HeadRef = "stranger", "feat/x"
+	_, failing = runWriteMergeEligible(t, []github.PullRequest{pr}, mergeEligibleInputs{org: "hivecommons", cfg: cfg})
+	if len(failing) != 1 || !failing[0].Conflict || failing[0].ReachableAction != github.ReachableActionPush {
+		t.Fatalf("ci_failing = %+v, want the ordinary branch listed as requested rebase work", failing)
+	}
+}
+
 // sweepRebaseLogged runs one writeMergeEligible sweep at now and returns the
 // ci-failing rows and the number of "routed to fixer for rebase" lines.
 func sweepRebaseLogged(t *testing.T, prs []github.PullRequest, now time.Time) ([]failingEntry, int) {

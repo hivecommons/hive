@@ -334,6 +334,43 @@ func TestRepoItemDecisionApproveOnDirtyPRQueuesRebase(t *testing.T) {
 	}
 }
 
+// Approve on a conflicting dependency bot's PR (a renovate/ head ref under a
+// dependency-bot App): no rebase episode opens, because the router never
+// hands such a request to a fixer (the bot rebases its own branch, and a
+// hive push would stop it for good), and the toast does not promise a
+// rebase. Rebase-then-merge stays on offer.
+func TestRepoItemDecisionApproveOnDirtyDependencyBotPRQueuesNoRebase(t *testing.T) {
+	attempts := useRebaseAttemptsStore(t)
+	mock := &repoItemDecisionMock{prAuthor: "mergeraptor[bot]", prHeadRef: "renovate/human-merge-paths-actions", prMergeState: "dirty", prLabels: []string{"stage/085-needs-decision", "needs-rebase"}}
+	srv := newRepoItemDecisionServer(t, mock)
+
+	w := postRepoItemDecisionAs(t, srv, 8, "writer", "merger", `{"decision":"approve","type":"pr"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("approve on dirty bot PR: code=%d body=%s", w.Code, w.Body.String())
+	}
+	var resp repoItemDecisionResponse
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp.Rebase != nil {
+		t.Fatalf("no rebase may be queued for a dependency bot's branch: %+v", resp.Rebase)
+	}
+	if _, ok := attempts.Get("testorg/testrepo", 8); ok {
+		t.Fatal("approve must not open a rebase episode on a dependency bot's branch")
+	}
+	if mock.updates != 0 {
+		t.Fatalf("a dependency bot's branch gets no update-branch: %d", mock.updates)
+	}
+	res := resp.Result
+	if res == nil || res.Outcome != "Approved: #8 conflicts with main. A dependency bot owns this branch and rebases it itself, so hive does not rebase it." {
+		t.Fatalf("result = %+v", res)
+	}
+	if strings.Contains(res.Outcome, "hive will rebase") || !strings.Contains(res.Next, "hive asks it to rebase") {
+		t.Fatalf("outcome = %q next = %q", res.Outcome, res.Next)
+	}
+	if len(res.Options) != 1 || res.Options[0].Action != decisionActionMergeNow || res.Options[0].Consequence != rebaseMergeFollowThroughConsequence(8, "main") {
+		t.Fatalf("options = %+v", res.Options)
+	}
+}
+
 // The approval is bound to the head the operator read. When a contributor
 // PR's head moves and GitHub says the hive did not commit it, the
 // follow-through fails closed — nothing merges, the ledger says why, the

@@ -23,6 +23,12 @@
 # helper now also reads the same check on the upstream repository's default
 # branch (the GitHub fork parent, or --upstream) and, when it is red there,
 # returns DEFER_EXTERNAL with a head-pinned marker the hive honours.
+#
+# A dependency bot's branch (a renovate/ head ref or a dependency-bot author)
+# is never merged into: the bot rebases it itself and stops for good once
+# another identity commits to it (projectbluefin/utah#1471, a scanner
+# MERGE_BASE onto a Renovate branch). Where the verdict would be MERGE_BASE,
+# such a PR gets BOT_REBASE instead.
 
 set -u -o pipefail
 
@@ -47,8 +53,9 @@ Exit status:
      upstream repository's default branch (DEFER_EXTERNAL)
   1  PR-local: the evidence does not point at a repository incident. The
      `action` says what to do — FIX_DIFF, MERGE_BASE (the branch is behind
-     the default branch; merge it before diagnosing), or NOT_REACHABLE_FORK
-     (the head is in a fork; comment, do not push)
+     the default branch; merge it before diagnosing), BOT_REBASE (behind,
+     but a dependency bot owns the branch; do not merge or push), or
+     NOT_REACHABLE_FORK (the head is in a fork; comment, do not push)
   2  unknown: invalid input, missing dependency, GitHub/API failure, or
      RERUN_BASELINE — the default-branch green is older than the evidence
      against it and every red sibling is behind base, so a stale-green
@@ -60,6 +67,12 @@ Actions (also in --json as "action"):
   DEFER_EXTERNAL     red upstream too: nothing in this repository can fix it;
                      comment once with the evidence and the external_marker
   MERGE_BASE         the branch is behind the default branch; merge it first
+  BOT_REBASE         behind, but a dependency bot owns the branch and rebases
+                     it itself; never merge the default branch in or push,
+                     leave the rebase to the bot (if the branch stalls the
+                     hive asks the bot, or hands the PR to a person), unless
+                     your work list hands you this PR as ADOPTED or with a
+                     rebase-resolve attempt
   FIX_DIFF           PR-local: diagnose this PR's own diff
   NOT_REACHABLE_FORK the head is in a fork; you cannot push — comment only
   RERUN_BASELINE     the default-branch green is stale; re-run it first
@@ -283,16 +296,29 @@ if (( SIBLING_COUNT >= THRESHOLD && DRIFT_SAMPLE > 0 )); then
     ' <<<"$PRS_JSON")
 fi
 
-# The PR under triage, when given: is its head in a fork (unpushable), and is
-# it behind base (merge base before diagnosing anything)?
+# The PR under triage, when given: is its head in a fork (unpushable), is its
+# branch a dependency bot's (never merged into), and is it behind base (merge
+# base before diagnosing anything)?
 PR_FORK=false
+PR_DEPENDENCY_BOT=false
 PR_BEHIND_BY="unknown"
 PR_OID=""
 if [[ -n "$PR_NUMBER" ]]; then
-  if ! PR_JSON="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json number,headRefOid,isCrossRepository)"; then
+  if ! PR_JSON="$(gh pr view "$PR_NUMBER" --repo "$REPO" --json number,headRefOid,isCrossRepository,headRefName,author)"; then
     error "could not read PR $REPO#$PR_NUMBER"
   fi
   PR_FORK="$(jq -r 'if .isCrossRepository == true then "true" else "false" end' <<<"$PR_JSON")"
+  # The same test as the hive's github.DependencyBotBranch
+  # (src/pkg/github/dependency_bot.go; keep the bot list in step): a
+  # renovate/ head ref, or a dependency-bot author. gh names an App author
+  # app/<slug> where the REST API says <slug>[bot]; both are accepted, and a
+  # plain user login of the same name is not, as in IsDependencyBotAuthor.
+  PR_DEPENDENCY_BOT="$(jq -r '
+      ((.headRefName // "") | startswith("renovate/")) as $ref
+      | ((.author.login // "") | ascii_downcase) as $login
+      | (["renovate", "dependabot", "mergeraptor"] | map(. + "[bot]", "app/" + .)) as $bots
+      | if $ref or ($bots | index($login)) != null then "true" else "false" end
+    ' <<<"$PR_JSON" 2>/dev/null || echo false)"
   PR_OID="$(jq -r '.headRefOid // ""' <<<"$PR_JSON")"
   if [[ -n "$PR_OID" ]]; then
     PR_BEHIND_BY="$(behind_by "$REPO" "$BASE_BRANCH" "$PR_OID")"
@@ -378,6 +404,11 @@ if [[ "$EXIT" -eq 1 && -n "$PR_NUMBER" ]]; then
     ACTION="MERGE_BASE"
     [[ "$REASON" == "isolated" ]] && REASON="stale-branch"
   fi
+  # A dependency bot rebases its own branch, and stops doing that for good
+  # once another identity commits to it: never send an agent to merge base.
+  if [[ "$ACTION" == "MERGE_BASE" && "$PR_DEPENDENCY_BOT" == true ]]; then
+    ACTION="BOT_REBASE"
+  fi
 fi
 # Red upstream outranks every local verdict but one: a fresh green on this
 # repository's own default branch proves the check can pass here, so the
@@ -432,6 +463,7 @@ if [[ "$JSON_OUTPUT" == true ]]; then
     --argjson siblings_unknown "$SIBLINGS_UNKNOWN" \
     --arg pr "$PR_NUMBER" \
     --argjson pr_fork "$PR_FORK" \
+    --argjson pr_dependency_bot "$PR_DEPENDENCY_BOT" \
     --arg pr_behind_by "$PR_BEHIND_BY" \
     --arg upstream "$UPSTREAM" \
     --arg upstream_branch "$UPSTREAM_BRANCH" \
@@ -450,12 +482,20 @@ if [[ "$JSON_OUTPUT" == true ]]; then
            completed_at:(if $upstream_completed_at == "" then null else $upstream_completed_at end)}
         end)}
      + (if $pr == "" then {} else
-          {pr:($pr|tonumber), pr_fork:$pr_fork,
+          {pr:($pr|tonumber), pr_fork:$pr_fork, pr_dependency_bot:$pr_dependency_bot,
            pr_behind_by:(if $pr_behind_by == "unknown" then null else ($pr_behind_by|tonumber) end)}
         end)
      + (if $external_marker == "" then {} else {external_marker:$external_marker} end)
      + (if $transient_marker == "" then {} else {transient_marker:$transient_marker} end)'
 else
+  # What to do about a branch that is behind: merge the default branch in,
+  # unless the branch is a dependency bot's.
+  MERGE_INTO="Merge \"$BASE_BRANCH\" into the branch before diagnosing."
+  MERGE_FIRST="Merge \"$BASE_BRANCH\" first."
+  if [[ "$ACTION" == "BOT_REBASE" ]]; then
+    MERGE_INTO="A dependency bot owns PR #$PR_NUMBER's branch and rebases it itself: do not merge \"$BASE_BRANCH\" into it or push to it; leave the rebase to the bot (if the branch stalls the hive asks the bot, or hands the PR to a person), unless your work list hands you this PR as ADOPTED or with a rebase-resolve attempt."
+    MERGE_FIRST="$MERGE_INTO"
+  fi
   case "$REASON" in
     upstream)
       printf 'SHARED (%s): check "%s" is red (%s) on upstream %s default branch "%s" as well; the failure comes from upstream and nothing in %s can fix it. Comment once with the evidence; do not repair, retry or open a [shared-ci] incident.\n' \
@@ -474,8 +514,8 @@ else
         "$SIBLINGS_CURRENT" "$SIBLINGS_SAMPLED" "$BASE_BRANCH"
       ;;
     stale-branches)
-      printf 'NOT SHARED (%s): check "%s" is red on %s open sibling PR(s) in %s, but every sampled one (%s) is behind "%s", which is green (%sh ago). Merge "%s" into the branch before diagnosing.\n' \
-        "$ACTION" "$CHECK_NAME" "$SIBLING_COUNT" "$REPO" "$SIBLINGS_SAMPLED" "$BASE_BRANCH" "$BASE_AGE_HOURS" "$BASE_BRANCH"
+      printf 'NOT SHARED (%s): check "%s" is red on %s open sibling PR(s) in %s, but every sampled one (%s) is behind "%s", which is green (%sh ago). %s\n' \
+        "$ACTION" "$CHECK_NAME" "$SIBLING_COUNT" "$REPO" "$SIBLINGS_SAMPLED" "$BASE_BRANCH" "$BASE_AGE_HOURS" "$MERGE_INTO"
       ;;
     stale-baseline)
       printf 'UNKNOWN (%s): check "%s" is red on %s open sibling PR(s) in %s, all sampled (%s) behind "%s", and the green conclusion on "%s" is %sh old (older than %sh). A stale-green baseline cannot be told from branch drift; re-run "%s" on "%s" before repairing any PR.\n' \
@@ -483,9 +523,9 @@ else
         "$BASE_AGE_HOURS" "$MAX_AGE_HOURS" "$CHECK_NAME" "$BASE_BRANCH"
       ;;
     stale-branch)
-      printf 'ISOLATED (%s): check "%s" is %s on %s default branch "%s", red on %s open sibling PR(s) (threshold %s), and PR #%s is %s commit(s) behind "%s". Merge "%s" first.\n' \
+      printf 'ISOLATED (%s): check "%s" is %s on %s default branch "%s", red on %s open sibling PR(s) (threshold %s), and PR #%s is %s commit(s) behind "%s". %s\n' \
         "$ACTION" "$CHECK_NAME" "$BASE_CONCLUSION" "$REPO" "$BASE_BRANCH" "$SIBLING_COUNT" "$THRESHOLD" \
-        "$PR_NUMBER" "$PR_BEHIND_BY" "$BASE_BRANCH" "$BASE_BRANCH"
+        "$PR_NUMBER" "$PR_BEHIND_BY" "$BASE_BRANCH" "$MERGE_FIRST"
       ;;
     *)
       printf 'ISOLATED (%s): check "%s" is %s on %s default branch "%s" and red on %s open sibling PR(s) (threshold %s).\n' \

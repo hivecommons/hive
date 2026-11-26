@@ -196,19 +196,31 @@ type busyRedPR struct {
 // the evidence an agent needs to write the suggestion, under a heading that
 // says the branch is not theirs to push to. n rows are read through row.
 func writeBusyRedPRs(b *strings.Builder, n int, row func(i int) busyRedPR) {
+	writeNoPushRedPRs(b, fmt.Sprintf("## ⏸ BUSY BRANCHES — red PRs you must NOT push to (%d)", n), busyBranchInstruction, " — ", n, func(i int) (busyRedPR, string) {
+		pr := row(i)
+		return pr, "busy: " + pr.Why + " — suggest, do not push"
+	})
+}
+
+// writeNoPushRedPRs renders one FIX-BEFORE-NEW companion block of red rows
+// the agent must not push to: the heading, the instruction, then each row
+// (number, repo, sep, title) with the mark line row returns for it and its
+// evidence. Busy branches and dependency-bot branches
+// (dependency_bot_branch.go) share it.
+func writeNoPushRedPRs(b *strings.Builder, heading, instruction, sep string, n int, row func(i int) (busyRedPR, string)) {
 	if n == 0 {
 		return
 	}
-	fmt.Fprintf(b, "\n## ⏸ BUSY BRANCHES — red PRs you must NOT push to (%d)\n\n", n)
-	b.WriteString(busyBranchInstruction + "\n\n")
+	b.WriteString("\n" + heading + "\n\n")
+	b.WriteString(instruction + "\n\n")
 	for i := 0; i < n; i++ {
 		if i >= redPRFixMaxDetailed {
 			fmt.Fprintf(b, "  … and %d more (full list: %s)\n", n-i, ciFailingPath)
 			break
 		}
-		pr := row(i)
-		fmt.Fprintf(b, "  #%d %s — %s\n", pr.Number, pr.Repo, pr.Title)
-		b.WriteString("    busy: " + pr.Why + " — suggest, do not push\n")
+		pr, mark := row(i)
+		fmt.Fprintf(b, "  #%d %s%s%s\n", pr.Number, pr.Repo, sep, pr.Title)
+		b.WriteString("    " + mark + "\n")
 		if len(pr.FailingChecks) > 0 {
 			fmt.Fprintf(b, "    failing: %s\n", strings.Join(pr.FailingChecks, ", "))
 		}

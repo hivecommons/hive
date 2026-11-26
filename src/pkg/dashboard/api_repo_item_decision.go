@@ -878,7 +878,16 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 // is merely behind, otherwise the fixer's rebase-resolve task on the next
 // router pass (the episode carries the operator as requester so the router
 // lists the PR whoever opened it, as long as the hive can push to it).
+// A dependency bot's branch (ghpkg.DependencyBotBranch) gets no episode:
+// the bot rebases it itself, a hive push would stop it doing so for good,
+// and the router never hands such a request to a fixer. nil then.
 func (s *Server) queueRebaseOnApprove(ctx context.Context, repoFull string, number int, user, head string, ms ghpkg.PRMergeState) *StageTrackerRebase {
+	if ghpkg.DependencyBotBranch(ms.HeadRef, ms.Author) {
+		if s.logger != nil {
+			s.logger.Info("approve on a dependency bot's PR that needs a rebase: left to the bot", "repo", repoFull, "number", number, "actor", user, "head", head, "head_ref", ms.HeadRef, "author", ms.Author, "mergeable_state", ms.MergeableState)
+		}
+		return nil
+	}
 	gh := s.deps.GHClient
 	now := rebaseMergeNow()
 	a := rebaseAttemptsStore().Request(repoFull, number, head, user, now)
@@ -901,6 +910,21 @@ func (s *Server) queueRebaseOnApprove(ctx context.Context, repoFull string, numb
 // and the one-click upgrade to "Rebase, then merge as maintainer".
 func approveNeedsRebaseResult(out *RowActionResult, number int, ms ghpkg.PRMergeState, rebase *StageTrackerRebase) {
 	base := nonEmptyString(ms.BaseRef, "its base branch")
+	if ghpkg.DependencyBotBranch(ms.HeadRef, ms.Author) {
+		// No rebase was queued (queueRebaseOnApprove): the bot keeps its
+		// own branch current. Rebase-then-merge stays on offer; a hive
+		// rebase followed straight by the merge strands nothing.
+		state := "is behind"
+		if ms.Conflicting() {
+			state = "conflicts with"
+		}
+		out.Outcome = fmt.Sprintf("Approved: #%d %s %s. A dependency bot owns this branch and rebases it itself, so hive does not rebase it.", number, state, base)
+		out.Next = "Once the bot's rebased head is green the gate takes it; if the bot stalls, hive asks it to rebase or hands the PR to a person. To have hive rebase it and merge it right away instead:"
+		opt := decisionOption(decisionActionMergeNow, rebaseMergeFollowThroughLabel, true, "")
+		opt.Consequence = rebaseMergeFollowThroughConsequence(number, ms.BaseRef)
+		out.Options = []StageTrackerDecisionOption{opt}
+		return
+	}
 	attempt := ""
 	if rebase != nil && !rebase.Exhausted {
 		attempt = fmt.Sprintf(" (attempt %d/%d)", rebase.Attempt, rebase.Max)

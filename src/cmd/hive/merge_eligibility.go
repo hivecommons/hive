@@ -1651,9 +1651,12 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			trustedRebase := !hiveAuthoredPR(pr) && !adopted && trustedAuthorRebasePR(cfg, fullRepo, pr)
 			// An operator's approve / merge-now from the dashboard on a
 			// conflicting PR asks for the rebase outright (the episode
-			// carries RequestedBy); that admits any PR the hive can push.
+			// carries RequestedBy); that admits any PR the hive can push,
+			// except a dependency bot's branch, as in trustedAuthorRebasePR:
+			// the bot rebases it itself. An operator who wants the hive to
+			// rebase one anyway arms rebase-then-merge, which adopts it above.
 			requested := false
-			if prior, ok := rebaseAttempts().Get(fullRepo, pr.Number); ok && prior.RequestedBy != "" && github.ReachableAction(pr) == github.ReachableActionPush {
+			if prior, ok := rebaseAttempts().Get(fullRepo, pr.Number); ok && prior.RequestedBy != "" && github.ReachableAction(pr) == github.ReachableActionPush && !github.DependencyBotBranch(pr.HeadRef, pr.Author) {
 				requested = !hiveAuthoredPR(pr) && !adopted && !trustedRebase
 			}
 			if !hiveAuthoredPR(pr) && !adopted && !trustedRebase && !requested {
