@@ -83,6 +83,7 @@ agents.<key>.emoji # TODO #11854
 agents.<key>.enabled # TODO #11854
 agents.<key>.explain_mode # TODO #11854
 agents.<key>.github_api_hourly_cap # TODO #11854
+agents.<key>.headless_turns # TODO #19902
 agents.<key>.id # TODO #11854
 agents.<key>.include_repos # TODO #11854
 agents.<key>.jev_mode # TODO #11854
