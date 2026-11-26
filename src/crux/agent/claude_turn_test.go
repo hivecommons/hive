@@ -8,6 +8,7 @@ package agent
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -443,5 +444,71 @@ func TestClaudeHeadlessPaneSignals(t *testing.T) {
 	done := running + "\r\x1b[KHIVE claude turn: status=success\n" + claudeHeadlessReadyMarker + "\n" + claudeHeadlessReadyMarker + "> "
 	if panesignal.ShowsAgentWorking(done) {
 		t.Fatalf("a finished headless claude turn must not read as working")
+	}
+}
+
+// TestDeliverKickLocked_ClaudeHeadlessRoutesToTurnRunner pins the manager
+// wiring for a headless_turns agent: a kick types one `hive claude-turn` line
+// (not the raw prompt) into the shell pane, ClearOnKick maps to
+// --new-session, and the inference stall watchdog stays disarmed so its
+// "continue" nudges are never typed into bash between turns.
+func TestDeliverKickLocked_ClaudeHeadlessRoutesToTurnRunner(t *testing.T) {
+	for _, clear := range []bool{false, true} {
+		m, agent, _ := kickLogTestManager(t, "")
+		agent.Config.Backend = "litellm"
+		agent.Config.HeadlessTurns = true
+		agent.Config.ClearOnKick = clear
+		agent.claudeHeadlessTurnCmd = "'claude' '--model' 'qwen'"
+		t.Cleanup(func() { _ = os.Remove(filepath.Join(agentStateDir, ".hive-claude-prompt-"+agent.Name+".txt")) })
+		termSeams(m).captureVisiblePane = func(*AgentProcess) string {
+			return claudeHeadlessReadyMarker + "\n" + claudeHeadlessReadyMarker + "> "
+		}
+		termSeams(m).sendKeys = func(*AgentProcess, ...string) {}
+		var typed []string
+		termSeams(m).sendLiteral = func(_ *AgentProcess, text string) { typed = append(typed, text) }
+
+		if err := m.deliverKickLocked(agent, "analyze coverage", "send-kick"); err != nil {
+			t.Fatalf("clear=%v: deliverKickLocked: %v", clear, err)
+		}
+		if len(typed) != 1 {
+			t.Fatalf("clear=%v: typed %d lines, want one turn-runner line: %#v", clear, len(typed), typed)
+		}
+		line := typed[0]
+		if !strings.Contains(line, " "+ClaudeTurnSubcommand+" ") || !strings.Contains(line, "-- 'claude' '--model' 'qwen'") {
+			t.Fatalf("clear=%v: kick did not type the claude-turn runner line: %q", clear, line)
+		}
+		if strings.Contains(line, "analyze coverage") {
+			t.Fatalf("clear=%v: prompt text typed into the shell instead of the prompt file: %q", clear, line)
+		}
+		if got := strings.Contains(line, "--new-session"); got != clear {
+			t.Fatalf("clear=%v: --new-session present = %v", clear, got)
+		}
+		if agent.LastKick == nil {
+			t.Fatalf("clear=%v: delivered kick not recorded", clear)
+		}
+		if !agent.lastInferKickAt.IsZero() {
+			t.Fatalf("clear=%v: inference stall watchdog armed for a headless_turns pane", clear)
+		}
+	}
+}
+
+// TestDeliverKickLocked_ClaudeHeadlessRefusesUnbuiltCommand pins that a kick
+// racing the first launch, before the per-kick claude line exists, is refused
+// rather than typed into the shell.
+func TestDeliverKickLocked_ClaudeHeadlessRefusesUnbuiltCommand(t *testing.T) {
+	m, agent, _ := kickLogTestManager(t, "")
+	agent.Config.Backend = "litellm"
+	agent.Config.HeadlessTurns = true
+	termSeams(m).captureVisiblePane = func(*AgentProcess) string { return claudeHeadlessReadyMarker + "> " }
+	var typed []string
+	termSeams(m).sendKeys = func(_ *AgentProcess, keys ...string) { typed = append(typed, keys...) }
+	termSeams(m).sendLiteral = func(_ *AgentProcess, text string) { typed = append(typed, text) }
+
+	err := m.deliverKickLocked(agent, "analyze coverage", "send-kick")
+	if !errors.Is(err, errClaudeHeadlessNotLaunched) {
+		t.Fatalf("deliverKickLocked err = %v, want errClaudeHeadlessNotLaunched", err)
+	}
+	if len(typed) != 0 {
+		t.Fatalf("typed into the pane with no claude command built: %#v", typed)
 	}
 }

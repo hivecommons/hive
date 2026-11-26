@@ -370,7 +370,7 @@ Commands (each maps onto crux.Runtime):
                                   runtime that spawned it, not run by hand
   claude-turn                     one headless Claude Code turn (claude -p) for a
                                   headless_turns agent; typed into its pane
-  cline-turn                     one bounded Cline CLI turn (stdin prompt);
+  cline-turn                      one bounded Cline CLI turn (stdin prompt);
                                   --model provider/model, --check for preflight
   runs start|status|cancel|list|restart|history
                                   contained command runs on a crux serve and
