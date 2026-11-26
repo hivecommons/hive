@@ -93,10 +93,12 @@ func TestGovernorForgeSelectsAdapters(t *testing.T) {
 	})
 
 	t.Run("forgejo uses the configured instance", func(t *testing.T) {
+		t.Setenv(forgejoTestTokenEnv, forgejoTestToken)
 		cfg := &config.Config{}
 		cfg.Project.Org = "acme"
 		cfg.Project.Forge = config.ForgeForgejo
 		cfg.Forgejo.URL = "https://forgejo.example.com"
+		cfg.Forgejo.TokenEnv = forgejoTestTokenEnv
 
 		if got := forgeKindOf(t, governorForge(cfg, gh, discardLogger())); got != forge.KindForgejo {
 			t.Fatalf("want the Forgejo adapter, got kind %q", got)
@@ -338,6 +340,14 @@ func TestForgeTokenSourceSelectsTheSentToken(t *testing.T) {
 
 				mu.Lock()
 				defer mu.Unlock()
+				// Forgejo answers a private repo with no token with a 404, so an
+				// empty Forgejo token builds neither writer nor merger (#19919).
+				if kind == config.ForgeForgejo && tc.tokenEnv == "" && tc.tokenFile == "" && os.Getenv(config.DefaultForgejoTokenEnv) == "" {
+					if w != nil || !errors.Is(mergeErr, errForgeTokenEmpty) || len(auths) != 0 {
+						t.Fatalf("empty Forgejo token: writer %T, merger err %v, %d requests; want none, errForgeTokenEmpty, 0", w, mergeErr, len(auths))
+					}
+					return
+				}
 				if tc.wantErr != "" {
 					if commentErr == nil {
 						t.Fatal("a bad token_file must not build a writer")
