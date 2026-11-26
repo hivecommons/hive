@@ -149,6 +149,11 @@ func (e *Env) Run(ctx context.Context, args []string) int {
 		e.usage(fs)
 		return ExitUsage
 	}
+	if rest[0] == JobBridgeCommand {
+		// The Job copy transport's container command: no runtime, work dir
+		// or server, and nothing exported into the kick's environment.
+		return e.cmdJobBridge(ctx, rest[1:])
+	}
 	if err := opts.resolve(); err != nil {
 		fmt.Fprintln(e.Stderr, "crux:", err)
 		return ExitError
@@ -372,6 +377,8 @@ Commands (each maps onto crux.Runtime):
                                   headless_turns agent; typed into its pane
   cline-turn                      one bounded Cline CLI turn (stdin prompt);
                                   --model provider/model, --check for preflight
+  job-bridge -- CMD [ARGS...]     a Job's container command on the copy
+                                  workspace transport; run by hive, not by hand
   runs start|status|cancel|list|restart|history
                                   contained command runs on a crux serve and
                                   their saved results (--server only;

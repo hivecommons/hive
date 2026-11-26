@@ -1,6 +1,9 @@
 package reviewfeedback
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +76,9 @@ func TestRecordKickHead_RetryCounting(t *testing.T) {
 	if got := s.PRs["o/r#1"].Retries; got != 1 {
 		t.Fatalf("retries = %d, want 1", got)
 	}
+	if check, err := s.CheckStranded("o/r#1", "sha", time.Time{}, items, t0.Add(3*time.Hour), p); err != nil || check.Verdict != StrandedWaiting {
+		t.Fatalf("check during doubled backoff = %+v, %v", check, err)
+	}
 	_ = s.RecordKickHead("o/r#1", strandedItems("inline:5"), "sha2", t0.Add(3*time.Hour))
 	if got := s.PRs["o/r#1"].Retries; got != 0 {
 		t.Fatalf("retries after a fresh kick = %d, want 0", got)
@@ -88,6 +94,144 @@ func TestCheckStranded_NoHeadWaits(t *testing.T) {
 	if c, _ := s.CheckStranded("o/r#1", "", time.Time{}, items, t0.Add(9*time.Hour), RetryPolicy{MaxRetries: 2, Backoff: time.Hour}); c.Verdict != StrandedWaiting {
 		t.Fatalf("check = %+v", c)
 	}
+}
+
+func TestStrandedHandoff_PersistsWhileFreshFeedbackRoutes(t *testing.T) {
+	const key = "o/r#1"
+	t0 := time.Date(2026, 11, 18, 20, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	store := openStrandedTestStore(t, dir)
+	policy := RetryPolicy{Backoff: time.Hour}
+	items := strandedItems("inline:1", "inline:2")
+	items[0].URL = "https://example.invalid/review/1"
+	items[1].URL = "https://example.invalid/review/2"
+	if err := store.RecordKickHead(key, items[:1], "head", t0); err != nil {
+		t.Fatal(err)
+	}
+	exhaustedAt := t0.Add(2 * time.Hour)
+	if check, err := store.CheckStranded(key, "head", time.Time{}, items, exhaustedAt, policy); err != nil || check.Verdict != StrandedExhausted {
+		t.Fatalf("exhausted kick = %+v, %v", check, err)
+	}
+	fb := github.PRFeedback{HeadSHA: "head", Items: items}
+	first, obsolete := readStrandedTestHandoff(t, store, key, fb, exhaustedAt, policy)
+	if obsolete || !first.Ready || !strings.Contains(first.Body, items[0].URL) || strings.Contains(first.Body, items[1].URL) {
+		t.Fatalf("first handoff = %+v, obsolete=%t", first, obsolete)
+	}
+
+	freshAt := t0.Add(3 * time.Hour)
+	fresh := store.Plan(key, items, freshAt, Limits{})
+	if fresh.Verdict != VerdictKick || len(fresh.Items) != 1 || fresh.Items[0].ID != items[1].ID {
+		t.Fatalf("fresh routing plan = %+v", fresh)
+	}
+	if err := store.RecordKickHead(key, fresh.Items, "head", freshAt); err != nil {
+		t.Fatal(err)
+	}
+	store = openStrandedTestStore(t, dir)
+	later := t0.Add(5 * time.Hour)
+	if check, err := store.CheckStranded(key, "head", time.Time{}, items, later, policy); err != nil || check.Verdict != StrandedExhausted {
+		t.Fatalf("second exhausted kick = %+v, %v", check, err)
+	}
+
+	// A bounded read omitted the original item. It must not retire its note.
+	fb.Items, fb.RuleCandidates = items[1:], items[1:]
+	stillFirst, obsolete := readStrandedTestHandoff(t, store, key, fb, later, policy)
+	if obsolete || stillFirst.Body != first.Body || !stillFirst.Ready {
+		t.Fatalf("handoff after restart and partial read = %+v, obsolete=%t", stillFirst, obsolete)
+	}
+
+	// Once the original item is visible but answered, its note can be removed.
+	fb.RuleCandidates = items
+	resolved, obsolete := readStrandedTestHandoff(t, store, key, fb, later, policy)
+	if !obsolete || resolved.Body != first.Body {
+		t.Fatalf("resolved handoff = %+v, obsolete=%t", resolved, obsolete)
+	}
+	if err := store.DiscardStrandedHandoff(key, later); err != nil {
+		t.Fatal(err)
+	}
+	second, obsolete := readStrandedTestHandoff(t, store, key, fb, later, policy)
+	if obsolete || !second.Ready || !strings.Contains(second.Body, items[1].URL) || strings.Contains(second.Body, items[0].URL) {
+		t.Fatalf("next handoff = %+v, obsolete=%t", second, obsolete)
+	}
+	if marked, err := store.MarkNeedsHuman(key, later); err != nil || !marked {
+		t.Fatalf("mark handoff posted = %t, %v", marked, err)
+	}
+	store = openStrandedTestStore(t, dir)
+	if note, _, err := store.NextStrandedHandoff(key, fb, later, policy); err != nil || note != nil || !store.NeedsHumanNoted(key) {
+		t.Fatalf("posted handoff after restart = %+v, %v", note, err)
+	}
+}
+
+func TestStrandedHandoff_DefersRefusedRetryAndWaitsForPersistence(t *testing.T) {
+	const key = "o/r#1"
+	t0 := time.Date(2026, 11, 18, 20, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	store := openStrandedTestStore(t, dir)
+	items := strandedItems("inline:1", "inline:2")
+	if err := store.RecordKickHead(key, items[:1], "head", t0); err != nil {
+		t.Fatal(err)
+	}
+	policy := RetryPolicy{MaxRetries: 1, Backoff: time.Hour}
+	if check, err := store.CheckStranded(key, "head", time.Time{}, items, t0.Add(2*time.Hour), policy); err != nil || check.Verdict != StrandedRetry {
+		t.Fatalf("initial retry = %+v, %v", check, err)
+	}
+	store = openStrandedTestStore(t, dir) // the retry was refused, leaving an empty Handled map
+	policy = RetryPolicy{Backoff: 5 * time.Hour}
+	waitAt := t0.Add(3 * time.Hour)
+	if check, err := store.CheckStranded(key, "", time.Time{}, items, waitAt, policy); err != nil || check.Verdict != StrandedExhausted {
+		t.Fatalf("capped retry = %+v, %v", check, err)
+	}
+	fb := github.PRFeedback{Items: items}
+	deferred, obsolete := readStrandedTestHandoff(t, store, key, fb, waitAt, policy)
+	if obsolete || deferred.Ready {
+		t.Fatalf("headless handoff = %+v, obsolete=%t", deferred, obsolete)
+	}
+	if fresh := store.Plan(key, items, waitAt, Limits{}); fresh.Verdict != VerdictKick || len(fresh.Items) != 1 || fresh.Items[0].ID != items[1].ID {
+		t.Fatalf("routing plan while waiting = %+v", fresh)
+	}
+	fb.HeadSHA = "head"
+	deferred, obsolete = readStrandedTestHandoff(t, store, key, fb, t0.Add(4*time.Hour), policy)
+	if obsolete || deferred.Ready {
+		t.Fatalf("handoff before longer backoff = %+v, obsolete=%t", deferred, obsolete)
+	}
+
+	postAt := t0.Add(6 * time.Hour)
+	blocker := filepath.Join(dir, stateFile+".tmp")
+	if err := os.Mkdir(blocker, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if note, _, err := store.NextStrandedHandoff(key, fb, postAt, policy); err == nil || note != nil {
+		t.Fatalf("handoff before persistence = %+v, %v", note, err)
+	}
+	if err := os.Remove(blocker); err != nil {
+		t.Fatal(err)
+	}
+	ready, obsolete := readStrandedTestHandoff(t, store, key, fb, postAt, policy)
+	if obsolete || !ready.Ready || ready.Body != deferred.Body {
+		t.Fatalf("handoff after persistence recovered = %+v, obsolete=%t", ready, obsolete)
+	}
+	store = openStrandedTestStore(t, dir)
+	fb.HeadSHA = "new-head"
+	if _, obsolete := readStrandedTestHandoff(t, store, key, fb, postAt.Add(time.Hour), policy); !obsolete {
+		t.Fatal("a push from the latest kick should retire its handoff")
+	}
+}
+
+func openStrandedTestStore(t *testing.T, dir string) *Store {
+	t.Helper()
+	store, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func readStrandedTestHandoff(t *testing.T, store *Store, key string, fb github.PRFeedback, now time.Time, policy RetryPolicy) (*StrandedHandoff, bool) {
+	t.Helper()
+	note, obsolete, err := store.NextStrandedHandoff(key, fb, now, policy)
+	if err != nil || note == nil {
+		t.Fatalf("expected a pending handoff, got %+v, %v", note, err)
+	}
+	return note, obsolete
 }
 
 func TestRetryPolicy_Normalized(t *testing.T) {

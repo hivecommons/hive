@@ -260,6 +260,90 @@ func TestWatcher_SharedFeedPruneAndErrors(t *testing.T) {
 	}
 }
 
+func TestWatcher_IndexVersionFieldsAreIndependent(t *testing.T) {
+	r := newWatcherRig(t)
+	src := Source{Kind: KindIndex, URL: r.feed.srv.URL}
+	preview := src
+	preview.VersionField = "preview"
+	shared := preview
+	shared.Name = "Preview channel"
+	r.subs = map[string][]Source{"stable": {src}, "preview": {preview}, "shared": {shared}}
+	ctx := context.Background()
+	r.feed.set(func(f *fakeFeed) { f.body = `{"version":"1.0.0","preview":"2.0.0-rc1"}` })
+	if res := r.w.Poll(ctx); res.Fetched != 2 || res.Detected != 0 {
+		t.Fatalf("baseline poll = %+v", res)
+	}
+
+	r.feed.set(func(f *fakeFeed) {
+		f.body, f.etag = `{"version":"1.0.0","preview":"2.0.0-rc2"}`, `"v2"`
+	})
+	if res := r.w.Poll(ctx); res.Fetched != 2 || res.Detected != 2 || len(res.Kicked) != 2 {
+		t.Fatalf("preview-only update = %+v", res)
+	}
+	for _, call := range r.kicker.calls {
+		if call.agent == "stable" || len(call.releases) != 1 {
+			t.Fatalf("unexpected kick: %+v", call)
+		}
+		if got := call.releases[0]; got.Old != "2.0.0-rc1" || got.New != "2.0.0-rc2" {
+			t.Fatalf("%s got release %+v", call.agent, got)
+		}
+	}
+}
+
+func TestWatcher_RebaselinesLegacyIndexStateOnce(t *testing.T) {
+	r := newWatcherRig(t)
+	stable := Source{Kind: KindIndex, URL: r.feed.srv.URL}
+	pypi := Source{Kind: KindPyPI, Package: "requests"}
+	r.subs = map[string][]Source{"stable": {stable}, "deps": {pypi}}
+	// The previous configuration watched preview. Only the default field is
+	// configured at upgrade, but v1 gives both selectors the same key.
+	legacy := fmt.Sprintf(`{"version":1,"sources":{
+		%q:{"etag":"\"v1\"","version":"2.0.0-rc1"},
+		%q:{"etag":"\"v1\"","version":"3.0.0"}
+	},"agents":{"stable":{"seen":{%q:"2.0.0-rc1"},"pending":[
+		{"source":%q,"old":"2.0.0-rc0","new":"2.0.0-rc1"}
+	]},"deps":{"seen":{%q:"3.0.0"},"pending":[
+		{"source":%q,"old":"2.9.0","new":"3.0.0"}
+	]}}}`,
+		stable.Key(), pypi.Key(), stable.Key(), stable.Key(), pypi.Key(), pypi.Key())
+	if err := os.MkdirAll(filepath.Dir(r.store.path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.store.path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	r.feed.set(func(f *fakeFeed) { f.body = `{"version":"1.0.0","preview":"2.0.0-rc1"}` })
+	ctx := context.Background()
+	if res := r.w.Poll(ctx); res.Fetched != 1 || res.NotModified != 1 || res.Detected != 0 ||
+		len(res.Kicked) != 1 || res.Kicked[0] != "deps" {
+		t.Fatalf("migration poll = %+v", res)
+	}
+	if got := r.kicker.calls[0].releases; len(got) != 1 || got[0].Old != "2.9.0" || got[0].New != "3.0.0" {
+		t.Fatalf("pending PyPI release after migration = %+v", got)
+	}
+
+	upgraded, err := r.store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upgraded.Version != 1 || !upgraded.IndexFieldsSeparated {
+		t.Fatalf("upgraded state must use rollback-readable version 1 and record the migration: %+v", upgraded)
+	}
+
+	r.w = r.newWatcher()
+	delete(r.subs, "deps")
+	r.feed.set(func(f *fakeFeed) {
+		f.body, f.etag = `{"version":"1.1.0","preview":"2.0.0-rc1"}`, `"v2"`
+	})
+	if res := r.w.Poll(ctx); res.Detected != 1 || len(res.Kicked) != 1 || res.Kicked[0] != "stable" {
+		t.Fatalf("stable release after restart = %+v", res)
+	}
+	if got := r.kicker.calls[1].releases; len(got) != 1 || got[0].Old != "1.0.0" || got[0].New != "1.1.0" {
+		t.Fatalf("stable release after migration = %+v", got)
+	}
+}
+
 func TestWatcher_DisabledNilKickerAndRun(t *testing.T) {
 	r := newWatcherRig(t)
 	off := New(Options{Enabled: func() bool { return false }, Fetcher: r.feed.fetcher()})

@@ -179,3 +179,40 @@ func customerMatchPublic(e customerMatchEntry, u *SaaSUser, hiveID string, domai
 	}
 	return e, public
 }
+
+// customerMatchFieldAffiliation is the answer field and label key for the
+// hub-derived affiliation.
+const customerMatchFieldAffiliation = "affiliation"
+
+// customerMatchAffiliation adds the hub-derived affiliation to a labeled
+// answer entry for a current grant holder of hiveID (#19856). Only an
+// affiliation derived from public github.com data crosses
+// (crmAffiliationShareable): never the identity-provider or GHE-host
+// fallbacks, and never anything derived from an email, which the hub never
+// matches. The label is the derivation source, for example "company_field"
+// or "colony:gitdm". It reports whether it added one.
+//
+// The trust-domain gate in handleCustomerMatch runs before this, so a hive
+// outside HIVE_HUB_CUSTOMERS_TRUSTED_HIVES never reaches it.
+func customerMatchAffiliation(e customerMatchEntry, u *SaaSUser, hiveID string) (customerMatchEntry, bool) {
+	if u == nil || u.Blocked || u.Hives[hiveID] == "" || !crmAffiliationShareable(u) {
+		return e, false
+	}
+	// A person who cleared their organization on the hub gets no derived
+	// one either, under any key (the same rule as customerPublicOrganization).
+	if u.CompanySource != "" && strings.TrimSpace(u.Company) == "" {
+		return e, false
+	}
+	v := truncateRunes(strings.TrimSpace(u.Affiliation), maxContactCompanyLen)
+	if v == "" {
+		return e, false
+	}
+	e.Affiliation = v
+	sources := make(map[string]string, len(e.Sources)+1)
+	for k, src := range e.Sources {
+		sources[k] = src
+	}
+	sources[customerMatchFieldAffiliation] = strings.TrimSpace(u.AffiliationSource)
+	e.Sources = sources
+	return e, true
+}

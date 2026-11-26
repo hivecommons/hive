@@ -160,10 +160,12 @@ Notes that will save you a wrong guess:
 
 - `gitlab:`, `gitea:` and `forgejo:` are **top-level** blocks, siblings of
   `github:` — not nested inside it.
-- `token_env` names the **environment variable to read the token from**. The
-  token value is never written to config, matching Hive's no-secrets-in-config
-  rule. Use `GITLAB_TOKEN` / `GITEA_TOKEN` / `FORGEJO_TOKEN` unless you have a
-  reason not to.
+- `token_env` names the **environment variable to read the token from**, and
+  `token_file` names a file under `/secrets` or `/data/secrets` that holds it.
+  When both are set, the file wins, and a bad file is an error with no
+  fallback to the env var. The token value is never written to config,
+  matching Hive's no-secrets-in-config rule. Use `GITLAB_TOKEN` /
+  `GITEA_TOKEN` / `FORGEJO_TOKEN` unless you have a reason not to.
 - Omitting `project.forge` means GitHub, so every existing config is unaffected.
 - GitLab defaults to `https://gitlab.com`. Gitea and Forgejo have **no** default
   — there is no single public host, so selecting either forge without a URL is a
@@ -190,7 +192,7 @@ Notes that will save you a wrong guess:
   is a config error. The GitLab block URL defaults to `https://gitlab.com`. A
   Gitea or Forgejo block with no URL of its own is not checked. The governor's
   escalation writes and its repo-scoped kicks follow the per-repo value; the
-  token still comes from the forge-wide `token_env`.
+  token still comes from the forge-wide `token_env` or `token_file`.
 
 ```yaml
 project:
@@ -204,7 +206,10 @@ project:
 
 Git clone and push on a Forgejo repo send a token only to that repo's forge
 host. By default the token is the `forgejo.token_env` access token, the one
-every agent tier shares, and it never expires. Set `forgejo.integration` to
+every agent tier shares, and it never expires. The read-only tiers (advisor
+and shared-uid-read) can then push with it, and hive logs a warning at boot
+and shows it in the dashboard's forge settings while this is the case. Set
+`forgejo.integration` to
 have hive sign a one-hour JWT for each push and clone instead. Forgejo's
 authorized integrations accept these tokens, and each tier gets its own
 integration, the Forgejo analogue of a GitHub App installation token:
@@ -239,9 +244,42 @@ mounted at `/secrets` with `defaultMode: 0440` presents it. hive refuses a
 group-readable key under any other group, because agent UIDs share group
 `node` (GID 1000), and refuses any key that others can read. A key kept under
 `/data/secrets` is sealed in place by the keystore at boot and still loads
-afterwards. The key file is read at every mint, so
-replacing it rotates the key; list the old and new key in the key list while
-the change rolls out.
+afterwards. `hive validate` reports a `key_file` that does not exist or
+cannot be read.
+
+`forgejo.integration` covers git clone and push only. Work discovery, the
+issue and pull request relays, merges and both sweeps still call the Forgejo
+REST API with the access token from `forgejo.token_env` or
+`forgejo.token_file`, so keep that token set
+([#19920](https://github.com/hivecommons/hive/issues/19920) tracks moving
+REST to the JWTs too). The hive writes labels, comments and merges with it,
+so it needs `write:repository` and `write:issue`; the live end-to-end run in
+[#19909](https://github.com/hivecommons/hive/issues/19909) used
+`write:repository,write:issue,read:user,read:organization`. An unset
+`token_env` variable fails with an error that names it.
+
+#### Rotate the signing key
+
+The key file is read at every mint, so replacing it rotates the key. Forgejo
+caches the key list for about 10 minutes, and does not fetch it again when a
+token names a key ID it does not know. A token signed with a key that is not
+yet in Forgejo's cached copy is refused, and the clone or push fails with
+`Authentication failed`. Rotate in this order:
+
+1. Publish a key list with both the old and the new key:
+   `hive forge key-list --issuer https://keys.example.com --key old.pem --key new.pem --out DIR`.
+2. Wait more than 10 minutes, so Forgejo fetches the new list.
+3. Point `key_file` at the new key, or replace the file in place.
+4. One hour after step 3, when the last token signed with the old key has
+   expired, publish the key list with the new key only.
+
+#### The key host is a git dependency
+
+Forgejo keeps no stale copy of the key list. If the host that serves it at
+`issuer` is unreachable for longer than the cache window, about 10 minutes,
+Forgejo refuses every JWT, and every clone and push on a Forgejo repo fails
+until the host is back. Run the key host with the same availability you expect
+from git.
 
 ### Do not confuse `project.forge` with `github.forge`
 

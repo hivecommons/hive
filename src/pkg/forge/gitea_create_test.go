@@ -39,6 +39,17 @@ func (f *fakeForgejoWrites) record(r *http.Request) {
 	f.bodies[key] = append(f.bodies[key], m)
 }
 
+// lastBody re-encodes the body record stored for r, which the handler has
+// already consumed.
+func (f *fakeForgejoWrites) lastBody(r *http.Request) []byte {
+	calls := f.calls(r.Method + " " + r.URL.Path)
+	if len(calls) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(calls[len(calls)-1])
+	return b
+}
+
 func (f *fakeForgejoWrites) calls(key string) []map[string]any {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -81,7 +92,7 @@ func (f *fakeForgejoWrites) server(t *testing.T) *httptest.Server {
 				_, _ = w.Write([]byte(`{"message":"label not found"}`))
 				return
 			}
-			_, _ = w.Write([]byte(`[]`))
+			_, _ = w.Write(echoAppliedLabels(f.lastBody(r)))
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -158,6 +169,31 @@ func TestForgejoCreateIssueLabelFailureKeepsRef(t *testing.T) {
 	}
 	if ref.Number != 42 {
 		t.Errorf("ref = %+v, want the created issue so the caller does not file twice", ref)
+	}
+}
+
+func TestForgejoCreateIssueReportsDroppedLabel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/labels"):
+			_, _ = w.Write([]byte(`[{"name":"bug"}]`))
+		default:
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"number": 42, "html_url": "u"}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	f := newTestForgejo(t, srv)
+
+	ref, err := f.(IssueCreator).CreateIssue(context.Background(), "widgets", "T", "", []string{"bug", "ready-for-review"})
+	if !errors.Is(err, ErrLabelsNotApplied) {
+		t.Fatalf("err = %v, want ErrLabelsNotApplied", err)
+	}
+	if !strings.Contains(err.Error(), "ready-for-review") || strings.Contains(err.Error(), "bug,") {
+		t.Errorf("err = %v, want it to name only the dropped label", err)
+	}
+	if ref.Number != 42 {
+		t.Errorf("ref = %+v", ref)
 	}
 }
 

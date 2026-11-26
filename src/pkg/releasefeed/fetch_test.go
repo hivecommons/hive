@@ -272,6 +272,10 @@ func TestSourceKeyAndLabel(t *testing.T) {
 		{Source{Kind: KindPyPI, Package: "Requests", AuthVar: "TOK"}, "pypi:requests#TOK", "Requests"},
 		{Source{Kind: KindIndex, URL: "https://i/x", Name: "internal"}, "index:https://i/x", "internal"},
 		{Source{Kind: KindIndex, URL: "https://i/x"}, "index:https://i/x", "https://i/x"},
+		{Source{Kind: KindIndex, URL: "https://i/x", VersionField: "version"}, "index:https://i/x", "https://i/x"},
+		{Source{Kind: KindIndex, URL: "https://i/x", VersionField: "  "}, "index:https://i/x", "https://i/x"},
+		{Source{Kind: KindIndex, URL: "https://i/x", VersionField: " pre:#% ", AuthVar: "TOK"},
+			"index-field:+pre%3A%23%25+:index:https://i/x#TOK", "https://i/x"},
 	}
 	for _, tc := range cases {
 		if tc.src.Key() != tc.key || tc.src.Label() != tc.label {

@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/url"
-	"os"
 	"sort"
 	"strings"
 
@@ -86,8 +85,11 @@ func forgejoMinter(cfg *config.Config) pushbroker.TokenMinter {
 			Audiences: auds,
 		}
 	}
-	envName := cfg.Forgejo.TokenEnvName()
-	return pushbroker.StaticTokenMinter{Token: func() string { return os.Getenv(envName) }}
+	gov := cfg.Forgejo.Credentials().Governor()
+	return pushbroker.StaticTokenMinter{Token: func() (string, error) {
+		token, _, err := gov.Resolve()
+		return token, err
+	}}
 }
 
 // forgejoHosts lists the hosts of every forge URL a Forgejo repo of cfg
@@ -138,9 +140,16 @@ func (b *boot) bootForgeRemoteResolver() pushbroker.ForgeRemoteResolver {
 // registers the configured Forgejo hosts with the agents' proxy so its mode
 // rules and the Forgejo hard denies apply to them. The Sessions workspace
 // clone gets the same resolver when it is created (userSessionRuntime).
+//
+// It also warns, once per boot, when Forgejo repos have no
+// forgejo.integration: every token tier then pushes with the one write
+// token (hivecommons/hive#19917).
 func (b *boot) wireForgeRemotes() {
 	if s, ok := b.agentMgr.(forgeRemoteSetter); ok {
 		s.SetSandboxForgeRemotes(b.bootForgeRemoteResolver())
 	}
 	proxy.SetForgeHosts(forgejoHosts(b.cfg))
+	if w := b.cfg.ForgejoSharedWriteTokenWarning(); w != "" && b.logger != nil {
+		b.logger.Warn(w, "fix", "forgejo.integration")
+	}
 }

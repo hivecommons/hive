@@ -405,6 +405,9 @@ func (w *Watcher) ensureLoaded() {
 		w.opts.Logger.Warn("release feed state unreadable; starting fresh (first answers are baselines)", "error", err)
 		return
 	}
+	if !st.IndexFieldsSeparated {
+		st.separateIndexFields()
+	}
 	w.state = st
 }
 

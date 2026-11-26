@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,10 @@ func (f *fakeFeedbackSource) FetchPRFeedback(_ context.Context, repo string, num
 func (f *fakeFeedbackSource) CreateIssueComment(_ context.Context, _ string, _ int, body string) error {
 	f.comments = append(f.comments, body)
 	return nil
+}
+
+func (f *fakeFeedbackSource) IssueCommentPosted(_ context.Context, _ string, _ int, body string) (bool, error) {
+	return slices.Contains(f.comments, body), nil
 }
 
 type recordingKicker struct {

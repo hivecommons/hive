@@ -53,6 +53,53 @@ type CustomersConfig struct {
 	// GitHub, GitHub Enterprise, GitLab, Gitea/Forgejo or Linear
 	// (#19302). Default OFF: it is a periodic network lookup about people.
 	ProfileFill CustomersProfileFillConfig `yaml:"profile_fill,omitempty" json:"profile_fill,omitempty"`
+	// Store picks where person records and enrichment results live during
+	// the move to the hivecommons/colony store (#19855): "json" (the
+	// default), "shadow" or "colony". See CustomersStoreMode and
+	// src/docs/design/colony-customer-data-backend.md.
+	Store string `yaml:"store,omitempty" json:"store,omitempty"`
+}
+
+// EnvCustomersStore overrides customers.store when it names a known mode.
+const EnvCustomersStore = "HIVE_CUSTOMERS_STORE"
+
+// Customers store modes (customers.store / HIVE_CUSTOMERS_STORE).
+const (
+	// CustomersStoreJSON is today's behaviour: people.json and
+	// enrichment.json only, and no colony.db is created. The default.
+	CustomersStoreJSON = "json"
+	// CustomersStoreShadow imports the JSON into colony.db on first boot,
+	// writes every change to both, and keeps reading the JSON.
+	CustomersStoreShadow = "shadow"
+	// CustomersStoreColony reads person records and enrichment from
+	// colony.db and still writes the JSON, so switching back to json loses
+	// nothing.
+	CustomersStoreColony = "colony"
+)
+
+// ParseCustomersStoreMode reads a store mode. An empty or unknown value is
+// not ok; the caller then falls back, so a typo can only mean json.
+func ParseCustomersStoreMode(raw string) (string, bool) {
+	switch v := strings.ToLower(strings.TrimSpace(raw)); v {
+	case CustomersStoreJSON, CustomersStoreShadow, CustomersStoreColony:
+		return v, true
+	}
+	return "", false
+}
+
+// CustomersStoreMode is the customers store mode: HIVE_CUSTOMERS_STORE when
+// it names a known mode, then customers.store, then json. An unknown value
+// anywhere fails closed to json.
+func (c *Config) CustomersStoreMode() string {
+	if v, ok := ParseCustomersStoreMode(os.Getenv(EnvCustomersStore)); ok {
+		return v
+	}
+	if c != nil {
+		if v, ok := ParseCustomersStoreMode(c.Customers.Store); ok {
+			return v
+		}
+	}
+	return CustomersStoreJSON
 }
 
 // EnvCustomersProfileFillEnabled overrides customers.profile_fill.enabled
@@ -307,9 +354,9 @@ func (c *Config) CustomersMentionSearchEnabled() bool {
 
 // Customers enrichment (`customers.enrichment:`) adds public affiliation and
 // activity facts about confirmed customers from CNCF-published sources, through
-// the hivecommons/colony resolver. Everything is OFF by default. The block and
-// each provider have their own switch, every switch also needs the one above it
-// on, and an environment variable overrides each one. See
+// the hivecommons/colony resolver. The master switch defaults off; gitdm
+// defaults on and the other providers default off. Each provider also needs
+// enrichment on, and an environment variable overrides each switch. See
 // src/docs/customers-enrichment.md.
 const (
 	// EnvCustomersEnrichmentEnabled overrides customers.enrichment.enabled.
@@ -372,6 +419,55 @@ type CustomersEnrichmentConfig struct {
 	// CrowdDev looks up affiliation and activity on crowd.dev (LFX
 	// Insights) by GitHub login, with an API token.
 	CrowdDev CustomersEnrichmentCrowdDevConfig `yaml:"crowddev,omitempty" json:"crowddev,omitempty"`
+	// AutoAccept is the auto-accept policy for provider affiliations: "off"
+	// (the default, every value is a suggestion) or "gitdm_high". See
+	// CustomersEnrichmentAutoAccept.
+	AutoAccept string `yaml:"auto_accept,omitempty" json:"auto_accept,omitempty"`
+}
+
+// EnvCustomersEnrichmentAutoAccept overrides customers.enrichment.auto_accept
+// when it names a known policy.
+const EnvCustomersEnrichmentAutoAccept = "HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT"
+
+// Enrichment auto-accept policies.
+const (
+	// CustomersAutoAcceptOff leaves every provider value a suggestion an
+	// owner accepts or dismisses. The default.
+	CustomersAutoAcceptOff = "off"
+	// CustomersAutoAcceptGitdmHigh accepts a current gitdm affiliation
+	// matched by login (confidence high) into an organization field that is
+	// empty or holds an automatic value. It never overwrites a value a
+	// person set or one shared from the hub, and it stays dismissible.
+	CustomersAutoAcceptGitdmHigh = "gitdm_high"
+)
+
+// ParseCustomersAutoAccept reads an auto-accept policy; an empty or unknown
+// value is not ok.
+func ParseCustomersAutoAccept(raw string) (string, bool) {
+	switch v := strings.ToLower(strings.TrimSpace(raw)); v {
+	case CustomersAutoAcceptOff, CustomersAutoAcceptGitdmHigh:
+		return v, true
+	}
+	return "", false
+}
+
+// CustomersEnrichmentAutoAccept is the auto-accept policy:
+// HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT when it names a known policy, then
+// customers.enrichment.auto_accept, then off. It is off whenever the gitdm
+// provider is off, and an unknown value fails closed to off.
+func (c *Config) CustomersEnrichmentAutoAccept() string {
+	if !c.CustomersEnrichmentGitdmEnabled() {
+		return CustomersAutoAcceptOff
+	}
+	if v, ok := ParseCustomersAutoAccept(os.Getenv(EnvCustomersEnrichmentAutoAccept)); ok {
+		return v
+	}
+	if c != nil {
+		if v, ok := ParseCustomersAutoAccept(c.Customers.Enrichment.AutoAccept); ok {
+			return v
+		}
+	}
+	return CustomersAutoAcceptOff
 }
 
 // IsEnabled reports whether the enrichment block is on (default off).
@@ -381,7 +477,7 @@ func (c CustomersEnrichmentConfig) IsEnabled() bool {
 
 // CustomersEnrichmentGitdmConfig (`customers.enrichment.gitdm:`).
 type CustomersEnrichmentGitdmConfig struct {
-	// Enabled turns the gitdm provider on. nil = false.
+	// Enabled turns the gitdm provider on. nil = true.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// RefreshInterval is how often the public snapshot is downloaded again,
 	// as a Go duration ("24h"). Empty = DefaultCustomersEnrichmentGitdmRefresh;
@@ -389,9 +485,9 @@ type CustomersEnrichmentGitdmConfig struct {
 	RefreshInterval string `yaml:"refresh_interval,omitempty" json:"refresh_interval,omitempty"`
 }
 
-// IsEnabled reports whether gitdm is on (default off).
+// IsEnabled reports whether gitdm is on (default on).
 func (c CustomersEnrichmentGitdmConfig) IsEnabled() bool {
-	return c.Enabled != nil && *c.Enabled
+	return c.Enabled == nil || *c.Enabled
 }
 
 // CustomersEnrichmentDevstatsConfig (`customers.enrichment.devstats:`).
@@ -496,7 +592,7 @@ func (c *Config) customersEnrichmentProviderEnabled(env string, saved func(Custo
 		return v
 	}
 	if c == nil {
-		return false
+		return saved(CustomersEnrichmentConfig{})
 	}
 	return saved(c.Customers.Enrichment)
 }

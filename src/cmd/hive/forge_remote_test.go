@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -180,5 +182,33 @@ func TestWireForgeRemotesRegistersOnlyConfiguredHosts(t *testing.T) {
 	}
 	if _, ok, err := b.bootForgeRemoteResolver()("team/app"); err != nil || !ok {
 		t.Fatalf("boot resolver ok=%v err=%v", ok, err)
+	}
+}
+
+// Boot says so when every Forgejo token tier would push with the one write
+// token (hivecommons/hive#19917), and stays quiet when forgejo.integration
+// gives each tier its own token or no repo is on Forgejo.
+func TestWireForgeRemotesWarnsWhenTiersShareTheWriteToken(t *testing.T) {
+	t.Cleanup(func() { proxy.SetForgeHosts(nil) })
+	var logs bytes.Buffer
+	b := &boot{cfg: forgejoTestConfig(), logger: slog.New(slog.NewTextHandler(&logs, nil))}
+	b.wireForgeRemotes()
+	out := logs.String()
+	if strings.Count(out, "level=WARN") != 1 || !strings.Contains(out, "forgejo.integration is not set") || !strings.Contains(out, "HIVE_TEST_FORGEJO_REMOTE_TOKEN") {
+		t.Fatalf("boot log = %q, want one warning naming forgejo.integration and the token env", out)
+	}
+
+	logs.Reset()
+	b.cfg.Forgejo.Integration = &config.ForgejoIntegrationConfig{}
+	b.wireForgeRemotes()
+	if strings.Contains(logs.String(), "forgejo.integration is not set") {
+		t.Fatalf("warned with forgejo.integration set: %q", logs.String())
+	}
+
+	logs.Reset()
+	b.cfg = &config.Config{}
+	b.wireForgeRemotes()
+	if strings.Contains(logs.String(), "forgejo.integration is not set") {
+		t.Fatalf("a GitHub-only hive warned: %q", logs.String())
 	}
 }
