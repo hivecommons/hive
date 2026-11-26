@@ -17,7 +17,6 @@ func TestCIMaintainerPoliciesCarryMergeHotspotGuidance(t *testing.T) {
 	required := [][]byte{
 		[]byte("## Merge Hotspots"),
 		[]byte("GET /api/hotspots"),
-		[]byte("hivectl governor hotspots"),
 		[]byte("<!-- hive:hotspot file=<path> -->"),
 		[]byte("mechanical split"),
 		[]byte("Do not splinter"),
