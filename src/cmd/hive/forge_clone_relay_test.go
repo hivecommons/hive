@@ -325,7 +325,7 @@ func TestForgeCloneRelayFailedMintFailsClosed(t *testing.T) {
 		t.Fatalf("ran git with an empty token: %+v", h2.calls)
 	}
 	readRelayResult(t, path, &resp)
-	if resp.OK || !strings.Contains(resp.Error, "no token") {
+	if resp.OK || !strings.Contains(resp.Error, "minting the clone token") {
 		t.Fatalf("empty token resp = %+v", resp)
 	}
 }
@@ -526,7 +526,7 @@ func TestForgeCloneBaseEnvDropsTraceAndConfig(t *testing.T) {
 		"GIT_TRACE=1", "GIT_TRACE_CURL=1", "GIT_TRACE_PACKET=1", "GIT_CURL_VERBOSE=1", "GIT_REDACT_COOKIES=",
 		"GIT_CONFIG_PARAMETERS='http.extraHeader=x'", "GIT_CONFIG_COUNT=1", "GIT_CONFIG_GLOBAL=/tmp/evil",
 		"GIT_DIR=/tmp/x", "GIT_OBJECT_DIRECTORY=/tmp/o", "GIT_ALTERNATE_OBJECT_DIRECTORIES=/tmp/a", "GIT_WORK_TREE=/tmp/w", "GIT_SSL_NO_VERIFY=1",
-		forgejoTestTokenEnv + "=" + forgePushTestToken,
+		"FORGEJO_TOKEN=" + forgePushTestToken,
 	})
 	if got := strings.Join(env, " "); got != "PATH=/usr/bin HOME=/root" {
 		t.Fatalf("base env = %q", got)
