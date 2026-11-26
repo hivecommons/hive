@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 )
 
@@ -26,6 +27,9 @@ type delegateDeciderRunner struct {
 	// model returns the per-feature model override ("" keeps the reviewer
 	// model); nil means the "Let hive decide" override.
 	model func(*config.Config) string
+	// modelFor, when set, picks the override per turn profile instead of
+	// model.
+	modelFor func(cfg *config.Config, profile string) string
 	// maxTokens caps the completion; zero means delegateDeciderMaxTokens.
 	maxTokens int
 }
@@ -59,13 +63,23 @@ func newDelegateDeciderRunner(cfg func() *config.Config) delegatedecision.TurnRu
 
 // newChatGroundingRunner is the same reviewer-endpoint turn for the
 // dashboard's grounded chat answers (chat.grounded_answers), with that
-// block's model override instead of the decider's.
+// block's model override instead of the decider's. The config assist
+// proposal turn uses chat.config_assist.model, which falls back to
+// grounded_answers.model.
 func newChatGroundingRunner(cfg func() *config.Config) delegatedecision.TurnRunner {
 	return &delegateDeciderRunner{
-		cfg:   cfg,
-		http:  &http.Client{Timeout: delegateDeciderTimeout},
-		model: func(c *config.Config) string { return c.Chat.GroundedAnswersModel() },
+		cfg:      cfg,
+		http:     &http.Client{Timeout: delegateDeciderTimeout},
+		modelFor: chatTurnModel,
 	}
+}
+
+// chatTurnModel is the chat runner's model override for one turn profile.
+func chatTurnModel(c *config.Config, profile string) string {
+	if profile == dashboard.ChatConfigAssistProfile {
+		return c.Chat.ConfigAssistModel()
+	}
+	return c.Chat.GroundedAnswersModel()
 }
 
 type delegateDeciderMessage struct {
@@ -97,6 +111,9 @@ func (r *delegateDeciderRunner) RunDeciderTurn(ctx context.Context, profile, sys
 	override := cfg.Decisions.Delegate.LLMModel
 	if r.model != nil {
 		override = func() string { return r.model(cfg) }
+	}
+	if r.modelFor != nil {
+		override = func() string { return r.modelFor(cfg, profile) }
 	}
 	if m := override(); m != "" {
 		model = m
