@@ -414,7 +414,7 @@ const maxModelLenQueryTimeout = 3 * time.Second
 // listing names no window for it.
 //
 // Servers spell the window differently: vLLM sends max_model_len, gufo and
-// OpenRouter send context_length, LiteLLM sends max_input_tokens. The first
+// OpenRouter send context_length, some gateways send max_input_tokens. The first
 // positive one, in that order, wins (hivecommons/hive#19913). When no entry
 // has the model's id, the first entry is used only if it is the ONLY entry:
 // on a multi-model gateway another model's window would be wrong.

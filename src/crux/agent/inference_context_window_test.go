@@ -140,3 +140,30 @@ func TestInferenceContextWindowEnv(t *testing.T) {
 		t.Fatalf("window env = %v", env)
 	}
 }
+
+// The setting describes the configured model: while an override runs another
+// model the agent falls back to discovery; an override naming the same model
+// keeps the setting.
+func TestAgentEnvPairs_InferenceContextWindowIgnoresSettingUnderModelOverride(t *testing.T) {
+	t.Setenv(inferencePassContextWindowEnv, "")
+	cfg := config.AgentConfig{Backend: "litellm", Model: "vllm/Qwen", MaxContextTokens: 262144}
+	for _, tc := range []struct {
+		name, override string
+		discovered     int
+		want           string
+		present        bool
+	}{
+		{"other model, discovered", "vllm/DeepSeek", 1048576, "1048576", true},
+		{"other model, nothing discovered", "vllm/DeepSeek", 0, "", false},
+		{"same model", "vllm/Qwen", 0, "262144", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewManager(map[string]config.AgentConfig{"a": cfg}, discardLogger(), ProjectContext{})
+			m.SetInferenceContextWindowLookup(func(string) (int, string) { return tc.discovered, tc.override })
+			v, ok := contextWindowEnv(m.agentEnvPairs(&AgentProcess{Name: "a", Config: cfg, ModelOverride: tc.override}))
+			if ok != tc.present || v != tc.want {
+				t.Fatalf("%s = %q (present=%v), want %q (present=%v)", claudeMaxContextTokensEnv, v, ok, tc.want, tc.present)
+			}
+		})
+	}
+}

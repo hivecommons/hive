@@ -665,7 +665,9 @@ Hive tells the CLI the real window with `CLAUDE_CODE_MAX_CONTEXT_TOKENS` when it
        max_context_tokens: 262144
    ```
 
-2. The window the inference translator discovered from the endpoint's `/v1/models`: `max_model_len` (vLLM), then `context_length` (gufo, OpenRouter), then `max_input_tokens` (LiteLLM). A listing entry is used only when its `id` matches the model, or when the listing has a single model. The discovery runs in the background when the route is set, so a window learned for a model applies from the next launch of an agent on that model. The `inference route max context length resolved` log line records it.
+2. The window the inference translator discovered from the endpoint's `/v1/models`: `max_model_len` (vLLM), then `context_length` (gufo, OpenRouter), then `max_input_tokens` (used by some gateways; LiteLLM's own `/v1/models` does not report a window, so set `max_context_tokens` there). A listing entry is used only when its `id` matches the model, or when the listing has a single model. The discovery runs in the background when the route is set, so a window learned for a model applies from the next launch of an agent on that model. Learned windows are kept in memory only, so after a hive restart the first launch on each model gets no discovered window. Set `max_context_tokens` when the window must apply from the first launch. The `inference route max context length resolved` log line records a learned window.
+
+`max_context_tokens` describes the agent's configured `model`. It is not applied while a model override (a dashboard switch or pin) runs another model, and a review head on a different model does not inherit it; those fall back to discovery.
 
 Hive does not export the variable for model IDs that contain `claude` (for example `anthropic/claude-sonnet-5-5`), because the CLI already knows those windows. Set `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` to turn the export off for the whole hive. Sandbox Job kicks do not get the variable yet: the sandbox drops every variable whose name contains `TOKEN`.
 

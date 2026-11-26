@@ -67,7 +67,9 @@ func TestQueryMaxModelLen_NoCrossModelFallback(t *testing.T) {
 // the same model (a relaunch, another agent) carries it from the moment it is
 // set, so the CLI launched right after can be told its window.
 func TestSetInferenceRoute_SeedsWindowFromEarlierDiscovery(t *testing.T) {
-	srv := modelsServer(t, `{"data":[{"id":"vllm/Qwen","context_length":262144}]}`)
+	// Two models, so the single-model fallback cannot answer for "vllm/DeepSeek"
+	// below and its background probe resolves nothing.
+	srv := modelsServer(t, `{"data":[{"id":"vllm/Qwen","context_length":262144},{"id":"vllm/Other","context_length":4096}]}`)
 	p := newInferenceTestProxy()
 
 	p.SetInferenceRoute("quality", &InferenceRoute{Backend: "litellm", Endpoint: srv.URL, Model: "vllm/Qwen"})

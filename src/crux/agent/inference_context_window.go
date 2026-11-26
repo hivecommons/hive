@@ -42,8 +42,10 @@ func inferencePassContextWindowEnabled() bool {
 // the agent's configured model; the model on the agent's live route, when the
 // proxy reports one, is checked instead, because that is the ID the CLI sees
 // once an empty model resolves to the gateway default. The agent's
-// max_context_tokens setting wins; otherwise the window the proxy discovered
-// for the route is used. Caller decides that the agent is inference-routed.
+// max_context_tokens setting wins, but only while the agent runs its
+// configured model: it describes that model, so a model override (a dashboard
+// switch, a pin) falls back to discovery. Otherwise the window the proxy
+// discovered for the route is used. Caller decides that the agent is inference-routed.
 // Safe with m.mu held.
 func (m *Manager) inferenceContextWindowFor(agent *AgentProcess, model string) int {
 	if !inferencePassContextWindowEnabled() {
@@ -60,7 +62,7 @@ func (m *Manager) inferenceContextWindowFor(agent *AgentProcess, model string) i
 	if strings.Contains(strings.ToLower(model), claudeModelIDMarker) {
 		return 0
 	}
-	if n := agent.Config.MaxContextTokens; n > 0 {
+	if n := agent.Config.MaxContextTokens; n > 0 && !modelOverridden(agent) {
 		return n
 	}
 	return discovered
@@ -73,4 +75,11 @@ func inferenceContextWindowEnv(window int) map[string]string {
 		return nil
 	}
 	return map[string]string{claudeMaxContextTokensEnv: strconv.Itoa(window)}
+}
+
+// modelOverridden reports whether the agent runs a model other than its
+// configured one.
+func modelOverridden(agent *AgentProcess) bool {
+	o := strings.TrimSpace(agent.ModelOverride)
+	return o != "" && o != strings.TrimSpace(agent.Config.Model)
 }
