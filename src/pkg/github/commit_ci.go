@@ -771,6 +771,15 @@ func EvaluateCommitCI(ctx context.Context, client *gh.Client, owner, repo, sha s
 			st.Reason = reason
 		}
 	}
+	if opts.PRNumber > 0 {
+		// The structured stall a merge verdict carries (CIReportingStallFor);
+		// display only, it changes no verdict here.
+		recordedAt := time.Now()
+		if opts.Now != nil {
+			recordedAt = opts.Now()
+		}
+		sharedCIReportingStalls.record(owner, repo, opts.PRNumber, sha, st.Reason, st.Reporting, recordedAt)
+	}
 	return st, nil
 }
 

@@ -533,6 +533,13 @@ type StageTrackerItem struct {
 	// ciChecking is a real check observed running on this snapshot's head
 	// with no failing checks, not a pending reviewer or meta check.
 	ciChecking bool
+	// ciReportingStalled is the your-turn decision's instruction for a PR
+	// whose required check GitHub still reports unfinished after its job
+	// finished (ownership_ci_reporting.go), and ciReportingStalledHead the
+	// head that decision was made for; unexported: the payload shows it as
+	// needs_human_why, never as a stage.
+	ciReportingStalled     string
+	ciReportingStalledHead string
 	// SentinelAlert is true on a PR the suspicious-activity sentinel flagged:
 	// it wears the configured alert label (sentinel.label, default
 	// sentinel-alert) or the review evidence bundle for its current head

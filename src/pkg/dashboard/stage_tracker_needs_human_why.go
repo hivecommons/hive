@@ -116,6 +116,12 @@ func stageTrackerNeedsHumanWhyFor(it StageTrackerItem) *StageTrackerNeedsHumanWh
 		// "needs an owner action: ...".
 		return &StageTrackerNeedsHumanWhy{Source: needsHumanSourceBlockedOnOwner, Reason: it.BlockedOwnerReason}
 	}
+	if reason := stageTrackerCIReportingStalledReason(it); reason != "" && !held {
+		// GitHub still shows a required check unfinished though its job
+		// finished; the stage stays CI-pending, a person re-runs the job
+		// (stage_tracker_ci_reporting.go).
+		return &StageTrackerNeedsHumanWhy{Source: needsHumanSourceCIReportingStalled, Reason: reason}
+	}
 	if held {
 		// A hold a person set is their own pause and waits on nobody; one
 		// the hive placed waits on a maintainer to lift it.
