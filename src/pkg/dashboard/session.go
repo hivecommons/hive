@@ -26,6 +26,11 @@ type userSession struct {
 	Username  string
 	Role      string
 	ExpiresAt time.Time
+	// GitHubLogin is the GitHub login a non-GitHub sign-in proved control of
+	// on the hub, carried by the SSO handoff (github_link.go, #19992). It is
+	// used only for contributor features keyed by GitHub login, never for the
+	// role.
+	GitHubLogin string `json:",omitempty"`
 }
 
 // sessionIDBytes is the entropy of an opaque session id. 32 bytes (256 bits) is

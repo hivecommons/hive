@@ -179,6 +179,11 @@ type SaaSUser struct {
 	AvatarURL         string `json:"avatar_url,omitempty"`
 	Email             string `json:"email,omitempty"`
 	LinkedGitHubLogin string `json:"linked_github_login,omitempty"`
+	// LinkedGitHubProvenAt is when the person proved control of
+	// LinkedGitHubLogin through the hub's GitHub OAuth link step
+	// (github_link.go, hivecommons/hive#19992). Zero means the value was not
+	// proven by that flow, and it is then never forwarded to a spoke.
+	LinkedGitHubProvenAt time.Time `json:"linked_github_proven_at,omitzero"`
 
 	// DisplayName is the PROVIDER-ASSERTED human name from the OIDC name claim
 	// (or userinfo), refreshed on every completed login. Distinct from FullName,

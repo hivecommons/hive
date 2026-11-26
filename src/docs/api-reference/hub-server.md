@@ -23,18 +23,22 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/auth/callback` | Hub handler-specific | OAuth Callback | `pkg/hub/oauth.go:73` |
 | `GET` | `/api/auth/user` | Hub handler-specific | Auth User | `pkg/hub/oauth.go:74` |
 | `POST` | `/api/auth/logout` | Hub handler-specific | Logout | `pkg/hub/oauth.go:75` |
+| `GET` | `/api/auth/github-link` | Hub auth | GitHub Link Status (the caller's proven GitHub login link) | `pkg/hub/github_link.go:115` |
+| `POST` | `/api/auth/github-link/start` | Hub auth | Start GitHub Link (OIDC sign-in proves a GitHub login through GitHub OAuth, #19992) | `pkg/hub/github_link.go:116` |
+| `POST` | `/api/auth/github-link/unlink` | Hub auth | Unlink Own GitHub Login | `pkg/hub/github_link.go:117` |
+| `POST` | `/api/admin/users/github-link` | Hub admin | Admin Unlink GitHub Login (unlink only; creating a link is refused) | `pkg/hub/github_link.go:118` |
 | `GET` | `/api/openrouter/connect/start` | Hub auth | Hub Open Router Start | `pkg/hub/openrouter.go:26` |
 | `GET` | `/api/openrouter/qr` | Hub auth | Hub Open Router QR | `pkg/hub/openrouter.go:27` |
 | `GET` | `/api/openrouter/models` | Hub auth | Hub Open Router Models | `pkg/hub/openrouter.go:28` |
 | `GET` | `/api/openrouter/credit` | Hub auth | Hub Open Router Credit | `pkg/hub/openrouter.go:29` |
 | `GET` | `/openrouter/callback` | Hub handler-specific | Hub Open Router Callback | `pkg/hub/openrouter.go:30` |
-| `GET` | `/dashboard` | Hub handler-specific | Dashboard | `pkg/hub/saas.go:367` |
-| `GET` | `/access-denied` | Hub handler-specific | Access Denied | `pkg/hub/saas.go:368` |
-| `GET` | `/api/hub/clusters` | Hub auth | List Clusters | `pkg/hub/saas.go:526` |
-| `GET` | `/api/hub/image-pulls` | Hub auth | Per-Release Image Pull Series | `pkg/hub/saas.go:375` |
+| `GET` | `/dashboard` | Hub handler-specific | Dashboard | `pkg/hub/saas.go:372` |
+| `GET` | `/access-denied` | Hub handler-specific | Access Denied | `pkg/hub/saas.go:373` |
+| `GET` | `/api/hub/clusters` | Hub auth | List Clusters | `pkg/hub/saas.go:531` |
+| `GET` | `/api/hub/image-pulls` | Hub auth | Per-Release Image Pull Series | `pkg/hub/saas.go:380` |
 | `POST` | `/api/benchmarks/ingest` | Per-hive heartbeat bearer | Spoke push target for anonymized [benchmark records](../benchmarks.md): body `{hive_id, records[]}`; the hub recomputes the hive hash from the authenticated id, rejects records whose `source.hive_id` differs (`401` bad bearer, `403` unregistered hive, `400` malformed), merges accepted records by id into `/data/benchmarks/<hash>/<YYYY-MM>.json` and returns `202 {accepted, rejected, files}` | `pkg/hub/benchmarks.go` |
 | `GET` | `/api/hub/benchmarks` | Public | Benchmark publisher status: `last_ingest_at`, `last_publish_at`, `last_publish_files`, `last_error`, `pending_files`, `hive_count`, `record_count` and per-hive-hash `hives{}` counts; the hub commits pending month files hourly to `hivecommons/benchmarks` (`HIVE_BENCHMARKS_REPO`) via its App identity | `pkg/hub/benchmarks.go` |
-| `GET` | `/api/reach` | Hub admin | PR Reach Report (?pr=NNN or ?recent=K) | `pkg/hub/saas.go:517` |
+| `GET` | `/api/reach` | Hub admin | PR Reach Report (?pr=NNN or ?recent=K) | `pkg/hub/saas.go:522` |
 | `GET` | `/fleet` | Hub handler-specific | My-Hives Fleet Page (static; data via `/api/saas/my-hives`) | `pkg/hub/server.go:1844` |
 | `GET` | `/my-hives` | Hub handler-specific | 301 redirect to `/fleet` (query preserved) | `pkg/hub/server.go:1845` |
 | `GET` | `/activity` | Signed-in user | Fleet activity page ([#16063](https://github.com/hivecommons/hive/issues/16063)): read-only, data-free shell that polls `/api/hub/activity` every 15 s with `If-None-Match`. No session → `307` to `/login`; blocked user → `403`. Own Content-Security-Policy (scripts and styles from `'self'` only, `script-src-attr`/`style-src-attr` `'none'`), `Cache-Control: no-cache` + content `ETag`. See [Hub Fleet activity page](../hub-fleet-activity.md) | `pkg/hub/activity_page.go` |

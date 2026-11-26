@@ -757,6 +757,17 @@ only when neither is configured.
 
 With two or more providers configured, `/login` renders a provider picker; with exactly one it redirects straight into it. A provider with a client id but missing/invalid issuer is **silently skipped** so it cannot take down login for the others — check the `hub login enabled providers=` startup log line when a button is missing.
 
+#### Linking a GitHub login to an OIDC sign-in
+
+A person signed in through an OIDC provider can link the GitHub login they control ([#19992](https://github.com/hivecommons/hive/issues/19992)). It needs `HIVE_HUB_OAUTH_CLIENT_ID`/`_CLIENT_SECRET`, because the person proves the GitHub side by completing GitHub OAuth from their own hub session: `POST /api/auth/github-link/start` (optional form field `login`, which the GitHub account must match). The callback refuses the link when the signed-in hub identity changed since the start, when GitHub returns a different account, or when the login is already linked to another hub user.
+
+- Nobody else can create a link. A hub admin can only remove one (`POST /api/admin/users/github-link` with `action: unlink`), and the person can remove their own (`POST /api/auth/github-link/unlink`).
+- The hub forwards a proven link to a spoke in the SSO handoff. The spoke uses it only for contributor features keyed by GitHub login (the contribute page, invites, label interests, dossier), so the person gets exactly the contributor access that login already has there.
+- The link never changes the person's spoke role, and the merge engine never reads it. A linked owner's PRs count as owner-authored only when `dashboard.authorized_users` already lists that GitHub login as an owner.
+- A spoke owner can revoke a link on that spoke with `POST /api/auth/github-link/revoke` and `{"identity": "<provider>:<subject>"}`. A later proof on the hub restores it.
+- Link, unlink, refusals and revocations are audited (hub `audit: github ...` log lines; spoke `github_link_session`, `github_link_revoked`, `github_link_refused`).
+- A hub-proxied spoke reads the visitor from the hub's injected header, not an SSO session, and does not use the link yet.
+
 ## Kubernetes downward API and platform variables
 
 | Variable | Required | Default | Purpose |
