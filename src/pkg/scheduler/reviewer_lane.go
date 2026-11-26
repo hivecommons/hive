@@ -252,6 +252,9 @@ func (s *Scheduler) renderReviewerLaneTemplate(agentName string, actionable *git
 		"REVIEWER_PASSED_LABEL":          func() string { return ReviewerPassedLabel },
 		"REVIEWER_RECOMMEND_CLOSE_LABEL": func() string { return ReviewerRecommendCloseLabel },
 		"REVIEWER_CLOSE_AUTHORITY":       func() string { return reviewerCloseAuthority(level) },
+		// What happens to a repaired PR once green depends on the ACMM hold
+		// gate (hivecommons/hive#20044), so the template takes it as a value.
+		"REVIEWER_MERGE_AFTER_GREEN": func() string { return s.reviewerLaneMergeAfterGreen(agentName) },
 	}
 	body, failClosed := s.substituteTemplateWithVars(tmpl, actionable, agentName, nil, extra)
 	if failClosed || strings.TrimSpace(body) == "" {
@@ -332,8 +335,8 @@ func (s *Scheduler) buildReviewerMessageHardcoded(agentName string, level int, w
 	b.WriteString("Reading a PR's checks once to judge it is fine. **Never watch, poll, or sleep on\n")
 	b.WriteString("CI** — no `gh run watch`, no `gh run view` loops, no repeated `gh pr checks`,\n")
 	b.WriteString("`gh pr view --json statusCheckRollup`, or `gh pr status`. If you repaired or\n")
-	b.WriteString("pushed to a PR, that ends your work on it for this kick; the automerge sweep\n")
-	b.WriteString("merges it the moment its checks are green. The budget is per KICK, not per PR:\n")
+	b.WriteString("pushed to a PR, that ends your work on it for this kick; " + s.reviewerLaneMergeAfterGreen(agentName) + ".\n")
+	b.WriteString("The budget is per KICK, not per PR:\n")
 	b.WriteString("at most **two** CI-status commands in total across every PR on the list, and\n")
 	b.WriteString("none once the kick is ten minutes old — the harness nudges you past either\n")
 	b.WriteString("line. Move to the next PR instead.\n")

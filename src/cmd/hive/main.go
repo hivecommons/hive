@@ -2952,6 +2952,8 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.tokenCollector.SetCopilotSessionsDir(b.cfg.Data.CopilotSessionsDir)
 	b.tokenCollector.SetBobSessionsDir(b.cfg.Data.BobSessionsDir)
 	b.tokenCollector.SetClineHomesRoot("/data/home")
+	// #20003: per-agent CODEX_HOME rollouts (/data/home/.codex-<agent>).
+	b.tokenCollector.SetCodexHomesRoot("/data/home")
 	b.tokenCollector.SetSandboxRunHistoryPath(crux.SandboxRunHistoryPath(crux.WorkDir()))
 	tokenStop := make(chan struct{})
 	deps.startTokenCollector(b.tokenCollector, tokenStop)

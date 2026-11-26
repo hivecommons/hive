@@ -189,6 +189,7 @@ type Diagnostics struct {
 	LastClaudeScanError  string `json:"last_claude_scan_error,omitempty"`
 	LastCopilotScanError string `json:"last_copilot_scan_error,omitempty"`
 	LastBobScanError     string `json:"last_bob_scan_error,omitempty"`
+	LastCodexScanError   string `json:"last_codex_scan_error,omitempty"`
 	LastSandboxScanError string `json:"last_sandbox_scan_error,omitempty"`
 	LiveCaptureEnabled   bool   `json:"live_capture_enabled,omitempty"`
 }
@@ -208,6 +209,7 @@ type Collector struct {
 	copilotSessionsDir        string
 	bobSessionsDir            string
 	clineHomesRoot            string
+	codexHomesRoot            string
 	sandboxRunHistoryPath     string
 	copilotLiveCaptureSinceMs int64
 	persistPath               string
@@ -219,7 +221,12 @@ type Collector struct {
 	// claudeTreeErrs is the last error logged per Claude session tree, so a
 	// persistent failure (an unreadable per-UID tree, #19307) is logged once
 	// when it starts and once when it clears, not on every 30s scan.
-	claudeTreeErrs   map[string]string
+	claudeTreeErrs map[string]string
+	// codexScanErr is the last codex rollout scan error logged, and
+	// codexSinceMs the cached codex metering start (codex_scanner.go). Both
+	// are used only by the scan goroutine.
+	codexScanErr     string
+	codexSinceMs     int64
 	diagnostics      Diagnostics
 	scanInterval     time.Duration
 	prevSessionCount int
@@ -340,6 +347,7 @@ func (c *Collector) scan() {
 	}
 	diag := Diagnostics{LiveCaptureEnabled: c.copilotLiveCaptureSince() > 0}
 	c.mergeClineUsage(agg)
+	c.mergeCodexUsage(agg, &diag)
 
 	if c.claudeSessionsDir != "" {
 		// Shared tree plus every per-agent ~/.claude/projects: since

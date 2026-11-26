@@ -12,7 +12,7 @@ On each governor kick, the supervisor follows its configured policy template and
 - Reads recent bead activity and compares it with each agent's `stale_timeout` when that field is configured.
 - Reports stale or stuck agents in an advisory bead. It does not kick agents: the governor does that on each agent's cadence.
 - Coordinates agent lanes so duplicate or conflicting work is surfaced early.
-- Delegates code, issue, pull request, and repository analysis to specialist agents.
+- Delegates code, issue, pull request, and repository analysis to specialist agents, using beads as the only channel.
 - Produces sweep reports and health assessments for the dashboard/operator.
 
 The supervisor is an orchestrator, not a fixer. Its policy forbids GitHub issue, pull request, API, and `gh` access.
@@ -70,15 +70,15 @@ Both templates enforce:
 - Internal orchestration only: monitor health, read beads, and coordinate the pipeline. The supervisor reports; the governor kicks.
 - No kicking: no dashboard kick API, `hive` binary, `pluk-send`, or tmux. A stale or stuck agent goes into one advisory bead with the agent name and the evidence.
 - No GitHub-referencing beads with `--external-ref "gh-*"`.
-- Delegation of analysis and code actions to specialist agents.
+- Delegation of analysis and code actions to specialist agents, with beads as the only channel for it.
 
 The ACMM mode remains advisory for the supervisor at every level. `${GH_AUTH}` is only injected for measured, hold-gated, and full templates, so the supervisor does not receive GitHub credentials through the policy template path.
 
 ## How the supervisor interacts with other agents
 
-The supervisor checks each agent's health inputs, including recent bead activity, configured stale timeouts, and visible session state. When it finds a problem, it records it in an advisory bead and stops. It does not kick, restart, or type into another agent's session.
+The supervisor checks each agent's health inputs, including recent bead activity and configured stale timeouts. When it finds a problem, it records it in an advisory bead and does nothing further for that agent. It does not kick, restart, or type into another agent's session.
 
-Some ACMM pack descriptions refer to restarts or self-healing at higher levels. In current policy, the supervisor still remains no-GitHub and delegates code or repository actions; runtime restart behavior is controlled by agent configuration such as `restart_strategy`, not by GitHub access.
+The supervisor never restarts agents, at any ACMM level. It stays no-GitHub and delegates code or repository actions; runtime restart behavior is controlled by agent configuration such as `restart_strategy`, not by GitHub access.
 
 ## Configuration reference
 

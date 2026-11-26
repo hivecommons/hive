@@ -7,6 +7,24 @@ type ChatConfig struct {
 	// GroundedAnswers gates the model-backed answer path for questions the
 	// deterministic slash-command handlers cannot answer.
 	GroundedAnswers ChatGroundedAnswersConfig `yaml:"grounded_answers,omitempty" json:"grounded_answers,omitempty"`
+	// ConfigAssist gates model-proposed, owner-confirmed config changes
+	// (RFC #19788). Default OFF.
+	ConfigAssist ChatConfigAssistConfig `yaml:"config_assist,omitempty" json:"config_assist,omitempty"`
+}
+
+// ChatConfigAssistConfig (`chat.config_assist:`) is the master switch for
+// Hive Chat config assist. Phase 1 only carries the flag; the model knob and
+// proposals arrive in later phases.
+type ChatConfigAssistConfig struct {
+	// Enabled turns config assist on. nil = false: the opposite default of
+	// grounded_answers, so the feature is opt-in.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// ConfigAssistEnabled reports whether chat config assist is on. It is true
+// only when config_assist.enabled is explicitly true.
+func (c ChatConfig) ConfigAssistEnabled() bool {
+	return c.ConfigAssist.Enabled != nil && *c.ConfigAssist.Enabled
 }
 
 // ChatGroundedAnswersConfig (`chat.grounded_answers:`) gates grounded chat

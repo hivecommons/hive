@@ -398,7 +398,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 		"PR_LIST":               lit(prList),
 		"REVIEW_PERSPECTIVES":   lit(s.reviewPerspectivesSection()),
 		"AUTHORIZED_REPOS":      lit(s.buildReposSectionFor(agentName)),
-		"GH_AUTH":               lit(s.ghAuthInstructions()),
+		"GH_AUTH":               lit(s.ghAuthInstructionsFor(agentName)),
 		"WORK_TRACKER":          lit(s.workTrackerSection()),
 		"IN_FLIGHT":             lit(inflightNote(heldInflight)),
 		"TOPIC_CLAIMS":          lit(topicClaimsSection(s.topicClaimsFor(agentName))),

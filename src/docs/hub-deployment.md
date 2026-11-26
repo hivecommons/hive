@@ -155,7 +155,9 @@ per request with the hive id and counts.
 
 ### Hub CRM on the colony store
 
-`HIVE_HUB_CUSTOMER_STORE` (default `json`) moves the hub's person and fact data
+`HIVE_HUB_CUSTOMER_STORE` (default `colony` since
+[#19972](https://github.com/hivecommons/hive/issues/19972); before that
+`json`) moves the hub's person and fact data
 onto the [colony](https://github.com/hivecommons/colony) store
 (`/data/saas/colony.db`, next to `/data/saas/users`), phase 4 of the
 [Colony customer-data backend design](design/colony-customer-data-backend.md)
@@ -167,7 +169,23 @@ per-user JSON.
 |---|---|---|---|
 | `json` | JSON | JSON | Nothing. An existing `colony.db` is opened only so a deleted user is erased from it too. |
 | `shadow` | JSON | JSON and colony | Backs up `colony.db`, imports every user on the first boot (one transaction, source fingerprint recorded), reconciles each person, erases people whose JSON record is gone, logs counts only. A missing users directory fails the boot closed to `json`. |
-| `colony` | colony, then JSON per field and per person | JSON and colony | As `shadow`. |
+| `colony` (default) | colony, then JSON per field and per person | JSON and colony | As `shadow`. |
+
+Unset or blank means `colony`. A value that is set but unknown (a typo) means
+`json`, and the boot logs `hub customer store: unknown mode; using json`, so a
+mistyped rollback never moves the hub onto colony.
+
+**Upgrading from the `json` default.** A hub that ran with the variable
+unset and is upgraded to a release with the `colony` default runs the boot
+sync on its first boot: the one-time import, the person-by-person reconcile
+and the count check, exactly as a first `shadow` boot does. The JSON files are
+not rewritten, so they are the backup, and every later boot keeps a
+`colony.db.bak-<UTC time>` copy. If the import cannot run (the users directory
+is missing, `colony.db` is locked, unreadable or from a newer release), the
+boot logs `hub customer store: running in json mode` and the hub keeps working
+on the JSON. Check the first boot's `hub customer store: boot sync` line for
+`parity=true` and `failed=0`. To stay on JSON through the upgrade, set
+`HIVE_HUB_CUSTOMER_STORE=json` before rolling the new image.
 
 - **Provenance.** Each field is one colony fact at the rank its JSON source
   names: `user` (`*_source: user`, `country_set_by_user`), `admin`
@@ -189,8 +207,12 @@ per-user JSON.
   fell behind is never written back. One boot erases at most 10 people, or
   10% of the store if that is more; a larger burst of missing JSON records is
   logged and held, never erased.
-- **Rollback.** Set `json` and roll the hub. Nothing is lost, because every
-  mode writes the JSON.
+- **Rollback.** Set `HIVE_HUB_CUSTOMER_STORE=json` and roll the hub. Nothing
+  is lost, because every mode writes the JSON: the hub reads the per-user
+  files as it did before the colony store, and `colony.db` is opened only to
+  erase a deleted user. Setting `colony` again later reconciles colony from
+  the JSON on the next boot. `shadow` is the half-way step: colony is still
+  written and checked, but reads come from the JSON.
 - **Erasure.** Deleting a user erases them from `colony.db` in every mode and
   tombstones their identities, so a later mirror never re-adds them; a person
   deleted while `colony.db` was closed is erased on the next `shadow` or

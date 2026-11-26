@@ -1,0 +1,1 @@
+- ACMM now credits Hive's own review-fix loop for `acmm:copilot-review-apply` (a PR that Hive asked to change and then re-reviewed at a new head within 30 days), and its tooltip and gap issue explain that the check only matches four workflow file names and point to the review-fix loop or a `.acmm.yml` waiver instead.

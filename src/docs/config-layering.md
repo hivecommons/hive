@@ -53,6 +53,8 @@ Everything else: the highest layer that sets the field wins.
 
 On a Kubernetes load that applies the dashboard overlay, the overlay's `agents.<name>` entry replaces the per-agent file's entry, except that a `paused: true` and a `sandbox:` block in `/data/agent-configs/<agent>.yaml` are carried forward over it (`/api/config/provenance` names that file as `agent-overlay`); an explicit overlay `converse` still wins. To unpause, use the dashboard, which writes both layers. The `review` and `agent_sandbox` blocks and every other top-level block are not per-agent and come from the dashboard overlay (`/data/hive.yaml.dashboard`) over the seed.
 
+For the other top-level blocks (`ask`, `chat`, `customers`, `dashboard` and the rest, apart from the seed-owned `variables`, `github`, `hub`, `acmm_level` and `hive_id`), which file wins is decided by content, not by modification time. Every save writes a first line to the overlay, `# hive-overlay-base: sha256:<hash>`, which records the config file content written by the same save. On a load, if the config file still has that content, nobody has edited it since the save. The overlay's version of a block then wins, so a hand edit to the overlay is picked up, and a boot-time copy of the same config file does not count as an edit. If the config file content has changed, the config file wins and a block missing there counts as removed. The same applies when the overlay has no header line, for example one written by an older version. Leave the header line in place when you edit the overlay by hand ([#20066](https://github.com/hivecommons/hive/issues/20066)).
+
 ## The ConfigMap decides almost nothing, and nothing can write it
 
 This is the most important and least obvious fact about the system.

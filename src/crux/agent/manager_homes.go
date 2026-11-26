@@ -109,13 +109,14 @@ func (m *Manager) setupCodexHome(agent *AgentProcess) {
 	} else if err := writeFileAsUser(agentUser, configPath, codexConfigSeed(nil, agent.Config.CLIMemory.AutoMemoryEnabled())); err != nil {
 		m.logger.Warn("failed to seed codex config", "agent", agent.Name, "dir", dir, "error", err)
 	}
-	// Bridge auth: symlink the per-agent auth.json to the shared login file so a
-	// single sign-in propagates to all agents. `ln -sfn` is idempotent and
-	// overwrites a stale regular-file auth.json left by an earlier codex version.
-	// The symlink target need not exist yet (a later `codex login` creates it).
+	// Bridge auth to the shared login; a regular file is kept (#20002, codex_auth_link.go).
 	authLink := filepath.Join(dir, "auth.json")
-	if err := exec.Command("su-exec", agentUser, "ln", "-sfn", codexSharedAuthFile, authLink).Run(); err != nil {
+	kept, err := linkCodexAuth(codexAuthLinkCommand(agentUser, codexSharedAuthFile, authLink))
+	switch {
+	case err != nil:
 		m.logger.Warn("failed to link codex auth", "agent", agent.Name, "link", authLink, "error", err)
+	case kept:
+		m.logger.Warn("kept a regular codex auth.json instead of replacing it with the shared login link; it may hold a login made in this agent's terminal after a logout, so other agents will not see it until it is moved into the shared file", "agent", agent.Name, "path", authLink, "shared", codexSharedAuthFile)
 	}
 }
 

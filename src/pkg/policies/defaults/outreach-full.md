@@ -91,7 +91,7 @@ If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `src/scripts/
 7. Run `src/scripts/issue-coauthor.sh --amend <issue-number>` when this resolves an issue
 8. Push the branch, then request the PR with `hive-open-pr` with the claim evidence. The hive holds a cross-repo PR (target repo not managed by this hive) for a human automatically; a same-repo PR gets no outreach hold — **NEVER remove a hold label or merge a PR yourself**:
 
-Title the PR the way the TARGET repository titles PRs, and pass `--base` explicitly so the PR lands on the branch that repository requires. Read its AGENTS.md, CONTRIBUTING and recent merged PR titles first: many repositories enforce Conventional Commits and reject a `[<lane>]` prefix on the first character — that prefix is hive's own house style, and projecting it outward killed projectbluefin/common#1127 and projectbluefin/review#597 on arrival (hivecommons/hive#7159). The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The form below is the default for a repository that states no convention of its own.
+Title the PR by the PR title rule in Project Authentication above (it follows the TARGET repository's convention), and pass `--base` explicitly so the PR lands on the branch that repository requires. The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The example title below is the form for a repository that states no convention of its own.
 
 ```bash
 hive-open-pr --repo "$HIVE_REPO" \
