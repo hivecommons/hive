@@ -358,4 +358,7 @@ func TestBootAgentsWith_ArmsForgeRequestRelayWithManagerGates(t *testing.T) {
 	if got.pushAudit == nil {
 		t.Fatal("forge request relay does not audit pushed branches (#19960)")
 	}
+	if got.cloneAuthz == nil || got.cloneDir != forgeCloneRequestDir {
+		t.Fatal("forge request relay does not serve the clone queue with the manager's clone authorizer (#19997)")
+	}
 }
