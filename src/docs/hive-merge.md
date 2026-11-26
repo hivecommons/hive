@@ -119,6 +119,16 @@ else happens. On any other repo it also raises the
 PR on GitHub or merging it by hand. A new head SHA starts fresh like any other
 exhausted request.
 
+**A PR already in GitHub's merge queue is a satisfied request, not a failure.**
+When the merge call answers `405 Pull Request is in the merge queue.`, the PR
+already has a merge queue entry and GitHub merges it when the queue's checks
+pass. The watcher writes `"ok": true, "queued": true` with a `note` saying so
+(no `sha`, because nothing has merged yet), removes the request file and its
+per-PR wait state as after a merge, and logs it once at INFO. No attempt is
+counted, nothing is set aside as `.exhausted`, the fix loop is not re-engaged
+and no operator alert is raised. If the PR later leaves the queue unmerged, a
+new `hive-merge` request is handled like any other.
+
 **Wait state survives restarts and re-requests.** The attempt count, `ci_waits`,
 the pending-poll backoff and an "exhausted" record are kept per PR and head SHA
 in `/data/merge-request-state.json` (the PVC), not only in the tmpfs result

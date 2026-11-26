@@ -266,6 +266,50 @@ MOCK_COMPARE='{"eee":0}' run_helper acme/widgets pytest 41 --json
 check_status 1 "current PR is PR-local"
 check_output '"action":"FIX_DIFF"' "current same-repo PR is a real diff to fix"
 
+# A dependency bot's branch is never merged into: the bot rebases it itself
+# and stops for good once anyone else commits to it (projectbluefin/utah#1471).
+# Behind, it is BOT_REBASE, never MERGE_BASE, whether the bot is named by its
+# author (gh's app/<slug> or the REST <slug>[bot]) or by a renovate/ head ref.
+printf '%s\n' '{"number":42,"headRefOid":"fff","isCrossRepository":false,"headRefName":"renovate/actions","author":{"login":"app/renovate","is_bot":true}}' >"$MOCK_PR_VIEW"
+MOCK_COMPARE='{"fff":4}' run_helper acme/widgets pytest 42 --json
+check_status 1 "behind dependency-bot PR is PR-local"
+check_output '"action":"BOT_REBASE"' "behind dependency-bot PR is left to the bot"
+check_output '"pr_dependency_bot":true' "JSON flags the dependency-bot branch"
+MOCK_COMPARE='{"fff":4}' run_helper acme/widgets pytest 42
+check_output 'ISOLATED (BOT_REBASE)' "human output carries the bot action"
+check_output 'do not merge "trunk" into it or push to it' "human output says not to merge base"
+if [[ "$OUTPUT" == *'Merge "trunk" first.'* ]]; then
+  echo "  FAIL: human output never tells the agent to merge base into a bot branch (output: $OUTPUT)"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: human output never tells the agent to merge base into a bot branch"; PASS=$((PASS + 1))
+fi
+
+printf '%s\n' '{"number":43,"headRefOid":"ggg","isCrossRepository":false,"headRefName":"renovate/go-deps","author":{"login":"ci-runner","is_bot":false}}' >"$MOCK_PR_VIEW"
+MOCK_COMPARE='{"ggg":2}' run_helper acme/widgets pytest 43 --json
+check_output '"action":"BOT_REBASE"' "a renovate/ head ref under a non-bot account is a bot branch"
+
+printf '%s\n' '{"number":44,"headRefOid":"hhh","isCrossRepository":false,"headRefName":"bump-go","author":{"login":"mergeraptor[bot]","is_bot":true}}' >"$MOCK_PR_VIEW"
+MOCK_COMPARE='{"hhh":2}' run_helper acme/widgets pytest 44 --json
+check_output '"action":"BOT_REBASE"' "a dependency-bot author makes any head ref a bot branch"
+MOCK_COMPARE='{"hhh":0}' run_helper acme/widgets pytest 44 --json
+check_output '"action":"FIX_DIFF"' "a current dependency-bot PR is still a diff to diagnose"
+
+printf '%s\n' '{"number":45,"headRefOid":"iii","isCrossRepository":true,"headRefName":"renovate/x","author":{"login":"app/renovate","is_bot":true}}' >"$MOCK_PR_VIEW"
+MOCK_COMPARE='{"iii":2}' run_helper acme/widgets pytest 45 --json
+check_output '"action":"NOT_REACHABLE_FORK"' "a fork head stays NOT_REACHABLE_FORK"
+
+printf '%s\n' '{"number":46,"headRefOid":"jjj","isCrossRepository":false,"headRefName":"fix/thing","author":{"login":"alice","is_bot":false}}' >"$MOCK_PR_VIEW"
+MOCK_COMPARE='{"jjj":4}' run_helper acme/widgets pytest 46 --json
+check_output '"action":"MERGE_BASE"' "an ordinary behind PR still merges base"
+check_output '"pr_dependency_bot":false' "JSON does not flag an ordinary branch"
+
+# A plain user login that only shares a bot's name is not a dependency bot,
+# matching the hive's IsDependencyBotAuthor (it needs app/<slug> or <slug>[bot]).
+printf '%s\n' '{"number":47,"headRefOid":"kkk","isCrossRepository":false,"headRefName":"bump","author":{"login":"renovate","is_bot":false}}' >"$MOCK_PR_VIEW"
+MOCK_COMPARE='{"kkk":4}' run_helper acme/widgets pytest 47 --json
+check_output '"action":"MERGE_BASE"' "a user named like a bot on an ordinary branch still merges base"
+check_output '"pr_dependency_bot":false' "a user named like a bot is not flagged"
+
 # The PR argument does not override a shared verdict.
 write_base '{"check_runs":[{"name":"pytest","status":"completed","conclusion":"failure","completed_at":"2026-08-30T01:00:00Z"}]}'
 MOCK_COMPARE='{"ddd":3}' run_helper acme/widgets pytest 40 --json

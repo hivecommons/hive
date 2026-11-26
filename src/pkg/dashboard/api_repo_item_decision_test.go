@@ -32,6 +32,10 @@ type repoItemDecisionMock struct {
 	// labels pulls/8 reports.
 	prForeign bool
 	prLabels  []string
+	// prAuthor, when set, is PR #8's author login (a Bot); prHeadRef is
+	// its head ref. Together they make a dependency bot's branch.
+	prAuthor  string
+	prHeadRef string
 	// prMergeState is PR #8's mergeable_state ("" = clean); prRedCI and
 	// prNoCI shape the head's combined status when the state alone does not
 	// settle CI (e.g. "blocked").
@@ -157,6 +161,9 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 			if m.prForeign {
 				author = map[string]any{"login": "someone", "type": "User"}
 			}
+			if m.prAuthor != "" {
+				author = map[string]any{"login": m.prAuthor, "type": "Bot"}
+			}
 			mergeState := m.prMergeState
 			if mergeState == "" {
 				mergeState = "clean"
@@ -174,7 +181,7 @@ func newRepoItemDecisionServer(t *testing.T, m *repoItemDecisionMock) *Server {
 				headSHA = "feedfacefeedfacefeedfacefeedfacefeedface"
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"number": n, "state": "open", "body": m.prBody, "labels": prLabels, "user": author, "mergeable": mergeState != "dirty", "mergeable_state": mergeState, "maintainer_can_modify": !m.prNoMaintainerEdits,
-				"head": map[string]any{"sha": headSHA, "repo": map[string]any{"full_name": headRepo}},
+				"head": map[string]any{"sha": headSHA, "ref": m.prHeadRef, "repo": map[string]any{"full_name": headRepo}},
 				"base": map[string]any{"ref": "main", "repo": map[string]any{"full_name": "testorg/testrepo"}}})
 		case r.Method == http.MethodGet && strings.Contains(path, "/compare/"):
 			files := []map[string]string{}
