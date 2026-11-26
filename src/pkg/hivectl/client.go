@@ -129,8 +129,29 @@ func NewClient(server, token string, timeout time.Duration) (*Client, error) {
 	return &Client{
 		baseURL: baseURL,
 		token:   strings.TrimSpace(token),
-		http:    &http.Client{Timeout: timeout, Transport: transport},
+		http: &http.Client{
+			Timeout:       timeout,
+			Transport:     transport,
+			CheckRedirect: refuseBodyRedirects,
+		},
 	}, nil
+}
+
+// refuseBodyRedirects stops redirects for any request that is not a GET or
+// HEAD. Go re-sends a rewindable body on 307/308 to whatever Location says,
+// including another host or an http downgrade; it drops auth headers on a
+// cross-host hop but still sends the body, which for `github token set` is
+// the PAT itself. The 3xx is returned as-is and surfaces as an APIError.
+func refuseBodyRedirects(req *http.Request, via []*http.Request) error {
+	if len(via) > 0 {
+		if m := via[0].Method; m != http.MethodGet && m != http.MethodHead {
+			return http.ErrUseLastResponse
+		}
+	}
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return nil
 }
 
 func (c *Client) Do(ctx context.Context, method, apiPath string, query url.Values, body any) (any, error) {

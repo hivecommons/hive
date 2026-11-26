@@ -73,8 +73,12 @@ func TestGitHubTokenSetRejectsBadInputWithoutCallingAPI(t *testing.T) {
 		"whitespace":   {"two words\n", []string{"github", "token", "set", "--stdin"}},
 		"argv token":   {"", []string{"github", "token", "set", "ghp_argv"}},
 	} {
-		if _, _, err := execute(t, server, tc.input, tc.args...); err == nil {
+		_, stderr, err := execute(t, server, tc.input, tc.args...)
+		if err == nil {
 			t.Fatalf("%s: expected an error", name)
+		}
+		if strings.Contains(err.Error(), "ghp_argv") || strings.Contains(stderr, "ghp_argv") {
+			t.Fatalf("%s: the argv token was echoed: err=%q stderr=%q", name, err, stderr)
 		}
 	}
 }

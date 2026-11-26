@@ -41,13 +41,23 @@ func newGitHubCommand(env *commandEnv) *cobra.Command {
 // argv (where it would show in the process list and shell history). The
 // server verifies it before saving; a refused token leaves the current one
 // in place and exits non-zero.
+// argsNoSecret rejects positional arguments without echoing them. cobra.NoArgs
+// (behind argsNone) embeds args[0] in its error, which would print a token
+// passed by mistake to stderr, CI logs and terminal recordings.
+func argsNoSecret(_ *cobra.Command, args []string) error {
+	if len(args) > 0 {
+		return &usageError{message: "the token is never accepted as an argument; pipe it with --stdin or use --file"}
+	}
+	return nil
+}
+
 func githubTokenSetCommand(env *commandEnv) *cobra.Command {
 	var file string
 	var stdin bool
 	command := &cobra.Command{
 		Use:   "set",
 		Short: "Rotate the GitHub personal access token without a restart",
-		Args:  argsNone(),
+		Args:  argsNoSecret,
 		Example: "  pass show hive/github-pat | hivectl github token set --stdin\n" +
 			"  hivectl github token set --file /run/secrets/github_pat",
 		RunE: func(cmd *cobra.Command, _ []string) error {
