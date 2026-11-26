@@ -56,7 +56,7 @@ project:
 | `forgejo.forgejo_url` | none | Instance root. The adapter appends `/api/v1`. Same fallback as Gitea when unset. |
 | `forgejo.token_env` | `FORGEJO_TOKEN` | Sent as `Authorization: token <TOKEN>`. |
 | `forgejo.token_file` | none | A file holding the token. See below. |
-| `forgejo.login` | none | The hive's own Forgejo username. Optional: lets the close-on-merge sweep skip the `GET /user` lookup a repository-limited token cannot make ([#19994](https://github.com/hivecommons/hive/issues/19994)). |
+| `forgejo.login` | none | The hive's own Forgejo username. Optional: lets the close-on-merge sweep use it when the `GET /user` lookup fails with 403, as it does for a repository-limited token ([#19994](https://github.com/hivecommons/hive/issues/19994)). It must be the token's own user, and it is trusted only with write on the repository. For a non-admin token that check fails for any other user; for an admin token it does not, so a wrong login there is not caught. |
 
 Each block reads its token the same way. When `token_file` is set, hive reads the token from that file and ignores the env var. The path must be absolute and under `/secrets` or `/data/secrets`, like other secret files in hive. The file is read each time the token is needed, so a rotated file takes effect on the next tick. A path outside those directories, an unreadable file, or an empty file is an error, and no request is sent. This includes the token git clone and push use on a Forgejo repo when `forgejo.integration` is unset. With no `token_file`, hive reads the env var as before.
 

@@ -333,14 +333,24 @@ func (f *forgejoForge) CloseIssue(ctx context.Context, repo string, number int) 
 }
 
 func (f *forgejoForge) Self(ctx context.Context) (string, error) {
-	// A repository-limited token cannot read /user (#19994). When the operator
-	// names the hive's own login in config, trust it and skip the lookup; the
-	// sweeps only compare the login against PR and issue authors.
-	if f.login != "" {
-		return f.login, nil
-	}
 	var u gtUser
-	if err := f.getJSON(ctx, "/user", nil, &u); err != nil {
+	err := f.getJSON(ctx, "/user", nil, &u)
+	if f.login != "" {
+		// forgejo.login (#19994) is for a token limited to specific
+		// repositories, which Forgejo refuses GET /user with 403. Any other
+		// answer is not that case: a token that can read its user must be
+		// that user, so a different login is refused rather than trusted,
+		// and an error other than 403 is not papered over by the config.
+		switch {
+		case err == nil && u.Login != "" && !strings.EqualFold(u.Login, f.login):
+			return "", fmt.Errorf("%s: forgejo.login %q is not the token's user %q", f.label, f.login, u.Login)
+		case err == nil && u.Login != "":
+			return u.Login, nil
+		case isGiteaStatus(err, http.StatusForbidden):
+			return f.login, nil
+		}
+	}
+	if err != nil {
 		return "", fmt.Errorf("%s: read token user: %w", f.label, err)
 	}
 	if u.Login == "" {
