@@ -1,0 +1,1 @@
+- Close-on-merge no longer closes a claimed issue when the merged PR only says `Refs`, and never closes a `hive/partially-addressed` issue for a PR without a closing keyword (#19956).

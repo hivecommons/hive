@@ -574,6 +574,10 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 			opts.Logger.Info("close-on-merge: PR used non-closing Refs for its claimed issue",
 				"repo", issueRepo, "issue", issueNumber, "pr", pr.GetNumber(), "author", author)
 		}
+		// The author's own non-closing Refs outranks the ledger claim: a PR
+		// that says Refs is partial by declaration (#19956).
+		res.Action, res.Reason = CloseOnMergeSkipped, "refs_only"
+		return res
 	}
 	owner, repoName := c.splitRepo(issueRepo)
 	if issue == nil {
@@ -609,6 +613,12 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 	}
 	if !strings.EqualFold(issue.GetState(), "open") {
 		res.Action, res.Reason = CloseOnMergeAlreadyDone, "issue_not_open"
+		return res
+	}
+	if labelPresent(issueLabelNames(issue.Labels), PartiallyAddressedLabel) && !closeOnMergePRClaimsIssue(pr, prRepo, issueRepo, issueNumber) {
+		// A partially-addressed issue is only closed by a PR that uses a
+		// closing keyword for it (#19956).
+		res.Action, res.Reason = CloseOnMergeSkipped, "partially_addressed_no_closing_keyword"
 		return res
 	}
 	if why, ok := isTrackingIssue(issue); ok {

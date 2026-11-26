@@ -204,6 +204,7 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 		head           string
 		claimMetadata  bool
 		issueState     string
+		issueLabels    []string
 		issueGetStatus int
 		commentStatus  int
 		patchStatus    int
@@ -216,8 +217,11 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 		{name: "untrusted author skipped", author: "stranger", body: "Fixes #7", claimMetadata: true, wantAction: CloseOnMergeSkipped, wantReason: "untrusted_author"},
 		{name: "trusted author func admits external author", author: "friend", trusted: func(repo, login string) bool { return repo == "o/r" && login == "friend" }, body: "Fixes #7", claimMetadata: true, wantAction: CloseOnMergeClosed, wantReason: "closed_completed"},
 		{name: "no claim metadata without closing keyword skipped", author: "hive[bot]", body: "unrelated", head: "scanner/other", claimMetadata: false, wantAction: CloseOnMergeSkipped, wantReason: "no_closing_or_claim_metadata"},
-		{name: "refs-only claim flagged wrong refs but still closes", author: "hive[bot]", body: "Refs #7", head: "scanner/other", claimMetadata: true, wantAction: CloseOnMergeClosed, wantReason: "closed_completed", wantWrongRefs: true},
-		{name: "refs-only claim for closed issue remains informational", author: "hive[bot]", body: "Refs #7", head: "scanner/other", claimMetadata: true, issueState: "closed", wantAction: CloseOnMergeAlreadyDone, wantReason: "issue_not_open", wantWrongRefs: true},
+		{name: "refs-only claim flagged wrong refs and is skipped", author: "hive[bot]", body: "Refs #7", head: "scanner/other", claimMetadata: true, wantAction: CloseOnMergeSkipped, wantReason: "refs_only", wantWrongRefs: true},
+		{name: "refs-only claim on partially-addressed issue stays open", author: "hive[bot]", body: "Refs #7", head: "scanner/other", claimMetadata: true, issueLabels: []string{PartiallyAddressedLabel}, wantAction: CloseOnMergeSkipped, wantReason: "refs_only", wantWrongRefs: true},
+		{name: "claim without closing keyword on partially-addressed issue stays open", author: "hive[bot]", body: "unrelated", head: "scanner/other", claimMetadata: true, issueLabels: []string{PartiallyAddressedLabel}, wantAction: CloseOnMergeSkipped, wantReason: "partially_addressed_no_closing_keyword"},
+		{name: "closing keyword on claimed issue still closes", author: "hive[bot]", body: "Fixes #7", head: "scanner/other", claimMetadata: true, wantAction: CloseOnMergeClosed, wantReason: "closed_completed"},
+		{name: "unclaimed refs-only is skipped", author: "hive[bot]", body: "Refs #7", head: "scanner/other", claimMetadata: false, wantAction: CloseOnMergeSkipped, wantReason: "no_closing_or_claim_metadata"},
 		{name: "issue read failure noops", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, issueGetStatus: http.StatusInternalServerError, wantAction: CloseOnMergeNoop, wantReason: "issue_read_failed"},
 		{name: "missing issue skipped without warn", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, issueGetStatus: http.StatusNotFound, wantAction: CloseOnMergeSkipped, wantReason: "issue_not_found"},
 		{name: "closed issue already done", author: "hive[bot]", body: "Fixes #7", claimMetadata: true, issueState: "closed", wantAction: CloseOnMergeAlreadyDone, wantReason: "issue_not_open"},
@@ -239,7 +243,11 @@ func TestCloseOnMergeDecisionSkipAndFailurePaths(t *testing.T) {
 					if state == "" {
 						state = "open"
 					}
-					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": state, "body": "body", "labels": []map[string]string{}})
+					labels := []map[string]string{}
+					for _, l := range tc.issueLabels {
+						labels = append(labels, map[string]string{"name": l})
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": state, "body": "body", "labels": labels})
 				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
 					if tc.markerStatus != 0 {
 						w.WriteHeader(tc.markerStatus)
