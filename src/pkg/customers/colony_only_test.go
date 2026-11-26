@@ -458,8 +458,8 @@ func TestColonyOnlyFailedWriteChangesNothing(t *testing.T) {
 	if _, ok := b.enrich.Get(fixAda); !ok {
 		t.Error("a failed enrichment delete dropped the entry in memory")
 	}
-	if n, err := b.enrich.DropSource(EnrichSourceGitdm); err == nil || n == 0 {
-		t.Errorf("DropSource with colony.db closed = %d, %v", n, err)
+	if n, err := b.enrich.DropSource(EnrichSourceGitdm); err == nil || n != 0 {
+		t.Errorf("DropSource with colony.db closed = %d, %v; want an error and nothing dropped", n, err)
 	}
 	if pe, _ := b.enrich.Get(fixAda); len(pe.Affiliations) != 2 {
 		t.Error("a failed DropSource dropped the entries in memory")
@@ -639,10 +639,9 @@ func TestColonyOnlyRefusesNewerDocument(t *testing.T) {
 	}
 }
 
-// A people.json that appears beside a migrated colony.db (an older binary
-// read colony-only as json and started a new one, or a stale copy was put
-// back) is set aside, never taken as the truth: nobody is forgotten, and
-// the migrated files keep everyone.
+// A stale people.json put back beside a migrated colony.db (older than the
+// migration) is set aside, never taken as the truth: nobody is forgotten,
+// and the migrated files keep everyone.
 func TestColonyOnlyStrayJSONIsSetAside(t *testing.T) {
 	dir := fixtureDir(t)
 	clk := newClock()
@@ -659,6 +658,12 @@ func TestColonyOnlyStrayJSONIsSetAside(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, EnrichmentFileName), []byte(`{"people":{}}`), storeFileMode); err != nil {
 		t.Fatal(err)
+	}
+	stale := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, name := range []string{FileName, EnrichmentFileName} {
+		if err := os.Chtimes(filepath.Join(dir, name), stale, stale); err != nil {
+			t.Fatal(err)
+		}
 	}
 	again := bootColony(t, dir, StoreColonyOnly, clk)
 	if again.colony.Mode() != StoreColonyOnly || len(again.store.People()) != 3 {
@@ -811,7 +816,7 @@ func TestColonyOnlyClosedStoreHelpers(t *testing.T) {
 
 // An enrichment.json that cannot be read stops the boot before anything is
 // migrated: nothing is renamed, and the wiring falls back.
-func TestColonyOnlyUnreadableEnrichmentStaysColony(t *testing.T) {
+func TestColonyOnlyUnreadableEnrichmentFailsClosed(t *testing.T) {
 	dir := fixtureDir(t)
 	ep := filepath.Join(dir, EnrichmentFileName)
 	if err := os.Remove(ep); err != nil {
@@ -863,5 +868,110 @@ func TestColonyOnlyEnrichmentOrphanKeptInMigratedFile(t *testing.T) {
 	}
 	if _, err := ExportColony(dir, filepath.Join(dir, FileName+MigratedSuffix), true); err == nil {
 		t.Error("export into a path that is a file succeeded")
+	}
+}
+
+// A people.json written after the migration (an older binary that read
+// colony-only as json) is newer than both copies' common point: neither is
+// chosen, nothing is moved, and colony.db keeps everyone. A colony or shadow
+// boot refuses too, since its orphan forget would erase what people.json
+// lacks.
+func TestColonyOnlyNewerJSONFailsClosed(t *testing.T) {
+	dir := fixtureDir(t)
+	clk := newClock()
+	b := bootColony(t, dir, StoreColonyOnly, clk)
+	if err := b.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+	partial := `{"version":1,"salt":"ffeeddccbbaa99887766554433221100","people":[]}`
+	pp := filepath.Join(dir, FileName)
+	if err := os.WriteFile(pp, []byte(partial), storeFileMode); err != nil {
+		t.Fatal(err)
+	}
+	future := clk.t.Add(time.Hour)
+	if err := os.Chtimes(pp, future, future); err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []StoreMode{StoreColonyOnly, StoreColony, StoreShadow} {
+		s, err := Open(dir, clk.now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c, err := AttachColony(s, mode, nil); err == nil {
+			_ = c.Close()
+			t.Fatalf("%s chose between a newer people.json and a migrated colony.db", mode)
+		}
+	}
+	if got := readFile(t, pp); string(got) != partial {
+		t.Error("people.json was touched")
+	}
+	db, err := cstore.Open(filepath.Join(dir, ColonyFileName), cstore.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = db.Close() }()
+	cc, err := readColonyOnly(db)
+	if err != nil || len(cc.people) != 3 || !cc.hasDoc {
+		t.Errorf("colony.db after the refusals: %d people, doc %v, %v", len(cc.people), cc.hasDoc, err)
+	}
+}
+
+// A document left by an attempt that never finished (no migration time)
+// does not make people.json stray: the next colony-only boot migrates from
+// it.
+func TestColonyOnlyLeftoverDocMigratesAgain(t *testing.T) {
+	dir := fixtureDir(t)
+	clk := newClock()
+	b := bootColony(t, dir, StoreColony, clk)
+	b.colony.mu.Lock()
+	err := b.colony.db.SetStoreAttachment(colonyAttachDoc, json.RawMessage(`{"version":1,"salt":"00"}`))
+	b.colony.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.store.SetNotes(fixCy, "after the leftover"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+	again := bootColony(t, dir, StoreColonyOnly, clk)
+	if again.colony.Mode() != StoreColonyOnly {
+		t.Fatalf("mode = %s, want colony-only", again.colony.Mode())
+	}
+	if cy, _ := again.store.Get(fixCy); cy.Notes != "after the leftover" {
+		t.Errorf("the leftover document won over people.json: %+v", cy)
+	}
+	if m, _ := filepath.Glob(filepath.Join(dir, "*"+colonyStraySuffix+"*")); len(m) != 0 {
+		t.Errorf("files set aside: %v", m)
+	}
+	mustNotExist(t, filepath.Join(dir, FileName))
+}
+
+// A stop after people.json was renamed but before enrichment.json and the
+// migration time: the next boot reads the verified store and finishes.
+func TestColonyOnlyFinishesAnInterruptedRename(t *testing.T) {
+	dir := fixtureDir(t)
+	clk := newClock()
+	b := bootColony(t, dir, StoreColonyOnly, clk)
+	if err := b.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(dir, EnrichmentFileName+MigratedSuffix), filepath.Join(dir, EnrichmentFileName)); err != nil {
+		t.Fatal(err)
+	}
+	if err := clearMigratedMarker(dir); err != nil {
+		t.Fatal(err)
+	}
+	again := bootColony(t, dir, StoreColonyOnly, clk)
+	mustNotExist(t, filepath.Join(dir, EnrichmentFileName))
+	if _, err := os.Stat(filepath.Join(dir, EnrichmentFileName+MigratedSuffix)); err != nil {
+		t.Errorf("enrichment.json not renamed .migrated: %v", err)
+	}
+	if again.colony.marker.MigratedAt.IsZero() {
+		t.Error("the migration time was not recorded")
+	}
+	if pe, ok := again.enrich.Get(fixAda); !ok || len(pe.Affiliations) != 2 {
+		t.Errorf("enrichment = %+v", pe)
 	}
 }

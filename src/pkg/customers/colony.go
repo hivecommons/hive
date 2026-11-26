@@ -324,6 +324,17 @@ func (c *Colony) boot(s *Store) error {
 	defer c.mu.Unlock()
 	prev, hadMarker := c.readMarker()
 	c.marker = colonySyncMarker{PendingForget: prev.PendingForget, Migrated: prev.Migrated, MigratedAt: prev.MigratedAt}
+	// A store whose colony-only migration finished and was never restored
+	// (MigratedAt still set) holds data this people.json may lack, and the
+	// catch-up and orphan forget below would erase it: the boot fails
+	// closed before writing anything.
+	if !c.marker.MigratedAt.IsZero() {
+		if _, has, err := c.db.StoreAttachment(colonyAttachDoc); err != nil {
+			return err
+		} else if has {
+			return fmt.Errorf("customers: %s is a colony-only store that was not restored; run hive colony export --format hive-people-json first", ColonyFileName)
+		}
+	}
 	if !ran {
 		if err := c.writeBackups(peopleData, enrichData); err != nil {
 			return err
@@ -1161,37 +1172,11 @@ func (c *Colony) pruneLocked(cp cstore.Person, rec cstore.Record, owns func(stri
 // without being forgotten (merged into someone else), keeping only the id
 // and the status removed, so an unmerge can bring them back.
 func (c *Colony) stripLocked(id string) error {
-	cp, err := c.db.Get(id)
-	if err != nil {
+	if _, err := c.db.Get(id); err != nil {
 		return err
 	}
-	for _, i := range cp.Identities {
-		if err := c.db.RemoveIdentity(id, i.Ref()); err != nil && !errors.Is(err, cstore.ErrNotFound) {
-			return err
-		}
-	}
-	for _, f := range cp.Facts {
-		if _, err := c.db.DeleteFact(id, f.Field, f.Rank); err != nil {
-			return err
-		}
-	}
-	for _, h := range cp.Held {
-		if _, err := c.db.RemoveHeld(id, h.Ref()); err != nil && !errors.Is(err, cstore.ErrNotFound) {
-			return err
-		}
-	}
-	for _, a := range cp.Answers {
-		if err := c.db.DeleteAnswer(id, a.Source); err != nil && !errors.Is(err, cstore.ErrNoAnswer) {
-			return err
-		}
-	}
-	for ns := range cp.Attachments {
-		if err := c.db.SetAttachment(id, ns, nil); err != nil {
-			return err
-		}
-	}
-	_, err = c.db.Upsert(cstore.PersonSpec{ID: id, Status: colonyStatusRemoved})
-	return err
+	// One transaction: a failure leaves the record as it was.
+	return c.db.Batch(func(b *cstore.Batch) error { return colonyStrip(b, id) })
 }
 
 // syncEnrichmentLocked brings one person's enrichment facts in line. A

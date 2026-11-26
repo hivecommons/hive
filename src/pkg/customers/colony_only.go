@@ -653,19 +653,25 @@ func (cc colonyOnlyContents) files() ([]byte, []byte, error) {
 func attachColonyOnly(s *Store, logger *slog.Logger) (*Colony, error) {
 	dir := filepath.Dir(s.path)
 	c := &Colony{mode: StoreColonyOnly, dir: dir, now: s.now, logger: logger, dirty: map[string]bool{}}
-	if _, err := os.Stat(s.path); err == nil {
-		migrated, err := colonyHasDoc(dir, s.now)
-		if err != nil {
-			return nil, err
-		}
-		if !migrated {
+	m, _ := c.readMarker()
+	if fi, err := os.Stat(s.path); err == nil {
+		// Only a migration whose renames finished records MigratedAt (in
+		// colony-sync.json, after the renames), and a restore clears it.
+		// Without it, people.json is the truth and is migrated, whatever
+		// document an unverified or rolled-back attempt left in colony.db.
+		if m.MigratedAt.IsZero() {
 			return migrateColonyOnly(s, logger)
 		}
-		// colony.db was migrated already, so this people.json is not the
-		// truth: an older binary that read colony-only as json started a
-		// new one, or a stale copy was put back. Taking it as the truth
-		// would forget everyone it lacks. It is set aside, never deleted,
-		// and the store is read from colony.db.
+		if fi.ModTime().After(m.MigratedAt) {
+			// Written after the migration (an older binary that read
+			// colony-only as json, or a restore whose cleanup failed):
+			// neither copy can be chosen safely, so nothing is.
+			return nil, fmt.Errorf("customers: %s is newer than the colony-only migration (%s); move it aside to keep colony.db, or run hive colony export and set another mode to keep it",
+				FileName, m.MigratedAt.UTC().Format(time.RFC3339))
+		}
+		// Older than the migration: a stale copy put back. Taking it as the
+		// truth would forget everyone it lacks. It is set aside, never
+		// deleted, and the store is read from colony.db.
 		for _, name := range []string{FileName, EnrichmentFileName} {
 			to, err := renameAside(filepath.Join(dir, name), colonyStraySuffix, s.now())
 			if err != nil {
@@ -679,9 +685,16 @@ func attachColonyOnly(s *Store, logger *slog.Logger) (*Colony, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	// A migration interrupted between its renames leaves enrichment.json
-	// behind; it is renamed like the rest.
-	if _, err := renameMigrated(filepath.Join(dir, EnrichmentFileName), s.now()); err != nil {
+	// A migration interrupted after renaming people.json leaves
+	// enrichment.json (verified with it) behind and no MigratedAt: the
+	// rename is finished here. Any other enrichment.json beside a migrated
+	// store was not migrated and is set aside.
+	leftover := renameAside
+	suffix := colonyStraySuffix
+	if m.MigratedAt.IsZero() {
+		suffix = MigratedSuffix
+	}
+	if _, err := leftover(filepath.Join(dir, EnrichmentFileName), suffix, s.now()); err != nil {
 		return nil, err
 	}
 	db, err := cstore.Open(filepath.Join(dir, ColonyFileName), cstore.Options{Now: s.now})
@@ -701,8 +714,14 @@ func attachColonyOnly(s *Store, logger *slog.Logger) (*Colony, error) {
 		return nil, fmt.Errorf("customers: %s holds people but no %s document and %s is missing; restore %s or run colony export",
 			ColonyFileName, colonyAttachDoc, FileName, FileName)
 	}
-	m, _ := c.readMarker()
 	c.marker = m
+	if cc.hasDoc && c.marker.MigratedAt.IsZero() {
+		// The renames finished but the marker was not written.
+		c.marker.MigratedAt = s.now().UTC()
+		if err := c.writeMarkerLocked(); err != nil {
+			c.logWarn("[customers] colony sync marker not written", "error", err)
+		}
+	}
 	s.mu.Lock()
 	s.loadColonyOnlyLocked(cc)
 	s.colony = c
@@ -867,21 +886,18 @@ func (c *Colony) migrate(s *Store, enrich map[string]PersonEnrichment) error {
 	if !bytes.Equal(gotEnrich, wantEnrichData) {
 		return fmt.Errorf("customers: read-back of %d enrichment entries does not match %s", len(wantEnrich), EnrichmentFileName)
 	}
-	// enrichment.json goes first: a people.json left by a failure after it
-	// means the next boot simply migrates again.
+	// people.json goes first: if the process stops before enrichment.json
+	// or the marker, the next boot reads the verified store and finishes the
+	// rename. If the people.json rename fails, nothing was renamed and the
+	// next boot migrates again.
 	var renamed []string
-	enrichTo, err := renameMigrated(filepath.Join(c.dir, EnrichmentFileName), now)
+	peopleTo, err := renameMigrated(s.path, now)
 	if err != nil {
 		return err
 	}
-	peopleTo, err := renameMigrated(s.path, now)
+	enrichTo, err := renameMigrated(filepath.Join(c.dir, EnrichmentFileName), now)
 	if err != nil {
-		if enrichTo != "" {
-			if rerr := os.Rename(enrichTo, filepath.Join(c.dir, EnrichmentFileName)); rerr != nil {
-				c.logWarn("[customers] enrichment.json could not be put back after a failed rename", "file", filepath.Base(enrichTo))
-			}
-		}
-		return err
+		c.logWarn("[customers] enrichment.json not renamed; the next colony-only boot renames it", "error", err)
 	}
 	for _, to := range []string{peopleTo, enrichTo} {
 		if to != "" {
@@ -1044,7 +1060,32 @@ func ExportColony(dir, outDir string, force bool) (ColonyExportReport, error) {
 		return rep, err
 	}
 	rep.People, rep.Enrichment = len(cc.people), len(cc.enrich)
+	if filepath.Clean(outDir) == filepath.Clean(dir) {
+		// Written back into the data directory: a rollback. people.json is
+		// the truth again, so the document and the migration time go, and
+		// the store can never be restored a second time over a newer
+		// people.json. db is closed first; the file lock is ours.
+		_ = db.Close()
+		if err := dropColonyOnlyDocLocked(dir); err != nil {
+			return rep, fmt.Errorf("customers: %s written; dropping the colony-only document failed: %w", FileName, err)
+		}
+		if err := clearMigratedMarker(dir); err != nil {
+			return rep, fmt.Errorf("customers: %s written; clearing the migration time failed: %w", FileName, err)
+		}
+	}
 	return rep, nil
+}
+
+// clearMigratedMarker removes the migration time from colony-sync.json.
+func clearMigratedMarker(dir string) error {
+	c := &Colony{dir: dir, now: time.Now}
+	m, ok := c.readMarker()
+	if !ok || (m.MigratedAt.IsZero() && len(m.Migrated) == 0) {
+		return nil
+	}
+	m.Migrated, m.MigratedAt = nil, time.Time{}
+	c.marker = m
+	return c.writeMarkerLocked()
 }
 
 // RestoreFromColony is the automatic rollback from colony-only: when dir has
@@ -1065,12 +1106,9 @@ func RestoreFromColony(dir string, logger *slog.Logger) (bool, error) {
 		return false, nil
 	}
 	if err != nil {
-		return false, err
-	}
-	// people.json is the truth again: the document must never be restored
-	// a second time over a newer people.json.
-	if err := dropColonyOnlyDoc(dir); err != nil {
-		return true, err
+		// Only an error with people.json written counts as restored.
+		_, statErr := os.Stat(filepath.Join(dir, FileName))
+		return statErr == nil, err
 	}
 	if logger != nil {
 		logger.Info("[customers] restored people.json and enrichment.json from the colony-only store",
@@ -1079,10 +1117,9 @@ func RestoreFromColony(dir string, logger *slog.Logger) (bool, error) {
 	return true, nil
 }
 
-// dropColonyOnlyDoc removes the colony-only document from dir's colony.db.
-func dropColonyOnlyDoc(dir string) error {
-	colonyFileMu.Lock()
-	defer colonyFileMu.Unlock()
+// dropColonyOnlyDocLocked removes the colony-only document from dir's
+// colony.db; colonyFileMu is held.
+func dropColonyOnlyDocLocked(dir string) error {
 	db, err := cstore.Open(filepath.Join(dir, ColonyFileName), cstore.Options{LockTimeout: colonyExportLockTimeout})
 	if err != nil {
 		return err
