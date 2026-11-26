@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -108,6 +109,10 @@ func NewClient(server, token string, timeout time.Duration) (*Client, error) {
 		return nil, fmt.Errorf("hive server URL must use http or https")
 	}
 	baseURL.Path = strings.TrimRight(baseURL.Path, "/")
+	// Hostnames are case-insensitive, but net/http's proxy bypass compares
+	// "localhost" case-sensitively: http://LOCALHOST would otherwise be sent
+	// through HTTP_PROXY in clear text.
+	baseURL.Host = strings.ToLower(baseURL.Host)
 	// Give the client its OWN transport rather than sharing the process-wide
 	// http.DefaultTransport (which a nil Transport silently uses).
 	//
@@ -129,8 +134,53 @@ func NewClient(server, token string, timeout time.Duration) (*Client, error) {
 	return &Client{
 		baseURL: baseURL,
 		token:   strings.TrimSpace(token),
-		http:    &http.Client{Timeout: timeout, Transport: transport},
+		http: &http.Client{
+			Timeout:       timeout,
+			Transport:     transport,
+			CheckRedirect: refuseBodyRedirects,
+		},
 	}, nil
+}
+
+// refuseBodyRedirects stops redirects for any request that is not a GET or
+// HEAD. Go re-sends a rewindable body on 307/308 to whatever Location says,
+// including another host or an http downgrade; it drops auth headers on a
+// cross-host hop but still sends the body, which for `github token set` is
+// the PAT itself. The 3xx is returned as-is and surfaces as an APIError.
+// net/http always passes at least the original request in via.
+//
+// Any request also refuses a redirect from https to plain http: net/http
+// keeps Authorization and Cookie on a same-host hop whatever the scheme, so
+// following it would send the dashboard credential in clear text.
+func refuseBodyRedirects(req *http.Request, via []*http.Request) error {
+	if m := via[0].Method; m != http.MethodGet && m != http.MethodHead {
+		return http.ErrUseLastResponse
+	}
+	if via[len(via)-1].URL.Scheme == "https" && req.URL.Scheme != "https" {
+		return errors.New("refusing a redirect from https to plain http")
+	}
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return nil
+}
+
+// RequireSecureTransport refuses a plain http:// server unless it is
+// loopback. Callers that send a credential in the request body (`github token
+// set`) check it first, so the credential never crosses a network in clear
+// text. "localhost" and loopback IP literals count as loopback.
+func (c *Client) RequireSecureTransport() error {
+	if c.baseURL.Scheme == "https" {
+		return nil
+	}
+	host := c.baseURL.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return nil
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	return errors.New("refusing to send a credential over plain http to a non-loopback server; use an https:// --server")
 }
 
 func (c *Client) Do(ctx context.Context, method, apiPath string, query url.Values, body any) (any, error) {

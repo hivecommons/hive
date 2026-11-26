@@ -57,9 +57,11 @@ func NewRootCommand(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	root.SetOut(out)
 	root.SetErr(errOut)
 	// Flag parsing failures are user mistakes; surface them with the usage exit code.
+	// The message is redacted because pflag quotes the offending value.
 	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
-		return &usageError{message: err.Error()}
+		return &usageError{message: RedactTokens(err.Error())}
 	})
+	root.SetHelpCommand(newHelpCommand())
 	root.PersistentFlags().StringVar(&options.server, "server", "http://127.0.0.1:3001", "Hive dashboard API base URL")
 	root.PersistentFlags().StringVar(&options.tokenEnv, "token-env", "HIVE_DASHBOARD_TOKEN", "environment variable containing the dashboard token")
 	root.PersistentFlags().DurationVar(&options.timeout, "timeout", 30*time.Second, "request or stream timeout")
@@ -82,6 +84,7 @@ func NewRootCommand(in io.Reader, out, errOut io.Writer) *cobra.Command {
 	root.AddCommand(newEvidenceCommand(env))
 	root.AddCommand(newBenchmarksCommand(env))
 	root.AddCommand(newTUICommand(env))
+	root.AddCommand(newGitHubCommand(env))
 	root.AddCommand(newLoginCommand(env))
 	root.AddCommand(newLogoutCommand(env))
 	return root
@@ -150,7 +153,8 @@ func (e *commandEnv) attachSession(client *hivectl.Client) {
 func wrapArgs(validator cobra.PositionalArgs) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if err := validator(cmd, args); err != nil {
-			return &usageError{message: err.Error()}
+			// cobra's validators quote the arguments; never repeat a token.
+			return &usageError{message: RedactTokens(err.Error())}
 		}
 		return nil
 	}
@@ -216,4 +220,25 @@ func requireYes(yes bool, example string) error {
 		return nil
 	}
 	return &usageError{message: "refusing destructive operation without --yes\nExample: " + example}
+}
+
+// newHelpCommand replaces cobra's built-in `help`, which prints an unknown
+// topic verbatim to stdout ("Unknown help topic [`ghp_...`]"), outside the
+// error path main redacts. This one redacts the topic and otherwise behaves
+// the same.
+func newHelpCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "help [command]",
+		Short: "Help about any command",
+		Long:  "Help provides help for any command in the application.\nSimply type hivectl help [path to command] for full details.",
+		RunE: func(c *cobra.Command, args []string) error {
+			target, _, err := c.Root().Find(args)
+			if target == nil || err != nil {
+				c.Printf("Unknown help topic %q\n", RedactTokens(strings.Join(args, " ")))
+				return c.Root().Usage()
+			}
+			target.InitDefaultHelpFlag()
+			return target.Help()
+		},
+	}
 }

@@ -68820,6 +68820,101 @@ function burnAreaChart() {
       }
     }
 
+    /* GitHub PAT rotation (#19633): a masked, write-only field over the
+       owner-only /api/github-token routes. The token is typed into a password
+       input, sent once and cleared; the page only ever learns the fingerprint,
+       the login and when the hive last verified it. A GitHub App hive has no
+       PAT to rotate, so the panel is not drawn. Built from DOM nodes and
+       textContent so nothing from the server is parsed as markup. */
+    async function loadGitHubTokenPanel() {
+      const host = document.getElementById('forge-pat-host');
+      if (!host) return;
+      try {
+        const res = await fetch('/api/github-token', { headers: _inceptionAuthHeaders() });
+        if (res.status === 403) {
+          /* Not the owner, or the owner proof is missing: say so instead of
+             leaving a silent gap, with the server's reason when it gives one. */
+          host.textContent = '';
+          host.appendChild(referenceRepoNode('div', 'fs-sm text-muted cfg-github-token-denied', githubTokenForbiddenText(await saveErrorMessage(res))));
+          return;
+        }
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        renderGitHubTokenPanel(host, await res.json(), loadGitHubTokenPanel);
+      } catch (e) {
+        host.textContent = '';
+        host.appendChild(referenceRepoNode('div', 'fs-sm text-danger', 'Failed to load the GitHub token status: ' + e.message));
+      }
+    }
+
+    /* The 403 wording for the PAT panel: who may rotate the token, then the
+       server's own reason (saveErrorMessage falls back to read-only advice). */
+    function githubTokenForbiddenText(reason) {
+      return 'Only the hive owner can view or rotate the GitHub token.' + (reason ? ' ' + reason : '');
+    }
+
+    function renderGitHubTokenPanel(host, st, onDone) {
+      host.textContent = '';
+      if (!st || st.mode === 'app') return; /* App mode: the credential is the App key */
+      const card = referenceRepoNode('div', 'card-inset mt-5 cfg-github-token');
+      card.appendChild(referenceRepoNode('div', 'settings-subsection-title', 'Personal access token'));
+      const state = referenceRepoNode('div', 'fs-sm cfg-github-token-state');
+      if (st.configured) {
+        let line = 'In use: fingerprint ' + st.fingerprint;
+        if (st.login) line += ', signed in as ' + st.login;
+        line += st.verified_at ? ', last verified ' + formatDashboardDateTime(st.verified_at) : ', not verified since this hive started';
+        state.textContent = line;
+      } else {
+        state.className += ' text-muted';
+        state.textContent = 'No personal access token is configured.';
+      }
+      card.appendChild(state);
+      const row = referenceRepoNode('div', 'config-list-item cfg-github-token-row');
+      const input = referenceRepoNode('input', 'cfg-github-token-input');
+      input.type = 'password';
+      /* off, not new-password: a password manager should neither offer to
+         generate a value here nor save the PAT. */
+      input.autocomplete = 'off';
+      input.setAttribute('data-1p-ignore', 'true');
+      input.setAttribute('data-lpignore', 'true');
+      input.placeholder = 'New personal access token';
+      input.setAttribute('aria-label', 'New GitHub personal access token');
+      const btn = referenceRepoNode('button', 'hv-btn btn-primary btn-sm', 'Verify and save');
+      btn.title = 'Check the token against GitHub, then replace the current one without a restart.';
+      const status = referenceRepoNode('div', 'fs-sm cfg-github-token-status text-muted');
+      const setStatus = (msg, cls) => { status.textContent = msg; status.className = 'fs-sm cfg-github-token-status ' + (cls || 'text-muted'); };
+      btn.addEventListener('click', async () => {
+        const token = (input.value || '').trim();
+        if (!token) { setStatus('Enter the new token first.', 'text-danger'); return; }
+        btn.disabled = true;
+        setStatus('Verifying with GitHub…');
+        try {
+          /* redirect: 'error' so no 3xx can carry the token to another URL. */
+          const res = await fetch('/api/github-token', { method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify({ token: token }), redirect: 'error' });
+          if (!res.ok) {
+            /* 422 token refused, 429 cooling down after a refusal, 409 on an App-mode install:
+               the server's reason is shown and the current token stays. A 403 says who may
+               rotate it before the reason. */
+            const reason = await saveErrorMessage(res);
+            throw new Error(res.status === 403 ? githubTokenForbiddenText(reason) : reason);
+          }
+          const d = await res.json();
+          input.value = '';
+          showToast('GitHub token rotated' + (d.login ? ' (signed in as ' + d.login + ')' : '') + (d.sealed === false ? '; stored as plaintext because no keystore is available' : ''), 'success');
+          onDone();
+        } catch (e) {
+          btn.disabled = false;
+          setStatus(e.message, 'text-danger');
+        }
+      });
+      row.appendChild(input);
+      row.appendChild(btn);
+      card.appendChild(row);
+      card.appendChild(status);
+      card.appendChild(referenceRepoNode('div', 'config-help',
+        'Write-only: the token is never shown again. It is verified against the configured API URL (sign-in, read access to every project repo and the scopes this hive needs) before it replaces the current one, which keeps working if the check fails. Applies without a restart and is recorded in the audit log by fingerprint. Scripted rotation: hivectl github token set --stdin.'));
+      host.appendChild(card);
+    }
+
     function forgeAppRow(label, valueHtml) {
       return `<div style="display:flex;gap:10px;font-size:0.78rem;padding:3px 0"><span style="min-width:140px;color:var(--muted);flex-shrink:0">${esc(label)}</span><span style="word-break:break-all">${valueHtml}</span></div>`;
     }
@@ -68869,7 +68964,9 @@ function burnAreaChart() {
           </div>`).join('');
       }
       html += renderForgeGitHubSettings(data.settings || {});
+      html += '<div id="forge-pat-host"></div>';
       host.innerHTML = html;
+      loadGitHubTokenPanel();
     }
 
     // renderForgeGitHubSettings shows the rest of the github: block. Identity
