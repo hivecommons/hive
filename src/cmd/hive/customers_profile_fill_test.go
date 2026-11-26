@@ -5,12 +5,16 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/customers"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -63,6 +67,50 @@ func TestCustomersProfileSourcesFollowTheForge(t *testing.T) {
 	deps.client = func() *github.Client { return nil }
 	if got := sourceNames(customersProfileSources(deps)); len(got) != 1 || got[0] != customers.ProfileSourceLinear {
 		t.Fatalf("no client = %v", got)
+	}
+}
+
+func TestCustomersProfileSourcesTokenFile(t *testing.T) {
+	root := t.TempDir()
+	defer cruxconfig.AllowSecretFileRoot(root)()
+	good := filepath.Join(root, "token")
+	if err := os.WriteFile(good, []byte("file-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gh := github.NewClient("t", "acme", nil, discardLogger(), "")
+	for _, tc := range []struct {
+		name      string
+		tokenFile string
+		wantToken string
+		wantBuilt int
+	}{
+		{"good file", good, "file-token", 1},
+		{"missing file", filepath.Join(root, "missing"), "", 0},
+		{"file outside the secret dirs", filepath.Join(t.TempDir(), "token"), "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("GITEA_TOKEN", "env-token")
+			cfg := &config.Config{}
+			cfg.Project.Forge = config.ForgeGitea
+			cfg.Gitea.URL = "https://codeberg.example.org"
+			cfg.Gitea.TokenFile = tc.tokenFile
+			var gotToken string
+			var built int
+			deps := customersProfileFillDeps{
+				cfg:    func() *config.Config { return cfg },
+				client: func() *github.Client { return gh },
+				orgs:   newCustomersOrgNames(),
+				newForge: func(kind forge.Kind, token string, opts forge.Options) (forge.Forge, error) {
+					gotToken = token
+					built++
+					return forge.NewForge(kind, token, opts)
+				},
+			}
+			got := customersProfileSources(deps)
+			if len(got) != tc.wantBuilt || built != tc.wantBuilt || gotToken != tc.wantToken {
+				t.Fatalf("sources=%d built=%d token=%q, want sources=built=%d token=%q", len(got), built, gotToken, tc.wantBuilt, tc.wantToken)
+			}
+		})
 	}
 }
 

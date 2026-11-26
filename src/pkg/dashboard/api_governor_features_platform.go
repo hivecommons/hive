@@ -41,10 +41,14 @@ type featuresPlatformBody struct {
 
 	ForgejoURL      *string `json:"forgejoUrl"`
 	ForgejoTokenEnv *string `json:"forgejoTokenEnv"`
-	GiteaURL        *string `json:"giteaUrl"`
-	GiteaTokenEnv   *string `json:"giteaTokenEnv"`
-	GitLabURL       *string `json:"gitlabUrl"`
-	GitLabTokenEnv  *string `json:"gitlabTokenEnv"`
+	// The token_file fields name a file under an allowed secret dir, never a token.
+	ForgejoTokenFile *string `json:"forgejoTokenFile"`
+	GiteaURL         *string `json:"giteaUrl"`
+	GiteaTokenEnv    *string `json:"giteaTokenEnv"`
+	GiteaTokenFile   *string `json:"giteaTokenFile"`
+	GitLabURL        *string `json:"gitlabUrl"`
+	GitLabTokenEnv   *string `json:"gitlabTokenEnv"`
+	GitLabTokenFile  *string `json:"gitlabTokenFile"`
 
 	MintMaxTTLSeconds *int `json:"mintMaxTtlSeconds"`
 
@@ -116,9 +120,40 @@ func settingsForgeURL(name, raw string) (string, error) {
 	return strings.TrimRight(v, "/"), nil
 }
 
+// rejectURLWithTokenFile refuses a write that touches a forge's URL or
+// token_file and leaves both set. The forge client sends the file's contents
+// to the URL, so a settings writer could otherwise aim an existing secret at a
+// host of their choosing. Clear one side first, or edit the config file.
+func (b featuresPlatformBody) rejectURLWithTokenFile(cur *config.Config) error {
+	for _, f := range []struct {
+		name            string
+		urlIn, fileIn   *string
+		urlCur, fileCur string
+	}{
+		{"forgejo", b.ForgejoURL, b.ForgejoTokenFile, cur.Forgejo.URL, cur.Forgejo.TokenFile},
+		{"gitea", b.GiteaURL, b.GiteaTokenFile, cur.Gitea.URL, cur.Gitea.TokenFile},
+		{"gitlab", b.GitLabURL, b.GitLabTokenFile, cur.GitLab.URL, cur.GitLab.TokenFile},
+	} {
+		if f.urlIn == nil && f.fileIn == nil {
+			continue
+		}
+		u, file := f.urlCur, f.fileCur
+		if f.urlIn != nil {
+			u = strings.TrimSpace(*f.urlIn)
+		}
+		if f.fileIn != nil {
+			file = strings.TrimSpace(*f.fileIn)
+		}
+		if u != "" && file != "" {
+			return fmt.Errorf("%s url and token_file cannot both be set through settings; clear one first", f.name)
+		}
+	}
+	return nil
+}
+
 // prepare validates every field the request carried and returns the mutation
 // to apply. Nothing is changed when an error is returned.
-func (b featuresPlatformBody) prepare() (func(*config.Config), error) {
+func (b featuresPlatformBody) prepare(cur *config.Config) (func(*config.Config), error) {
 	var steps []func(*config.Config)
 
 	for _, f := range []struct {
@@ -232,6 +267,29 @@ func (b featuresPlatformBody) prepare() (func(*config.Config), error) {
 		}
 		dst := f.dst
 		steps = append(steps, func(c *config.Config) { *dst(c) = name })
+	}
+
+	for _, f := range []struct {
+		raw  *string
+		name string
+		dst  func(*config.Config) *string
+	}{
+		{b.ForgejoTokenFile, "forgejo.token_file", func(c *config.Config) *string { return &c.Forgejo.TokenFile }},
+		{b.GiteaTokenFile, "gitea.token_file", func(c *config.Config) *string { return &c.Gitea.TokenFile }},
+		{b.GitLabTokenFile, "gitlab.token_file", func(c *config.Config) *string { return &c.GitLab.TokenFile }},
+	} {
+		if f.raw == nil {
+			continue
+		}
+		path := strings.TrimSpace(*f.raw)
+		if msg := config.SecretFilePathRejection(f.name, path); msg != "" {
+			return nil, fmt.Errorf("%s", msg)
+		}
+		dst := f.dst
+		steps = append(steps, func(c *config.Config) { *dst(c) = path })
+	}
+	if err := b.rejectURLWithTokenFile(cur); err != nil {
+		return nil, err
 	}
 
 	if b.MintMaxTTLSeconds != nil {
@@ -435,12 +493,15 @@ func featuresPlatformResponse(cfg *config.Config) map[string]interface{} {
 		"evidenceEnabled":        cfg.Evidence.IsEnabled(),
 		"evidenceSigningKeyFile": cfg.Evidence.SigningKeyPath(),
 
-		"forgejoUrl":      cfg.Forgejo.URL,
-		"forgejoTokenEnv": cfg.Forgejo.TokenEnv,
-		"giteaUrl":        cfg.Gitea.URL,
-		"giteaTokenEnv":   cfg.Gitea.TokenEnv,
-		"gitlabUrl":       cfg.GitLab.URL,
-		"gitlabTokenEnv":  cfg.GitLab.TokenEnv,
+		"forgejoUrl":       cfg.Forgejo.URL,
+		"forgejoTokenEnv":  cfg.Forgejo.TokenEnv,
+		"forgejoTokenFile": cfg.Forgejo.TokenFile,
+		"giteaUrl":         cfg.Gitea.URL,
+		"giteaTokenEnv":    cfg.Gitea.TokenEnv,
+		"giteaTokenFile":   cfg.Gitea.TokenFile,
+		"gitlabUrl":        cfg.GitLab.URL,
+		"gitlabTokenEnv":   cfg.GitLab.TokenEnv,
+		"gitlabTokenFile":  cfg.GitLab.TokenFile,
 
 		"mintKeyPath":       cfg.Mint.KeyPath,
 		"mintMaxTtlSeconds": cfg.Mint.MaxTTLSeconds,
