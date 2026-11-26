@@ -1702,7 +1702,10 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		// fail-closed on nil by contract — currentGeneration returns
 		// (zero,false), currentSecret returns "", deriveDomainKey returns "" for
 		// an empty master, and acceptableGenerations returns nil — so nothing
-		// mints on a key the hub cannot vouch for. Heartbeat verification and
+		// that reads the set mints on a key the hub cannot vouch for. The
+		// accessors in hub_keys.go (mintingSecret, ssoSigningSeedForHive) do
+		// fall back to s.hubSecret here, so SSO handoffs, session cookies and
+		// heartbeat signatures keep the single-master behaviour (#20102). Heartbeat verification and
 		// session verification both fall through to their documented
 		// single-master paths (hub_keys.go:287, hub_session_revocation.go:434),
 		// which key off s.hubSecret and are untouched here, so EXISTING SPOKES

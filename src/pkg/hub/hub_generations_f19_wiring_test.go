@@ -42,9 +42,16 @@ const (
 // reason. Restoring rather than nil-ing keeps that honest under -count=N.
 func withCleanLiveGenerations(t *testing.T) {
 	t.Helper()
-	prevSet, prevUntrusted := liveGenerations, liveGenerationsUntrusted
+	liveGenerationsMu.RLock()
+	prevSet, prevUntrusted, prevRoot := liveGenerations, liveGenerationsUntrusted, liveGenerationsRoot
+	liveGenerationsMu.RUnlock()
 	setLiveGenerations(nil, false)
-	t.Cleanup(func() { setLiveGenerations(prevSet, prevUntrusted) })
+	t.Cleanup(func() {
+		setLiveGenerations(prevSet, prevUntrusted)
+		liveGenerationsMu.Lock()
+		liveGenerationsRoot = prevRoot
+		liveGenerationsMu.Unlock()
+	})
 }
 
 // TestRotationReachesDesiredPerHiveEnv is THE test whose absence let F19 ship.

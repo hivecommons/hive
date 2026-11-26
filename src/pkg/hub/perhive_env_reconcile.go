@@ -672,6 +672,10 @@ func (s *HubServer) PerHiveEnvSnapshot() PerHiveEnvStatus {
 	if s == nil {
 		return out
 	}
+	// Snapshot the generation set BEFORE taking perHiveEnvMu: rotation holds
+	// keyGenerationsMu while it reads perHiveEnvMu (fleetObservation), so
+	// taking them in the other order here could deadlock.
+	gs := s.currentGenerations()
 	s.perHiveEnvMu.RLock()
 	defer s.perHiveEnvMu.RUnlock()
 	out.ConsideredHives = s.perHiveEnvConsidered
@@ -683,7 +687,6 @@ func (s *HubServer) PerHiveEnvSnapshot() PerHiveEnvStatus {
 	// sweep that admitted nobody has observed nothing, and "nothing observed"
 	// is not "everything observed".
 	out.FleetFullyObserved = out.ConsideredHives > 0 && out.UnreachableHives == 0
-	gs := s.keyGenerations
 	now := time.Now()
 	current, hasCurrent := gs.currentGeneration()
 	if hasCurrent {
@@ -888,7 +891,7 @@ func (s *HubServer) reconcilePerHiveEnv() {
 		}
 		// Attribute this hive to a generation from the SAME read that produced
 		// the drift list, so the two can never describe different moments.
-		gen, _ := perHiveEnvGeneration(s.keyGenerations.acceptableGenerations(time.Now()), liveEnv, h.ID)
+		gen, _ := perHiveEnvGeneration(s.currentGenerations().acceptableGenerations(time.Now()), liveEnv, h.ID)
 		// Record the observation from THIS read regardless of whether we go on
 		// to patch — the readiness surface must reflect the whole fleet even
 		// while remediation is rate-limited.

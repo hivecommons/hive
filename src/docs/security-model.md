@@ -678,8 +678,10 @@ the hub can reach, and the endpoint refuses to rotate unless the last sweep
 considered at least one hive and reached every hive it considered. From the
 moment of rotation the hub signs session cookies with the current
 generation. It signs SSO handoffs and heartbeat responses with the current
-generation too, except for a spoke the sweep last saw on the previous
-generation, which gets the previous one until its window ends. During the
+generation too, with one exception while the previous generation's window
+is open. A spoke the sweep last saw on the previous generation gets the
+previous one. So does a spoke the sweep has not read since a hub restart,
+if it was provisioned before the rotation. During the
 window the hub verifies both generations, and swept spokes accept both
 through the `_PREV` public keys. When the window ends the previous generation is retired. Swept spokes
 keep working because they already hold the current keys, and session cookies

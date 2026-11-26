@@ -92,14 +92,57 @@ func (s *HubServer) ssoSigningSeedForHive(hiveID string, now time.Time) string {
 	if gs == nil {
 		return s.ssoSigningSeed()
 	}
-	if observed := s.observedSpokeGeneration(hiveID); observed != 0 && observed != gs.Current {
+	observed := s.observedSpokeGeneration(hiveID)
+	if observed != 0 && observed != gs.Current {
 		for _, g := range gs.acceptableGenerations(now) {
 			if g.ID == observed {
 				return deriveDomainKey(g.Secret, infoSSOEd25519Seed)
 			}
 		}
 	}
+	if observed == 0 {
+		// No attribution yet: the first sweep after a hub restart has not read
+		// this hive, or could not attribute it. A hive whose record predates
+		// the current generation was provisioned with the previous one, and if
+		// the sweep has since patched it, it also holds that key as _PREV, so
+		// the previous generation verifies either way. A hive provisioned after
+		// the rotation holds only the current key, so it keeps the default.
+		if prev, ok := previousAcceptableGeneration(gs, now); ok && hiveProvisionedBefore(hiveID, gs) {
+			return deriveDomainKey(prev.Secret, infoSSOEd25519Seed)
+		}
+	}
 	return deriveDomainKey(gs.currentSecret(), infoSSOEd25519Seed)
+}
+
+// previousAcceptableGeneration returns the still-acceptable non-current
+// generation, if any.
+func previousAcceptableGeneration(gs *generationSet, now time.Time) (keyGeneration, bool) {
+	for _, g := range gs.acceptableGenerations(now) {
+		if g.ID != gs.Current {
+			return g, true
+		}
+	}
+	return keyGeneration{}, false
+}
+
+// hiveProvisionedBefore reports whether hiveID's SaaS record was created
+// before the current generation was minted. Unknown on either side (no
+// record, unparseable time, a current generation without a Created stamp)
+// answers false, which keeps the current-generation default.
+func hiveProvisionedBefore(hiveID string, gs *generationSet) bool {
+	cur, ok := gs.currentGeneration()
+	if !ok || cur.Created.IsZero() {
+		return false
+	}
+	rec := loadSaaSHive(hiveID)
+	if rec == nil {
+		return false
+	}
+	created, err := time.Parse(time.RFC3339, strings.TrimSpace(rec.CreatedAt))
+	if err != nil {
+		return false
+	}
+	return created.Before(cur.Created)
 }
 
 // observedSpokeGeneration is the generation the last sweep attributed hiveID's

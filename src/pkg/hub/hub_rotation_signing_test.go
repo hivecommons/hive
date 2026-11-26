@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -348,6 +350,7 @@ func TestLiveGenerationsRootLifecycle(t *testing.T) {
 // with the current generation once it is not.
 func TestUnsweptSpokeKeepsWorkingDuringOverlap(t *testing.T) {
 	withTempGenerationsPath(t)
+	withCleanLiveGenerations(t)
 	masterA := mustGenerateMaster(t)
 	s := newRotationTestHub(t, masterA)
 	const hiveID = "hive-unswept"
@@ -415,5 +418,74 @@ func TestUnsweptSpokeKeepsWorkingDuringOverlap(t *testing.T) {
 	var nilHub *HubServer
 	if nilHub.ssoSigningSeedForHive(hiveID, time.Now()) != "" || nilHub.observedSpokeGeneration(hiveID) != 0 {
 		t.Error("a nil hub must sign nothing")
+	}
+}
+
+// writeSaaSHiveRecord seeds a hive's meta.json with only a creation time.
+func writeSaaSHiveRecord(t *testing.T, hiveID string, created time.Time) {
+	t.Helper()
+	dir := filepath.Join(saasHivesDir, hiveID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(SaaSHive{CreatedAt: created.UTC().Format(time.RFC3339)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "meta.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestUnobservedHiveDuringOverlap covers the window after a hub restart,
+// before the first sweep has attributed each hive: a hive provisioned before
+// the rotation gets the previous generation (the key an unswept spoke holds,
+// and a swept one holds as _PREV), a hive provisioned after it gets the
+// current one, and a hive with no record gets the current one.
+func TestUnobservedHiveDuringOverlap(t *testing.T) {
+	withTempGenerationsPath(t)
+	withCleanLiveGenerations(t)
+	oldHives := saasHivesDir
+	saasHivesDir = t.TempDir()
+	t.Cleanup(func() { saasHivesDir = oldHives })
+
+	masterA := mustGenerateMaster(t)
+	s := newRotationTestHub(t, masterA)
+	rotatedAt := time.Now()
+	if _, _, err := s.rotateMasterSecret(rotatedAt, false); err != nil {
+		t.Fatalf("rotateMasterSecret: %v", err)
+	}
+	gs := s.currentGenerations()
+	prevSeed := SSOSigningSeedFromMaster(masterA)
+	curSeed := deriveDomainKey(gs.currentSecret(), infoSSOEd25519Seed)
+
+	writeSaaSHiveRecord(t, "hive-old", rotatedAt.Add(-24*time.Hour))
+	writeSaaSHiveRecord(t, "hive-new", rotatedAt.Add(time.Hour))
+	now := time.Now()
+	if s.ssoSigningSeedForHive("hive-old", now) != prevSeed {
+		t.Error("an unobserved hive provisioned before the rotation must get the previous generation during the overlap")
+	}
+	if s.ssoSigningSeedForHive("hive-new", now) != curSeed {
+		t.Error("a hive provisioned after the rotation must get the current generation")
+	}
+	if s.ssoSigningSeedForHive("hive-missing", now) != curSeed {
+		t.Error("a hive with no record must get the current generation")
+	}
+	afterWindow := now.Add(defaultVerifyWindow + time.Hour)
+	if s.ssoSigningSeedForHive("hive-old", afterWindow) != curSeed {
+		t.Error("after verify_until no hive may get the previous generation")
+	}
+
+	// Unknown creation times keep the default.
+	writeSaaSHiveRecord(t, "hive-bad", rotatedAt)
+	if err := os.WriteFile(filepath.Join(saasHivesDir, "hive-bad", "meta.json"), []byte(`{"created_at":"not-a-time"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if hiveProvisionedBefore("hive-bad", gs) {
+		t.Error("an unparseable creation time must not count as provisioned before")
+	}
+	noCreated := newGenerationSet(gs.Current, []keyGeneration{{ID: gs.Current, Secret: gs.currentSecret()}})
+	if hiveProvisionedBefore("hive-old", noCreated) {
+		t.Error("a current generation with no Created stamp must not select the previous one")
 	}
 }
