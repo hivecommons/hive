@@ -124,7 +124,15 @@ type Headroom struct {
 	// visible in diagnostics and the published reading. It never turns a hold
 	// into an admit. Empty when ProbeErr is nil.
 	ProbeErrCause ProbeErrorCause `json:"-"`
+	// AuthMode names a positively detected login that has no subscription
+	// windows to read (AuthModeAPIKey for a Codex API-key login,
+	// hivecommons/hive#19932). Empty for every windowed or failed reading.
+	AuthMode string `json:"auth_mode,omitempty"`
 }
+
+// AuthModeAPIKey marks a reading from a metered API-key login: the account
+// bills per token and has no five-hour or weekly window to protect.
+const AuthModeAPIKey = "api_key"
 
 // ProbeErrorCause categorizes why a probe produced no usable reading. The
 // motivating case (kubestellar/hive#6986): the Agy adapter reporting `unknown`
@@ -157,6 +165,13 @@ const (
 	// ProbeCauseProbeFailed: any other measurement failure (transport error,
 	// non-zero exit, unparseable transport).
 	ProbeCauseProbeFailed ProbeErrorCause = "probe_failed"
+	// ProbeCauseAPIKeyLogin: the CLI is logged in with a metered API key, which
+	// has no subscription windows to read (hivecommons/hive#19932). It is the
+	// one cause that is not a blind measurement: there is positively nothing to
+	// protect. Rotation still treats it as a failed probe (never a target), and
+	// only the contributor reading turns it into an admitted, windowless
+	// reading marked auth_mode "api_key".
+	ProbeCauseAPIKeyLogin ProbeErrorCause = "api_key_login"
 )
 
 // causedError couples a probe error with its ProbeErrorCause so failOpen can
@@ -278,6 +293,7 @@ func (h Headroom) MarshalJSON() ([]byte, error) {
 		ProbeErrCause string        `json:"probe_error_cause,omitempty"`
 		PlanType      string        `json:"plan_type,omitempty"`
 		ExtraUsage    *ExtraUsage   `json:"extra_usage,omitempty"`
+		AuthMode      string        `json:"auth_mode,omitempty"`
 	}
 	return json.Marshal(alias{
 		Provider:      h.Provider,
@@ -292,6 +308,7 @@ func (h Headroom) MarshalJSON() ([]byte, error) {
 		ProbeErrCause: string(h.ProbeErrCause),
 		PlanType:      h.PlanType,
 		ExtraUsage:    h.ExtraUsage,
+		AuthMode:      h.AuthMode,
 	})
 }
 
@@ -946,13 +963,93 @@ func (p CodexProber) Probe(ctx context.Context) Headroom {
 		err = errors.New("codex app-server: no rateLimits response")
 	}
 	if err != nil {
+		if codexAPIKeyLogin() {
+			return codexAPIKeyHeadroom(p.Provider())
+		}
 		return failOpen(p.Provider(), classifyCodexProbeError(err))
 	}
 	h, err := codexHeadroomForModel(p.Provider(), p.ThresholdPct, result, p.Model)
 	if err != nil {
+		if codexAPIKeyLogin() {
+			return codexAPIKeyHeadroom(p.Provider())
+		}
 		return failOpen(p.Provider(), err)
 	}
 	return h
+}
+
+// codexAPIKeyHeadroom is the reading for a Codex API-key login
+// (hivecommons/hive#19932). account/rateLimits/read reports ChatGPT
+// subscription windows, and an API-key account has none, so the probe fails or
+// comes back empty on every such host. The result stays a failed measurement
+// for rotation, which never places load on it, but carries
+// ProbeCauseAPIKeyLogin so the contributor reading can admit it instead of
+// holding as if quota were exhausted.
+func codexAPIKeyHeadroom(provider string) Headroom {
+	h := failOpen(provider, withCause(ProbeCauseAPIKeyLogin, errors.New("codex is logged in with an API key: no subscription quota windows to read; work spends metered API credits")))
+	h.CapturedAt = time.Now().UTC()
+	h.AuthMode = AuthModeAPIKey
+	return h
+}
+
+// codexAPIKeyEnvVars are the variables Codex reads an API key from.
+var codexAPIKeyEnvVars = []string{"CODEX_API_KEY", "OPENAI_API_KEY"}
+
+// codexAuthFilePath is the auth.json the probe's app-server reads: CODEX_HOME
+// when set (the app-server inherits it), else .codex under the HOME
+// codexAppServerRequest gives the app-server.
+func codexAuthFilePath() string {
+	if home := strings.TrimSpace(os.Getenv("CODEX_HOME")); home != "" {
+		return filepath.Join(home, "auth.json")
+	}
+	home := ""
+	if fi, err := os.Stat(sharedCLIHomePath); err == nil && fi.IsDir() {
+		home = sharedCLIHomePath
+	} else if h, err := os.UserHomeDir(); err == nil {
+		home = h
+	}
+	if home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".codex", "auth.json")
+}
+
+// codexAPIKeyLogin reports whether this host's Codex login is an API key and
+// not a ChatGPT subscription (hivecommons/hive#19932). Any ChatGPT token in
+// auth.json means a subscription login, whose failed probe stays a real
+// failure and holds. An auth.json that cannot be parsed also returns false,
+// so an unreadable login never admits. Otherwise an API key in the
+// environment, or in auth.json (written by `codex login --with-api-key`),
+// marks API-key mode.
+func codexAPIKeyLogin() bool {
+	fileKey := false
+	if path := codexAuthFilePath(); path != "" {
+		if b, err := os.ReadFile(path); err == nil {
+			var data map[string]any
+			if json.Unmarshal(b, &data) != nil {
+				return false
+			}
+			if tokens, ok := data["tokens"].(map[string]any); ok {
+				for _, key := range []string{"access_token", "refresh_token", "id_token"} {
+					if v, ok := tokens[key].(string); ok && strings.TrimSpace(v) != "" {
+						return false
+					}
+				}
+			}
+			if v, ok := data["OPENAI_API_KEY"].(string); ok && strings.TrimSpace(v) != "" {
+				fileKey = true
+			}
+		}
+	}
+	if fileKey {
+		return true
+	}
+	for _, name := range codexAPIKeyEnvVars {
+		if strings.TrimSpace(os.Getenv(name)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // errCodexAppServerNoResponse reports that the app-server closed its output
