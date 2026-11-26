@@ -303,6 +303,16 @@ func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservat
 			obs.Reason = pass.EscalationReason
 		}
 	}
+	if author := FixingStage(obs); !verdict.Terminal && pass.AuthorsTurn && !pass.AdoptionLive && verdict.Stage.YieldsToAdoptionFor(pass.Route) && (author == stagelabels.ReturnedToContributor || author == stagelabels.NeedsAuthor) {
+		// A person returned a head the hive cannot push to its author:
+		// the author's stage stands over the adoption pin, for the
+		// decision's changes request whatever the lane read.
+		verdict.Stage = author
+		verdict.Rank = stageRankOwned
+		verdict.Reason = autoMergeReasonHumanChangesRequested
+		obs.Reason = autoMergeReasonHumanChangesRequested
+		human = nil
+	}
 	if !verdict.Terminal && !pass.AdoptionLive && pass.ForkEscalationReason != "" && verdict.Stage == stagelabels.ReturnedToContributor {
 		verdict.Stage = stagelabels.NeedsDecision
 		verdict.Rank = stageRankOwned
