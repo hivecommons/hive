@@ -480,10 +480,7 @@ func (p *GitHubProxy) inferenceTranslatorHandlerFor(identify func(*http.Request)
 			p.recordInferenceResponseError(route, agentName, upstreamURL, resp, errBody)
 			backendMsg := inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server"))
 			p.recordAgentInferenceError(agentName, backendMsg, resp.StatusCode)
-			status, errorType := resp.StatusCode, "api_error"
-			if inferenceContextLengthError(status, errBody) {
-				status, errorType = http.StatusBadRequest, "invalid_request_error"
-			}
+			status, errorType := inferenceAnthropicErrorStatus(resp.StatusCode, errBody)
 			if failStream(status, backendMsg) {
 				return
 			}
@@ -704,16 +701,12 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	}
 	applyInferenceIdleTimeout(p.logger, resp, agentName, route)
 	defer func() { _ = resp.Body.Close() }()
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errBody, _ := io.ReadAll(resp.Body)
 		p.recordInferenceResponseError(route, agentName, upstreamURL, resp, errBody)
 		backendMsg := inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server"))
 		p.recordAgentInferenceError(agentName, backendMsg, resp.StatusCode)
-		status, errorType := resp.StatusCode, "api_error"
-		if inferenceContextLengthError(status, errBody) {
-			status, errorType = http.StatusBadRequest, "invalid_request_error"
-		}
+		status, errorType := inferenceAnthropicErrorStatus(resp.StatusCode, errBody)
 		if stream != nil {
 			stream.fail(status, backendMsg)
 			return
