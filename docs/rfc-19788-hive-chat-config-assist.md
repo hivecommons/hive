@@ -1,6 +1,6 @@
 # RFC #19788: Hive Chat config assist (model-proposed, owner-confirmed config changes)
 
-Status: accepted ([#19835](https://github.com/hivecommons/hive/pull/19835)). Phase 1 ([#19979](https://github.com/hivecommons/hive/issues/19979)), phase 2 ([#19977](https://github.com/hivecommons/hive/issues/19977)) and phase 3a ([#19978](https://github.com/hivecommons/hive/issues/19978), proposals with "Open in agent config") are implemented. Phase 3b (direct Apply and Undo) is not.
+Status: accepted ([#19835](https://github.com/hivecommons/hive/pull/19835)). Phase 1 ([#19979](https://github.com/hivecommons/hive/issues/19979)), phase 2 ([#19977](https://github.com/hivecommons/hive/issues/19977)), phase 3a ([#19978](https://github.com/hivecommons/hive/issues/19978), proposals with "Open in agent config") and phase 3b ([#19985](https://github.com/hivecommons/hive/issues/19985), direct Apply and Undo) are implemented.
 Target: Hive v5
 Scope: dashboard Hive Chat panel, the `chat:` config block, agent config write endpoints, audit log
 Out of scope: a write-capable MCP server, writes from Slack/Discord/email chat surfaces, secrets, governance and write-surface settings, hub-level settings
@@ -9,8 +9,8 @@ Refs: [#19788](https://github.com/hivecommons/hive/issues/19788), [#19177](https
 > **This design was accepted on [#19788](https://github.com/hivecommons/hive/issues/19788)**
 > after review in [#19835](https://github.com/hivecommons/hive/pull/19835). It is
 > implemented one phase per issue; the status line above says which phases have
-> shipped. [Decisions for maintainers](#decisions-for-maintainers) D2, D4 and D6
-> are still open and are settled when their phase is picked up. Phase 3a keeps
+> shipped. [Decisions for maintainers](#decisions-for-maintainers) D2 and D4
+> are still open (D6 was settled by shipping 3b) and are settled when their phase is picked up. Phase 3a keeps
 > the proposal TTL, rate and caps as code constants (the values in
 > [§3](#3-the-proposal-turn)); the `config_assist.model` and `proposal_ttl` knobs
 > wait on D2.
@@ -357,7 +357,8 @@ each change there ships with its own test.
   Slack/Discord/email chat stay read-only because they have no owner-verified
   session to confirm with.
 - **D6. 3b at all?** Is phase 3a ("Open in agent config") enough on its own,
-  so that 3b is dropped or deferred indefinitely?
+  so that 3b is dropped or deferred indefinitely? Settled: 3b shipped in
+  [#19985](https://github.com/hivecommons/hive/issues/19985).
 
 ## Not in scope
 

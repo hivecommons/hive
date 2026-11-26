@@ -420,6 +420,17 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	// Chat config assist attribution (#19978): verified against the stored
 	// proposal, never taken from the query string alone.
 	viaProposal, viaClaimed := s.chatConfigVia(r, name, "general", func(f string) bool { _, ok := body[f]; return ok })
+	// A card Apply (#19985) is bound to its stored proposal here, under
+	// agentConfigMu; without the header this is a normal dialog save.
+	apply, applyOK := s.chatConfigApplyBegin(w, r, name, "general", body)
+	if !applyOK {
+		return
+	}
+	if apply != nil {
+		w = apply.w
+		defer apply.finish()
+		viaProposal, viaClaimed = &apply.p, true
+	}
 
 	if err := validateAgentGeneralInput(body); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -1030,6 +1041,17 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 	}
 
 	viaProposal, viaClaimed := s.chatConfigVia(r, name, "cadences", func(f string) bool { _, ok := body[f]; return ok })
+	// A card Apply (#19985) is bound to its stored proposal here, under
+	// agentConfigMu; without the header this is a normal dialog save.
+	apply, applyOK := s.chatConfigApplyBegin(w, r, name, "cadences", body)
+	if !applyOK {
+		return
+	}
+	if apply != nil {
+		w = apply.w
+		defer apply.finish()
+		viaProposal, viaClaimed = &apply.p, true
+	}
 
 	gov := &s.deps.Config.Governor
 	cadences, err := validateCadencesBody(gov, body)
@@ -1276,6 +1298,17 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 	viaProposal, viaClaimed := s.chatConfigVia(r, name, "models", func(f string) bool {
 		return (f == "model" && body.Model != "") || (f == "reasoning_effort" && body.ReasoningEffort != nil)
 	})
+	// A card Apply (#19985) is bound to its stored proposal here, under
+	// agentConfigMu; without the header this is a normal dialog save.
+	apply, applyOK := s.chatConfigApplyBegin(w, r, name, "models", chatConfigModelsBodyJSON(body))
+	if !applyOK {
+		return
+	}
+	if apply != nil {
+		w = apply.w
+		defer apply.finish()
+		viaProposal, viaClaimed = &apply.p, true
+	}
 
 	u, err := s.validateModelsBody(name, agentCfg, body)
 	if err != nil {
