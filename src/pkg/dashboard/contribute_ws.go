@@ -4016,6 +4016,9 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			var prDetail ghpkg.PRVerification
 			if completedTask != nil {
 				prDetail = h.verifyReportedPRDetail(completedTask.Repo, msg.PRURL, s.contributor.profile.GitHubUsername)
+				// #19985: an older PR of the contributor's that the relay
+				// scraped from the agent's output is not this task's work.
+				prDetail = h.dropUnrelatedReportedPR(completedTask, prDetail, msg.PRURL, s.contributor.profile.GitHubUsername, taskAssignedAt)
 				// #17300: the scan ledger has usually not seen a PR the relay
 				// just opened with its own token, so record the verified PR
 				// before the revoke below decides whether the claim is kept.
