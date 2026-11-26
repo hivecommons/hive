@@ -14,6 +14,7 @@ import (
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/cruxtest"
 	"github.com/hivecommons/hive/crux/kubejob"
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -211,10 +212,9 @@ func TestSandboxCopyAdmissionCheckRunsOnlyForTheCopyTransport(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the boot admission check never ran")
 	}
-	deadline := time.Now().Add(10 * time.Second)
-	for !strings.Contains(logBuf.String(), "level=ERROR") && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	testutil.Eventually(t, 10*time.Second, func() bool {
+		return strings.Contains(logBuf.String(), "level=ERROR")
+	}, "refusal never logged at ERROR")
 	if got := logBuf.String(); !strings.Contains(got, "level=ERROR") || !strings.Contains(got, "probe admitted") {
 		t.Fatalf("refusal not logged at ERROR: %s", got)
 	}
