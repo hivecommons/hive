@@ -1,1 +1,0 @@
-- Hive Chat config assist can now propose one agent config change (model, reasoning effort, one-mode cadence, or disable) from an owner's chat message, as a card whose "Open in agent config" button opens the agent dialog pre-filled for the owner to Save; the save is attributed `via=chat` only after the server checks the proposal id against its stored copy (#19978).

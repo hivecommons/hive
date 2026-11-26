@@ -11,6 +11,23 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.377.0)
+
+### Added
+
+- Hive Chat config assist can now propose one agent config change (model, reasoning effort, one-mode cadence, or disable) from an owner's chat message, as a card whose "Open in agent config" button opens the agent dialog pre-filled for the owner to Save; the save is attributed `via=chat` only after the server checks the proposal id against its stored copy (#19978).
+- Forgejo: the spoke can serve its own `forgejo.integration` key list. With `forgejo.integration.serve_key_list: true` (off by default) the dashboard answers `GET /.well-known/openid-configuration` and `GET /jwks.json` anonymously, rendered from `key_file` and the new `previous_key_files`, public keys only, cached and rate limited, so the key host is up whenever the hive that mints the tokens is, and a rotation keeps the old or next key listed without a separate host. `hive validate` checks each previous key, and the issuer rules still apply at config load ([#19996](https://github.com/hivecommons/hive/issues/19996)).
+
+### Changed
+
+- ci: Go file-size ratchet for src/ outside crux (warning-only rollout) (#20064)
+
+### Fixed
+
+- Repo-local skills now reach agents on a spoke with no local checkout. Hive fetches `skills/<name>.md` from the primary repo's default branch for each skill an agent declares that the hive-wide registry lacks, caches it next to the fetched `AGENTS.md`, and removes it when the file is deleted upstream. Repo `skills/` files also load when the repo has no `AGENTS.md`, their YAML front matter is stripped before injection, and symlinked skill files are refused. A configured checkout root that is missing or empty now falls back to GitHub with one warning instead of silently turning injection off. (#20009)
+- Dashboard: saving the Labels or Features settings now reports an error (409 when the config changed on disk, 500 otherwise) when the config save fails, instead of answering 200 for a change that only lived in memory and was lost on restart; a failed Labels save also puts the previous settings back ([#20073](https://github.com/hivecommons/hive/issues/20073)).
+- Forgejo: the close-on-merge sweep's error for a 403 from `GET /user` now names `forgejo.login`, the setting that covers a repo-limited token or a `rest_audience` integration without `read:user` (#19920).
+
 ## 2026-11-26 (v5.376.0)
 
 ### Added

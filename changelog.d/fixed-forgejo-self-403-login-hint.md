@@ -1,1 +1,0 @@
-- Forgejo: the close-on-merge sweep's error for a 403 from `GET /user` now names `forgejo.login`, the setting that covers a repo-limited token or a `rest_audience` integration without `read:user` (#19920).
