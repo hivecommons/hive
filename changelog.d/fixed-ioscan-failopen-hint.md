@@ -1,1 +1,0 @@
-- The `ioscan classifier failed open` warning for a genuine classifier backend error now tells operators to check the endpoint is reachable and healthy instead of to configure an endpoint that is already set ([#19988](https://github.com/hivecommons/hive/issues/19988)).
