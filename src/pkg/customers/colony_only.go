@@ -652,12 +652,38 @@ func (cc colonyOnlyContents) files() ([]byte, []byte, error) {
 // attachColonyOnly is AttachColony for colony-only.
 func attachColonyOnly(s *Store, logger *slog.Logger) (*Colony, error) {
 	dir := filepath.Dir(s.path)
+	c := &Colony{mode: StoreColonyOnly, dir: dir, now: s.now, logger: logger, dirty: map[string]bool{}}
 	if _, err := os.Stat(s.path); err == nil {
-		return migrateColonyOnly(s, logger)
+		migrated, err := colonyHasDoc(dir, s.now)
+		if err != nil {
+			return nil, err
+		}
+		if !migrated {
+			return migrateColonyOnly(s, logger)
+		}
+		// colony.db was migrated already, so this people.json is not the
+		// truth: an older binary that read colony-only as json started a
+		// new one, or a stale copy was put back. Taking it as the truth
+		// would forget everyone it lacks. It is set aside, never deleted,
+		// and the store is read from colony.db.
+		for _, name := range []string{FileName, EnrichmentFileName} {
+			to, err := renameAside(filepath.Join(dir, name), colonyStraySuffix, s.now())
+			if err != nil {
+				return nil, err
+			}
+			if to != "" {
+				c.logWarn("[customers] colony-only: a JSON file beside the migrated colony store was set aside, not read",
+					"file", filepath.Base(to))
+			}
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	c := &Colony{mode: StoreColonyOnly, dir: dir, now: s.now, logger: logger, dirty: map[string]bool{}}
+	// A migration interrupted between its renames leaves enrichment.json
+	// behind; it is renamed like the rest.
+	if _, err := renameMigrated(filepath.Join(dir, EnrichmentFileName), s.now()); err != nil {
+		return nil, err
+	}
 	db, err := cstore.Open(filepath.Join(dir, ColonyFileName), cstore.Options{Now: s.now})
 	if err != nil {
 		return nil, fmt.Errorf("customers: opening %s: %w", ColonyFileName, err)
@@ -715,6 +741,27 @@ func (s *Store) loadColonyOnlyLocked(cc colonyOnlyContents) {
 	}
 }
 
+// colonyStraySuffix names a JSON file set aside beside a migrated store.
+const colonyStraySuffix = ".stray"
+
+// colonyHasDoc reports whether dir's colony.db holds the colony-only
+// document, without keeping it open. A missing colony.db holds none.
+func colonyHasDoc(dir string, now func() time.Time) (bool, error) {
+	path := filepath.Join(dir, ColonyFileName)
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	db, err := cstore.Open(path, cstore.Options{Now: now})
+	if err != nil {
+		return false, fmt.Errorf("customers: opening %s: %w", ColonyFileName, err)
+	}
+	_, ok, err := db.StoreAttachment(colonyAttachDoc)
+	if cerr := db.Close(); err == nil {
+		err = cerr
+	}
+	return ok, err
+}
+
 // migrateColonyOnly is the first colony-only boot: the colony-mode boot,
 // then a full write, a read-back compare and the rename. When the compare
 // fails the hive runs in colony mode with the JSON untouched.
@@ -726,10 +773,19 @@ func migrateColonyOnly(s *Store, logger *slog.Logger) (*Colony, error) {
 	enrichPath := filepath.Join(c.dir, EnrichmentFileName)
 	_, enrichData, err := fileHash(enrichPath)
 	if err != nil {
+		c.logWarn("[customers] colony-only migration not run: enrichment.json unreadable; running in colony mode, the JSON kept",
+			"error", err)
 		return c, nil
 	}
 	enrich := parseEnrichment(enrichData)
 	if err := c.migrate(s, enrich); err != nil {
+		// Nothing the failed attempt wrote may later be taken for a
+		// migrated store.
+		c.mu.Lock()
+		if cerr := c.clearColonyOnlyLocked(); cerr != nil {
+			c.logWarn("[customers] colony-only leftovers not cleared; the next colony or shadow boot drops them", "error", cerr)
+		}
+		c.mu.Unlock()
 		c.logWarn("[customers] colony-only migration not verified; running in colony mode, people.json and enrichment.json kept",
 			"error", err)
 		return c, nil
@@ -811,12 +867,23 @@ func (c *Colony) migrate(s *Store, enrich map[string]PersonEnrichment) error {
 	if !bytes.Equal(gotEnrich, wantEnrichData) {
 		return fmt.Errorf("customers: read-back of %d enrichment entries does not match %s", len(wantEnrich), EnrichmentFileName)
 	}
+	// enrichment.json goes first: a people.json left by a failure after it
+	// means the next boot simply migrates again.
 	var renamed []string
-	for _, name := range []string{FileName, EnrichmentFileName} {
-		to, err := renameMigrated(filepath.Join(c.dir, name), now)
-		if err != nil {
-			return err
+	enrichTo, err := renameMigrated(filepath.Join(c.dir, EnrichmentFileName), now)
+	if err != nil {
+		return err
+	}
+	peopleTo, err := renameMigrated(s.path, now)
+	if err != nil {
+		if enrichTo != "" {
+			if rerr := os.Rename(enrichTo, filepath.Join(c.dir, EnrichmentFileName)); rerr != nil {
+				c.logWarn("[customers] enrichment.json could not be put back after a failed rename", "file", filepath.Base(enrichTo))
+			}
 		}
+		return err
+	}
+	for _, to := range []string{peopleTo, enrichTo} {
 		if to != "" {
 			renamed = append(renamed, filepath.Base(to))
 		}
@@ -837,14 +904,20 @@ func (c *Colony) migrate(s *Store, enrich map[string]PersonEnrichment) error {
 // path.migrated-<time> when that name is taken, and returns the new path.
 // A missing path is not an error. Nothing is ever overwritten.
 func renameMigrated(path string, now time.Time) (string, error) {
+	return renameAside(path, MigratedSuffix, now)
+}
+
+// renameAside renames path to path+suffix, or path+suffix-<time> when that
+// is taken. A missing path is not an error; nothing is ever overwritten.
+func renameAside(path, suffix string, now time.Time) (string, error) {
 	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	} else if err != nil {
 		return "", err
 	}
-	to := path + MigratedSuffix
+	to := path + suffix
 	if _, err := os.Stat(to); err == nil {
-		to = path + MigratedSuffix + "-" + now.UTC().Format(colonyMigratedStamp)
+		to = path + suffix + "-" + now.UTC().Format(colonyMigratedStamp)
 		if _, err := os.Stat(to); err == nil {
 			return "", fmt.Errorf("customers: %s already exists", filepath.Base(to))
 		}
@@ -870,6 +943,34 @@ func (c *Colony) dropColonyOnlyDocLocked() error {
 	}
 	c.logInfo("[customers] colony store: dropped the colony-only document; people.json is the store again")
 	return nil
+}
+
+// clearColonyOnlyLocked removes the colony-only document and every hive
+// attachment: what a migration that did not verify left behind, so it can
+// never be read as a migrated store. c.mu is held.
+func (c *Colony) clearColonyOnlyLocked() error {
+	if c.db == nil {
+		return nil
+	}
+	var ids []string
+	if err := c.db.List(func(cp cstore.Person) error {
+		if len(cp.Attachments) > 0 {
+			ids = append(ids, cp.ID)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return c.db.Batch(func(b *cstore.Batch) error {
+		for _, id := range ids {
+			for _, ns := range []string{colonyAttachPerson, colonyAttachEnrichment} {
+				if err := b.SetAttachment(id, ns, nil); err != nil {
+					return err
+				}
+			}
+		}
+		return b.SetStoreAttachment(colonyAttachDoc, nil)
+	})
 }
 
 // loadColonyOnly fills the enrichment store from colony-only colony.db.
@@ -966,11 +1067,31 @@ func RestoreFromColony(dir string, logger *slog.Logger) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// people.json is the truth again: the document must never be restored
+	// a second time over a newer people.json.
+	if err := dropColonyOnlyDoc(dir); err != nil {
+		return true, err
+	}
 	if logger != nil {
 		logger.Info("[customers] restored people.json and enrichment.json from the colony-only store",
 			"people", rep.People, "enrichment", rep.Enrichment)
 	}
 	return true, nil
+}
+
+// dropColonyOnlyDoc removes the colony-only document from dir's colony.db.
+func dropColonyOnlyDoc(dir string) error {
+	colonyFileMu.Lock()
+	defer colonyFileMu.Unlock()
+	db, err := cstore.Open(filepath.Join(dir, ColonyFileName), cstore.Options{LockTimeout: colonyExportLockTimeout})
+	if err != nil {
+		return err
+	}
+	err = db.SetStoreAttachment(colonyAttachDoc, nil)
+	if cerr := db.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // errNoColonyOnlyDoc is wrapped by ExportColony when colony.db was not

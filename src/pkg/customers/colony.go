@@ -1185,6 +1185,11 @@ func (c *Colony) stripLocked(id string) error {
 			return err
 		}
 	}
+	for ns := range cp.Attachments {
+		if err := c.db.SetAttachment(id, ns, nil); err != nil {
+			return err
+		}
+	}
 	_, err = c.db.Upsert(cstore.PersonSpec{ID: id, Status: colonyStatusRemoved})
 	return err
 }

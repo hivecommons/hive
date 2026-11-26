@@ -186,6 +186,7 @@ func (e *EnrichmentStore) SetSource(id, source string, affs []EnrichedAffiliatio
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	before := e.snapshotLocked()
 	pe := clonePersonEnrichment(e.people[id])
 	keptA := pe.Affiliations[:0:0]
 	for _, a := range pe.Affiliations {
@@ -215,15 +216,24 @@ func (e *EnrichmentStore) SetSource(id, source string, affs []EnrichedAffiliatio
 	}
 	pe.FetchedAt[source] = at.UTC()
 	e.people[id] = pe
-	return e.saveLocked(map[string]PersonEnrichment{id: clonePersonEnrichment(pe)}, nil)
+	if err := e.saveLocked(map[string]PersonEnrichment{id: clonePersonEnrichment(pe)}, nil); err != nil {
+		e.restoreLocked(before)
+		return err
+	}
+	return nil
 }
 
 // DropSource removes one source's facts from every person, for a source
 // that was switched off. It reports how many people changed.
-func (e *EnrichmentStore) DropSource(source string) (int, error) {
+func (e *EnrichmentStore) DropSource(source string) (n int, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	n := 0
+	before := e.snapshotLocked()
+	defer func() {
+		if err != nil {
+			e.restoreLocked(before)
+		}
+	}()
 	changed := map[string]PersonEnrichment{}
 	var removed []string
 	for id, pe := range e.people {
@@ -260,8 +270,13 @@ func (e *EnrichmentStore) Delete(id string) error {
 	if _, ok := e.people[id]; !ok {
 		return nil
 	}
+	before := e.snapshotLocked()
 	delete(e.people, id)
-	return e.saveLocked(nil, []string{id})
+	if err := e.saveLocked(nil, []string{id}); err != nil {
+		e.restoreLocked(before)
+		return err
+	}
+	return nil
 }
 
 // Prune removes the people keep says are gone (forgotten, merged away or
@@ -269,6 +284,7 @@ func (e *EnrichmentStore) Delete(id string) error {
 func (e *EnrichmentStore) Prune(keep func(id string) bool) (int, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	before := e.snapshotLocked()
 	n := 0
 	var removed []string
 	for id := range e.people {
@@ -281,7 +297,33 @@ func (e *EnrichmentStore) Prune(keep func(id string) bool) (int, error) {
 	if n == 0 {
 		return 0, nil
 	}
-	return n, e.saveLocked(nil, removed)
+	if err := e.saveLocked(nil, removed); err != nil {
+		e.restoreLocked(before)
+		return n, err
+	}
+	return n, nil
+}
+
+// enrichmentSnapshot is the state a failed save rolls back to.
+type enrichmentSnapshot struct {
+	people map[string]PersonEnrichment
+	saved  []byte
+}
+
+// snapshotLocked copies the state; e.mu is held.
+func (e *EnrichmentStore) snapshotLocked() enrichmentSnapshot {
+	sn := enrichmentSnapshot{people: make(map[string]PersonEnrichment, len(e.people)), saved: e.saved}
+	for id, pe := range e.people {
+		sn.people[id] = clonePersonEnrichment(pe)
+	}
+	return sn
+}
+
+// restoreLocked puts back a snapshot after a failed save, so a change that
+// was not written is not shown (colony-only writes only what changed, so
+// it would never be retried); e.mu is held.
+func (e *EnrichmentStore) restoreLocked(sn enrichmentSnapshot) {
+	e.people, e.saved = sn.people, sn.saved
 }
 
 // saveLocked writes enrichment.json and then mirrors the people it changed
