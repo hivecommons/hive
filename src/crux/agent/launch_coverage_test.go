@@ -2,12 +2,47 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/internal/testutil"
 )
+
+// seedAdoptablePane prepares the agent's tmux session showing a CLI marker so
+// Start takes launchInTmux's adopt-running-CLI branch, and returns only once
+// the manager itself sees that marker.
+//
+// The session goes through newRawTmuxSession rather than a bare new-session:
+//   - it lands on the package test tmux server (-L defaultTmuxSocket), the
+//     same server the manager inspects (#4628);
+//   - it kills any session of the same name first. Every adopt test uses the
+//     fixed "cxa" agent (session "hive-cxa"), shared with many other tests in
+//     this package whose async relaunch machinery can re-create that session
+//     after their own cleanup — a bare new-session then fails "duplicate
+//     session" (#6618, #19963);
+//   - it uses the production 500-column pane, so a long shell prompt cannot
+//     wrap the marker out of the visible-pane substring match.
+//
+// Waiting on tmuxPaneHasCLIForAgent instead of a fixed sleep removes the
+// other race: on a loaded runner the typed marker may not have rendered yet,
+// so Start would take the fresh-launch branch instead of the one under test.
+func seedAdoptablePane(t *testing.T, m *Manager, agent *AgentProcess, marker string) {
+	t.Helper()
+	newRawTmuxSession(t, agent.tmuxSession)
+	if err := testTmuxCommand("send-keys", "-t", agent.tmuxSession, "-l", ": "+marker).Run(); err != nil {
+		t.Fatalf("send-keys: %v", err)
+	}
+	if err := testTmuxCommand("send-keys", "-t", agent.tmuxSession, "Enter").Run(); err != nil {
+		t.Fatalf("send-keys Enter: %v", err)
+	}
+	testutil.EventuallyEveryFunc(t, 10*time.Second, 50*time.Millisecond, func() bool {
+		return m.tmuxPaneHasCLIForAgent(agent)
+	}, func() string {
+		return fmt.Sprintf("pane never showed CLI marker %q; pane:\n%s", marker, m.captureVisiblePaneForAgent(agent))
+	})
+}
 
 // TestStart_CLIAlreadyRunning exercises launchInTmux's early-return branch: the
 // tmux pane already shows a CLI marker and forceRelaunch is false, so the
@@ -25,23 +60,7 @@ func TestStart_CLIAlreadyRunning(t *testing.T) {
 	agent := m.agents["cxa"]
 	m.mu.RUnlock()
 
-	// Pre-create the session and render a CLI marker. This must land on the
-	// package test tmux server (-L defaultTmuxSocket) — the same server the
-	// manager inspects. A bare `tmux` exec would hit the default-socket server
-	// instead, where the manager never looks, so the adopt branch under test
-	// would silently never trigger (#4628).
-	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
-		// tmuxAvailable() already passed above, so tmux is on PATH and
-		// TMUX_TMPDIR points into TestMain's temp tree. A failure here is a
-		// broken test (stale socket, uncleaned server, name collision), not
-		// a missing capability (#5388).
-		testutil.SkipfUnlessRequired(t, "cannot create tmux session: %v", err)
-	}
-	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
-	// Inject a marker; forceRelaunch defaults to false.
-	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "-l", ": goose is ready").Run()
-	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "Enter").Run()
-	time.Sleep(500 * time.Millisecond)
+	seedAdoptablePane(t, m, agent, "goose is ready")
 
 	if err := m.Start(context.Background(), "cxa"); err != nil {
 		t.Fatalf("Start: %v", err)
@@ -65,28 +84,28 @@ func TestStart_InferenceCLIAlreadyRunning(t *testing.T) {
 		"cxa": {Backend: "litellm", Model: "x"},
 	}, discardLogger(), ProjectContext{})
 	m.SetInferenceCallbacks(func(string, string, string) {}, func(string) {})
+	// The adopt branch re-arms dismissInferencePrompts, which does not watch
+	// ctx. cleanupAgent can kill the pane before that goroutine's first poll,
+	// leaving it polling an empty pane until its timeout — 60s by default,
+	// long past this test and into the next test that reuses "hive-cxa".
+	// Bound it well inside cleanupAgent's 5s drain.
+	m.promptDismissTimeout = 2 * time.Second
 
 	m.mu.RLock()
 	agent := m.agents["cxa"]
 	m.mu.RUnlock()
 
-	// Same-server requirement as TestStart_CLIAlreadyRunning above.
-	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
-		// tmuxAvailable() already passed above, so tmux is on PATH and
-		// TMUX_TMPDIR points into TestMain's temp tree. A failure here is a
-		// broken test (stale socket, uncleaned server, name collision), not
-		// a missing capability (#5388).
-		testutil.SkipfUnlessRequired(t, "cannot create tmux session: %v", err)
-	}
-	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
-	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "-l", ": esc to interrupt bypass permissions on Claude").Run()
-	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "Enter").Run()
-	time.Sleep(500 * time.Millisecond)
+	seedAdoptablePane(t, m, agent, "esc to interrupt bypass permissions on Claude")
 
 	if err := m.Start(context.Background(), "cxa"); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
 	defer cleanupAgent(t, m, "cxa")
+
+	ap, _ := m.GetStatus("cxa")
+	if ap.State != StateRunning {
+		t.Errorf("adopted inference CLI should be running, got %s", ap.State)
+	}
 }
 
 // TestStart_CopilotAdoptsRunning covers the copilot adopt branch (which also
@@ -104,18 +123,7 @@ func TestStart_CopilotAdoptsRunning(t *testing.T) {
 	agent := m.agents["cxa"]
 	m.mu.RUnlock()
 
-	// Same-server requirement as TestStart_CLIAlreadyRunning above.
-	if err := testTmuxCommand("new-session", "-d", "-s", agent.tmuxSession).Run(); err != nil {
-		// tmuxAvailable() already passed above, so tmux is on PATH and
-		// TMUX_TMPDIR points into TestMain's temp tree. A failure here is a
-		// broken test (stale socket, uncleaned server, name collision), not
-		// a missing capability (#5388).
-		testutil.SkipfUnlessRequired(t, "cannot create tmux session: %v", err)
-	}
-	defer testTmuxCommand("kill-session", "-t", agent.tmuxSession).Run()
-	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "-l", ": Copilot ready").Run()
-	testTmuxCommand("send-keys", "-t", agent.tmuxSession, "Enter").Run()
-	time.Sleep(500 * time.Millisecond)
+	seedAdoptablePane(t, m, agent, "Copilot ready")
 
 	if err := m.Start(context.Background(), "cxa"); err != nil {
 		t.Fatalf("Start: %v", err)
