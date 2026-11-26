@@ -66,7 +66,19 @@ type Source struct {
 
 // Key identifies the feed in the state file. The auth variable is part of
 // it: the same URL read with different credentials may answer differently.
+// Generic indexes also distinguish which JSON field supplies the version.
 func (s Source) Key() string {
+	key := s.legacyKey()
+	if s.Kind == KindIndex {
+		if field := s.indexField(); field != defaultIndexField {
+			return "index-field:" + url.QueryEscape(field) + ":" + key
+		}
+	}
+	return key
+}
+
+// legacyKey is shared by all index fields in version 1 of the watcher state.
+func (s Source) legacyKey() string {
 	id := s.Repo
 	switch s.Kind {
 	case KindPyPI:
@@ -80,6 +92,8 @@ func (s Source) Key() string {
 	}
 	return key
 }
+
+func (s Source) indexField() string { return orDefault(s.VersionField, defaultIndexField) }
 
 // Label is the feed's name in the kick block.
 func (s Source) Label() string {
@@ -283,7 +297,7 @@ func (f *Fetcher) parse(src Source, body []byte) (string, string, error) {
 			link = DefaultPyPIBase + "/project/" + url.PathEscape(strings.TrimSpace(src.Package)) + "/" + url.PathEscape(v) + "/"
 		}
 	case KindIndex:
-		version = indexVersion(body, orDefault(src.VersionField, defaultIndexField))
+		version = indexVersion(body, src.indexField())
 		link = redactedURL(src.URL)
 	}
 	version = cleanVersion(version)
