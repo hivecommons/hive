@@ -264,8 +264,11 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 				}
 			}
 		}
-		if !blocked && !isLinear && agentName != internalCallerName {
+		if !blocked && IsGitHubHost(host) && agentName != internalCallerName {
 			// Apply the push broker's sign-off rules to in-pod pushes (#19297).
+			// GitHub hosts only: Forgejo pushes are intercepted too, but their
+			// lane identities (the forge user's noreply address) are not
+			// modelled here, so they are left to the forge relay's checks.
 			if reason, refused, closeConn := pushSignoffRefusal(req, agentName, p.pushAppBotIdentity()); refused {
 				closeAfterBlock = closeConn
 				blocked = true

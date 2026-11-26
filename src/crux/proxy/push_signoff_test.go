@@ -73,6 +73,11 @@ func TestPushSignoffRefusal(t *testing.T) {
 		{"forged signoff author person committer person", testCommit(person, person, signed, 1), true},
 		{"person commit unsigned by lane", testCommit(person, person, "msg", 1), false},
 		{"lane merge unsigned", testCommit(lane, lane, "merge", 2), false},
+		// GitHub's own squash commit: a person's authorship, committed by
+		// GitHub, carrying the lane's trailer from the squashed commits.
+		{"github squash commit with lane signoff", testCommit(person, "GitHub <noreply@github.com>", signed, 1), false},
+		// Only GitHub's exact committer address is skipped.
+		{"lookalike github committer", testCommit(person, "GitHub <noreply@github.com.example>", signed, 1), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -280,5 +285,16 @@ func TestGitHubProxyAppBotIdentityFunc(t *testing.T) {
 	p.SetAppBotIdentityFunc(nil)
 	if p.pushAppBotIdentity() != nil {
 		t.Fatal("nil must clear the App bot identity")
+	}
+}
+
+// The sign-off guard is wired for GitHub hosts only (#19297): Forgejo lane
+// identities are not modelled, so a Forgejo push must not reach it.
+func TestPushSignoffGuardGitHubHostsOnly(t *testing.T) {
+	if !IsGitHubHost("github.com") {
+		t.Fatal("github.com must be a GitHub host so in-pod pushes are checked")
+	}
+	if IsGitHubHost("forgejo.example.com") {
+		t.Fatal("a Forgejo host must not be treated as a GitHub host")
 	}
 }

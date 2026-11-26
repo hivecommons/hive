@@ -45,6 +45,16 @@ import (
 // instead of a "tree " literal is not inspected, and neither are commits made
 // through the REST git/commits API or GraphQL createCommitOnBranch. GitHub-side
 // DCO remains the enforcement.
+//
+// Scope: the proxy only reads a push when it decrypts github.com traffic,
+// which is when HIVE_PROXY_INJECT_GH_AUTH=true. On a hive without it, in-pod
+// pushes are tunneled unread and this guard does not run. Forgejo hosts are
+// not checked here. Commits GitHub created server-side (committer
+// noreply@github.com) are skipped.
+
+// githubWebCommitterEmail is the committer GitHub records on commits it
+// creates server-side (squash merges, web edits).
+const githubWebCommitterEmail = "noreply@github.com"
 
 // maxPushSignoffBody bounds the push body buffered for inspection. A larger
 // push is refused (fail closed) rather than forwarded uninspected.
@@ -468,6 +478,14 @@ func pushSignoffViolation(lane pushLaneIdentity, commits []pushCommit) string {
 	for _, c := range commits {
 		if c.merge {
 			continue // DCO App and Prow skip merge commits, as does the broker
+		}
+		if strings.EqualFold(strings.TrimSpace(c.committerEmail), githubWebCommitterEmail) {
+			// Made by GitHub itself (a squash or web merge): authored by a
+			// person and often carrying the lane's Signed-off-by from the
+			// squashed commits. A push that carries it to a remote lacking it
+			// (a stale fork, a fresh mirror) did not write it, and the lane
+			// cannot remediate it.
+			continue
 		}
 		authored := lane.matches(c.authorName, c.authorEmail)
 		committed := lane.matches(c.committerName, c.committerEmail)
