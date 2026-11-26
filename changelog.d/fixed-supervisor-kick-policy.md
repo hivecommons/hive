@@ -1,0 +1,1 @@
+- Stop instructing the supervisor to kick agents; it reports stale or stuck agents while the governor schedules kicks.
