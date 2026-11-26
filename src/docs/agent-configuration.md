@@ -671,7 +671,7 @@ Hive tells the CLI the real window with `CLAUDE_CODE_MAX_CONTEXT_TOKENS` when it
 
 #### Earlier auto-compaction (opt-in)
 
-Inference-routed Claude CLI agents can opt into an earlier compaction window:
+Claude CLI agents, direct or inference-routed, can opt into an earlier compaction window:
 
 ```yaml
 agents:
@@ -694,8 +694,9 @@ exported context window, so it inherits the discovery, model-ID, and
 `HIVE_INFERENCE_PASS_CONTEXT_WINDOW` limitations above and below. The explicit
 per-agent setting does not depend on the context-window export and also works
 for Claude model IDs. It describes the configured model and is dropped for a
-review head using a different model. The same auto-compaction setting is passed
-to sandbox Job kicks as to ordinary agent launches.
+review head using a different model. Sandbox Job kicks receive the explicit
+per-agent window, but not the percentage fallback: the sandbox filters out the
+context-window variable on which the percentage depends.
 
 Hive does not export the variable for model IDs that contain `claude` (for example `anthropic/claude-sonnet-5-5`), because the CLI already knows those windows. Set `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` to turn the export off for the whole hive. Sandbox Job kicks do not get the variable yet: the sandbox drops every variable whose name contains `TOKEN`.
 

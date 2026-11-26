@@ -4,11 +4,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/sandbox"
 )
 
 const inferenceTestKickKey = "sk-hive-kick-0123"
@@ -90,18 +93,28 @@ func TestEnrollInferenceRelayJobKick(t *testing.T) {
 func TestEnrollInferenceRelayCarriesContextSettings(t *testing.T) {
 	t.Setenv(inferencePassContextWindowEnv, "")
 	t.Setenv(inferenceAutoCompactPercentEnv, "80")
-	cfg := config.AgentConfig{Backend: "litellm", Model: "vllm/Qwen"}
-	m := NewManager(map[string]config.AgentConfig{"scanner": cfg}, discardLogger(), ProjectContext{})
-	m.SetInferenceContextWindowLookup(func(string) (int, string) { return 262144, cfg.Model })
-	agent := &AgentProcess{Name: "scanner", Config: cfg}
-	e := &SandboxExecutor{InferenceRelay: &fakeInferenceRelay{}}
-	env, release := e.enrollInferenceRelay(SandboxKickSpec{
-		Agent: "scanner", Runtime: config.SandboxRuntimeJob, InferenceRouted: true,
-		ClaudeContextEnv: m.claudeContextEnv(agent, cfg.Backend, cfg.Model),
-	}, t.TempDir())
-	defer release()
-	if env[claudeMaxContextTokensEnv] != "262144" || env[claudeAutoCompactPercentEnv] != "80" {
-		t.Fatalf("job context env = %v", env)
+	for _, window := range []int{0, 160000} {
+		t.Run(strconv.Itoa(window), func(t *testing.T) {
+			cfg := config.AgentConfig{Backend: "litellm", Model: "vllm/Qwen", AutoCompactWindowTokens: window}
+			m := NewManager(map[string]config.AgentConfig{"scanner": cfg}, discardLogger(), ProjectContext{})
+			m.SetInferenceContextWindowLookup(func(string) (int, string) { return 262144, cfg.Model })
+			agent := &AgentProcess{Name: "scanner", Config: cfg}
+			e := &SandboxExecutor{InferenceRelay: &fakeInferenceRelay{}}
+			env, release := e.enrollInferenceRelay(SandboxKickSpec{
+				Agent: "scanner", Runtime: config.SandboxRuntimeJob, InferenceRouted: true,
+				ClaudeContextEnv: m.sandboxClaudeContextEnv(agent, cfg.Backend, cfg.Model),
+			}, t.TempDir())
+			defer release()
+			got := sandbox.SanitizedEnv(nil, nil, env)
+			for _, entry := range got {
+				if strings.HasPrefix(entry, claudeAutoCompactPercentEnv+"=") || strings.HasPrefix(entry, claudeMaxContextTokensEnv+"=") {
+					t.Fatalf("unsafe job context env = %v", got)
+				}
+			}
+			if window != 0 && !slices.Contains(got, claudeAutoCompactWindowEnv+"=160000") {
+				t.Fatalf("explicit compaction window missing from job env: %v", got)
+			}
+		})
 	}
 }
 

@@ -285,7 +285,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	}
 	spec.InferenceRouted = m.routeSandboxInferenceLocked(agent, runtime)
 	if runtime == config.SandboxRuntimeJob {
-		spec.ClaudeContextEnv = m.claudeContextEnv(agent, effectiveBackend(agent), agent.effectiveModel())
+		spec.ClaudeContextEnv = m.sandboxClaudeContextEnv(agent, effectiveBackend(agent), agent.effectiveModel())
 	}
 	// The verify list comes from config only. A kick message is not a trusted
 	// source for commands: by the time it reaches the manager it carries
