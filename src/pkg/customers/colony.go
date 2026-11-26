@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hivecommons/colony/resolver"
 	cstore "github.com/hivecommons/colony/store"
@@ -87,6 +88,8 @@ const (
 	colonyConfidenceLow  = 0.3
 	// colonyMaxFieldBytes is colony's limit on a fact field name.
 	colonyMaxFieldBytes = 64
+	// colonyMaxSourceBytes is colony's limit on a source label.
+	colonyMaxSourceBytes = 128
 	// colonyCompactTxBytes bounds one compaction transaction.
 	colonyCompactTxBytes = 64 << 20
 )
@@ -118,7 +121,16 @@ type colonySyncMarker struct {
 	People     string    `json:"people_sha256"`
 	Enrichment string    `json:"enrichment_sha256"`
 	At         time.Time `json:"at"`
+	// PendingForget holds the person ids whose forget has not reached
+	// colony.db or the backups yet, with the tombstone hashes hive wrote
+	// for them. Ids are random and hold no personal data. Every boot and
+	// every later forget retries them.
+	PendingForget map[string][]string `json:"pending_forget,omitempty"`
 }
+
+// colonyFileMu serialises every forget, compaction and offline open of a
+// colony.db in this process, so two forgets never compact over each other.
+var colonyFileMu sync.Mutex
 
 // ColonyParity is the parity check: counts only, never values.
 type ColonyParity struct {
@@ -270,6 +282,9 @@ func (c *Colony) boot(s *Store) error {
 	for _, p := range s.people {
 		people = append(people, clonePerson(p))
 	}
+	// The tombstone check is taken under s.mu now, so c.mu is never held
+	// while s.mu is taken (Store.change takes s.mu, then c.mu).
+	forgotten := s.forgottenSnapshotLocked()
 	s.mu.Unlock()
 	sort.Slice(people, func(i, j int) bool { return people[i].ID < people[j].ID })
 
@@ -279,36 +294,207 @@ func (c *Colony) boot(s *Store) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	switch {
-	case !ran:
+	prev, hadMarker := c.readMarker()
+	c.marker = colonySyncMarker{PendingForget: prev.PendingForget}
+	if !ran {
 		if err := c.writeBackups(peopleData, enrichData); err != nil {
 			return err
 		}
 		src := &colonyJSONSource{people: people, enrich: enrich, now: c.now(),
-			fingerprint: peopleHash + ":" + enrichHash, forgotten: s.Forgotten}
+			fingerprint: peopleHash + ":" + enrichHash, forgotten: forgotten}
 		res, err := c.db.Migrate(context.Background(), colonyMigrationName, src, cstore.MigrateOptions{})
 		if err != nil {
 			return fmt.Errorf("customers: importing into %s: %w", ColonyFileName, err)
 		}
-		if res.Record.Report.People != len(people) {
-			return fmt.Errorf("customers: import wrote %d people, people.json holds %d", res.Record.Report.People, len(people))
-		}
 		c.logInfo("[customers] imported people.json into the colony store", "people", res.Record.Report.People,
 			"identities", res.Record.Report.Identities, "facts", res.Record.Report.Facts,
 			"skipped_identities", res.Record.Report.SkippedIdentities, "skipped_facts", res.Record.Report.SkippedFacts)
-	default:
-		m, ok := c.readMarker()
-		if !ok || m.People != peopleHash || m.Enrichment != enrichHash {
-			// The JSON changed while colony.db was not written (json mode,
-			// or a failed colony write): the JSON is newer, import it again.
-			if err := c.resyncLocked(people, enrich, s.Forgotten); err != nil {
-				return err
-			}
-			c.logInfo("[customers] colony store caught up from people.json", "people", len(people))
+	} else if !hadMarker || prev.People != peopleHash || prev.Enrichment != enrichHash {
+		// The JSON changed while colony.db was not written (json mode, or
+		// a failed colony write): the JSON is newer, import it again.
+		if err := c.resyncLocked(people, enrich, forgotten); err != nil {
+			return err
+		}
+		c.logInfo("[customers] colony store caught up from people.json", "people", len(people))
+	}
+	// Forgets that did not finish (a failed colony write, or a json-mode
+	// forget that could not open colony.db) run now, and anyone colony.db or
+	// the backups still hold who is neither in people.json nor merged into
+	// someone there is forgotten as well.
+	if err := c.forgetOrphansLocked(keptPersonIDs(people)); err != nil {
+		return err
+	}
+	c.retryPendingLocked()
+	if c.db == nil {
+		return fmt.Errorf("customers: %s did not reopen after compaction", ColonyFileName)
+	}
+	if err := c.verifyCountLocked(len(people)); err != nil {
+		// No new marker is written, so every later boot catches up again
+		// and fails closed until the counts agree.
+		return err
+	}
+	c.marker.People, c.marker.Enrichment = peopleHash, enrichHash
+	return c.writeMarkerLocked()
+}
+
+// verifyCountLocked checks that colony holds as many live people as the
+// JSON.
+func (c *Colony) verifyCountLocked(want int) error {
+	n := 0
+	err := c.db.List(func(cp cstore.Person) error {
+		if cp.Status != colonyStatusRemoved {
+			n++
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if n != want {
+		return fmt.Errorf("customers: %s holds %d people, people.json holds %d", ColonyFileName, n, want)
+	}
+	return nil
+}
+
+// keptPersonIDs is every id a record may still be held for: the people in
+// the JSON and everyone merged into them, at any depth (an unmerge brings
+// them back).
+func keptPersonIDs(people []Person) map[string]bool {
+	keep := map[string]bool{}
+	var walk func(p Person)
+	walk = func(p Person) {
+		keep[p.ID] = true
+		for _, m := range p.MergedFrom {
+			walk(m.Person)
 		}
 	}
-	c.marker = colonySyncMarker{People: peopleHash, Enrichment: enrichHash}
-	return c.writeMarkerLocked()
+	for _, p := range people {
+		walk(p)
+	}
+	return keep
+}
+
+// forgetOrphansLocked forgets every colony record, and removes from the
+// backups every person, that keep does not name: they were forgotten while
+// colony.db could not be written.
+func (c *Colony) forgetOrphansLocked(keep map[string]bool) error {
+	var orphans []string
+	err := c.db.List(func(cp cstore.Person) error {
+		if !keep[cp.ID] {
+			orphans = append(orphans, cp.ID)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, id := range backupPersonIDs(c.dir) {
+		if !keep[id] {
+			orphans = append(orphans, id)
+		}
+	}
+	for _, id := range orphans {
+		if _, pending := c.marker.PendingForget[id]; !pending {
+			c.addPendingLocked(id, nil)
+		}
+	}
+	return nil
+}
+
+// backupPersonIDs lists the people the .pre-colony backups hold.
+func backupPersonIDs(dir string) []string {
+	var out []string
+	if data, err := os.ReadFile(filepath.Join(dir, FileName+PreColonySuffix)); err == nil {
+		var f storeFile
+		if json.Unmarshal(data, &f) == nil {
+			for _, p := range f.People {
+				out = append(out, p.ID)
+			}
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, EnrichmentFileName+PreColonySuffix)); err == nil {
+		var f enrichmentFile
+		if json.Unmarshal(data, &f) == nil {
+			for id := range f.People {
+				out = append(out, id)
+			}
+		}
+	}
+	return out
+}
+
+func (c *Colony) addPendingLocked(id string, tombs []string) {
+	if c.marker.PendingForget == nil {
+		c.marker.PendingForget = map[string][]string{}
+	}
+	c.marker.PendingForget[id] = append(c.marker.PendingForget[id], tombs...)
+}
+
+// retryPendingLocked runs every pending forget and drops those that
+// finished.
+func (c *Colony) retryPendingLocked() {
+	if len(c.marker.PendingForget) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(c.marker.PendingForget))
+	for id := range c.marker.PendingForget {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	erased := false
+	for _, id := range ids {
+		ok := c.db != nil
+		if ok {
+			if err := colonyForgetOne(c.db, id); err != nil {
+				ok = false
+				c.failures++
+				c.logWarn("[customers] colony store forget failed; it is retried", "error", err)
+			} else {
+				erased = true
+			}
+		}
+		if err := forgetInBackups(c.dir, id, c.marker.PendingForget[id]); err != nil {
+			ok = false
+			c.logWarn("[customers] forget in the pre-colony backups failed; it is retried", "error", err)
+		}
+		if ok {
+			delete(c.marker.PendingForget, id)
+		}
+	}
+	if erased && !c.compactLocked() {
+		// The freed pages may still hold the bytes: compact again later.
+		for _, id := range ids {
+			if _, still := c.marker.PendingForget[id]; !still {
+				c.addPendingLocked(id, nil)
+			}
+		}
+	}
+}
+
+// colonyForgetOne erases one person from an open colony store. Colony
+// tombstones every identity the record holds; hive does not tombstone a
+// dashboard account or an unconfirmed claim (a dashboard user who signs in
+// again gets a fresh profile), so those are detached first and only what
+// hive tombstones is tombstoned in colony too.
+func colonyForgetOne(db *cstore.Store, id string) error {
+	cp, err := db.Get(id)
+	if errors.Is(err, cstore.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, i := range cp.Identities {
+		if i.Kind == cstore.KindOIDC || !i.Verified {
+			if err := db.RemoveIdentity(id, i.Ref()); err != nil && !errors.Is(err, cstore.ErrNotFound) {
+				return err
+			}
+		}
+	}
+	if _, err := db.Forget(id); err != nil && !errors.Is(err, cstore.ErrNotFound) {
+		return err
+	}
+	return nil
 }
 
 // bootRead is the colony-mode read at boot, after the import. When it
@@ -390,7 +576,7 @@ func (src *colonyJSONSource) Records(ctx context.Context, fn func(cstore.Record)
 		}
 		rec := colonyRecord(p, owners, src.forgotten)
 		if pe, ok := src.enrich[p.ID]; ok {
-			rec.Facts = append(rec.Facts, colonyEnrichmentFacts(pe, rec.Person.Identities, src.now)...)
+			rec.Facts = append(rec.Facts, colonyEnrichmentFacts(pe, rec.Person.Identities, src.now, rec.Dismissed...)...)
 		}
 		if err := fn(rec); err != nil {
 			return err
@@ -496,13 +682,21 @@ func colonyIdentities(p Person, owners map[string]string, forgotten func(Identit
 		}
 		// colony forces every email on a domain that is not free-mail to
 		// local_only whatever is asked.
-		src := i.Source
-		if len(src) > colonyMaxFieldBytes {
-			src = src[:colonyMaxFieldBytes]
-		}
+		src := truncateRunes(i.Source, colonyMaxSourceBytes)
 		out = append(out, cstore.Identity{Kind: k, Value: v, Verified: !i.Claimed, Locality: loc, Source: src, At: i.At})
 	}
 	return out
+}
+
+// truncateRunes cuts s to at most n bytes on a rune boundary.
+func truncateRunes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // colonyHubLabel is the colony source label of a hub Rule.
@@ -529,8 +723,17 @@ func hubRuleFromSource(source string) string {
 	return ""
 }
 
-// githubRef is p's first confirmed GitHub login among ids, as a colony ref.
-func githubRef(ids []cstore.Identity) (cstore.IdentityRef, bool) {
+// githubRef is the confirmed GitHub login among ids, as a colony ref: the
+// one named by prefer when the person holds it, else the first.
+func githubRef(ids []cstore.Identity, prefer ...string) (cstore.IdentityRef, bool) {
+	for _, want := range prefer {
+		w := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(want), "@"))
+		for _, i := range ids {
+			if w != "" && i.Kind == cstore.KindGitHub && i.Verified && i.Value == w {
+				return i.Ref(), true
+			}
+		}
+	}
 	for _, i := range ids {
 		if i.Kind == cstore.KindGitHub && i.Verified {
 			return i.Ref(), true
@@ -595,8 +798,16 @@ func colonyProfileFacts(p Person, ids []cstore.Identity) []cstore.Fact {
 				publicGitHub = true
 			}
 			if publicGitHub && hasGH {
+				ref := gh
+				login := f.Login
+				if name == FieldCountry {
+					login = p.Profile.Location.Login
+				}
+				if r, ok := githubRef(ids, login); ok {
+					ref = r
+				}
 				fact.Locality = cstore.LocalityShareable
-				fact.DerivedFrom = []cstore.IdentityRef{gh}
+				fact.DerivedFrom = []cstore.IdentityRef{ref}
 			}
 			out = append(out, fact)
 		}
@@ -615,11 +826,20 @@ func colonyDismissals(p Person) []cstore.Dismissal {
 	return out
 }
 
+// colonyStatus is the colony status of a hive status; an empty one is
+// colony's default, so the two compare equal.
+func colonyStatus(st Status) string {
+	if st == "" {
+		return cstore.StatusActive
+	}
+	return string(st)
+}
+
 // colonyRecord is one person as colony holds it (enrichment facts aside).
 func colonyRecord(p Person, owners map[string]string, forgotten func(IdentityKind, string) bool) cstore.Record {
 	ids := colonyIdentities(p, owners, forgotten)
 	return cstore.Record{
-		Person:    cstore.PersonSpec{ID: p.ID, Status: string(p.Status), Identities: ids},
+		Person:    cstore.PersonSpec{ID: p.ID, Status: colonyStatus(p.Status), Identities: ids},
 		Facts:     colonyProfileFacts(p, ids),
 		Dismissed: colonyDismissals(p),
 		CreatedAt: p.CreatedAt,
@@ -652,8 +872,16 @@ func colonyActivityField(project string) string {
 // current at now becomes a suggested affiliation fact (colony holds one per
 // rank), each devstats project a suggested activity count. A value records
 // the identities it was matched by, so an email match stays local_only.
-func colonyEnrichmentFacts(pe PersonEnrichment, ids []cstore.Identity, now time.Time) []cstore.Fact {
+func colonyEnrichmentFacts(pe PersonEnrichment, ids []cstore.Identity, now time.Time, dismissed ...cstore.Dismissal) []cstore.Fact {
 	var out []cstore.Fact
+	isDismissed := func(v string) bool {
+		for _, d := range dismissed {
+			if d.Field == cstore.FieldAffiliation && strings.EqualFold(strings.TrimSpace(d.Value), strings.TrimSpace(v)) {
+				return true
+			}
+		}
+		return false
+	}
 	gh, hasGH := githubRef(ids)
 	var gitdm []EnrichedAffiliation
 	for _, a := range pe.Affiliations {
@@ -661,7 +889,7 @@ func colonyEnrichmentFacts(pe PersonEnrichment, ids []cstore.Identity, now time.
 			gitdm = append(gitdm, a)
 		}
 	}
-	if cur, ok := currentEnrichedAffiliation(gitdm, now); ok {
+	if cur, ok := currentEnrichedAffiliation(gitdm, now); ok && !isDismissed(cur.Org) {
 		f := cstore.Fact{Field: cstore.FieldAffiliation, Value: cur.Org, Rank: cstore.RankEnrichment, Source: colonySourceGitdm,
 			Locality: cstore.LocalityShareable, From: parseEnrichedDate(cur.From), Until: parseEnrichedDate(cur.Until),
 			At: pe.FetchedAt[EnrichSourceGitdm], Suggested: true}
@@ -755,9 +983,37 @@ func (c *Colony) syncPeopleLocked(changed []Person, gone []string, forgotten fun
 		rec.Person.Identities = kept
 		if err := c.importLocked(rec); err != nil {
 			failed = append(failed, p.ID)
+			continue
+		}
+		// A gitdm suggestion dismissed here leaves colony too.
+		if err := c.dropDismissedLocked(p.ID, rec.Dismissed); err != nil {
+			failed = append(failed, p.ID)
 		}
 	}
 	return failed
+}
+
+// dropDismissedLocked deletes the enrichment affiliation of a person when
+// its value was dismissed.
+func (c *Colony) dropDismissedLocked(id string, dismissed []cstore.Dismissal) error {
+	if len(dismissed) == 0 {
+		return nil
+	}
+	cp, err := c.db.Get(id)
+	if err != nil {
+		return err
+	}
+	f, ok := cp.FactAt(cstore.FieldAffiliation, cstore.RankEnrichment)
+	if !ok {
+		return nil
+	}
+	for _, d := range dismissed {
+		if strings.EqualFold(strings.TrimSpace(d.Value), strings.TrimSpace(f.Value)) {
+			_, err := c.db.DeleteFact(id, cstore.FieldAffiliation, cstore.RankEnrichment)
+			return err
+		}
+	}
+	return nil
 }
 
 func personIDs(ps []Person) []string {
@@ -846,7 +1102,7 @@ func (c *Colony) syncEnrichmentLocked(id string, pe PersonEnrichment, held bool)
 	}
 	var facts []cstore.Fact
 	if held {
-		facts = colonyEnrichmentFacts(pe, cp.Identities, c.now())
+		facts = colonyEnrichmentFacts(pe, cp.Identities, c.now(), cp.Dismissed...)
 	}
 	rec := cstore.Record{Person: cstore.PersonSpec{ID: id}, Facts: facts}
 	if err := c.pruneLocked(cp, rec, isEnrichmentField, false); err != nil {
@@ -869,27 +1125,19 @@ func (c *Colony) resyncLocked(people []Person, enrich map[string]PersonEnrichmen
 	for _, p := range people {
 		in[p.ID] = true
 	}
-	var gone, forget []string
+	keep := keptPersonIDs(people)
+	var gone []string
 	err := c.db.List(func(cp cstore.Person) error {
-		if in[cp.ID] || cp.Status == colonyStatusRemoved {
-			return nil
+		// Someone merged into a person in the JSON is stripped; anyone
+		// else who left the JSON was forgotten, and forgetOrphansLocked
+		// erases them after this catch-up.
+		if !in[cp.ID] && keep[cp.ID] && cp.Status != colonyStatusRemoved {
+			gone = append(gone, cp.ID)
 		}
-		for _, i := range cp.Identities {
-			if k, ok := hiveKind(i.Kind); ok && forgotten(k, i.Value) {
-				forget = append(forget, cp.ID)
-				return nil
-			}
-		}
-		gone = append(gone, cp.ID)
 		return nil
 	})
 	if err != nil {
 		return err
-	}
-	for _, id := range forget {
-		if _, err := c.db.Forget(id); err != nil && !errors.Is(err, cstore.ErrNotFound) {
-			return err
-		}
 	}
 	if failed := c.syncPeopleLocked(people, gone, forgotten); len(failed) > 0 {
 		return fmt.Errorf("customers: %d people could not be written to %s", len(failed), ColonyFileName)
@@ -899,9 +1147,6 @@ func (c *Colony) resyncLocked(people []Person, enrich map[string]PersonEnrichmen
 		if err := c.syncEnrichmentLocked(p.ID, pe, held); err != nil {
 			return err
 		}
-	}
-	if len(forget) > 0 {
-		c.compactLocked()
 	}
 	return nil
 }
@@ -915,7 +1160,13 @@ func (c *Colony) mirrorPeople(changed []Person, gone []string, forgets map[strin
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for id, hashes := range forgets {
-		c.forgetLocked(id, hashes)
+		c.addPendingLocked(id, hashes)
+	}
+	if len(forgets) > 0 {
+		c.retryPendingLocked()
+		if err := c.writeMarkerLocked(); err != nil {
+			c.logWarn("[customers] colony sync marker not written", "error", err)
+		}
 	}
 	var plainGone []string
 	for _, id := range gone {
@@ -968,36 +1219,23 @@ func (c *Colony) settleLocked(failed []string, advance func(*colonySyncMarker)) 
 	}
 }
 
-// forgetLocked erases a person from colony.db (record, facts, identity
-// index; tombstones in their place), compacts the file so the old pages do
-// not keep the bytes, and removes the person from the .pre-colony backups.
-func (c *Colony) forgetLocked(id string, tombs []string) {
-	if c.db != nil {
-		if _, err := c.db.Forget(id); err != nil && !errors.Is(err, cstore.ErrNotFound) {
-			c.dirty[id] = true
-			c.failures++
-			c.logWarn("[customers] colony store forget failed", "error", err)
-		}
-		c.compactLocked()
-	}
-	if err := forgetInBackups(c.dir, id, tombs); err != nil {
-		c.logWarn("[customers] forget in the pre-colony backups failed", "error", err)
-	}
-	delete(c.dirty, id)
-}
-
 // compactLocked rewrites colony.db so pages a forget freed no longer hold
 // the person's bytes. A failure leaves the file as it was.
-func (c *Colony) compactLocked() {
+// It reports whether the compaction succeeded.
+func (c *Colony) compactLocked() bool {
 	if c.db == nil {
-		return
+		return false
 	}
+	colonyFileMu.Lock()
+	defer colonyFileMu.Unlock()
 	path := c.db.Path()
 	if err := c.db.Close(); err != nil {
 		c.logWarn("[customers] colony store close before compaction failed", "error", err)
 	}
 	c.db = nil
+	compacted := true
 	if err := compactBolt(path); err != nil {
+		compacted = false
 		c.logWarn("[customers] colony store compaction failed", "error", err)
 	}
 	db, err := cstore.Open(path, cstore.Options{Now: c.now})
@@ -1005,9 +1243,10 @@ func (c *Colony) compactLocked() {
 		c.failures++
 		c.dirty["*"] = true
 		c.logWarn("[customers] colony store did not reopen after compaction; writes stop until restart", "error", err)
-		return
+		return false
 	}
 	c.db = db
+	return compacted
 }
 
 // compactBolt copies the bbolt file at path into a fresh file and renames
@@ -1110,30 +1349,70 @@ func forgetInBackups(dir, id string, tombs []string) error {
 }
 
 // ForgetOffline is Forget's colony half in json mode: colony.db and the
-// .pre-colony backups may remain from an earlier shadow or colony run, and
-// a forgotten person must leave them too. It opens colony.db only if it
-// exists and never creates it.
-func ForgetOffline(dir, id string, tombs []string, now func() time.Time) error {
-	path := filepath.Join(dir, ColonyFileName)
-	if _, err := os.Stat(path); err == nil {
-		db, err := cstore.Open(path, cstore.Options{Now: now})
-		if err != nil {
-			return fmt.Errorf("customers: opening %s to forget: %w", ColonyFileName, err)
-		}
-		if _, err := db.Forget(id); err != nil && !errors.Is(err, cstore.ErrNotFound) {
-			_ = db.Close()
-			return err
-		}
-		if err := db.Close(); err != nil {
-			return err
-		}
-		if err := compactBolt(path); err != nil {
-			return err
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+// .pre-colony backups may remain from an earlier shadow or colony run, and a
+// forgotten person must leave them too. forgets maps each person id to the
+// tombstones hive wrote for them. It opens colony.db only if it exists and
+// never creates it. What it cannot finish (colony.db damaged, locked or
+// written by a newer release) is recorded in colony-sync.json and retried by
+// the next forget and by the next shadow or colony boot; the error is
+// returned for the log only, since people.json has already forgotten them.
+func ForgetOffline(dir string, forgets map[string][]string, now func() time.Time) error {
+	colonyFileMu.Lock()
+	defer colonyFileMu.Unlock()
+	c := &Colony{dir: dir, now: now, dirty: map[string]bool{}}
+	m, _ := c.readMarker()
+	c.marker = m
+	for id, tombs := range forgets {
+		c.addPendingLocked(id, tombs)
 	}
-	return forgetInBackups(dir, id, tombs)
+	if len(c.marker.PendingForget) == 0 {
+		return nil
+	}
+	path := filepath.Join(dir, ColonyFileName)
+	var openErr error
+	var db *cstore.Store
+	if _, err := os.Stat(path); err == nil {
+		db, openErr = cstore.Open(path, cstore.Options{Now: now})
+	} else if !errors.Is(err, os.ErrNotExist) {
+		openErr = err
+	}
+	var failed error
+	erased := false
+	for id, tombs := range c.marker.PendingForget {
+		ok := openErr == nil
+		if db != nil {
+			if err := colonyForgetOne(db, id); err != nil {
+				ok, failed = false, err
+			} else {
+				erased = true
+			}
+		}
+		if err := forgetInBackups(dir, id, tombs); err != nil {
+			ok, failed = false, err
+		}
+		if ok {
+			delete(c.marker.PendingForget, id)
+		}
+	}
+	if db != nil {
+		if err := db.Close(); err != nil && failed == nil {
+			failed = err
+		}
+		if erased {
+			if err := compactBolt(path); err != nil && failed == nil {
+				failed = err
+			}
+		}
+	}
+	if openErr != nil {
+		failed = fmt.Errorf("customers: opening %s to forget: %w", ColonyFileName, openErr)
+	}
+	if _, err := os.Stat(c.markerPath()); err == nil || len(c.marker.PendingForget) > 0 {
+		if err := c.writeMarkerLocked(); err != nil && failed == nil {
+			failed = err
+		}
+	}
+	return failed
 }
 
 // readFromColony is the colony-mode read: for each person, what colony.db
@@ -1187,11 +1466,14 @@ func (s *Store) overlayColonyLocked(p Person, cp cstore.Person) Person {
 		}
 		key := colonyClassKey(k, NormalizeIdentity(i.Kind, i.Value))
 		ci, ok := inColony[key]
-		if !ok {
-			continue
+		if ok {
+			// colony is authoritative for whether an identity is confirmed.
+			have[key] = true
+			i.Claimed = !ci.Verified
 		}
-		have[key] = true
-		i.Claimed = !ci.Verified
+		// An identity colony does not hold is kept: colony may refuse one
+		// (one owner per identity, tombstones written on forget), and the
+		// JSON must stay a lossless rollback copy.
 		kept = append(kept, i)
 	}
 	for key, ci := range inColony {

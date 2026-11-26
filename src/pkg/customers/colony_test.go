@@ -618,3 +618,106 @@ func TestColonyFailedWriteForcesCatchUp(t *testing.T) {
 		t.Fatalf("parity after catch-up = %+v", par)
 	}
 }
+
+// Forgetting a merge target also erases the person merged into them, from
+// colony.db and from the backups.
+func TestColonyForgetMergeTargetErasesMerged(t *testing.T) {
+	dir := fixtureDir(t)
+	b := bootColony(t, dir, StoreShadow, newClock())
+	if _, err := b.store.Merge(fixAda, fixBea, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.store.Forget(fixAda); err != nil {
+		t.Fatal(err)
+	}
+	b.colony.mu.Lock()
+	_, err := b.colony.db.Get(fixBea)
+	b.colony.mu.Unlock()
+	if !errors.Is(err, cstore.ErrNotFound) {
+		t.Fatalf("the merged person's record survived the forget: %v", err)
+	}
+	for _, name := range []string{ColonyFileName, FileName + PreColonySuffix, FileName} {
+		if strings.Contains(mustRead(t, filepath.Join(dir, name)), fixBea) {
+			t.Fatalf("%s still names the merged person", name)
+		}
+	}
+}
+
+// A json-mode forget that cannot reach colony.db does not fail: it is
+// recorded, and the next shadow boot erases the person.
+func TestColonyJSONModeForgetIsRetried(t *testing.T) {
+	dir := fixtureDir(t)
+	clk := newClock()
+	b := bootColony(t, dir, StoreShadow, clk)
+	if err := b.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+	db := filepath.Join(dir, ColonyFileName)
+	aside := db + ".aside"
+	if err := os.Rename(db, aside); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(db, []byte("damaged"), storeFileMode); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir, clk.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Forget(fixBea); err != nil {
+		t.Fatalf("a json-mode forget failed on an unreadable colony.db: %v", err)
+	}
+	c := &Colony{dir: dir}
+	m, ok := c.readMarker()
+	if _, pending := m.PendingForget[fixBea]; !ok || !pending {
+		t.Fatalf("the forget was not recorded for retry: %+v", m)
+	}
+	if strings.Contains(mustRead(t, filepath.Join(dir, FileName+PreColonySuffix)), fixBea) {
+		t.Fatal("the backup still holds the forgotten person")
+	}
+	if err := os.Rename(aside, db); err != nil {
+		t.Fatal(err)
+	}
+	again := bootColony(t, dir, StoreShadow, clk)
+	again.colony.mu.Lock()
+	_, err = again.colony.db.Get(fixBea)
+	again.colony.mu.Unlock()
+	if !errors.Is(err, cstore.ErrNotFound) {
+		t.Fatalf("the next boot did not erase the person: %v", err)
+	}
+	if strings.Contains(mustRead(t, db), "bea.sample@gmail.com") {
+		t.Fatal("colony.db still holds the forgotten person's bytes")
+	}
+	if m, _ := again.colony.readMarker(); len(m.PendingForget) != 0 {
+		t.Fatalf("pending forgets left after the retry: %+v", m.PendingForget)
+	}
+}
+
+// Colony tombstones only what hive tombstones: a dashboard user forgotten
+// and signing in again gets a fresh profile in both stores, and colony mode
+// keeps it.
+func TestColonyForgottenHiveUserCanReturn(t *testing.T) {
+	dir := fixtureDir(t)
+	clk := newClock()
+	b := bootColony(t, dir, StoreShadow, clk)
+	if _, err := b.store.Forget(fixCy); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := b.store.EnsureHiveUser("cy")
+	if err != nil || fresh.ID == fixCy {
+		t.Fatalf("EnsureHiveUser = %+v, %v", fresh, err)
+	}
+	b.colony.mu.Lock()
+	owner, err := b.colony.db.FindByIdentity(cstore.KindOIDC, "cy")
+	b.colony.mu.Unlock()
+	if err != nil || owner.ID != fresh.ID {
+		t.Fatalf("the returning dashboard user is not in colony: %+v, %v", owner, err)
+	}
+	if err := b.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+	c := bootColony(t, dir, StoreColony, clk)
+	if p, ok := c.store.Lookup(KindHiveUser, "cy"); !ok || p.ID != fresh.ID {
+		t.Fatalf("colony mode lost the dashboard user's profile: %+v, %v", p, ok)
+	}
+}

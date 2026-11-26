@@ -676,8 +676,7 @@ func (s *Store) ApplyAutoProfile(id string, values map[string]string) (Person, b
 		for _, name := range ProfileFields {
 			f := p.Profile.Field(name)
 			v, err := cleanText(values[name], MaxProfileFieldLen, false)
-			if err != nil || v == "" || f.Source == SourceManual || (f.Source == SourceHub && !HubValueYieldsToForge(*f)) || f.Value == v ||
-				f.Rule == AffiliationAutoAcceptedGitdm {
+			if err != nil || v == "" || f.Source == SourceManual || (f.Source == SourceHub && !HubValueYieldsToForge(*f)) || f.Value == v {
 				continue
 			}
 			*f = ProfileField{Value: v, Source: SourceAuto, Rule: ProfileSourceGitHub, At: s.now()}
@@ -764,6 +763,11 @@ func (s *Store) ApplyProfileFill(id string, values map[string]ProfileFillValue, 
 				v = ""
 			}
 			owned := f.Source == SourceAuto && IsForgeProfileRule(f.Rule) && answered[f.Rule]
+			if f.Source == SourceAuto && f.Rule == AffiliationAutoAcceptedGitdm && strings.TrimSpace(values[name].Value) != "" {
+				// The person's own forge company outranks an auto-accepted
+				// gitdm value.
+				*f = ProfileField{}
+			}
 			switch {
 			case v != "" && (f.Value == "" || owned):
 				if f.Value == v && f.Rule == nv.Source && f.Login == nv.Login {
@@ -856,6 +860,7 @@ func (s *Store) ClearProfileFetched() (int, error) {
 func (s *Store) Forget(id string) (Person, error) {
 	var out Person
 	var tombs []string
+	var forgets map[string][]string
 	err := s.change(func() error {
 		p, ok := s.people[id]
 		if !ok {
@@ -880,16 +885,32 @@ func (s *Store) Forget(id string) (Person, error) {
 		}
 		delete(s.people, id)
 		s.dropRefsLocked(id)
+		// Everyone merged into the person goes with them: their records
+		// sit in MergedFrom here and, emptied, in colony.db.
 		s.pendingForget = map[string][]string{id: tombs}
+		var merged func(p Person)
+		merged = func(p Person) {
+			for _, m := range p.MergedFrom {
+				s.pendingForget[m.Person.ID] = nil
+				merged(m.Person)
+			}
+		}
+		merged(p)
+		forgets = make(map[string][]string, len(s.pendingForget))
+		for k := range s.pendingForget {
+			forgets[k] = nil
+		}
+		forgets[id] = tombs
 		return nil
 	})
 	if err != nil {
 		return out, err
 	}
 	if s.Colony() == nil {
-		if err := ForgetOffline(filepath.Dir(s.path), id, tombs, s.now); err != nil {
-			return out, err
-		}
+		// json mode. A colony.db or backup it cannot reach is recorded and
+		// retried; people.json has forgotten the person either way, so
+		// the forget does not fail here.
+		_ = ForgetOffline(filepath.Dir(s.path), forgets, s.now)
 	}
 	return out, nil
 }
