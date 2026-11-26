@@ -88,9 +88,10 @@
     }
     // Config assist proposal card (#19978). Everything on it comes from the
     // server's stored proposal; `why` is model text and is shown escaped, as
-    // plain text. The only actions are "Open in agent config" (the existing
-    // dialog, pre-filled; the owner's own Save is the write) and Dismiss.
-    // Typing in chat never applies a proposal.
+    // plain text. The actions are Apply (#19985: the stored body sent to the
+    // section endpoint with X-Hive-Chat-Proposal, checked server-side), "Open
+    // in agent config" (the existing dialog, pre-filled; the owner's own Save
+    // is the write) and Dismiss. Typing in chat never applies a proposal.
     function chatConfigProposalCardHtml(p) {
       const field = p.section === 'cadences' ? 'cadence in ' + String(p.field || '') + ' mode' : String(p.field || '');
       return '<div class="chat-config-proposal">' +
@@ -98,14 +99,89 @@
         '<div class="chat-config-proposal-diff"><code>' + escapeHtml(String(p.before || '(unset)')) + '</code> → <code>' + escapeHtml(String(p.after || '(unset)')) + '</code></div>' +
         (p.effect ? '<div class="fs-sm text-muted">' + escapeHtml(String(p.effect)) + '</div>' : '') +
         (p.why ? '<div class="chat-config-proposal-why fs-sm text-muted">' + escapeHtml(String(p.why)) + '</div>' : '') +
-        '<div class="chat-config-proposal-actions"><button type="button" class="hv-btn btn-sm chat-config-proposal-open">Open in agent config</button> ' +
+        '<div class="chat-config-proposal-actions"><button type="button" class="hv-btn btn-sm chat-config-proposal-apply">Apply</button> ' +
+        '<button type="button" class="hv-btn btn-sm chat-config-proposal-open">Open in agent config</button> ' +
         '<button type="button" class="hv-btn btn-sm chat-config-proposal-dismiss">Dismiss</button></div></div>';
+    }
+    // chatApplyConfigProposal is the owner's Apply (or Undo) click: it PUTs the
+    // stored body to the existing section endpoint with the proposal id in
+    // X-Hive-Chat-Proposal. The server checks the id, user, body and section
+    // hash under its config lock and answers 409 for a stale proposal. The card
+    // says "applied" only on a 2xx.
+    async function chatApplyConfigProposal(card, p) {
+      const actions = card.querySelector('.chat-config-proposal-actions');
+      if (!actions) return;
+      actions.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      let res = null;
+      let data = {};
+      try {
+        res = await fetch('/api/config/agent/' + encodeURIComponent(String(p.agent || '')) + '/' + encodeURIComponent(String(p.section || '')), {
+          method: 'PUT',
+          headers: Object.assign({}, _inceptionAuthHeaders(), { 'X-Hive-Chat-Proposal': String(p.id || '') }),
+          body: JSON.stringify((p.body && typeof p.body === 'object') ? p.body : {})
+        });
+        data = await res.json().catch(() => ({}));
+      } catch (err) {
+        data = { error: String((err && err.message) || err) };
+      }
+      const msg = data && data.error ? String(data.error) : (res ? 'HTTP ' + res.status : 'network error');
+      if (!res || !res.ok) {
+        if (res && res.status === 409) {
+          actions.textContent = 'Not applied: ' + msg + '.';
+          return;
+        }
+        actions.querySelectorAll('button').forEach(b => { b.disabled = false; });
+        let err = card.querySelector('.chat-config-proposal-error');
+        if (!err) {
+          err = document.createElement('div');
+          err.className = 'chat-config-proposal-error fs-sm text-muted';
+          card.appendChild(err);
+        }
+        err.textContent = 'Apply failed: ' + msg;
+        return;
+      }
+      const restartFailed = !!(data && data.restart_error);
+      if (p.reverses) {
+        actions.textContent = restartFailed ? 'Undone; saved, but the restart failed. Restart the agent to pick it up.' : 'Undone.';
+        return;
+      }
+      actions.textContent = restartFailed ? 'Saved; restart failed. Restart the agent to pick it up. ' : 'Applied. ';
+      const undo = document.createElement('button');
+      undo.type = 'button';
+      undo.className = 'hv-btn btn-sm chat-config-proposal-undo';
+      undo.textContent = 'Undo';
+      undo.addEventListener('click', () => chatUndoConfigProposal(card, p));
+      actions.appendChild(undo);
+    }
+    // chatUndoConfigProposal asks the server for the reverse proposal of an
+    // applied one (bound to the section as it is now) and applies it through
+    // the same check and endpoint. 409 when the section changed since.
+    async function chatUndoConfigProposal(card, p) {
+      const actions = card.querySelector('.chat-config-proposal-actions');
+      if (!actions) return;
+      actions.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      let res = null;
+      let data = {};
+      try {
+        res = await fetch('/api/chat/config-proposals/' + encodeURIComponent(String(p.id || '')) + '/undo', { method: 'POST', headers: _inceptionAuthHeaders() });
+        data = await res.json().catch(() => ({}));
+      } catch (err) {
+        data = { error: String((err && err.message) || err) };
+      }
+      const rev = data && data.config_proposal && typeof data.config_proposal === 'object' ? data.config_proposal : null;
+      if (!res || !res.ok || !rev) {
+        actions.textContent = 'Not undone: ' + (data && data.error ? String(data.error) : (res ? 'HTTP ' + res.status : 'network error')) + '.';
+        return;
+      }
+      await chatApplyConfigProposal(card, rev);
     }
     function chatBindConfigProposalCard(msgEl, p) {
       const card = msgEl.querySelector('.chat-config-proposal');
       if (!card) return;
+      const apply = card.querySelector('.chat-config-proposal-apply');
       const open = card.querySelector('.chat-config-proposal-open');
       const dismiss = card.querySelector('.chat-config-proposal-dismiss');
+      if (apply) apply.addEventListener('click', () => chatApplyConfigProposal(card, p));
       if (open) open.addEventListener('click', () => {
         window._chatConfigProposal = { id: String(p.id || ''), agent: String(p.agent || ''), section: String(p.section || ''), field: String(p.field || ''), before: String(p.before || ''), after: String(p.after || ''), body: (p.body && typeof p.body === 'object') ? p.body : {} };
         openConfigDialog('agent', String(p.agent || ''), p.section === 'cadences' ? 'Cadences' : 'General');
