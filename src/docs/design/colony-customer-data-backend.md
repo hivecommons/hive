@@ -1,8 +1,9 @@
 # Colony as the customer-data backend
 
-Status: **Accepted; phases 1 to 3 built.** P3, the spoke on the colony store,
-is described in [Spoke implementation (P3)](#spoke-implementation-p3). Tracking
-issue
+Status: **Accepted; phases 1 to 4 built, P5 cleanup built, P5 default flip
+pending shadow parity.** P3, the spoke on the colony store, is described in
+[Spoke implementation (P3)](#spoke-implementation-p3), and what P5 has done so
+far in [P5 status](#p5-status). Tracking issue
 [#19851](https://github.com/hivecommons/hive/issues/19851). Phase 1 (hub
 Affiliation from colony) and the trust-domain enforcement are built in their
 own PR, and every later phase ships behind its own issue. Related records:
@@ -318,6 +319,38 @@ v0.3.0 (`src/pkg/customers/colony.go`). What it does beyond the steps above:
   downloadable spoke backup carries neither; a volume-level backup of `/data`
   covers both (see [backup and restore](../backup-restore.md)).
 
+### P5 status
+
+[#19857](https://github.com/hivecommons/hive/issues/19857). Built:
+
+- **Hub consent reads come from colony in `colony` mode.** The match index,
+  the match answer and the person's own Profile sharing page read the grant
+  (fields, disclosure version, granted and withdrawn times) from colony. The
+  delivery bookkeeping (first and last delivery, the delivered field sets and
+  the rev) has no slot in colony's `Consent`, so it is still read from
+  `/data/saas/consents`. Only hive ids the consent file lists are read, because
+  colony has no delete and keeps a pruned consent as an emptied record. A
+  person whose last sync failed is read from the file alone. Consent writes,
+  the delivery stamp and the retention sweep still read and write the file
+  first and mirror it, so `json` stays the rollback. In `json` and `shadow`
+  mode nothing changes.
+- **Settings.** `customers.store` (Customer record store) and
+  `customers.enrichment.auto_accept` (Auto-accept gitdm affiliations) have
+  Settings controls under Features, Customers. Settings refuses an unknown
+  value, and shows when an environment override decides.
+
+Not yet, tracked in
+[#19972](https://github.com/hivecommons/hive/issues/19972):
+
+- The store default stays `json` on hub and spoke until a full release in
+  `shadow` shows clean parity logs on the hub and on the project's own hive.
+- The spoke gitdm default-on is sequenced with that flip.
+- `colony-only`, the `*.migrated` rename and `colony export` come one release
+  after the default flip. The duplicated enrichment types in
+  `src/pkg/customers/enrichment.go` and the hub's top-repo affiliation cache
+  fields go with `colony-only`, because `json` and `shadow` mode still read
+  them.
+
 ## Providers
 
 ### Hub (P1, built)
@@ -509,10 +542,10 @@ works. This section is about what to do with it once it does.
 | Phase | Issue | Depends on | One PR |
 |---|---|---|---|
 | P1 hub Affiliation via colony gitdm and devstats, plus the trust-domain allowlist | [#19853](https://github.com/hivecommons/hive/issues/19853), [#19854](https://github.com/hivecommons/hive/issues/19854) | nothing | built |
-| P2 colony store package | [hivecommons/colony#6](https://github.com/hivecommons/colony/issues/6) | nothing | colony repo |
-| P3 spoke Customers on the colony store, migration, auto-accept | [#19855](https://github.com/hivecommons/hive/issues/19855) | P2 released | hive |
-| P4 hub CRM on the colony store, migration, labelled affiliation for trusted hives | [#19856](https://github.com/hivecommons/hive/issues/19856) | P2 released | hive |
-| P5 default-on and cleanup | [#19857](https://github.com/hivecommons/hive/issues/19857) | P3, P4 | hive |
+| P2 colony store package | [hivecommons/colony#6](https://github.com/hivecommons/colony/issues/6) | nothing | built (colony v0.3.0) |
+| P3 spoke Customers on the colony store, migration, auto-accept | [#19855](https://github.com/hivecommons/hive/issues/19855) | P2 released | built |
+| P4 hub CRM on the colony store, migration, labelled affiliation for trusted hives | [#19856](https://github.com/hivecommons/hive/issues/19856) | P2 released | built |
+| P5 default-on and cleanup | [#19857](https://github.com/hivecommons/hive/issues/19857), default flip [#19972](https://github.com/hivecommons/hive/issues/19972) | P3, P4 | cleanup built; flip after shadow parity |
 | P6 crowd.dev | [#19858](https://github.com/hivecommons/hive/issues/19858) | colony#5 | hive |
 
 The repo-shaping follow-ups above are filed only after this design is

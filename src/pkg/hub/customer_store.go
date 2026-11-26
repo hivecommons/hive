@@ -851,6 +851,74 @@ func crmOverlayUser(u *SaaSUser) {
 	crmOverlay(u, p)
 }
 
+// crmOverlayConsents is the colony-mode read hook for a person's consent
+// records (#19857): the grant itself (fields, disclosure version, granted and
+// withdrawn times) is read from colony, and the hub-only delivery bookkeeping
+// (first and last delivery, delivered fields, rev), which colony's Consent has
+// no slot for, stays from the consent file. It is called by the read paths:
+// the match index, the match answer and the person's own consent page. Writes
+// still read and write the JSON first and mirror it, so a write path never
+// calls it.
+//
+// Only hive ids the consent file still lists are considered: colony has no
+// delete, so a consent the hub pruned is an emptied record there, and the
+// file decides which records exist. A person whose last sync failed or was
+// skipped is read from the JSON alone, like crmOverlayUser.
+func crmOverlayConsents(u *SaaSUser, records map[string]customerConsent) {
+	st, mode := hubCRM.active()
+	if st == nil || mode != hubCustomerStoreColony || u == nil || len(records) == 0 {
+		return
+	}
+	id := crmPersonID(u)
+	if hubCRM.isDirty(id) {
+		return
+	}
+	p, err := st.Get(id)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			slog.Warn("hub customer store: consent read failed; using json", "error", crmErrClass(err))
+		}
+		return
+	}
+	for hiveID, rec := range records {
+		have, ok := p.Consent(hiveID)
+		if !ok {
+			continue // colony does not hold it: dual-read from the JSON
+		}
+		records[hiveID] = crmOverlayConsent(rec, have)
+	}
+}
+
+// crmOverlayConsent writes the colony grant onto one consent record. A time
+// colony holds equal to the JSON one keeps the JSON value, so an unchanged
+// record still serialises byte for byte.
+func crmOverlayConsent(rec customerConsent, have store.Consent) customerConsent {
+	var fields customerConsentFields
+	for _, f := range have.Fields {
+		switch f {
+		case store.FieldRealName:
+			fields.RealName = true
+		case store.FieldOrganization:
+			fields.Organization = true
+		case store.FieldCountry:
+			fields.Country = true
+		}
+	}
+	rec.Fields = fields
+	rec.TextVersion = have.TextVersion
+	if !rec.GrantedAt.Equal(have.GrantedAt) {
+		rec.GrantedAt = have.GrantedAt
+	}
+	switch {
+	case have.WithdrawnAt.IsZero():
+		rec.WithdrawnAt = nil
+	case rec.WithdrawnAt == nil || !rec.WithdrawnAt.Equal(have.WithdrawnAt):
+		w := have.WithdrawnAt
+		rec.WithdrawnAt = &w
+	}
+	return rec
+}
+
 // crmForgetUser erases a deleted user from colony in every mode, before the
 // JSON record is removed, so a failure leaves the user in place to retry.
 func crmForgetUser(u *SaaSUser) error {

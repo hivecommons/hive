@@ -287,7 +287,8 @@ func crmSecondaryIdentities(u *SaaSUser) []store.Identity {
 
 // crmConsentsFromRecords maps the hub consent file to colony Consent
 // records. The hub-only delivery bookkeeping (delivered fields and rev)
-// stays in the consent file, which remains what the match answer reads.
+// stays in the consent file; in colony mode crmOverlayConsents reads the
+// grant back from colony and that bookkeeping from the file.
 func crmConsentsFromRecords(records map[string]customerConsent) []store.Consent {
 	out := make([]store.Consent, 0, len(records))
 	for hiveID, c := range records {

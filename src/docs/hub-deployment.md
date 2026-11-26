@@ -199,9 +199,13 @@ per-user JSON.
   erasure must reach the disk. In `json` mode an existing `colony.db` is not
   mirrored, so a value cleared meanwhile stays in it until the next `shadow`
   or `colony` boot reconciles it, or until the user is deleted.
-- **Consent records** are mirrored as colony Consent records. The match answer
-  still reads consent and its delivery bookkeeping from
-  `/data/saas/consents` until phase 5. When the hub prunes a consent, colony
+- **Consent records** are mirrored as colony Consent records. In `colony`
+  mode the match answer and the Profile sharing page read the grant (fields,
+  disclosure version, granted and withdrawn times) from colony; the delivery
+  bookkeeping, which colony has no slot for, is still read from
+  `/data/saas/consents`, and a person whose last sync failed is read from the
+  file alone. Consent writes still go to the file first and are mirrored, so
+  `json` stays the rollback. When the hub prunes a consent, colony
   has no delete, so its record is emptied (no fields, text version or times)
   and only the hive id stays, until the user is deleted.
 - **Affiliation in the answer** is not a delivered field: it is not stamped on

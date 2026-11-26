@@ -168,8 +168,7 @@ func (s *HubServer) customerMatchIndexFor(hiveID string, keys []string, now time
 		if err != nil {
 			continue
 		}
-		c, ok := records[hiveID]
-		if !ok || c.discardable(now) || c.WithdrawnAt != nil && c.DeliveredFields == nil {
+		if _, ok := records[hiveID]; !ok {
 			continue
 		}
 		user := loadSaaSUser(strings.TrimSuffix(entry.Name(), ".json"))
@@ -177,6 +176,10 @@ func (s *HubServer) customerMatchIndexFor(hiveID string, keys []string, now time
 			continue
 		}
 		if p, err := customerConsentPath(user); err != nil || p != path {
+			continue
+		}
+		crmOverlayConsents(user, records)
+		if c := records[hiveID]; c.discardable(now) || c.WithdrawnAt != nil && c.DeliveredFields == nil {
 			continue
 		}
 		login := customerMatchLogin(user)
@@ -435,11 +438,12 @@ func (s *HubServer) handleCustomerMatch(w http.ResponseWriter, r *http.Request) 
 		if err != nil {
 			continue
 		}
-		c, hasConsent := records[hiveID]
-		if !hasConsent && !labels {
+		if _, hasConsent := records[hiveID]; !hasConsent && !labels {
 			continue
 		}
 		user := loadSaaSUser(strings.TrimSuffix(filepath.Base(path), ".json"))
+		crmOverlayConsents(user, records)
+		c, hasConsent := records[hiveID]
 		var entry customerMatchEntry
 		var sent, public customerConsentFields
 		affiliation := false
