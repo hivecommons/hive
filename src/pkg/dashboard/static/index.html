@@ -75147,6 +75147,102 @@ function burnAreaChart() {
         }
       });
     }
+    /* Chat config assist toggle, phase 1 (RFC #19788, issue #19979):
+       chat.config_assist.enabled, loaded from and saved to the owner-only
+       /api/config/chat/config-assist endpoint. Off by default. Rendered with
+       DOM nodes and textContent only. The toggle persists and is audited
+       (config_chat_assist) on save; nothing is saved on an error. */
+    const CHAT_ASSIST_HOST_ID = 'cfg-chat-assist-host';
+
+    function chatAssistNode(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    async function loadChatConfigAssistSettings() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/chat/config-assist');
+        host = document.getElementById(CHAT_ASSIST_HOST_ID);
+        if (!host) return;
+        if (r.status === 403) {
+          host.textContent = '';
+          host.appendChild(chatAssistNode('div', 'fs-sm text-muted', 'Only the hive owner can view and edit the chat config assist toggle.'));
+          return;
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        renderChatConfigAssistPanel(host, await r.json());
+      } catch (e) {
+        host = host || document.getElementById(CHAT_ASSIST_HOST_ID);
+        if (!host) return;
+        host.textContent = '';
+        host.appendChild(chatAssistNode('div', 'fs-sm text-danger', 'Failed to load the chat config assist toggle: ' + e.message));
+      }
+    }
+
+    /* renderChatConfigAssistPanel paints the single toggle plus whether a
+       grounded-answers runner is attached (the toggle still saves either way;
+       it just has nothing to propose yet without one). */
+    function renderChatConfigAssistPanel(host, data) {
+      if (!host) return;
+      data = data || {};
+      const state = { enabled: data.enabled === true };
+
+      host.textContent = '';
+      host.appendChild(chatAssistNode('p', 'config-help',
+        'Lets Hive Chat propose config changes (model, reasoning effort, cadence) for you to confirm, instead of only answering questions. Off by default.'));
+      if (!data.runner_attached) {
+        host.appendChild(chatAssistNode('p', 'fs-sm text-muted', 'No grounded-answers runner is attached yet, so turning this on has nothing to propose with until one is.'));
+      }
+
+      const toggleRow = chatAssistNode('div', 'config-toggle');
+      const switchEl = chatAssistNode('div', 'config-toggle-switch' + (state.enabled ? ' on' : ''));
+      const label = chatAssistNode('span', 'config-toggle-label', 'Chat config assist enabled ');
+      const hint = chatAssistNode('span', 'settings-yaml-hint', 'YAML ');
+      hint.appendChild(chatAssistNode('code', '', 'chat.config_assist.enabled'));
+      label.appendChild(hint);
+      toggleRow.appendChild(switchEl);
+      toggleRow.appendChild(label);
+      host.appendChild(toggleRow);
+
+      const statusEl = chatAssistNode('div', 'fs-sm');
+      const setStatus = (msg, cls) => { statusEl.textContent = msg; statusEl.className = 'fs-sm ' + (cls || 'text-muted'); };
+      const saveBtn = chatAssistNode('button', 'hv-btn btn-primary btn-sm', 'Save');
+      saveBtn.disabled = true;
+
+      switchEl.addEventListener('click', () => {
+        state.enabled = !state.enabled;
+        switchEl.classList.toggle('on', state.enabled);
+        saveBtn.disabled = false;
+        setStatus('');
+      });
+
+      const actions = chatAssistNode('div', 'config-list-add');
+      actions.appendChild(saveBtn);
+      actions.appendChild(statusEl);
+      host.appendChild(actions);
+
+      saveBtn.addEventListener('click', async () => {
+        saveBtn.disabled = true;
+        setStatus('Saving…');
+        try {
+          const res = await fetch('/api/config/chat/config-assist', {
+            method: 'PUT',
+            headers: _inceptionAuthHeaders(),
+            body: JSON.stringify({ enabled: state.enabled }),
+          });
+          if (!res.ok) throw new Error(await saveErrorMessage(res));
+          await res.json();
+          await loadChatConfigAssistSettings();
+          showToast('Chat config assist ' + (state.enabled ? 'enabled' : 'disabled'), 'success');
+        } catch (e) {
+          saveBtn.disabled = false;
+          setStatus(e.message, 'text-danger');
+        }
+      });
+    }
     // Workflow-model bindings (hivecommons/hive#17620, RFC phase 2).
     //
     // Each repo row on Settings → Repos carries a "Workflow" select: hive-default
@@ -80161,6 +80257,7 @@ function burnAreaChart() {
       { id: 'work-intake', title: 'Work intake & issue lifecycle', desc: 'How issues are classified, claimed, closed on merge, de-duplicated, auto-closed and re-planned.' },
       { id: 'agents', title: 'Agents & tooling', desc: 'Agent session supervision and resume, provider rotation, the policy repo, decision models and workload identity.' },
       { id: 'quality', title: 'Quality loops & release health', desc: 'Post-completion feedback lanes, audit publication and release CI repair.' },
+      { id: 'chat', title: 'Chat', desc: 'Hive Chat behavior: grounded answers and the owner-only config assist toggle.' },
       { id: 'integrations', title: 'Integrations & observability', desc: 'OpenTelemetry export plus the Linear, upstream-fork and self-report connections.' },
       { id: 'experimental', title: 'Experimental', desc: 'Pilots and report-only rollouts. Off by default; expect these to move or change.' },
     ];
@@ -80450,6 +80547,7 @@ function burnAreaChart() {
       setTimeout(() => { if (typeof loadReviewRulesSettings === 'function') loadReviewRulesSettings(); }, 0);
       /* Stranded review-feedback retry (#19320): its own owner-only endpoint. */
       setTimeout(() => { if (typeof loadReviewRetrySettings === 'function') loadReviewRetrySettings(); }, 0);
+      setTimeout(() => { if (typeof loadChatConfigAssistSettings === 'function') loadChatConfigAssistSettings(); }, 0);
       // Status line: distinguish ON+running from ON+not-configured from OFF.
       let trajStatus, trajStatusColor;
       if (!trajOn) { trajStatus = 'Off'; trajStatusColor = 'var(--muted)'; }
@@ -81307,6 +81405,13 @@ function burnAreaChart() {
             <div class="config-field"><label>Posture history (days) ${yamlHint('compliance.posture_checks.history_days')} ${settingHelpMark('settings', 'features', 'Posture history', `How long posture-check results are kept, 30 to 1095 days. 0 uses the default (${esc(String(platformDefaults.compliancePostureHistoryDays || 365))}).`)}</label><input type="number" min="0" max="1095" step="1" value="${esc(String(f.compliancePostureHistoryDays || ''))}" placeholder="${esc(String(platformDefaults.compliancePostureHistoryDays || 365))}" data-change-action="markDirty" data-arg0="features" data-arg1="compliancePostureHistoryDays" data-arg-types="s,s,N"></div>
           </div>
           <div class="config-help">Applies on the next posture pass.</div>
+        </div>
+        `)}
+
+        ${featuresSectionHtml('chat', `
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Config assist ${yamlHint('chat.config_assist')} ${settingHelpMark('settings', 'features', 'Config assist', `Lets Hive Chat propose config changes (model, reasoning effort, cadence) for an owner to confirm, instead of only answering questions. Owner-only; persisted and audited as config_chat_assist.`)}</div>
+          <div id="cfg-chat-assist-host"><div class="fs-sm text-muted">Loading…</div></div>
         </div>
         `)}
 

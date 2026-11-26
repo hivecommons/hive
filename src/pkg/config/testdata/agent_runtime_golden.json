@@ -794,7 +794,8 @@
     "unsolicited": {}
   },
   "chat": {
-    "grounded_answers": {}
+    "grounded_answers": {},
+    "config_assist": {}
   },
   "customers": {
     "inference": {},

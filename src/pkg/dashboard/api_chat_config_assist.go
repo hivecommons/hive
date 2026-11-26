@@ -79,5 +79,5 @@ func (s *Server) chatConfigAssistHint(r *http.Request, query string) string {
 	if !chatConfigShapedRE.MatchString(query) {
 		return ""
 	}
-	return "Tip: chat can propose config changes (model, reasoning effort, cadence) for you to confirm. Turn it on in Settings → Chat → Config assist."
+	return "Tip: chat can propose config changes (model, reasoning effort, cadence) for you to confirm. Turn it on in Settings → Features → Chat → Config assist."
 }

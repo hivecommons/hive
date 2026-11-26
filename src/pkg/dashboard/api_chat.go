@@ -24,8 +24,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	route := chatParseRoute(body.Query)
-	// Owner-only NUX: one hint toward Settings → Chat → Config assist when
-	// the flag is off (#19979). Rides along as its own field on answers.
+	// Owner-only NUX: one hint toward Settings → Features → Chat → Config
+	// assist when the flag is off (#19979). Rides along as its own field on
+	// answers.
 	hint := s.chatConfigAssistHint(r, body.Query)
 	withHint := func(m map[string]interface{}) map[string]interface{} {
 		if hint != "" {
