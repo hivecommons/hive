@@ -1,0 +1,1 @@
+- Codex rotation no longer treats an environment API key as a Codex login unless the auth mode is explicitly API-key; legacy auth-file keys are preserved and ambiguous or ChatGPT logins are held ([#19943](https://github.com/hivecommons/hive/issues/19943)).
