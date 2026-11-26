@@ -557,7 +557,12 @@ func (c *Client) closeIssueForMergedPRClaim(ctx context.Context, issueRepo strin
 }
 
 func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueRepo string, issueNumber int, pr *gh.PullRequest, claimMetadata bool, opts CloseOnMergeOptions, issue *gh.Issue) CloseOnMergeResult {
-	prRepo := issueRepo
+	// The backfill passes the configured repo name, which may omit the
+	// owner; references parsed from the PR text are always owner/name, so
+	// match them against the qualified form.
+	refOwner, refName := c.splitRepo(issueRepo)
+	issueRefRepo := refOwner + "/" + refName
+	prRepo := issueRefRepo
 	if pr != nil && pr.GetBase() != nil && pr.GetBase().GetRepo() != nil && pr.GetBase().GetRepo().GetFullName() != "" {
 		prRepo = pr.GetBase().GetRepo().GetFullName()
 	}
@@ -586,7 +591,7 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 			return res
 		}
 	}
-	if !claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, issueRepo, issueNumber) {
+	if !claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, issueRefRepo, issueNumber) {
 		res.Action, res.Reason = CloseOnMergeSkipped, "no_closing_or_claim_metadata"
 		return res
 	}
@@ -596,7 +601,7 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 	// issue (hivecommons/hive#19956). The verdict is applied once the issue
 	// is read, so a confirmation-gated issue can still be labelled partially
 	// addressed (#11931).
-	refsOnly := closeOnMergePRRefsOnly(pr, prRepo, issueRepo, issueNumber)
+	refsOnly := closeOnMergePRRefsOnly(pr, prRepo, issueRefRepo, issueNumber)
 	if refsOnly {
 		res.WrongRefs = true
 		if opts.Logger != nil {
@@ -663,7 +668,7 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		res.Action, res.Reason = CloseOnMergeSkipped, "refs_only"
 		return res
 	}
-	if !gated && labelPresent(issueLabelNames(issue.Labels), PartiallyAddressedLabel) && !closeOnMergePRHasClosingKeyword(pr, prRepo, issueRepo, issueNumber) {
+	if !gated && labelPresent(issueLabelNames(issue.Labels), PartiallyAddressedLabel) && !closeOnMergePRHasClosingKeyword(pr, prRepo, issueRefRepo, issueNumber) {
 		// hive/partially-addressed says work remains. Only an explicit
 		// closing keyword for this issue overrides that; a claim or a branch
 		// name alone does not (hivecommons/hive#19956).

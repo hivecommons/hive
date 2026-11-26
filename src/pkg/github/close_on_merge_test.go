@@ -110,7 +110,7 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 		{name: "needs human gets likely done comment", labels: []string{"needs-human"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
 		{name: "epic gets likely done comment", labels: []string{"Epic"}, prBody: "Fixes #7", wantAction: CloseOnMergeAwaiting},
 		{name: "refs-only PR is partially addressed, no awaiting comment", labels: []string{"needs-human"}, wantAction: CloseOnMergeSkipped},
-		{name: "existing marker noops", marker: true, wantAction: CloseOnMergeAlreadyDone},
+		{name: "existing marker noops", marker: true, prBody: "Fixes #7", wantAction: CloseOnMergeAlreadyDone},
 		{name: "unmerged PR noops", unmerged: true, wantAction: CloseOnMergeNoop},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
