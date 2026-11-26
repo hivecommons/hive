@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 
+	"github.com/hivecommons/hive/crux/forgejwt"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -61,6 +63,17 @@ func runConfigCheck(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "  %s: backend %q, launch_cmd %q dropped: %s\n", d.Agent, d.Backend, d.LaunchCmd, d.Error)
 		}
 		return configCheckExitCode
+	}
+
+	// Load checks only that forgejo.integration.key_file is an absolute path,
+	// because the signer reads the file at each mint. This command answers
+	// whether the hive can clone and push as configured, so it runs the
+	// mint's key checks now (hivecommons/hive#19919).
+	if in := cfg.Forgejo.Integration; in != nil {
+		if err := forgejwt.CheckKeyFile(strings.TrimSpace(in.KeyFile)); err != nil {
+			fmt.Fprintf(stderr, "config INVALID: %s\nforgejo.integration.key_file: %v\n", *configPath, err)
+			return configCheckExitCode
+		}
 	}
 
 	names := make([]string, 0, len(cfg.Agents))

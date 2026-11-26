@@ -25,6 +25,9 @@ type scriptedGit struct {
 	fails   map[string]error
 	calls   []string
 	pushErr error
+	// pushOut, when set, is what the push returns instead of "ok": the
+	// stdout+stderr ExecRunner hands back from a failed git push.
+	pushOut string
 	pushed  bool
 }
 
@@ -33,6 +36,9 @@ func (g *scriptedGit) Run(_ context.Context, _ string, _ []string, name string, 
 	if slices.Contains(args, "push") {
 		g.pushed = true
 		g.calls = append(g.calls, "push")
+		if g.pushOut != "" {
+			return []byte(g.pushOut), g.pushErr
+		}
 		return []byte("ok"), g.pushErr
 	}
 	g.calls = append(g.calls, key)

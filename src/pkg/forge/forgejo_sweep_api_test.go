@@ -35,6 +35,11 @@ func newSweepAPIServer(t *testing.T, routes map[string]string) (SweepAPI, *[]str
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		if body == "403" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"Only admins can query all permissions, repo admins can query all repo permissions, collaborators can query only their own"}`))
+			return
+		}
 		_, _ = w.Write([]byte(body))
 	}))
 	t.Cleanup(srv.Close)
@@ -211,5 +216,62 @@ func TestForgejoSweepAPISelfError(t *testing.T) {
 	api, _ := newSweepAPIServer(t, map[string]string{})
 	if _, err := api.Self(context.Background()); err == nil {
 		t.Error("Self 404: want an error")
+	}
+}
+
+// TestForgejoPermissionForWriteAccessHive is #19914: Forgejo answers the
+// permission API about another user only for a repo or site admin, and
+// returns 403 to a hive user with write access. The sweep then reads the
+// assignee list, which lists the users with write access.
+func TestForgejoPermissionForWriteAccessHive(t *testing.T) {
+	api, calls := newSweepAPIServer(t, map[string]string{
+		"GET " + repoAPI + "/collaborators/fjadmin/permission":  `403`,
+		"GET " + repoAPI + "/collaborators/reader/permission":   `403`,
+		"GET " + repoAPI + "/collaborators/hive-bot/permission": `{"permission":"write"}`,
+		"GET " + repoAPI + "/assignees":                         `[{"login":"hive-bot"},{"login":"FjAdmin"},{"login":""}]`,
+	})
+	ctx := context.Background()
+	if perm, err := api.Permission(ctx, "widgets", "fjadmin"); err != nil || perm != PermissionAssignable {
+		t.Errorf("labeller on the assignee list: Permission = %q %v, want %q", perm, err, PermissionAssignable)
+	}
+	if perm, err := api.Permission(ctx, "widgets", "reader"); err != nil || perm != "none" {
+		t.Errorf("labeller missing from the assignee list: Permission = %q %v, want none", perm, err)
+	}
+	if perm, err := api.Permission(ctx, "widgets", "hive-bot"); err != nil || perm != "write" {
+		t.Errorf("own permission: Permission = %q %v, want write", perm, err)
+	}
+	assigneeReads := 0
+	for _, c := range *calls {
+		if strings.HasPrefix(c, "GET "+repoAPI+"/assignees") {
+			assigneeReads++
+		}
+	}
+	if assigneeReads != 2 {
+		t.Errorf("assignee reads = %d, want one per 403 and none for an answered call; calls = %v", assigneeReads, *calls)
+	}
+}
+
+func TestForgejoPermissionFallbackErrors(t *testing.T) {
+	// A 403 with no readable assignee list is an error, never a "none"
+	// that reads as a verdict.
+	api, _ := newSweepAPIServer(t, map[string]string{
+		"GET " + repoAPI + "/collaborators/x/permission": `403`,
+		"GET " + repoAPI + "/assignees":                  `500`,
+	})
+	if perm, err := api.Permission(context.Background(), "widgets", "x"); err == nil || !strings.Contains(err.Error(), "assignee") {
+		t.Errorf("Permission = %q %v, want an error that names the assignee read", perm, err)
+	}
+	// Any status other than 403 stays an error with no fallback.
+	api, calls := newSweepAPIServer(t, map[string]string{
+		"GET " + repoAPI + "/collaborators/x/permission": `500`,
+		"GET " + repoAPI + "/assignees":                  `[{"login":"x"}]`,
+	})
+	if _, err := api.Permission(context.Background(), "widgets", "x"); err == nil {
+		t.Error("Permission 500: want an error")
+	}
+	for _, c := range *calls {
+		if strings.Contains(c, "/assignees") {
+			t.Errorf("a 500 read the assignee list: %v", *calls)
+		}
 	}
 }
