@@ -10,7 +10,8 @@ import (
 
 // installMutationSelfReportHooks wires the mutation boundary's queue-health
 // hooks to the self-report tracker: a journaled external effect that stays
-// Unknown/Planned past mutation.DefaultStuckAfter while callers keep retrying
+// Unknown/Planned past mutation.DefaultStuckAfter (or past its kind's
+// unresolved TTL when longer) while callers keep retrying
 // it is reported as fleetreport.ClassEffectLedgerOpStuck (key = the op's
 // logical ID), and the condition clears when the op is applied, reconciled or
 // expired past its kind's unresolved TTL (Boundary.UnresolvedTTL).

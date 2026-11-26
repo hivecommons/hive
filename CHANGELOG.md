@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.378.0)
+
+### Added
+
+- The owner can now rotate a PAT-mode hive's GitHub token from Settings -> Forge App, in a masked write-only field that shows the token's fingerprint, login and last verification and reports a refused token (422), the retry cooldown (429) or a GitHub App hive (409), and from scripts with `hivectl github token set --stdin` or a no-echo prompt in a terminal (the token is never taken from an argument or flag, token-shaped values are redacted from every hivectl error, and it is sent only over https or to loopback, never along a redirect) and `hivectl github token status` (#19633).
+- **Customers can run on the colony store alone (`customers.store: colony-only`, opt-in).** On colony v0.4.0, which adds slots for identity provenance, second claimants of an identity, full provider answers, consent delivery bookkeeping and long notes, a hive set to `colony-only` writes everything into `/data/customers/colony.db`, reads it all back, and only when it matches renames `people.json` and `enrichment.json` to `*.migrated` (kept, never deleted). Nothing writes the JSON after that. Setting `colony`, `shadow` or `json` again writes the files back from `colony.db` on the next start, and `hive colony export --format hive-people-json` does it by hand. `shadow` and `colony` mode now also write the new fields, and parity counts held identities (#19972).
+- Hive Chat config assist proposal cards now have an Apply button that saves the stored change through the existing agent config endpoint with an `X-Hive-Chat-Proposal` header, checked server-side under the config lock against the proposal's owner, body and section hash (a stale, reused or mismatched proposal gets `409` and changes nothing), and an applied card offers Undo, which restores the previous value through the same check and fails with `409` if the section changed since; failed applies are audited as `chat_config_apply_failed` and undos as `chat_config_undo` (#19985).
+
+### Fixed
+
+- The check that stops an older, unrelated contributor PR from counting as a task's work now also applies after the relay reconnects mid-task (the task lease keeps when the task was issued), and an issue reference that names another repository no longer counts (#19985).
+
 ## 2026-11-26 (v5.377.1)
 
 ### Changed
