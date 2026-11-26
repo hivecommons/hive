@@ -38,6 +38,29 @@ func (m *Manager) agentUsesClaudeHeadless(backend string, agent *AgentProcess) b
 	return cmd == ""
 }
 
+// paneIsClaudeHeadless reports whether the agent's CURRENT pane was launched
+// as a headless_turns shell. Kick-time routing (kick delivery, the inference
+// watchdog, SendResumeKick) must follow the pane, not the live config: the
+// pane's shape is fixed at launch, so toggling headless_turns has no effect
+// until the next relaunch, and a kick never types C-c, /clear or the raw
+// prompt into the bash shim. claudeHeadlessTurnCmd is set or cleared on every
+// launch pass, the surviving-pane path included.
+func paneIsClaudeHeadless(agent *AgentProcess) bool {
+	return agent != nil && strings.TrimSpace(agent.claudeHeadlessTurnCmd) != ""
+}
+
+// paneShapeMatchesHeadlessLocked reports whether the agent's live pane has the
+// shape a launch with the given headless decision would build: the
+// headless_turns shim shows its ready (or running) marker, an interactive CLI
+// shows neither. Used to refuse reusing a surviving pane after headless_turns
+// was toggled while the hub was down. Caller holds m.mu.
+func (m *Manager) paneShapeMatchesHeadlessLocked(agent *AgentProcess, headless bool) bool {
+	pane := m.captureVisiblePaneForAgent(agent)
+	paneHeadless := strings.Contains(pane, claudeHeadlessReadyMarker) ||
+		strings.Contains(pane, claudeHeadlessRunningMarker)
+	return paneHeadless == headless
+}
+
 // claudeHeadlessLaunchCmd is the line typed into the pane at launch: no CLI
 // runs until the first kick. It creates the per-launch session file and sets
 // a PS1 carrying the ready marker for the launch, reuse and kick gates.

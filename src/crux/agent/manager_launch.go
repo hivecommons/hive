@@ -221,7 +221,12 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		launchCmd += fmt.Sprintf(" --text \"$(cat %s)\"", minimalPrompt)
 	}
 
-	if !agent.forceRelaunch && m.tmuxPaneHasCLIForAgent(agent) {
+	// A surviving pane is reused only when its shape matches this launch:
+	// headless_turns toggled while the hub was down leaves a bash shim where an
+	// interactive CLI is now expected (or the reverse), and reusing it would
+	// route kicks for the wrong shape. A mismatch falls through to a real
+	// relaunch, which reaps any stale CLI first.
+	if !agent.forceRelaunch && m.tmuxPaneHasCLIForAgent(agent) && m.paneShapeMatchesHeadlessLocked(agent, headless) {
 		m.logger.Info("CLI already running in tmux pane, skipping launch", "name", agent.Name, "session", agent.tmuxSession)
 		now := time.Now()
 		agent.State = StateRunning

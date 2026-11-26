@@ -492,6 +492,47 @@ func TestDeliverKickLocked_ClaudeHeadlessRoutesToTurnRunner(t *testing.T) {
 	}
 }
 
+// TestDeliverKickLocked_ClaudeHeadlessFollowsPaneAfterLiveToggleOff pins that
+// kick routing follows the pane's launch-time shape: with headless_turns
+// turned off in the live config but the pane still the bash shim (no relaunch
+// yet), a kick still runs through claude-turn, never sends C-c / /clear
+// or the raw prompt into bash, and leaves the inference watchdog disarmed.
+func TestDeliverKickLocked_ClaudeHeadlessFollowsPaneAfterLiveToggleOff(t *testing.T) {
+	m, agent, _ := kickLogTestManager(t, "")
+	agent.Config.Backend = "litellm"
+	agent.Config.HeadlessTurns = false
+	agent.Config.ClearOnKick = true
+	agent.claudeHeadlessTurnCmd = "'claude' '--model' 'qwen'"
+	t.Cleanup(func() { _ = os.Remove(filepath.Join(agentStateDir, ".hive-claude-prompt-"+agent.Name+".txt")) })
+	termSeams(m).captureVisiblePane = func(*AgentProcess) string {
+		return claudeHeadlessReadyMarker + "\n" + claudeHeadlessReadyMarker + "> "
+	}
+	var keys []string
+	termSeams(m).sendKeys = func(_ *AgentProcess, k ...string) { keys = append(keys, k...) }
+	var typed []string
+	termSeams(m).sendLiteral = func(_ *AgentProcess, text string) { typed = append(typed, text) }
+
+	if err := m.deliverKickLocked(agent, "analyze coverage", "send-kick"); err != nil {
+		t.Fatalf("deliverKickLocked: %v", err)
+	}
+	if len(typed) != 1 || !strings.Contains(typed[0], " "+ClaudeTurnSubcommand+" ") {
+		t.Fatalf("kick after live toggle-off did not go through claude-turn: %#v", typed)
+	}
+	for _, text := range typed {
+		if strings.Contains(text, "analyze coverage") || strings.Contains(text, "/clear") {
+			t.Fatalf("interactive kick text typed into the bash shim: %q", text)
+		}
+	}
+	for _, k := range keys {
+		if k == "C-c" {
+			t.Fatalf("interactive clear key %q sent to the bash shim", k)
+		}
+	}
+	if !agent.lastInferKickAt.IsZero() {
+		t.Fatalf("inference stall watchdog armed for a headless_turns pane after live toggle-off")
+	}
+}
+
 // TestDeliverKickLocked_ClaudeHeadlessRefusesUnbuiltCommand pins that a kick
 // racing the first launch, before the per-kick claude line exists, is refused
 // rather than typed into the shell.
@@ -510,5 +551,32 @@ func TestDeliverKickLocked_ClaudeHeadlessRefusesUnbuiltCommand(t *testing.T) {
 	}
 	if len(typed) != 0 {
 		t.Fatalf("typed into the pane with no claude command built: %#v", typed)
+	}
+}
+
+// TestPaneShapeMatchesHeadless pins that a surviving pane is reused only when
+// its shape matches the launch: a headless_turns shim (ready or running
+// marker) after headless_turns was toggled off, or an interactive CLI after it
+// was toggled on, must be relaunched rather than reused.
+func TestPaneShapeMatchesHeadless(t *testing.T) {
+	m, agent, _ := kickLogTestManager(t, "")
+	cases := []struct {
+		name     string
+		pane     string
+		headless bool
+		want     bool
+	}{
+		{"shim idle, headless", claudeHeadlessReadyMarker + "> ", true, true},
+		{"shim running, headless", claudeHeadlessRunningMarker + "\nworking", true, true},
+		{"shim idle, toggled off", claudeHeadlessReadyMarker + "> ", false, false},
+		{"interactive, toggled on", "❯ ", true, false},
+		{"interactive, interactive", "❯ ", false, true},
+	}
+	for _, tc := range cases {
+		pane := tc.pane
+		termSeams(m).captureVisiblePane = func(*AgentProcess) string { return pane }
+		if got := m.paneShapeMatchesHeadlessLocked(agent, tc.headless); got != tc.want {
+			t.Errorf("%s: paneShapeMatchesHeadlessLocked = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

@@ -90,7 +90,7 @@ func (m *Manager) SendResumeKick(name, message, sessionID string) error {
 		return fmt.Errorf("%w: agent %s not found", ErrResumeSessionGone, name)
 	}
 	if m.agentSandboxEnabledLocked(agent) || agentUsesAgyHeadless(effectiveBackend(agent), agent) ||
-		m.agentUsesClaudeHeadless(effectiveBackend(agent), agent) {
+		paneIsClaudeHeadless(agent) || m.agentUsesClaudeHeadless(effectiveBackend(agent), agent) {
 		return fmt.Errorf("%w: agent %s has no interactive session", ErrResumeUnsupported, name)
 	}
 	if agent.Paused || agent.State == StatePaused {
