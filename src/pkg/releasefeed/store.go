@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 )
@@ -36,10 +39,16 @@ type State struct {
 	Version int                    `json:"version"`
 	Sources map[string]SourceState `json:"sources,omitempty"`
 	Agents  map[string]*AgentState `json:"agents,omitempty"`
+	// IndexFieldsSeparated marks migrated state without changing the file
+	// version, so a previous binary can still read the state on rollback.
+	IndexFieldsSeparated bool `json:"index_fields_separated,omitempty"`
 }
 
 func newState() *State {
-	return &State{Version: stateFileVersion, Sources: map[string]SourceState{}, Agents: map[string]*AgentState{}}
+	return &State{
+		Version: stateFileVersion, IndexFieldsSeparated: true,
+		Sources: map[string]SourceState{}, Agents: map[string]*AgentState{},
+	}
 }
 
 func (s *State) agent(name string) *AgentState {
@@ -52,6 +61,21 @@ func (s *State) agent(name string) *AgentState {
 		a.Seen = map[string]string{}
 	}
 	return a
+}
+
+// separateIndexFields drops legacy index state because the keys did not record
+// which version field produced the saved versions and validators.
+func (s *State) separateIndexFields() {
+	isIndex := func(key string) bool { return strings.HasPrefix(key, KindIndex+":") }
+	maps.DeleteFunc(s.Sources, func(key string, _ SourceState) bool { return isIndex(key) })
+	for _, agent := range s.Agents {
+		if agent == nil {
+			continue
+		}
+		maps.DeleteFunc(agent.Seen, func(key, _ string) bool { return isIndex(key) })
+		agent.Pending = slices.DeleteFunc(agent.Pending, func(r Release) bool { return isIndex(r.Source) })
+	}
+	s.IndexFieldsSeparated = true
 }
 
 // Store persists State.
@@ -80,7 +104,7 @@ func (f *FileStore) Load() (*State, error) {
 	if err != nil {
 		return nil, err
 	}
-	st := newState()
+	st := &State{Version: stateFileVersion}
 	if err := json.Unmarshal(data, st); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", f.path, err)
 	}
