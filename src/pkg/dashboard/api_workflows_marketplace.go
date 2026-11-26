@@ -172,29 +172,12 @@ func (s *Server) importBundle(st *wfstore.Store, b *bundle.Bundle, by string) (w
 	if err := bundle.Verify(b); err != nil {
 		return wfstore.Entry{}, &importVerifyError{err}
 	}
-	m := b.Model
-	name := m.Metadata.Name
-	version := m.Spec.Meta.Version
-	if wfstore.IsBuiltin(name) {
-		return wfstore.Entry{}, fmt.Errorf("%w: %s is a built-in model", wfstore.ErrReadOnly, name)
+	m := *b.Model
+	if wfstore.IsBuiltin(m.Metadata.Name) {
+		return wfstore.Entry{}, fmt.Errorf("%w: %s is a built-in model", wfstore.ErrReadOnly, m.Metadata.Name)
 	}
-	if version != "" {
-		if _, _, err := st.Get(name, version); err == nil {
-			version = ""
-		} else if !errors.Is(err, wfstore.ErrNotFound) {
-			return wfstore.Entry{}, err
-		}
-	}
-	if version == "" {
-		next, err := nextWorkflowVersion(st, name)
-		if err != nil {
-			return wfstore.Entry{}, err
-		}
-		version = next
-	}
-	m.Spec.Meta.Version = version
 	m.Spec.Meta.Provenance = importedProvenance(m.Spec.Meta.Provenance, b.Tier)
-	return st.Save(m, by, time.Now().UTC())
+	return st.SaveImportedVersion(&m, by, time.Now().UTC())
 }
 
 // importedProvenance decides what provenance an imported model is stored

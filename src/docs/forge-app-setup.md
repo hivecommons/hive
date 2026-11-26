@@ -160,10 +160,12 @@ Notes that will save you a wrong guess:
 
 - `gitlab:`, `gitea:` and `forgejo:` are **top-level** blocks, siblings of
   `github:` — not nested inside it.
-- `token_env` names the **environment variable to read the token from**. The
-  token value is never written to config, matching Hive's no-secrets-in-config
-  rule. Use `GITLAB_TOKEN` / `GITEA_TOKEN` / `FORGEJO_TOKEN` unless you have a
-  reason not to.
+- `token_env` names the **environment variable to read the token from**, and
+  `token_file` names a file under `/secrets` or `/data/secrets` that holds it.
+  When both are set, the file wins, and a bad file is an error with no
+  fallback to the env var. The token value is never written to config,
+  matching Hive's no-secrets-in-config rule. Use `GITLAB_TOKEN` /
+  `GITEA_TOKEN` / `FORGEJO_TOKEN` unless you have a reason not to.
 - Omitting `project.forge` means GitHub, so every existing config is unaffected.
 - GitLab defaults to `https://gitlab.com`. Gitea and Forgejo have **no** default
   — there is no single public host, so selecting either forge without a URL is a
@@ -190,7 +192,7 @@ Notes that will save you a wrong guess:
   is a config error. The GitLab block URL defaults to `https://gitlab.com`. A
   Gitea or Forgejo block with no URL of its own is not checked. The governor's
   escalation writes and its repo-scoped kicks follow the per-repo value; the
-  token still comes from the forge-wide `token_env`.
+  token still comes from the forge-wide `token_env` or `token_file`.
 
 ```yaml
 project:

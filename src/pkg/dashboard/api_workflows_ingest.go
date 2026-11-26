@@ -2,16 +2,13 @@ package dashboard
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/workflowmodel"
 	"github.com/hivecommons/hive/pkg/workflowmodel/ingest"
-	wfstore "github.com/hivecommons/hive/pkg/workflowmodel/store"
 )
 
 // workflowIngestTimeout bounds one repository fetch + ingest.
@@ -93,42 +90,5 @@ func (s *Server) handleWorkflowIngest(w http.ResponseWriter, r *http.Request) {
 	if p != nil {
 		resp["profile"] = p
 	}
-	if !req.Save {
-		jsonResponse(w, resp)
-		return
-	}
-	st := s.workflowStore(w)
-	if st == nil {
-		return
-	}
-	version, err := nextWorkflowVersion(st, m.Metadata.Name)
-	if err != nil {
-		workflowStoreError(w, err)
-		return
-	}
-	m.Spec.Meta.Version = version
-	e, err := st.Save(m, requestUser(r), time.Now().UTC())
-	if err != nil {
-		workflowStoreError(w, err)
-		return
-	}
-	s.auditFromRequest(r, "workflow_ingest", fmt.Sprintf("%s from %s@%s files=%d compiled=%v", e.Key(), repo, ref, len(files), e.Compiled), "")
-	resp["entry"] = e
-	jsonStatusResponse(w, http.StatusCreated, resp)
-}
-
-// nextWorkflowVersion is one past the highest integer version stored under
-// name ("1" for a new name); non-integer versions are ignored.
-func nextWorkflowVersion(st *wfstore.Store, name string) (string, error) {
-	entries, err := st.Versions(name)
-	if err != nil && !errors.Is(err, wfstore.ErrNotFound) {
-		return "", err
-	}
-	max := 0
-	for _, e := range entries {
-		if n, err := strconv.Atoi(e.Version); err == nil && n > max {
-			max = n
-		}
-	}
-	return strconv.Itoa(max + 1), nil
+	s.finishWorkflowIngest(w, r, req.Save, m, resp, fmt.Sprintf("from %s@%s files=%d", repo, ref, len(files)))
 }

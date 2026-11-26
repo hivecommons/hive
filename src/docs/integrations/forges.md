@@ -49,10 +49,15 @@ project:
 | --- | --- | --- |
 | `gitlab.gitlab_url` | `https://gitlab.com` | Instance root. The adapter appends `/api/v4`. |
 | `gitlab.token_env` | `GITLAB_TOKEN` | Sent as the `PRIVATE-TOKEN` header. |
+| `gitlab.token_file` | none | A file holding the token. See below. |
 | `gitea.gitea_url` | none | Instance root. The adapter appends `/api/v1`. Without it the adapter cannot be built and the governor falls back to the GitHub client with a warning. |
 | `gitea.token_env` | `GITEA_TOKEN` | Sent as `Authorization: token <TOKEN>`. |
+| `gitea.token_file` | none | A file holding the token. See below. |
 | `forgejo.forgejo_url` | none | Instance root. The adapter appends `/api/v1`. Same fallback as Gitea when unset. |
 | `forgejo.token_env` | `FORGEJO_TOKEN` | Sent as `Authorization: token <TOKEN>`. |
+| `forgejo.token_file` | none | A file holding the token. See below. |
+
+Each block reads its token the same way. When `token_file` is set, hive reads the token from that file and ignores the env var. The path must be absolute and under `/secrets` or `/data/secrets`, like other secret files in hive. The file is read each time the token is needed, so a rotated file takes effect on the next tick. A path outside those directories, an unreadable file, or an empty file is an error, and no request is sent. This includes the token git clone and push use on a Forgejo repo when `forgejo.integration` is unset. With no `token_file`, hive reads the env var as before.
 
 The keys and defaults come from `GitLabConfig`, `GiteaConfig` and `ForgejoConfig` in `src/pkg/config/config.go`. The adapter is built per governor cycle in `src/cmd/hive/forgewire.go`, so a config reload takes effect on the next tick. An unknown `project.forge` value also falls back to the GitHub client and logs a warning.
 

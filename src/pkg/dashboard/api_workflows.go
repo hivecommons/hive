@@ -59,6 +59,8 @@ func workflowStoreError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, wfstore.ErrNotFound):
 		jsonError(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, wfstore.ErrVersionExhausted):
+		jsonError(w, err.Error(), http.StatusConflict)
 	case errors.Is(err, wfstore.ErrReadOnly):
 		jsonError(w, err.Error(), http.StatusForbidden)
 	case errors.Is(err, wfstore.ErrBadName), errors.Is(err, wfstore.ErrBadVersion), errors.Is(err, wfstore.ErrNotCompiled):
@@ -142,16 +144,12 @@ func (s *Server) handleWorkflowSave(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, fmt.Sprintf("body is %s@%s, path is %s@%s", m.Metadata.Name, m.Spec.Meta.Version, name, r.PathValue("version")), http.StatusBadRequest)
 		return
 	}
+	save := st.Save
 	// The editor posts meta.version "" to mean "next free integer version".
 	if r.PathValue("name") == "" && strings.TrimSpace(m.Spec.Meta.Version) == "" && m.Metadata.Name != "" {
-		v, err := st.NextVersion(m.Metadata.Name)
-		if err != nil {
-			workflowStoreError(w, err)
-			return
-		}
-		m.Spec.Meta.Version = v
+		save = st.SaveNextVersion
 	}
-	e, err := st.Save(&m, requestUser(r), time.Now().UTC())
+	e, err := save(&m, requestUser(r), time.Now().UTC())
 	if err != nil {
 		workflowStoreError(w, err)
 		return
