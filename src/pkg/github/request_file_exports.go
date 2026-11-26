@@ -2,6 +2,7 @@ package github
 
 import (
 	"errors"
+	"log/slog"
 	"time"
 )
 
@@ -56,4 +57,42 @@ func WriteRequestResult(path string, data []byte) error {
 // per-label allowances, so a caller using it alone fails closed.
 func ReservedLabelForAgents(label, autoMergeLabel string) bool {
 	return reservedLabelForAgents(label, autoMergeLabel)
+}
+
+// EnsureRequestDir creates one agent-facing request queue with the drop-box
+// mode every relay uses (group-writable, setgid, sticky). It returns false
+// when the directory cannot be created.
+func EnsureRequestDir(logger *slog.Logger, kind, dir string) bool {
+	return ensureRequestDir(logger, kind, dir)
+}
+
+// ValidPushBranchName reports whether branch is a name the push-branch relay
+// will put in a refspec (hivecommons/hive#19916).
+func ValidPushBranchName(branch string) bool {
+	return validPushBranchName(branch)
+}
+
+// ValidatePushBranchDir checks the agent-named checkout of a push-branch
+// request: absolute, an existing directory, and owned by fileUID when
+// fileUID > 0.
+func ValidatePushBranchDir(dir string, fileUID int) error {
+	return validatePushBranchDir(dir, fileUID)
+}
+
+// PushBranchGitEnv is the environment the push-branch relay runs git with in
+// an agent-owned checkout: no prompts, hooks, fsmonitor or credential
+// helpers from the checkout, and token as a Basic auth extraHeader scoped to
+// remote. An empty token adds no header.
+func PushBranchGitEnv(dir, remote, token string) []string {
+	header := ""
+	if token != "" {
+		header = gitBasicAuthHeader(token)
+	}
+	return pushBranchGitEnv(dir, remote, header)
+}
+
+// FirstOutputLines returns the first n non-empty lines of a command's output,
+// as the relays quote git's diagnostics.
+func FirstOutputLines(output string, n int) string {
+	return firstOutputLines(output, n)
 }
