@@ -8527,6 +8527,13 @@ func (c *Config) saveDashboardOverlayFor(base *contentSum) error {
 	// the #19561 guard then reloads it). The runtime config still carries
 	// this save, and it is the boot input whenever it exists.
 	if c.overlayKeptWhole() {
+		// The overlay's header goes stale while it is held, because this
+		// save still writes the config file. Remember the content so the
+		// load after the operator's fix still treats the overlay as the
+		// latest edit (hivecommons/hive#20066).
+		if base != nil {
+			recordOverlayHeldWrite(*base)
+		}
 		if data, rerr := os.ReadFile(DashboardOverlayFile); rerr == nil {
 			logOverlayOnce("file-save", data, "[config] WARNING: dashboard overlay %s is not valid YAML; this save leaves it as it is (fix or remove the file to let saves update it)", DashboardOverlayFile)
 		}
@@ -8576,6 +8583,7 @@ func (c *Config) saveDashboardOverlayFor(base *contentSum) error {
 		return err
 	}
 	c.recordLayerSum(DashboardOverlayFile, overlaySum)
+	clearOverlayHeldWrites()
 	log.Printf("[config] dashboard overlay written to %s (merged over the ConfigMap seed at next boot)", DashboardOverlayFile)
 	return nil
 }
