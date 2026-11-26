@@ -610,10 +610,70 @@ func TestHubCustomerStoreUnreadableFileFailsClosed(t *testing.T) {
 }
 
 func TestParseHubCustomerStoreMode(t *testing.T) {
-	for raw, want := range map[string]string{"": "json", "JSON": "json", " shadow ": "shadow", "colony": "colony", "colony-only": "json"} {
-		if got, _ := parseHubCustomerStoreMode(raw); got != want {
+	// Unset is the colony default (#19972); an explicit json still works; an
+	// unknown value fails closed to json and reports it.
+	for raw, want := range map[string]string{"": "colony", "  ": "colony", "JSON": "json", "json": "json", " shadow ": "shadow",
+		"colony": "colony", "colony-only": "json", "bogus": "json"} {
+		got, ok := parseHubCustomerStoreMode(raw)
+		if got != want {
 			t.Errorf("%q -> %q, want %q", raw, got, want)
 		}
+		known := raw != "colony-only" && raw != "bogus"
+		if ok != known {
+			t.Errorf("%q ok = %v, want %v", raw, ok, known)
+		}
+	}
+}
+
+// A hub that ran on the old json default and is upgraded with
+// HIVE_HUB_CUSTOMER_STORE unset boots on colony (#19972): the boot sync
+// imports every user, parity holds, the JSON files are not rewritten, and
+// reads come back the same. A second boot imports nothing again and keeps a
+// colony.db backup.
+func TestHubCustomerStoreDefaultUpgradeFromJSON(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	before := map[string][]byte{}
+	files, err := listHubUserFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(f.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[f.Path] = data
+	}
+	if _, err := os.Stat(hubCustomerStorePath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("json era left a colony.db: %v", err)
+	}
+	t.Setenv(hubCustomerStoreEnv, "")
+	mode, ok := parseHubCustomerStoreMode(os.Getenv(hubCustomerStoreEnv))
+	if !ok || mode != hubCustomerStoreColony {
+		t.Fatalf("default mode = %q (ok %v), want colony", mode, ok)
+	}
+	st := useHubCustomerStore(t, mode)
+	rec, ran, err := st.Migration(hubCustomerStoreMigration)
+	if err != nil || !ran || rec.Report.People != len(users) {
+		t.Fatalf("upgrade import = %+v ran=%v err=%v", rec, ran, err)
+	}
+	for path, data := range before {
+		if got, _ := os.ReadFile(path); string(got) != string(data) {
+			t.Fatalf("the upgrade boot rewrote %s", filepath.Base(path))
+		}
+	}
+	if got := loadSaaSUser("ada-example"); got == nil || got.FullName != "Ada Example" || got.Notes != users[0].Notes {
+		t.Fatalf("colony read after the upgrade = %+v", got)
+	}
+	closeHubCustomerStore()
+	st = useHubCustomerStore(t, mode)
+	again, _, err := st.Migration(hubCustomerStoreMigration)
+	if err != nil || !again.At.Equal(rec.At) || again.Fingerprint != rec.Fingerprint {
+		t.Fatalf("second boot ran the import again: %+v then %+v (%v)", rec, again, err)
+	}
+	if backups, _ := filepath.Glob(hubCustomerStorePath() + hubCustomerStoreBackupPrefix + "*"); len(backups) != 1 {
+		t.Fatalf("%d colony.db backups after the second boot, want 1", len(backups))
 	}
 }
 

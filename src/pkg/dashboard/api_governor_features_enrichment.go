@@ -104,7 +104,7 @@ func (b featuresEnrichmentBody) prepare() (func(*config.Config), error) {
 	if b.CustomersStore != nil {
 		v, err := featuresChoice(b.CustomersStore, config.ParseCustomersStoreMode, fmt.Sprintf(
 			"customers store must be empty (default %s), %s, %s or %s",
-			config.CustomersStoreJSON, config.CustomersStoreJSON, config.CustomersStoreShadow, config.CustomersStoreColony))
+			config.DefaultCustomersStore, config.CustomersStoreJSON, config.CustomersStoreShadow, config.CustomersStoreColony))
 		if err != nil {
 			return nil, err
 		}
@@ -144,7 +144,7 @@ func featuresEnrichmentResponse(cfg *config.Config) map[string]interface{} {
 			"customersEnrichmentGitdmRefresh":        config.DefaultCustomersEnrichmentGitdmRefresh.String(),
 			"customersEnrichmentDevstatsHourlyLimit": config.DefaultCustomersEnrichmentDevstatsHourlyLimit,
 			"customersEnrichmentAutoAccept":          config.CustomersAutoAcceptOff,
-			"customersStore":                         config.CustomersStoreJSON,
+			"customersStore":                         config.DefaultCustomersStore,
 		},
 	}
 }

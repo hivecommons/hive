@@ -30,17 +30,21 @@ import (
 // people.json. Tags, goals, satisfaction, suggestions, pins, hints, merge
 // records and the edge index stay in hive, keyed by the same person ids.
 //
-// customers.store picks the mode:
+// customers.store picks the mode (config.CustomersStoreMode; colony is the
+// default since #19972):
 //
-//   - json (the default): people.json and enrichment.json only. colony.db is
-//     never created; an existing one is opened only to forget a person.
+//   - json: people.json and enrichment.json only. colony.db is never
+//     created; an existing one is opened only to forget a person. It is the
+//     rollback, and what a hive falls back to when colony.db cannot be used.
 //   - shadow: the first boot imports both JSON files into colony.db in one
 //     transaction, records the source hash and keeps .pre-colony copies.
 //     Every change is written to the JSON and then to colony.db. Reads come
 //     from the JSON. A parity check logs counts only.
-//   - colony: as shadow, but colony.db is authoritative for what it holds: on
-//     boot its records replace the JSON copy, and enrichment is read from it.
-//     The JSON is still written, so switching back to json loses nothing.
+//   - colony (the default): as shadow, but colony.db is authoritative for
+//     what it holds: on boot its records replace the JSON copy, and
+//     enrichment is read from it. The JSON is still written, so switching
+//     back to json loses nothing. A hive upgrading from the json default runs
+//     the shadow import on that boot, with the .pre-colony backups.
 //
 // The JSON is always written first. A colony write that fails leaves the
 // sync marker stale, so the next boot imports again from the JSON, which is
