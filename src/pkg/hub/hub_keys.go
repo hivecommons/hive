@@ -40,12 +40,128 @@ func derivePerHiveKey(master, info, hiveID string) string {
 	return keyderive.PerHiveKey(master, info, hiveID)
 }
 
+// mintingSecret is the master every hub-side derivation below signs with: the
+// ACTIVE generation's secret (#20102).
+//
+// A rotation writes the new master only to the generation set; it never
+// updates s.hubSecret, which keeps holding the raw HIVE_HUB_SECRET /
+// hub-secret.key value (generation 1). Deriving from s.hubSecret therefore
+// kept the SSO handoff and the heartbeat signature on generation 1 after a
+// rotation, while the sweep moved spokes onto the new generation's public key.
+// That worked only while generation 1 was still delivered as _PREV, and broke
+// sign-in and heartbeat verification on every swept spoke at retirement.
+//
+// s.hubSecret is used only when there is no generation set: hand-built test
+// servers, and the untrusted-generations state, which keeps the documented
+// single-master behaviour (see the generationsUntrusted arm in NewHubServer).
+// On a hub that has never rotated the set holds one generation whose secret IS
+// s.hubSecret, so every derived key is byte-identical to before.
+func (s *HubServer) mintingSecret() string {
+	if s == nil {
+		return ""
+	}
+	if gs := s.currentGenerations(); gs != nil {
+		return gs.currentSecret()
+	}
+	return s.hubSecret
+}
+
+// ssoSigningSeedForHive is the SSO-domain seed the hub signs a PER-HIVE
+// artifact for hiveID with: the SSO handoff token for that hive and the
+// heartbeat response signature sent to it (#20102).
+//
+// It is the current generation's seed, except while the sweep's last read of
+// that hive's Deployment still attributed it to a previous generation that is
+// still acceptable. Such a spoke holds only that generation's public key, so a
+// current-generation signature would fail on it until the sweep reaches it,
+// which can take hours on a large fleet. Signing it with the previous
+// generation widens nothing: every verifier accepts that generation until
+// verify_until anyway, and each token is bound to one hive ID. Once the sweep
+// patches the spoke it holds the current key plus _PREV, so it accepts either
+// signature until the next read records it on the current generation.
+//
+// Retirement ends this: a retired generation is not acceptable, so every hive
+// gets the current generation's signature from then on. A hive with no
+// observation (not swept, or the first sweep after a hub restart has not run
+// yet) also gets the current generation.
+func (s *HubServer) ssoSigningSeedForHive(hiveID string, now time.Time) string {
+	if s == nil {
+		return ""
+	}
+	gs := s.currentGenerations()
+	if gs == nil {
+		return s.ssoSigningSeed()
+	}
+	observed := s.observedSpokeGeneration(hiveID)
+	if observed != 0 && observed != gs.Current {
+		for _, g := range gs.acceptableGenerations(now) {
+			if g.ID == observed {
+				return deriveDomainKey(g.Secret, infoSSOEd25519Seed)
+			}
+		}
+	}
+	if observed == 0 {
+		// No attribution yet: the first sweep after a hub restart has not read
+		// this hive, or could not attribute it. A hive whose record predates
+		// the current generation was provisioned with the previous one, and if
+		// the sweep has since patched it, it also holds that key as _PREV, so
+		// the previous generation verifies either way. A hive provisioned after
+		// the rotation holds only the current key, so it keeps the default.
+		if prev, ok := previousAcceptableGeneration(gs, now); ok && hiveProvisionedBefore(hiveID, gs) {
+			return deriveDomainKey(prev.Secret, infoSSOEd25519Seed)
+		}
+	}
+	return deriveDomainKey(gs.currentSecret(), infoSSOEd25519Seed)
+}
+
+// previousAcceptableGeneration returns the still-acceptable non-current
+// generation, if any.
+func previousAcceptableGeneration(gs *generationSet, now time.Time) (keyGeneration, bool) {
+	for _, g := range gs.acceptableGenerations(now) {
+		if g.ID != gs.Current {
+			return g, true
+		}
+	}
+	return keyGeneration{}, false
+}
+
+// hiveProvisionedBefore reports whether hiveID's SaaS record was created
+// before the current generation was minted. Unknown on either side (no
+// record, unparseable time, a current generation without a Created stamp)
+// answers false, which keeps the current-generation default.
+func hiveProvisionedBefore(hiveID string, gs *generationSet) bool {
+	cur, ok := gs.currentGeneration()
+	if !ok || cur.Created.IsZero() {
+		return false
+	}
+	rec := loadSaaSHive(hiveID)
+	if rec == nil {
+		return false
+	}
+	created, err := time.Parse(time.RFC3339, strings.TrimSpace(rec.CreatedAt))
+	if err != nil {
+		return false
+	}
+	return created.Before(cur.Created)
+}
+
+// observedSpokeGeneration is the generation the last sweep attributed hiveID's
+// Deployment to, or 0 when there is none.
+func (s *HubServer) observedSpokeGeneration(hiveID string) int {
+	if s == nil || hiveID == "" {
+		return 0
+	}
+	s.perHiveEnvMu.RLock()
+	defer s.perHiveEnvMu.RUnlock()
+	return s.perHiveEnvSeen[hiveID].Generation
+}
+
 func (s *HubServer) heartbeatKey() string {
-	return deriveDomainKey(s.hubSecret, infoHeartbeatKey)
+	return deriveDomainKey(s.mintingSecret(), infoHeartbeatKey)
 }
 
 func (s *HubServer) sessionKey() string {
-	return deriveDomainKey(s.hubSecret, infoSessionKey)
+	return deriveDomainKey(s.mintingSecret(), infoSessionKey)
 }
 
 // ssoSigningSeed returns the hex-encoded 32-byte Ed25519 SEED the hub signs SSO
@@ -54,18 +170,18 @@ func (s *HubServer) sessionKey() string {
 // key (SpokeSSOPublicKey / provisionSSOPublicKey). Returns "" for an empty master
 // so minting stays fail-closed.
 func (s *HubServer) ssoSigningSeed() string {
-	return deriveDomainKey(s.hubSecret, infoSSOEd25519Seed)
+	return deriveDomainKey(s.mintingSecret(), infoSSOEd25519Seed)
 }
 
 func (s *HubServer) impersonateKey() string {
-	return deriveDomainKey(s.hubSecret, infoImpersonateKey)
+	return deriveDomainKey(s.mintingSecret(), infoImpersonateKey)
 }
 
 // sessionSigningSeed returns the hex-encoded 32-byte Ed25519 SEED the hub signs
 // session cookies with (audit N2). PRIVATE key material: it must NEVER be
 // injected into a spoke — spokes receive only sessionPublicKey().
 func (s *HubServer) sessionSigningSeed() string {
-	return deriveDomainKey(s.hubSecret, infoSessionEd25519Seed)
+	return deriveDomainKey(s.mintingSecret(), infoSessionEd25519Seed)
 }
 
 // sessionPublicKey returns the hex Ed25519 PUBLIC key a spoke verifies hub
@@ -144,7 +260,7 @@ func provisionCustomerMatchKey(hiveID string) string {
 // hiveID. Mirror of provisionHeartbeatKey, resolved against the running hub's
 // own master rather than the provisioning-time lookup.
 func (s *HubServer) heartbeatKeyFor(hiveID string) string {
-	return derivePerHiveKey(s.hubSecret, infoHeartbeatKey, hiveID)
+	return derivePerHiveKey(s.mintingSecret(), infoHeartbeatKey, hiveID)
 }
 
 // verifyHeartbeatBearer authenticates a heartbeat and BINDS it to the claimed
@@ -220,8 +336,8 @@ func (s *HubServer) verifyHeartbeatBearerGeneration(presented, hiveID string) (i
 		}
 		return 0, false
 	}
-	if s.keyGenerations != nil {
-		return verifyHeartbeatBearerAcrossGenerations(s.keyGenerations, presented, hiveID, time.Now())
+	if gs := s.currentGenerations(); gs != nil {
+		return verifyHeartbeatBearerAcrossGenerations(gs, presented, hiveID, time.Now())
 	}
 	perHive := s.heartbeatKeyFor(hiveID)
 	if perHive != "" && secureCompareHub(presented, perHive) {
@@ -325,8 +441,8 @@ func (s *HubServer) heartbeatBearerIsPerHive(presented, hiveID string) bool {
 	if IsSelfServiceHiveID(hiveID) {
 		return s.selfService.verify(hiveID, presented)
 	}
-	if s.keyGenerations != nil {
-		_, ok := verifyHeartbeatBearerAcrossGenerations(s.keyGenerations, presented, hiveID, time.Now())
+	if gs := s.currentGenerations(); gs != nil {
+		_, ok := verifyHeartbeatBearerAcrossGenerations(gs, presented, hiveID, time.Now())
 		return ok
 	}
 	perHive := s.heartbeatKeyFor(hiveID)
@@ -595,16 +711,25 @@ func provisionGenerationSet() *generationSet {
 		return gs
 	}
 	liveGenerationsMu.RLock()
-	gs, untrusted := liveGenerations, liveGenerationsUntrusted
+	gs, untrusted, root := liveGenerations, liveGenerationsUntrusted, liveGenerationsRoot
 	liveGenerationsMu.RUnlock()
 	if untrusted {
 		// FAIL CLOSED. Never re-derive from the raw master here — see above.
 		return nil
 	}
-	if gs != nil && generationSetDescendsFrom(gs, provisionMasterSecret()) {
+	ambient := provisionMasterSecret()
+	// #20102. The installed set is authoritative when it was LOADED against
+	// the ambient master (root) and has since changed only by rotation or
+	// retirement, OR when it still holds that master. The root check is what
+	// survives retirement: once generation 1 is retired the set no longer
+	// contains the ambient master, which stays generation 1 forever because a
+	// rotation never rewrites it. Without the root check this fell back to
+	// legacyGenerationSet(ambient) and the sweep pushed the RETIRED
+	// generation's keys back onto every spoke.
+	if gs != nil && ((root != "" && root == ambient) || generationSetDescendsFrom(gs, ambient)) {
 		return gs
 	}
-	return legacyGenerationSet(provisionMasterSecret())
+	return legacyGenerationSet(ambient)
 }
 
 // generationSetDescendsFrom reports whether gs is a set this process's ambient
@@ -624,6 +749,10 @@ func provisionGenerationSet() *generationSet {
 // is still present in the set as either the current or the previous generation.
 // A set that contains it is therefore a legitimate descendant; one that does not
 // belongs to a different master entirely.
+//
+// That invariant ends at RETIREMENT, which drops the generation holding the
+// ambient master. provisionGenerationSet therefore also trusts a set whose
+// recorded root (liveGenerationsRoot) is the ambient master (#20102).
 //
 // This is what keeps the un-rotated fallback honest and is load-bearing for
 // TestPerHiveEnvGenerationIsAReadPathChangeToday and friends: a test that builds
@@ -673,19 +802,54 @@ var (
 	// tests that never build one. Collapsing "untrusted" into "nil" would make
 	// every such test take the refuse path and derive nothing.
 	liveGenerationsUntrusted bool
+	// liveGenerationsRoot is the ambient master the installed set was loaded
+	// against by NewHubServer (#20102). Rotation and retirement keep it, since
+	// both only evolve that same set; any other install clears it. It is
+	// compared only with provisionMasterSecret() and never leaves the process.
+	liveGenerationsRoot string
 )
 
 // setLiveGenerations installs the set the spoke-bound derivation path reads.
 //
-// Called by NewHubServer with the loaded set, and by rotateMasterSecret with
-// the newly rotated one — the latter is what makes a rotation actually reach
-// the fleet, which is the F19 fix. untrusted latches the fail-closed state and
-// is only ever set from the generationsUntrusted branch.
+// It records no root, so provisionGenerationSet trusts the set only while it
+// still holds the ambient master. NewHubServer installs through
+// installLiveGenerations and rotation and retirement through
+// advanceLiveGenerations, which is what lets a rotation reach the fleet (F19)
+// and keeps it there after retirement (#20102). untrusted latches the
+// fail-closed state and is only ever set from the generationsUntrusted branch.
 func setLiveGenerations(gs *generationSet, untrusted bool) {
 	liveGenerationsMu.Lock()
 	defer liveGenerationsMu.Unlock()
 	liveGenerations = gs
 	liveGenerationsUntrusted = untrusted
+	liveGenerationsRoot = ""
+}
+
+// installLiveGenerations installs the set NewHubServer loaded and records the
+// ambient master it was loaded against, so provisionGenerationSet keeps
+// trusting the set after the generation holding that master retires (#20102).
+func installLiveGenerations(gs *generationSet, root string) {
+	liveGenerationsMu.Lock()
+	defer liveGenerationsMu.Unlock()
+	liveGenerations = gs
+	liveGenerationsUntrusted = false
+	liveGenerationsRoot = strings.TrimSpace(root)
+	if gs == nil {
+		liveGenerationsRoot = ""
+	}
+}
+
+// advanceLiveGenerations installs the result of a rotation or retirement of
+// the live set. It keeps the recorded root: the new set descends from the one
+// NewHubServer loaded, whether or not it still contains the ambient master.
+func advanceLiveGenerations(next *generationSet) {
+	liveGenerationsMu.Lock()
+	defer liveGenerationsMu.Unlock()
+	liveGenerations = next
+	liveGenerationsUntrusted = false
+	if next == nil {
+		liveGenerationsRoot = ""
+	}
 }
 
 // provisionGenerationsOverride replaces the resolved generation set.

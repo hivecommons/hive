@@ -1066,9 +1066,9 @@ func (s *HubServer) mintSessionCookies(w http.ResponseWriter, r *http.Request, c
 	// as before, minus a `g:1` claim the Node proxy ignores. keyGenerations is
 	// nil only in hand-built test servers, which stay on the unmarked mint.
 	var cookieValue string
-	if s.keyGenerations != nil {
+	if gs := s.currentGenerations(); gs != nil {
 		cookieValue, _ = mintHubUserCookieValueV3ForGeneration(
-			s.keyGenerations, canonicalID, time.Now(), cookieSessionTTL)
+			gs, canonicalID, time.Now(), cookieSessionTTL)
 	} else {
 		cookieValue, _ = mintHubUserCookieValueV3(
 			s.sessionSigningSeed(), canonicalID, time.Now(), cookieSessionTTL)
