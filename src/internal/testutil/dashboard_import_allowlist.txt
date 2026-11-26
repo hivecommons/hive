@@ -12,10 +12,12 @@
 # agentsmd: the /api/status repo entries carry each repo's last AGENTS.md injection status (size, effective cap, dropped sections) from agentsmd.StatusFor, the read side of the registry the scheduler records into (hivecommons/hive#18495).
 # askai: the Ask AI help routes (/api/ask*) and the shared panel assets run the same consent, limits, credential-shape refusal, source filtering and hub-relay client the hub uses, so the hub and hive cannot drift (hivecommons/hive#19183).
 # buildcontains: GET /api/version/contains answers "does the running build contain PR #N" through the same dependency-free ancestry resolver the hub uses (yes/no/unknown, never a guess); a leaf package importing only the standard library (hivecommons/hive#18915).
+# forgejwt: the opt-in served forgejo.integration key list (/.well-known/openid-configuration, /jwks.json) renders the public keys with the same KeyList the hive forge key-list command uses, so the served and hosted documents cannot drift (hivecommons/hive#19996).
 github.com/hivecommons/hive/crux
 github.com/hivecommons/hive/crux/agentsmd
 github.com/hivecommons/hive/crux/claude
 github.com/hivecommons/hive/crux/egressmark
+github.com/hivecommons/hive/crux/forgejwt
 github.com/hivecommons/hive/crux/kubejob
 github.com/hivecommons/hive/crux/logscrub
 github.com/hivecommons/hive/crux/paneclass
