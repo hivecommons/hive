@@ -484,8 +484,7 @@ func (p *GitHubProxy) inferenceTranslatorHandlerFor(identify func(*http.Request)
 			if failStream(status, backendMsg) {
 				return
 			}
-			anthropicErr := fmt.Sprintf(`{"type":"error","error":{"type":"%s","message":"%s"}}`,
-				errorType, jsonEscape(backendMsg))
+			anthropicErr := fmt.Sprintf(`{"type":"error","error":{"type":"%s","message":"%s"}}`, errorType, jsonEscape(backendMsg))
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(status)
 			_, _ = w.Write([]byte(anthropicErr))
