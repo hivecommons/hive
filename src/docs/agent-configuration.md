@@ -649,6 +649,26 @@ Two rules of thumb:
 
   Only `POST /v1/messages` is translated into an OpenAI `/v1/chat/completions` call. The Claude CLI also talks to its Anthropic host for housekeeping — telemetry batches (`/api/event_logging/...`), error reports, `POST /v1/messages/count_tokens` — and none of that has a meaning to an OpenAI-compatible gateway; forwarding it used to cost a gateway `400 Missing required parameter: 'messages'` per call, charged against the provider's request rate limit (roughly two failures per real completion in practice). The translator and the MITM reroute now answer those locally: `count_tokens` returns a chars-based estimate, anything under `/api/` returns `{}`, and any other path is a 404 in Anthropic error shape with a `WARN` log line naming the method and path, so a new CLI endpoint shows up in the hive log rather than as gateway noise. Inference-routed `claude` sessions are additionally launched with `DISABLE_TELEMETRY=1`, `DISABLE_ERROR_REPORTING=1`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and `CLAUDE_CODE_AUTO_MODE_SERVER=0`; subscription sessions are not. The last one matters for Claude Code's [auto-mode classifier](https://code.claude.com/docs/en/auto-mode-classifier-billing): the CLI otherwise asks the inference host for a server-side safety verdict (`safeguards` field in, `safeguard_results` out) that an OpenAI-compatible gateway can never return, then halts the session on an interactive "this session isn't eligible because your requests go through 127.0.0.1:18444 … Enter to continue" notice. With the variable set the CLI runs its own classifier requests through the translator like any other call. Should the notice still appear (for example from a settings file that re-enables the server check), the lifetime prompt watcher presses Enter for it.
 
+### Context window for inference-routed agents
+
+Claude Code sizes auto-compaction from the model ID. It does not know gateway or local IDs such as `vllm/Qwen3.8-27B`, and for those it assumes a 1M-token window (it shows `Model "..." isn't recognized · context assumed to be 1m tokens`). On a model server with a smaller context, a conversation can then grow past the server's limit before the CLI compacts, and the server refuses the turn (#19913).
+
+Hive tells the CLI the real window with `CLAUDE_CODE_MAX_CONTEXT_TOKENS` when it knows one. It uses, in order:
+
+1. The agent's `max_context_tokens` setting (tokens). Set it when the model server enforces a window that its `/v1/models` listing does not report, or reports wrongly:
+
+   ```yaml
+   agents:
+     quality:
+       backend: litellm
+       model: vllm/Qwen3.8-27B-Q8_K_XL
+       max_context_tokens: 262144
+   ```
+
+2. The window the inference translator discovered from the endpoint's `/v1/models`: `max_model_len` (vLLM), then `context_length` (gufo, OpenRouter), then `max_input_tokens` (LiteLLM). A listing entry is used only when its `id` matches the model, or when the listing has a single model. The discovery runs in the background when the route is set, so a window learned for a model applies from the next launch of an agent on that model. The `inference route max context length resolved` log line records it.
+
+Hive does not export the variable for model IDs that contain `claude` (for example `anthropic/claude-sonnet-5-5`), because the CLI already knows those windows. Set `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` to turn the export off for the whole hive. Sandbox Job kicks do not get the variable yet: the sandbox drops every variable whose name contains `TOKEN`.
+
 ### Per-agent homes: what is shared and what is private
 
 Each per-UID agent runs with its own durable `HOME` under `/data/home/agents/<name>`. "One login authenticates the fleet" is implemented by *bridging* — symlinks from the per-agent home back to the same path under the shared `/data/home` — and the bridge list is deliberately narrow:

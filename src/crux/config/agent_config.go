@@ -214,12 +214,22 @@ type AgentConfig struct {
 	// AGENT_REASONING_EFFORT; this field is the in-config analogue for
 	// manager-launched agents.
 	ReasoningEffort string `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
-	BeadsDir        string `yaml:"beads_dir" json:"beads_dir,omitempty"`
-	Enabled         bool   `yaml:"enabled" json:"enabled,omitempty"`
-	Replicas        int    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
-	ReplicaOf       string `yaml:"-" json:"replicaOf,omitempty"`
-	ReplicaIndex    int    `yaml:"-" json:"replicaIndex,omitempty"`
-	ReplicaCount    int    `yaml:"-" json:"replicaCount,omitempty"`
+	// MaxContextTokens is the real context window, in tokens, of the model
+	// this agent runs on through hive's inference translator (a model gateway
+	// or vllm/llm-d/litellm backend). Hive passes it to the Claude CLI as
+	// CLAUDE_CODE_MAX_CONTEXT_TOKENS so the CLI compacts before the model
+	// server refuses the request; without it the CLI assumes a 1M window for
+	// a model ID it does not recognize (hivecommons/hive#19913). 0 (the
+	// default) falls back to the window discovered from the endpoint's
+	// /v1/models. Ignored for other backends and for Claude model IDs, whose
+	// window the CLI already knows.
+	MaxContextTokens int    `yaml:"max_context_tokens,omitempty" json:"max_context_tokens,omitempty"`
+	BeadsDir         string `yaml:"beads_dir" json:"beads_dir,omitempty"`
+	Enabled          bool   `yaml:"enabled" json:"enabled,omitempty"`
+	Replicas         int    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
+	ReplicaOf        string `yaml:"-" json:"replicaOf,omitempty"`
+	ReplicaIndex     int    `yaml:"-" json:"replicaIndex,omitempty"`
+	ReplicaCount     int    `yaml:"-" json:"replicaCount,omitempty"`
 	// ReviewHeads derives one reviewer agent per entry and replica from this
 	// (base) agent, each with its own backend/model: the swarm's model
 	// "heads" (hivecommons/hive#13542). With split perspectives every

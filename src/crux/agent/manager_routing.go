@@ -46,6 +46,13 @@ func (m *Manager) SetGatewayBackendChecker(fn func(backend string) bool) {
 	m.isGatewayBackend.Store(&fn)
 }
 
+// SetInferenceContextWindowLookup injects the inference proxy's per-agent
+// context-window lookup (see Manager.inferenceContextWindow). Lock-free so it
+// is safe from any lock context.
+func (m *Manager) SetInferenceContextWindowLookup(fn func(agentName string) (window int, model string)) {
+	m.inferenceContextWindow.Store(&fn)
+}
+
 // routableBackend reports whether a backend should be routed through the
 // inference proxy: either a built-in inference backend, or a configured gateway
 // name. Safe to call while holding m.mu (isGatewayBackend is read atomically).

@@ -4651,6 +4651,9 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 				deps.clearInferenceRoute(b.githubProxy, agentName)
 			},
 		)
+		if deps.installContextWindowLookup != nil {
+			deps.installContextWindowLookup(b.agentMgr, b.githubProxy)
+		}
 
 		deps.startProxy(b.githubProxy, b.logger)
 		b.wireSandboxGitHubReadRelay()

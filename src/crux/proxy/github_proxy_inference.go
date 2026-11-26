@@ -111,7 +111,19 @@ func (p *GitHubProxy) translatorAgentName(r *http.Request) (string, bool) {
 // pod reads to the OpenShift router as "Application is not available". The
 // max-context-len only feeds token capping and defaults gracefully to 0
 // (no cap) until the async probe fills it in.
+//
+// A window discovered earlier for the same endpoint and model seeds the route
+// at once (hivecommons/hive#19913), so the agent launched right after this call
+// can be told its window; the background probe still runs and refreshes it.
 func (p *GitHubProxy) SetInferenceRoute(agentName string, route *InferenceRoute) {
+	needProbe := route.MaxContextLen == 0
+	if needProbe {
+		if cached := p.inference.cachedContextWindow(route.Endpoint, route.Model); cached > 0 {
+			seeded := *route
+			seeded.MaxContextLen = cached
+			route = &seeded
+		}
+	}
 	p.inference.Set(agentName, route)
 	keySHA256 := config.APIKeySHA256(route.APIKey)
 	if keySHA256 != "" {
@@ -120,12 +132,15 @@ func (p *GitHubProxy) SetInferenceRoute(agentName string, route *InferenceRoute)
 		p.logger.Info("inference route set", "agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "model", route.Model, "maxContextLen", route.MaxContextLen, "api_key_sha256", "")
 	}
 
-	if route.MaxContextLen == 0 {
+	if needProbe {
 		endpoint, model, apiKey, caBundle := route.Endpoint, route.Model, route.APIKey, route.CABundle
+		seeded := route.MaxContextLen
 		go func() {
 			if maxLen := queryMaxModelLen(endpoint, model, apiKey, caBundle); maxLen > 0 {
 				if p.inference.UpdateMaxContextLen(agentName, endpoint, model, maxLen) {
-					p.logger.Info("inference route max context length resolved", "agent", agentName, "model", model, "maxContextLen", maxLen)
+					// The CLI reads its window only at launch, so a window
+					// first learned here reaches the agent on its next launch.
+					p.logger.Info("inference route max context length resolved", "agent", agentName, "model", model, "maxContextLen", maxLen, "seededMaxContextLen", seeded)
 				}
 			}
 		}()
@@ -796,4 +811,17 @@ func (p *GitHubProxy) recordInferenceResponseError(route *InferenceRoute, agentN
 		)
 	}
 	p.recordInferenceError(route, agentName, resp.StatusCode, body)
+}
+
+// InferenceContextWindow returns the context window, in tokens, known for the
+// agent's current inference route (discovered from the endpoint's /v1/models
+// or seeded from an earlier discovery of the same model) and the route's
+// model. 0 and "" when the agent has no route; window 0 when none is known.
+// The agent manager passes the window to the Claude CLI at launch
+// (hivecommons/hive#19913).
+func (p *GitHubProxy) InferenceContextWindow(agentName string) (window int, model string) {
+	if route := p.inference.Get(agentName); route != nil {
+		return route.MaxContextLen, route.Model
+	}
+	return 0, ""
 }
