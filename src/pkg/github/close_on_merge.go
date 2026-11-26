@@ -708,7 +708,7 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		return res
 	}
 	if gated {
-		if cov := c.closeOnMergeCoverage(ctx, prRepo, issueRepo, issueNumber, pr, issue, opts); cov.partial() {
+		if cov := c.closeOnMergeCoverage(ctx, prRepo, issueRefRepo, issueNumber, pr, issue, opts); cov.partial() {
 			c.markPartiallyAddressed(ctx, issueRepo, issueNumber, pr.GetNumber(), issue, cov, opts)
 			res.Action, res.Reason = CloseOnMergeSkipped, "partially_addressed"
 			return res
