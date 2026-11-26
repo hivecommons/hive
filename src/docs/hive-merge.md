@@ -1041,9 +1041,12 @@ Then, for at most 3 PRs per pass (the evaluation budget), it reads GitHub:
     always behind after 4 hours;
 
   A single failed attempt on a single head files nothing;
-- each base tip's successful run must have started after the head's newest
-  failing run started (a base run that started before the breakage proves
-  nothing about it, however late it finished). An older base proof, or a
+- each base tip's successful run must be newer than the head's newest
+  failing run: when the head is behind the tip, it must have started after
+  that failing run started (a base run that started before the breakage
+  proves nothing about it, however late it finished); when the head already
+  contains the tip, whose push-triggered run always starts first, finishing
+  after the failing run started is enough. An older base proof, or a
   missing time on either side, is unknown: nothing is filed. This holds on both paths; on the cross-head
   path it is not enough by itself when the head is behind the tip (below);
 - what the issue quotes: only the newest failing runs' failure-level

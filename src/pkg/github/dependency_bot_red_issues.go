@@ -343,7 +343,7 @@ func RenderDependencyBotRedIssueBody(f DependencyBotRedIssueFacts) string {
 	if f.BaseSHA != "" {
 		fmt.Fprintf(&b, " at `%s`", DependencyBotRedSafeText(shortSHA(f.BaseSHA)))
 	}
-	b.WriteString(", where the newest run of each of these checks passed, starting after this head's failing run started.\n")
+	b.WriteString(", where the newest run of each of these checks passed after this head's failing run started.\n")
 	switch {
 	case strings.TrimSpace(f.PreviousHeadSHA) != "":
 		built := "a base commit"

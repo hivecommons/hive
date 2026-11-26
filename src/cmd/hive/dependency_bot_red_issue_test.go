@@ -569,17 +569,16 @@ func TestDependencyBotRedIssueOnlyReproducedFailures(t *testing.T) {
 	}
 }
 
-// The base proof must be no older than the failure: a passing base run that
-// started before the head's failing run started (however late it
-// finished), or without a time, is unknown, on the re-run-done path too.
+// The base proof must be no older than the failure. On a head that contains
+// the base tip (the in-suite paths) that is a passing base run that finished
+// after the head's newest failing run started; one that finished before it,
+// or without a time, is unknown, on the re-run-done path too. (Behind the
+// tip, the cross-head path also needs it to have started after.)
 func TestDependencyBotRedIssueBaseProofMustPostdateFailure(t *testing.T) {
 	for name, mut := range map[string]func(*depBotRedIssueFake){
-		// Finished after the failure started, but started before it: no
-		// proof about the breakage.
-		"base run started before the failure": func(f *depBotRedIssueFake) { f.base.SucceededStartedAt["test"] = depBotRedFailStart.Add(-time.Minute) },
-		"base run started at the same time":   func(f *depBotRedIssueFake) { f.base.SucceededStartedAt["test"] = depBotRedFailStart },
-		"base run start unknown":              func(f *depBotRedIssueFake) { delete(f.base.SucceededStartedAt, "test") },
-		"base run time unknown":               func(f *depBotRedIssueFake) { delete(f.base.SucceededAt, "test") },
+		"base run finished before the failure": func(f *depBotRedIssueFake) { f.base.SucceededAt["test"] = depBotRedFailStart.Add(-time.Minute) },
+		"base run finished at the same time":   func(f *depBotRedIssueFake) { f.base.SucceededAt["test"] = depBotRedFailStart },
+		"base run time unknown":                func(f *depBotRedIssueFake) { delete(f.base.SucceededAt, "test") },
 		// A skipped or neutral base run is completed and not red, so the
 		// stale-red verdict clears, but it has no success time.
 		"base run skipped or neutral": func(f *depBotRedIssueFake) {
@@ -604,6 +603,19 @@ func TestDependencyBotRedIssueBaseProofMustPostdateFailure(t *testing.T) {
 				t.Fatalf("re-run done: out=%+v, want no issue", out)
 			}
 		})
+	}
+}
+
+// A head that contains the base tip ran after the tip's push-triggered run
+// started, so the in-suite proof is a base run that finished after the
+// failure started, even when it started before (the start-time rule is the
+// cross-head path's).
+func TestDependencyBotRedIssueInSuiteBaseProofUsesFinishTime(t *testing.T) {
+	f := newDepBotRedIssueFake()
+	f.base.SucceededStartedAt["test"] = depBotRedFailStart.Add(-time.Hour)
+	pass := newDepBotRedIssuePass(f.policy(), nil)
+	if out := pass.issueFor(context.Background(), loadDepBotConflictStore(""), "acme/widgets", depBotKey, depBotRedBump("sha-1"), depBotTransientRerun{State: depBotRerunDone}, depBotT0, discardLogger()); out.Number == 0 || f.creates != 1 {
+		t.Fatalf("in-suite head, base run started before but finished after the failure: out=%+v creates=%d, want one issue", out, f.creates)
 	}
 }
 

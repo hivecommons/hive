@@ -799,12 +799,20 @@ func (p *depBotRedIssuePass) judge(ctx context.Context, store *depBotConflictSto
 		}
 		allReproduced = allReproduced && r.Reproduced
 		// The base proof must be a run that concluded success (not skipped
-		// or neutral) and no older than the failure: it started after the
-		// head's newest failing run started. A base run that started before
-		// the breakage proves nothing about it, however late it finished.
+		// or neutral) and no older than the failure. When the head is behind
+		// the tip it must have started after the head's newest failing run
+		// started: a base run that started before the breakage proves
+		// nothing about it, however late it finished. A head that contains
+		// the tip ran after the tip's push-triggered run started, so there
+		// finishing after the failure started is the proof, as before;
+		// reproduction on the head itself carries the rest.
 		started := base.SucceededStartedAt[check]
-		if base.SucceededAt[check].IsZero() || started.IsZero() || r.FailureStartedAt.IsZero() || !started.After(r.FailureStartedAt) {
-			return skip(depBotRedIssueSkipBaseStale, "check", check, "base_started_at", started, "failure_started_at", r.FailureStartedAt)
+		proof := started
+		if behind == 0 {
+			proof = base.SucceededAt[check]
+		}
+		if base.SucceededAt[check].IsZero() || proof.IsZero() || r.FailureStartedAt.IsZero() || !proof.After(r.FailureStartedAt) {
+			return skip(depBotRedIssueSkipBaseStale, "check", check, "base_started_at", started, "base_succeeded_at", base.SucceededAt[check], "behind_by", behind, "failure_started_at", r.FailureStartedAt)
 		}
 		for _, msg := range r.Errors {
 			errorLines = append(errorLines, check+": "+msg)

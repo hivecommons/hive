@@ -73,7 +73,7 @@ func TestRenderDependencyBotRedIssueBody(t *testing.T) {
 		"The Renovate pull request #42 fails `build`, `test`",
 		"`Update module example.com/lib to v2`",
 		"https://github.com/o/r/actions/runs/1/job/2",
-		"`main` at `fedcba987654`, where the newest run of each of these checks passed, starting after this head's failing run started.",
+		"`main` at `fedcba987654`, where the newest run of each of these checks passed after this head's failing run started.",
 		"The head already contains that base commit",
 		"```text\nbuild: missing target \u2039gen code\u203a\ntest: '''break'''\n```",
 		"Fix the repository so this bump passes; do not edit the bot's branch. Once the fix is on `main`, tick the box.",
