@@ -66,13 +66,16 @@ func (c *Client) EnqueueNativePullRequest(ctx context.Context, id, head string) 
 	return out.EnqueuePullRequest.MergeQueueEntry, nil
 }
 
+// DequeueNativePullRequest removes a PR from the native merge queue. Unlike
+// EnqueuePullRequestInput, GitHub's DequeuePullRequestInput names the PR node
+// "id", not "pullRequestId".
 func (c *Client) DequeueNativePullRequest(ctx context.Context, id string) error {
 	if !c.NativeMergeQueueAvailable() {
 		return fmt.Errorf("native merge queue requires App installation authentication")
 	}
 	return c.graphQL(ctx, `mutation($input: DequeuePullRequestInput!) {
  dequeuePullRequest(input: $input) { clientMutationId }
- }`, map[string]any{"input": map[string]any{"pullRequestId": id}}, nil)
+ }`, map[string]any{"input": map[string]any{"id": id}}, nil)
 }
 
 // NativeMergeQueueMethod reads the branch-wide merge method: enqueue has no
