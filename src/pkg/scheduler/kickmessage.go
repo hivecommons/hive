@@ -862,7 +862,7 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 			if skip {
 				continue
 			}
-			annotationText = prKickAnnotation(pr, agentName) + s.reviewMark(verdicts, links, pr) + annotationText + busyBranchAnnotation(pr, s.cfg.BaseAgentName(agentName), busyCheck)
+			annotationText = prKickAnnotation(pr, agentName) + s.reviewMark(verdicts, links, pr) + annotationText + busyBranchAnnotation(pr, s.cfg.BaseAgentName(agentName), busyCheck) + dependencyBotAnnotation(pr, s.cfg.Project.Org)
 			annotation, annotationVerdict := s.enforceIssueTextVerdict(annotationText)
 			failClosed = failClosed || (s.ioscanFailClosed() && annotationVerdict.HasCriticalInjection())
 			b.WriteString(fmt.Sprintf("  %s#%d%s %s\n", pr.Repo, pr.Number, forkAnnotation(pr), annotation))
@@ -891,7 +891,7 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 		if skip {
 			continue
 		}
-		annotationText = prKickAnnotation(pr, agentName) + s.reviewMark(verdicts, links, pr) + annotationText + busyBranchAnnotation(pr, s.cfg.BaseAgentName(agentName), busyCheck)
+		annotationText = prKickAnnotation(pr, agentName) + s.reviewMark(verdicts, links, pr) + annotationText + busyBranchAnnotation(pr, s.cfg.BaseAgentName(agentName), busyCheck) + dependencyBotAnnotation(pr, s.cfg.Project.Org)
 		annotation, annotationVerdict := s.enforceTextFrom(annotationText, src)
 		failClosed = failClosed || (s.ioscanFailClosed() && annotationVerdict.HasCriticalInjection())
 		b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s %s\n", pr.Repo, pr.Number, author, forkAnnotation(pr), annotation, title))

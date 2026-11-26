@@ -388,6 +388,8 @@ func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CI
 		AppAuthored      bool       `json:"app_authored"`
 		HeadPushedAt     *time.Time `json:"head_pushed_at"`
 		Issues           []int      `json:"issues"`
+		Author           string     `json:"author"`
+		HeadRef          string     `json:"head_ref"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -423,6 +425,7 @@ func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CI
 				Repo:          sig.Repo,
 				Title:         sig.Title,
 				Agent:         sig.Agent,
+				Author:        sig.Author,
 				FailingChecks: []string{sig.Check},
 				Excerpt:       ciFailureSignalEvidence(sig),
 			}
@@ -438,7 +441,7 @@ func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CI
 		row ciFailingRow
 		why string
 	}
-	var busyRows []busyRow
+	var busyRows, depBotRows []busyRow
 	forks := 0
 	for _, pr := range payload.Items {
 		if pr.Escalated {
@@ -481,6 +484,12 @@ func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CI
 			baseRed = append(baseRed, pr)
 			continue
 		}
+		if dependencyBotBranchRow(pr.HeadRef, pr.Author, pr.AppAuthored, pr.Adopted) {
+			// A dependency bot's branch: never a push target, whatever
+			// the age of its head (dependency_bot_branch.go).
+			depBotRows = append(depBotRows, busyRow{row: pr, why: dependencyBotOwner(pr.HeadRef, pr.Author)})
+			continue
+		}
 		if busy != nil {
 			if why := busy(busyBranchRow{Repo: pr.Repo, Number: pr.Number, Issues: pr.Issues, AppAuthored: pr.AppAuthored, Adopted: pr.Adopted, HeadPushedAt: pr.HeadPushedAt, Own: ownRepairRow(pr.Agent, agent, pr.TrustedAuthor, pr.ReroutedFrom)}); why != "" {
 				busyRows = append(busyRows, busyRow{row: pr, why: why})
@@ -489,21 +498,25 @@ func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CI
 		}
 		mine = append(mine, pr)
 	}
-	if len(mine) == 0 && len(busyRows) == 0 {
+	if len(mine) == 0 && len(busyRows) == 0 && len(depBotRows) == 0 {
 		return ""
 	}
 
 	var b strings.Builder
-	// Busy rows go after the gate (or alone): they are not push targets
-	// and must not hold back new work.
-	writeBusy := func() {
-		writeBusyRedPRs(&b, len(busyRows), func(i int) busyRedPR {
-			r := busyRows[i]
+	// Busy and dependency-bot rows go after the gate (or alone): they are
+	// not push targets and must not hold back new work.
+	noPushRow := func(rows []busyRow) func(i int) busyRedPR {
+		return func(i int) busyRedPR {
+			r := rows[i]
 			return busyRedPR{Number: r.row.Number, Repo: r.row.Repo, Title: r.row.Title, FailingChecks: r.row.FailingChecks, Excerpt: r.row.Excerpt, Why: r.why}
-		})
+		}
+	}
+	writeNoPush := func() {
+		writeBusyRedPRs(&b, len(busyRows), noPushRow(busyRows))
+		writeDependencyBotRedPRs(&b, len(depBotRows), noPushRow(depBotRows))
 	}
 	if len(mine) == 0 {
-		writeBusy()
+		writeNoPush()
 		return b.String()
 	}
 	b.WriteString(fmt.Sprintf("\n%s — your open PRs with failing CI or merge conflicts (%d)\n\n", redPRFixHeader, len(mine)))
@@ -577,7 +590,7 @@ func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CI
 		}
 	}
 	b.WriteString("\n")
-	writeBusy()
+	writeNoPush()
 	return b.String()
 }
 
@@ -591,8 +604,8 @@ const redPRFixHeader = "## 🔴 FIX-BEFORE-NEW"
 // line names that attempt. Routing a rebase only lists it in ci-failing.json
 // for the fixer's next kick, so the delivery of a kick this reports true for
 // is when the attempt's deadline starts (rebasemerge.Attempts.Deliver). A
-// row past the detailed cap, a busy-branch row, or a row the kick listed
-// for another attempt was not handed over.
+// row past the detailed cap, a busy-branch or dependency-bot row, or a row
+// the kick listed for another attempt was not handed over.
 func KickCarriesRebaseAttempt(message, repo string, number, attempt int) bool {
 	if number <= 0 || attempt < 1 || strings.TrimSpace(repo) == "" {
 		return false

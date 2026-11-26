@@ -69,12 +69,29 @@ exit `1` means the evidence is PR-local; exit `2` means unknown and requires
 manual diagnosis — never treat an API failure as evidence that the PR is at
 fault. Act on the `action` field, not just the exit code: `DEFER_TO_INCIDENT`
 (shared — stop), `MERGE_BASE` (the branch is behind the default branch —
-merge it and re-check before diagnosing anything), `FIX_DIFF` (the PR's own
+merge it and re-check before diagnosing anything), `BOT_REBASE` (the branch
+is behind, but a dependency bot owns it: see below), `FIX_DIFF` (the PR's own
 diff is at fault), `NOT_REACHABLE_FORK` (the head is in a fork — you cannot
 push; comment with the finding, never push a branch of that name), or
 `RERUN_BASELINE` (the default branch's green is stale and every red sibling
 is behind it — re-run the check on the default branch, or diagnose by hand;
 do not repair PRs against it).
+
+`MERGE_BASE` never applies to a dependency bot's branch: a PR whose head ref
+starts with `renovate/` or whose author is a dependency bot, or a work-list row
+that carries a `[dependency bot: ...]` marker or sits under DEPENDENCY-BOT
+BRANCHES. The helper says `BOT_REBASE` for such a PR. Never merge the base into
+that branch, rebase it, or push to it: the bot rebases its own branch, and once
+any other identity commits to it the bot stops for good and the PR is stranded
+behind its base. A branch that is only behind needs nothing from you; the bot,
+or the hive's bot rebase request when the bot stalls, brings it up to date. Still
+triage a red check on such a PR as above, and stamp the helper's
+`transient_marker` or `external_marker` (below) when the failure is transient
+or upstream; for a failure the bump itself causes, report the failing check and the
+fix in one PR comment. The one exception: a PR your work list hands you as
+ADOPTED or with a `rebase-resolve` attempt. The hive's adoption or an
+operator's rebase-then-merge made that rebase the hive's, so do it as listed,
+whatever the helper says.
 
 A shared result is **one repository incident, not one failure per PR**. Stop
 PR-specific retries. Create or reuse the single open issue with the stable title
