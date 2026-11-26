@@ -343,13 +343,13 @@ v0.3.0 (`src/pkg/customers/colony.go`). What it does beyond the steps above:
   `customers.enrichment.auto_accept` (Auto-accept gitdm affiliations) have
   Settings controls under Features, Customers. Settings refuses an unknown
   value, and shows when an environment override decides.
+- Spoke gitdm defaults on when enrichment is enabled, independently of the store flip.
 
 Not yet, tracked in
 [#19972](https://github.com/hivecommons/hive/issues/19972):
 
 - The store default stays `json` on hub and spoke until a full release in
   `shadow` shows clean parity logs on the hub and on the project's own hive.
-- The spoke gitdm default-on is sequenced with that flip.
 - `colony-only`, the `*.migrated` rename and `colony export` come one release
   after the default flip. The duplicated enrichment types in
   `src/pkg/customers/enrichment.go` and the hub's top-repo affiliation cache
@@ -424,7 +424,7 @@ that #19303 promised.
 | Hub gitdm | **on** | No data about anyone leaves the hub. The download is the same public files for everyone, with ETags. This meets the Linux Foundation telemetry policy as a public download, not collection. |
 | Hub devstats | **off** | It is a per-person request to a third party, so it is a new outbound path. The Linux Foundation telemetry policy asks for review and consent before such a path is on by default. In colony v0.2.0 devstats returns activity, not affiliation, and DevStats' own company data comes from gitdm, so turning it on adds no affiliation the hub does not already have. |
 | Hub trust allowlist | **empty** | Fail closed. The operator lists the project's own hives. |
-| Spoke gitdm | off today, **on with Customers in P5** | Sends nothing about anyone. P5 flips it after P3 ships. |
+| Spoke gitdm | **on when enrichment is enabled** | Sends nothing about anyone; enrichment itself remains off by default. |
 | Spoke devstats, crowd.dev | off | Same reasoning as the hub. crowd.dev is inert until colony#5. |
 | Spoke auto-accept | `off` | Accepting is a decision an owner makes until the owner chooses a policy. |
 | Store mode | `json` until P5 | Then `colony` after one clean `shadow` release. |

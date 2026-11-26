@@ -62,8 +62,8 @@ func readEnrichmentFeatures(t *testing.T, s *Server) enrichmentFeatures {
 }
 
 // TestGovernorFeatures_CustomersEnrichmentRoundTrip covers
-// customers.enrichment.*: every switch defaults off, a non-owner is refused,
-// the owner's values persist and are reported back with their effective
+// customers.enrichment.*: gitdm defaults on but enrichment defaults off;
+// a non-owner is refused, and the owner's values persist with their effective
 // value, an unrelated PUT leaves them alone, a provider follows its parents,
 // and the env overrides win.
 func TestGovernorFeatures_CustomersEnrichmentRoundTrip(t *testing.T) {
@@ -71,9 +71,9 @@ func TestGovernorFeatures_CustomersEnrichmentRoundTrip(t *testing.T) {
 	s := covApiServer(t)
 	s.deps.Config.Customers.Enrichment.CrowdDev.TokenFile = filepath.Join(t.TempDir(), "crowd")
 	got := readEnrichmentFeatures(t, s).Features
-	if got.Enabled || got.Effective || got.GitdmEnabled || got.GitdmEffective || got.DevstatsEnabled ||
+	if got.Enabled || got.Effective || !got.GitdmEnabled || got.GitdmEffective || got.DevstatsEnabled ||
 		got.DevstatsEffective || got.CrowdDevEnabled || got.CrowdDevEffective || got.CrowdDevTokenSet {
-		t.Fatalf("default payload = %+v, want everything off", got)
+		t.Fatalf("default payload = %+v, want only gitdm configured on", got)
 	}
 	all := map[string]any{
 		"customersEnrichmentEnabled":             true,
@@ -88,7 +88,7 @@ func TestGovernorFeatures_CustomersEnrichmentRoundTrip(t *testing.T) {
 	}); rec.Code != http.StatusForbidden {
 		t.Fatalf("non-owner PUT = %d, want 403", rec.Code)
 	}
-	if e := s.deps.Config.Customers.Enrichment; e.IsEnabled() || e.Gitdm.IsEnabled() || e.Gitdm.RefreshInterval != "" || e.Devstats.HourlyLimit != 0 {
+	if e := s.deps.Config.Customers.Enrichment; e.IsEnabled() || e.Gitdm.Enabled != nil || e.Gitdm.RefreshInterval != "" || e.Devstats.HourlyLimit != 0 {
 		t.Fatalf("a refused PUT changed the config: %+v", e)
 	}
 	if rec := doPut(s, "/api/config/governor/features", all); rec.Code != http.StatusOK {

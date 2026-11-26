@@ -148,6 +148,18 @@ func TestKickServerStopEndsTheCommandAndAllowsThePull(t *testing.T) {
 	if resp := kickRequest(t, http.MethodPut, base+PathWorkspace, kickTestToken, packed.Bytes()); resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("push = %d, want 204", resp.StatusCode)
 	}
+	// Wait for the command to write partial.txt before stopping it; stopping
+	// right after the push can kill sh before its echo runs (crux#164).
+	partialDeadline := time.Now().Add(10 * time.Second)
+	for {
+		if got, _ := os.ReadFile(filepath.Join(work, "partial.txt")); string(got) == "partial\n" {
+			break
+		}
+		if time.Now().After(partialDeadline) {
+			t.Fatal("the command did not write partial.txt before the stop")
+		}
+		<-time.After(10 * time.Millisecond)
+	}
 	if resp := kickRequest(t, http.MethodPost, base+PathStop, "wrong", nil); resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("stop with a wrong token = %d, want 401", resp.StatusCode)
 	}

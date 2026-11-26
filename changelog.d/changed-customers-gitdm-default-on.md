@@ -1,0 +1,1 @@
+- Customers enrichment now enables local gitdm by default, downloading the public cncf/gitdm files when enrichment is enabled. To opt out, set `customers.enrichment.gitdm.enabled: false` or `HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED=false` ([#19972](https://github.com/hivecommons/hive/issues/19972)).
