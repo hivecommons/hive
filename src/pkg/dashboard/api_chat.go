@@ -24,6 +24,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	route := chatParseRoute(body.Query)
+	// Owner-only NUX: one hint toward Settings → Chat → Config assist when
+	// the flag is off (#19979). Rides along as its own field on answers.
+	hint := s.chatConfigAssistHint(r, body.Query)
+	withHint := func(m map[string]interface{}) map[string]interface{} {
+		if hint != "" {
+			m["config_assist_hint"] = hint
+		}
+		return m
+	}
 	if answer, ok := s.chatRouteLocalAnswer(r, route); ok {
 		jsonResponse(w, map[string]interface{}{
 			"answer": answer,
@@ -50,12 +59,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		answer, items, err := s.chatGroundedAnswer(r.Context(), route)
 		s.chatAuditGrounded(r, route, items, err)
 		if err == nil {
-			jsonResponse(w, map[string]interface{}{
+			jsonResponse(w, withHint(map[string]interface{}{
 				"answer":   answer,
 				"status":   "ok",
 				"grounded": true,
 				"scope":    firstNonEmpty(route.Scope, "all"),
-			})
+			}))
 			return
 		}
 		groundErr = err
@@ -104,10 +113,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if strings.TrimSpace(answer) != "" {
-			jsonResponse(w, map[string]interface{}{
+			jsonResponse(w, withHint(map[string]interface{}{
 				"answer": answer,
 				"status": "ok",
-			})
+			}))
 			return
 		}
 	}
