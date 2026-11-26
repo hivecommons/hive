@@ -158,7 +158,7 @@ func TestForgejoKeyListServedAnonymously(t *testing.T) {
 
 	// Both the current and the previous key are listed, and a token from
 	// either verifies: the rotation overlap.
-	want, _, _, err := forgejwt.KeyListFromFiles(testKeyListIssuer, in.KeyFile, in.PreviousKeyFiles)
+	_, want, _, err := forgejwt.KeyListFromFiles(testKeyListIssuer, in.KeyFile, in.PreviousKeyFiles)
 	if err != nil {
 		t.Fatal(err)
 	}
