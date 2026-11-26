@@ -143,6 +143,7 @@ func TestMainNeverEchoesTokenShapedArguments(t *testing.T) {
 		"set unknown flag":     {"github", "token", "set", "--" + token},
 		"server flag value":    {"--server", token, "github", "token", "status"},
 		"fine-grained pat":     {"github_pat_11AAAAAAA0_mainLevelSecret42"},
+		"help topic":           {"help", token},
 	} {
 		// `hivectl github <x>` prints the group's help (exit 0), so only the
 		// echo is asserted, not the exit code.

@@ -135,3 +135,40 @@ func TestClientRefusesEveryRedirectForBodyRequests(t *testing.T) {
 		}
 	}
 }
+
+// The host is lowercased so net/http's case-sensitive "localhost" proxy
+// bypass applies: http://LOCALHOST must not go through HTTP_PROXY.
+func TestNewClientLowercasesHost(t *testing.T) {
+	t.Parallel()
+	client, err := NewClient("http://LocalHost:3001/Base", "", 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.baseURL.Host != "localhost:3001" || client.baseURL.Path != "/Base" {
+		t.Fatalf("baseURL = %s", client.baseURL)
+	}
+}
+
+// A GET that is redirected from https to plain http stops, so the
+// Authorization header and session cookie are never sent in clear text.
+func TestRefuseBodyRedirectsRefusesHTTPSDowngrade(t *testing.T) {
+	t.Parallel()
+	mustReq := func(method, raw string) *http.Request {
+		req, err := http.NewRequest(method, raw, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return req
+	}
+	via := []*http.Request{mustReq(http.MethodGet, "https://hive.example/api/status")}
+	if err := refuseBodyRedirects(mustReq(http.MethodGet, "http://hive.example/api/status"), via); err == nil {
+		t.Fatal("https -> http redirect was allowed")
+	}
+	if err := refuseBodyRedirects(mustReq(http.MethodGet, "https://hive.example/api/other"), via); err != nil {
+		t.Fatalf("https -> https redirect refused: %v", err)
+	}
+	plain := []*http.Request{mustReq(http.MethodGet, "http://127.0.0.1/api/status")}
+	if err := refuseBodyRedirects(mustReq(http.MethodGet, "http://127.0.0.1/api/new"), plain); err != nil {
+		t.Fatalf("http -> http redirect refused: %v", err)
+	}
+}

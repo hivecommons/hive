@@ -68867,7 +68867,8 @@ function burnAreaChart() {
         btn.disabled = true;
         setStatus('Verifying with GitHub…');
         try {
-          const res = await fetch('/api/github-token', { method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify({ token: token }) });
+          /* redirect: 'error' so no 3xx can carry the token to another URL. */
+          const res = await fetch('/api/github-token', { method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify({ token: token }), redirect: 'error' });
           if (!res.ok) {
             /* 422 token refused, 429 cooling down after a refusal, 409 on an App-mode install:
                the server's reason is shown and the current token stays. A 403 says who may

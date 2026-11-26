@@ -85,6 +85,7 @@ test('Verify and save PUTs the token once, clears the input and reloads', async 
   assert.strictEqual(calls.length, 1);
   assert.strictEqual(calls[0].url, '/api/github-token');
   assert.strictEqual(calls[0].opts.method, 'PUT');
+  assert.strictEqual(calls[0].opts.redirect, 'error');
   assert.deepStrictEqual(calls[0].body, { token: 'ghp_new' });
   assert.strictEqual(input(host).value, '');
   assert.strictEqual(toasts[0][1], 'success');

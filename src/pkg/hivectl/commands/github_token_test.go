@@ -244,8 +244,10 @@ func TestRedactTokens(t *testing.T) {
 		`unknown command "ghp_abc123" for "hivectl"`: `unknown command "` + redactedToken + `" for "hivectl"`,
 		"github_pat_11ABC_def and gho_x and ghs_y":   redactedToken + " and " + redactedToken + " and " + redactedToken,
 		"ghu_a ghr_b": redactedToken + " " + redactedToken,
-		"invalid --output \"table2\"; nothing secret":  "invalid --output \"table2\"; nothing secret",
-		"ghx_notatoken and gh_alone stay as they were": "ghx_notatoken and gh_alone stay as they were",
+		"invalid --output \"table2\"; nothing secret":      "invalid --output \"table2\"; nothing secret",
+		"ghx_notatoken and gh_alone stay as they were":     "ghx_notatoken and gh_alone stay as they were",
+		"old 0123456789abcdef0123456789abcdef01234567 pat": "old " + redactedToken + " pat",
+		"short 0123456789abcdef stays":                     "short 0123456789abcdef stays",
 	} {
 		if got := RedactTokens(in); got != want {
 			t.Errorf("RedactTokens(%q) = %q, want %q", in, got, want)
@@ -287,5 +289,41 @@ func TestGitHubTokenStatus(t *testing.T) {
 	stdout, _, err := execute(t, server, "", "--output", "json", "github", "token", "status")
 	if err != nil || !strings.Contains(stdout, "abc123def456") {
 		t.Fatalf("stdout = %q err = %v", stdout, err)
+	}
+}
+
+// `hivectl help <topic>` prints an unknown topic to stdout, outside the error
+// path; it is redacted there too, and known topics still work.
+func TestHelpCommandRedactsUnknownTopics(t *testing.T) {
+	const token = "ghp_helpTopicSecret"
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	stdout, stderr, err := execute(t, server, "", "help", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout+stderr, "Unknown help topic") || !strings.Contains(stdout+stderr, redactedToken) {
+		t.Fatalf("stdout = %q stderr = %q", stdout, stderr)
+	}
+	assertNoToken(t, "help", token, nil, stdout, stderr)
+
+	stdout, _, err = execute(t, server, "", "help", "github", "token", "set")
+	if err != nil || !strings.Contains(stdout, "--stdin") {
+		t.Fatalf("help for a known topic: stdout = %q err = %v", stdout, err)
+	}
+}
+
+// With plain http to a remote server the command fails before reading the
+// token, so nobody is prompted for a token that cannot be sent.
+func TestGitHubTokenSetChecksTransportBeforePrompting(t *testing.T) {
+	reads := fakeTerminal(t, "ghp_neverRead", nil)
+	var stdout, stderr bytes.Buffer
+	command := NewRootCommand(strings.NewReader(""), &stdout, &stderr)
+	command.SetArgs([]string{"--server", "http://hive.invalid", "github", "token", "set"})
+	if err := command.Execute(); err == nil || ExitCode(err) != ExitUsage {
+		t.Fatalf("err = %v", err)
+	}
+	if reads.Load() != 0 || strings.Contains(stderr.String(), githubTokenPrompt) {
+		t.Fatalf("prompted before the transport check: reads=%d stderr=%q", reads.Load(), stderr.String())
 	}
 }

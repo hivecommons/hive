@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/term"
+	"github.com/hivecommons/hive/pkg/hivectl"
 	"github.com/spf13/cobra"
 )
 
@@ -92,6 +93,12 @@ func githubTokenSetCommand(env *commandEnv) *cobra.Command {
 		Example: "  pass show hive/github-pat | hivectl github token set --stdin\n" +
 			"  hivectl github token set    # prompts without echo",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Check the transport before asking for the token, so nobody
+			// types it only to be told it cannot be sent.
+			client, err := secureTokenClient(env)
+			if err != nil {
+				return err
+			}
 			data, err := readGitHubToken(env.in, cmd.ErrOrStderr(), stdin)
 			if err != nil {
 				return err
@@ -103,7 +110,7 @@ func githubTokenSetCommand(env *commandEnv) *cobra.Command {
 			if strings.ContainsAny(token, " \t\r\n") {
 				return &usageError{message: "the token input must be a single token with no whitespace inside"}
 			}
-			return scrubToken(sendGitHubToken(cmd, env, token), token)
+			return scrubToken(sendGitHubToken(cmd, env, client, token), token)
 		},
 	}
 	command.Flags().BoolVar(&stdin, "stdin", false, "read the new token from stdin (hidden when stdin is a terminal)")
@@ -131,18 +138,22 @@ func readGitHubToken(in io.Reader, prompt io.Writer, stdin bool) ([]byte, error)
 	return readLimited(in, maxAPIInputBytes)
 }
 
-// sendGitHubToken PUTs the token. It refuses plain http to anything but
-// loopback before building the request, and the client never follows a
-// redirect on a request with a body, so the token goes to the configured
-// server or nowhere.
-func sendGitHubToken(cmd *cobra.Command, env *commandEnv, token string) error {
+// secureTokenClient builds the client for `github token set` and refuses
+// plain http to anything but loopback.
+func secureTokenClient(env *commandEnv) (*hivectl.Client, error) {
 	client, err := env.client()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := client.RequireSecureTransport(); err != nil {
-		return &usageError{message: err.Error()}
+		return nil, &usageError{message: err.Error()}
 	}
+	return client, nil
+}
+
+// sendGitHubToken PUTs the token. The client never follows a redirect on a
+// request with a body, so the token goes to the configured server or nowhere.
+func sendGitHubToken(cmd *cobra.Command, env *commandEnv, client *hivectl.Client, token string) error {
 	result, err := client.Do(cmd.Context(), http.MethodPut, "/api/github-token", nil, map[string]string{"token": token})
 	if err != nil {
 		return err
