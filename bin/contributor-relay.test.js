@@ -16273,3 +16273,43 @@ test('failCurrentTask prints the CLI output tail to the local log, not only the 
   }
   assert.ok(lines.some(l => l.includes('CLI output tail') && l.includes('Unrecognized flag: --auto')), lines.join('\n'));
 });
+
+// ── #19932 Codex API-key login: metered, not unknown ────────────────────────
+test('#19932 an api_key reading admits and says work spends API credits', () => {
+  const relay = loadRelay({ backend: 'codex', env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({
+    state: 'available', captured_at: new Date().toISOString(), cause: 'api_key_login', auth_mode: 'api_key', limits: [],
+  }) } });
+  const lines = [];
+  const savedWarn = console.warn;
+  console.warn = (...args) => lines.push(args.join(' '));
+  try {
+    const d = relay.evaluateContributorQuota({ complexity: 'medium' });
+    assert.strictEqual(d.admit, true);
+    assert.strictEqual(d.reason, 'metered_api_key');
+    relay.evaluateContributorQuota({ complexity: 'medium' });
+    const metered = lines.filter((l) => l.includes('logged in with an API key'));
+    assert.strictEqual(metered.length, 1, lines.join('\n'));
+    assert.ok(metered[0].includes('metered API credits'), metered[0]);
+  } finally {
+    console.warn = savedWarn;
+    teardown(relay);
+  }
+});
+
+test('#19932 auth_mode never admits an unknown or stale reading', () => {
+  for (const state of ['unknown', 'stale']) {
+    const relay = loadRelay({ backend: 'codex', env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({ state, auth_mode: 'api_key', limits: [] }) } });
+    try {
+      assert.strictEqual(relay.evaluateContributorQuota(null).admit, false);
+    } finally { teardown(relay); }
+  }
+});
+
+test('#19932 a windowed reading keeps its window reserve despite auth_mode', () => {
+  const relay = loadRelay({ backend: 'codex', env: { HIVE_CONTRIBUTOR_QUOTA_READING_JSON: JSON.stringify({
+    state: 'available', captured_at: new Date().toISOString(), auth_mode: 'api_key', limits: [{ id: 'p', kind: 'five_hour', pct_remaining: 0 }],
+  }) } });
+  try {
+    assert.strictEqual(relay.evaluateContributorQuota({ complexity: 'medium' }).admit, false);
+  } finally { teardown(relay); }
+});

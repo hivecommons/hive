@@ -115,6 +115,14 @@ consented to for it, so with the list empty no hive receives anything. The
 hub decides by the hive identity the per-hive bearer proves; a hive cannot
 widen the domain from its side.
 
+The labeled answer to a trusted hive also carries `affiliation`, a separate
+field from `organization` so the hive can tell a derivation from a statement
+([#19856](https://github.com/hivecommons/hive/issues/19856)). It is the
+hub-derived affiliation of a github.com user, labeled with its derivation
+(`company_field`, `contributions`, `org_membership` or `colony:<provider>`),
+and only when it comes from public github.com data: the identity-provider and
+GHE-host fallbacks, and anything derived from an email, never cross.
+
 A hive asks for these values only when its owner turns on
 `customers.hub_import.enabled` (see
 [Customers hub import](telemetry.md#customers-hub-import)). The hive posts
@@ -144,6 +152,64 @@ What each role sees:
 Audit lines carry names of fields, never values: `audit: customer consent
 grant`, `change` and `withdrawal` per consent change, and `audit: customer match`
 per request with the hive id and counts.
+
+### Hub CRM on the colony store
+
+`HIVE_HUB_CUSTOMER_STORE` (default `json`) moves the hub's person and fact data
+onto the [colony](https://github.com/hivecommons/colony) store
+(`/data/saas/colony.db`, next to `/data/saas/users`), phase 4 of the
+[Colony customer-data backend design](design/colony-customer-data-backend.md)
+([#19856](https://github.com/hivecommons/hive/issues/19856)). Account and
+access data (hives, expiry, quota, tokens, engagement stats) stays in the
+per-user JSON.
+
+| Mode | Reads | Writes | On boot |
+|---|---|---|---|
+| `json` | JSON | JSON | Nothing. An existing `colony.db` is opened only so a deleted user is erased from it too. |
+| `shadow` | JSON | JSON and colony | Backs up `colony.db`, imports every user on the first boot (one transaction, source fingerprint recorded), reconciles each person, erases people whose JSON record is gone, logs counts only. A missing users directory fails the boot closed to `json`. |
+| `colony` | colony, then JSON per field and per person | JSON and colony | As `shadow`. |
+
+- **Provenance.** Each field is one colony fact at the rank its JSON source
+  names: `user` (`*_source: user`, `country_set_by_user`), `admin`
+  (`*_source: admin`, and a legacy value with no recorded source), or
+  `enrichment` (a browser-language country, the GitHub-footprint and colony
+  affiliation with its confidence, the profile and top-repo cache). Slack id,
+  notes, location, bio, the top-repo cache and every email are `local_only`;
+  colony's own `Shareable()` export never carries them.
+- **Precedence** is unchanged: a user-set value is never replaced by an admin
+  edit or a login inference.
+- **Migration safety.** The migration never rewrites a JSON file, so the JSON
+  is the backup and the rollback. Once a `shadow` or `colony` boot holds the
+  file lock, it writes a full colony snapshot (with its tombstones) as
+  `colony.db.bak-<UTC time>`, mode `0600`, only when it differs from the
+  newest one, and keeps the newest 3. Running the boot sync again changes
+  nothing. A value colony refuses (a note over 4096 bytes, a control
+  character) stays JSON-only. A person whose last mirror failed or was
+  skipped reads from the JSON until a mirror succeeds, so a colony copy that
+  fell behind is never written back. One boot erases at most 10 people, or
+  10% of the store if that is more; a larger burst of missing JSON records is
+  logged and held, never erased.
+- **Rollback.** Set `json` and roll the hub. Nothing is lost, because every
+  mode writes the JSON.
+- **Erasure.** Deleting a user erases them from `colony.db` in every mode and
+  tombstones their identities, so a later mirror never re-adds them; a person
+  deleted while `colony.db` was closed is erased on the next `shadow` or
+  `colony` boot. bbolt does not zero freed pages, and a boot backup holds what
+  it held when taken, so compact the file and remove the backups when an
+  erasure must reach the disk. In `json` mode an existing `colony.db` is not
+  mirrored, so a value cleared meanwhile stays in it until the next `shadow`
+  or `colony` boot reconciles it, or until the user is deleted.
+- **Consent records** are mirrored as colony Consent records. The match answer
+  still reads consent and its delivery bookkeeping from
+  `/data/saas/consents` until phase 5. When the hub prunes a consent, colony
+  has no delete, so its record is emptied (no fields, text version or times)
+  and only the hive id stays, until the user is deleted.
+- **Affiliation in the answer** is not a delivered field: it is not stamped on
+  a consent record and carries no `cleared` signal, so when it stops crossing
+  the hive drops it at its 72-hour refresh expiry. A person who cleared their
+  organization on the hub gets no derived affiliation either.
+- **Single writer.** bbolt takes a file lock, so the hub stays one replica on
+  its PVC. A lock held for more than 5 seconds at boot leaves the hub in `json`.
 
 ### Ask AI help
 
@@ -407,6 +473,7 @@ Every decision writes one structured log line, documented in [audit-log.md](audi
 | `selfservice_hive_expired` | The sweep removed a hive; `last_heartbeat` is RFC 3339 or `never`. |
 
 No audit line ever carries a key or a hash.
+
 
 ## Hosted spoke provisioning model
 

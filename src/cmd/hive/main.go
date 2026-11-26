@@ -1370,6 +1370,8 @@ func (b *boot) wireBootClosures() {
 			RemergeDerivedReferenceRepos: b.remergeLastDerivedReferenceRepos,
 			OwnerIdentity:                b.ownerIdentityStore(),
 			OwnerIdentityChanged:         b.ownerIdentityChanged,
+			VerifyGitHubToken:            b.verifyRotatedGitHubToken,
+			ApplyGitHubToken:             b.applyRotatedGitHubToken,
 			RepoAgents:                   b.repoAgents,
 			CheckRemoteWriteIdentity:     b.checkRemoteWriteIdentity,
 			RemoteWriteIdentityChanged:   b.remoteWriteIdentityChanged,
