@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.374.0)
+
+### Added
+
+- Add the opt-in `headless_turns` agent setting. A translator-routed agent (an inference backend or a named gateway) with it set runs one headless `claude -p` per kick instead of a resident interactive Claude Code session. Anthropic bills that as Agent SDK usage, so Max, Ultra and Team subscribers can pay for these agents with their monthly API credits. The translator's key custody, metering and model discovery do not change (#19902).
+
 ## 2026-11-26 (v5.373.11)
 
 ### Fixed
