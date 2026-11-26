@@ -8622,6 +8622,19 @@ func (c *Config) redactedForPersist() *Config {
 	return &cp
 }
 
+// GitHubTokenSealable reports whether Save would persist token as a
+// keystore envelope rather than plaintext: a provider is active and sealing
+// succeeds. False means the value would be written as it is (legacy mode, or
+// a seal failure), so the caller can protect the file that carries it
+// (hivecommons/hive#19633).
+func GitHubTokenSealable(token string) bool {
+	if token == "" {
+		return false
+	}
+	sealed, err := keystore.SealActive(context.Background(), token, githubTokenAAD)
+	return err == nil && sealed != token
+}
+
 // githubTokenAAD binds the persisted github.token envelope to its slot, so an
 // envelope lifted from a secret file cannot be pasted in as the PAT.
 var githubTokenAAD = []byte("config:github.token")

@@ -712,6 +712,16 @@ func Verify(key, sealed []byte) (*Manifest, error) {
 
 // Extract decrypts an archive and writes its contents under destDir.
 func Extract(key, sealed []byte, destDir string) (*Manifest, error) {
+	return extract(key, sealed, destDir, os.WriteFile)
+}
+
+// ExtractNewFiles decrypts an archive and requires each member to create a new
+// file. This rejects archive paths that alias on the extraction filesystem.
+func ExtractNewFiles(key, sealed []byte, destDir string) (*Manifest, error) {
+	return extract(key, sealed, destDir, writeNewArchiveFile)
+}
+
+func extract(key, sealed []byte, destDir string, writeFile func(string, []byte, os.FileMode) error) (*Manifest, error) {
 	if _, err := Verify(key, sealed); err != nil {
 		return nil, err
 	}
@@ -748,7 +758,7 @@ func Extract(key, sealed []byte, destDir string) (*Manifest, error) {
 		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 			return nil, err
 		}
-		if err := os.WriteFile(out, content, os.FileMode(hdr.Mode)&restoreFileMode); err != nil { // #nosec G115 -- only the low permission bits survive the restoreFileMode mask, so truncating the tar mode cannot widen it
+		if err := writeFile(out, content, os.FileMode(hdr.Mode)&restoreFileMode); err != nil { // #nosec G115 -- only the low permission bits survive the restoreFileMode mask, so truncating the tar mode cannot widen it
 			return nil, err
 		}
 		if hdr.Name == manifestName {
@@ -759,4 +769,17 @@ func Extract(key, sealed []byte, destDir string) (*Manifest, error) {
 		}
 	}
 	return man, nil
+}
+
+func writeNewArchiveFile(path string, content []byte, mode os.FileMode) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	_, writeErr := file.Write(content)
+	closeErr := file.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	return closeErr
 }

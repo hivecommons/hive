@@ -592,10 +592,11 @@ func TestGitHubClientRebuildSitesUseSharedConstructor(t *testing.T) {
 			t.Errorf("expected %s to construct the App client; the source walk may be broken", fn)
 		}
 	}
-	// The dashboard's ReinitGitHubFunc, the config watcher and the heartbeat
-	// App delivery. Fewer means a site stopped using the shared constructor
-	// (or the walk is broken).
-	const knownRebuildSites = 4
+	// The dashboard's ReinitGitHubFunc, the config watcher (App identity and
+	// PAT rotation), the heartbeat App delivery and the dashboard PAT
+	// rotation (#19633). Fewer means a site stopped using the shared
+	// constructor (or the walk is broken).
+	const knownRebuildSites = 5
 	if rebuildSites < knownRebuildSites {
 		t.Errorf("found %d calls to b.newConfiguredGitHubAppClient, want at least %d rebuild sites", rebuildSites, knownRebuildSites)
 	}

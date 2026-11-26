@@ -39,6 +39,17 @@ func (f *fakeForgejoWrites) record(r *http.Request) {
 	f.bodies[key] = append(f.bodies[key], m)
 }
 
+// lastBody re-encodes the body record stored for r, which the handler has
+// already consumed.
+func (f *fakeForgejoWrites) lastBody(r *http.Request) []byte {
+	calls := f.calls(r.Method + " " + r.URL.Path)
+	if len(calls) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(calls[len(calls)-1])
+	return b
+}
+
 func (f *fakeForgejoWrites) calls(key string) []map[string]any {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -81,18 +92,7 @@ func (f *fakeForgejoWrites) server(t *testing.T) *httptest.Server {
 				_, _ = w.Write([]byte(`{"message":"label not found"}`))
 				return
 			}
-			var req struct {
-				Labels []string `json:"labels"`
-			}
-			if calls := f.calls(r.Method + " " + r.URL.Path); len(calls) > 0 {
-				data, _ := json.Marshal(calls[len(calls)-1])
-				_ = json.Unmarshal(data, &req)
-			}
-			applied := []map[string]string{}
-			for _, l := range req.Labels {
-				applied = append(applied, map[string]string{"name": l})
-			}
-			_ = json.NewEncoder(w).Encode(applied)
+			_, _ = w.Write(echoAppliedLabels(f.lastBody(r)))
 		default:
 			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

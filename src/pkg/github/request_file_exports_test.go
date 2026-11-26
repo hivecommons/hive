@@ -3,6 +3,7 @@ package github
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -51,5 +52,40 @@ func TestReservedLabelForAgentsExport(t *testing.T) {
 	}
 	if ReservedLabelForAgents("kind/bug", "queue") {
 		t.Error("kind/bug reserved")
+	}
+}
+
+func TestPushBranchExports(t *testing.T) {
+	if !ValidPushBranchName("fix/19916") || ValidPushBranchName("-rf") || ValidPushBranchName("a..b") {
+		t.Error("ValidPushBranchName does not match validPushBranchName")
+	}
+	dir := t.TempDir()
+	if err := ValidatePushBranchDir(dir, os.Getuid()); err != nil {
+		t.Errorf("own dir refused: %v", err)
+	}
+	if err := ValidatePushBranchDir("relative", 0); err == nil {
+		t.Error("relative dir accepted")
+	}
+
+	const remote = "https://fj.example/acme/widgets.git"
+	env := strings.Join(PushBranchGitEnv(dir, remote, "tok"), "\n")
+	for _, want := range []string{"GIT_TERMINAL_PROMPT=0", "core.hooksPath", "credential.helper", "http." + remote + ".extraHeader", gitBasicAuthHeader("tok")} {
+		if !strings.Contains(env, want) {
+			t.Errorf("push env lacks %q:\n%s", want, env)
+		}
+	}
+	if env := strings.Join(PushBranchGitEnv(dir, remote, ""), "\n"); strings.Contains(env, "extraHeader") {
+		t.Errorf("an empty token still adds a header:\n%s", env)
+	}
+	if got := FirstOutputLines("\n a \n\nb\nc\n", 2); got != "a\nb" {
+		t.Errorf("FirstOutputLines = %q", got)
+	}
+
+	queue := filepath.Join(t.TempDir(), "push-requests")
+	if !EnsureRequestDir(nil, "push", queue) {
+		t.Fatal("EnsureRequestDir failed")
+	}
+	if fi, err := os.Stat(queue); err != nil || !fi.IsDir() || fi.Mode()&os.ModeSticky == 0 {
+		t.Fatalf("queue = %v, %v; want a sticky directory", fi, err)
 	}
 }

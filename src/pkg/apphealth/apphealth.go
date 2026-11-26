@@ -303,6 +303,19 @@ func ClassifyRepoCoverage(ctx context.Context, appAuth *github.AppAuth, org stri
 		return false, "", github.AppStateOK
 	}
 
+	// #19915: a repo renamed within the configured account is still covered,
+	// just under its new name, and GitHub redirects the old one. Telling an org
+	// owner to tick it sends them looking for a name that is gone. Log the stale
+	// config entry instead of raising the banner for it.
+	missing, renamed := appAuth.ResolveRenames(ctx, cov, missing)
+	for _, r := range renamed {
+		logger.Info("github app repo coverage: configured repository was renamed and is covered under its new name; update the hive config",
+			"configured", r.Configured, "now", r.CoveredAs)
+	}
+	if len(missing) == 0 {
+		return false, "", github.AppStateOK
+	}
+
 	// #5774: a coverage miss whose shape is an org TRANSFER gets its own
 	// verdict, checked first because the not-covered copy is actively wrong for
 	// it. "Tick this repo in the installation's repository access" cannot be

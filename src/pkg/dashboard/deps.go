@@ -253,6 +253,18 @@ type Dependencies struct {
 	// disconnects their account, so the reference-repo policies re-resolve
 	// without a restart. Nil skips.
 	OwnerIdentityChanged func()
+	// VerifyGitHubToken checks a candidate PAT for PUT /api/github-token
+	// (hivecommons/hive#19633) against the configured api_url before anything
+	// changes: GET /user, read access to every project repo, and the boot
+	// scope check for the current ACMM level. It returns the token's login,
+	// or an error that names the failed step (never token material). Nil
+	// answers 503 on that route.
+	VerifyGitHubToken func(ctx context.Context, token string) (login string, err error)
+	// ApplyGitHubToken is called after a verified PAT has been persisted: it
+	// builds a PAT client for it and adopts it the way a config reload does
+	// (adoptGitHubClient, then the agent token refresh), so agents and relays
+	// use the new token without a restart. Nil answers 503 on that route.
+	ApplyGitHubToken func(token string)
 	// RepoAgents holds the agent definitions discovered under managed repos'
 	// .hive/agents/ that wait for an owner's approval (hivecommons/hive#18491).
 	// Nil (most tests, a hive without a GitHub client) reports the feature

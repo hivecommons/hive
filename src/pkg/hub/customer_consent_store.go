@@ -81,7 +81,7 @@ func customerConsentPath(u *SaaSUser) (string, error) {
 
 func readCustomerConsents(path string) (map[string]customerConsent, error) {
 	records := make(map[string]customerConsent)
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G703 -- callers pass customerConsentPath (customerConsentDir plus the base name of a validated user file) or a directory entry of customerConsentDir
 	if errors.Is(err, os.ErrNotExist) {
 		return records, nil
 	}
@@ -106,7 +106,11 @@ func removeCustomerConsents(path string) error {
 
 func saveCustomerConsents(path string, records map[string]customerConsent) error {
 	if len(records) == 0 {
-		return removeCustomerConsents(path)
+		if err := removeCustomerConsents(path); err != nil {
+			return err
+		}
+		crmMirrorConsentFile(path)
+		return nil
 	}
 	data, err := json.MarshalIndent(records, "", "  ")
 	if err != nil {
@@ -126,7 +130,11 @@ func saveCustomerConsents(path string, records map[string]customerConsent) error
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	crmMirrorConsentFile(path)
+	return nil
 }
 
 func pruneCustomerConsents(path string, now time.Time) error {

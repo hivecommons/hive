@@ -190,11 +190,39 @@ func PublicKey(path string) (*rsa.PublicKey, error) {
 	return &key.PublicKey, nil
 }
 
+// CheckKeyFile runs the checks Mint runs on the signing key file at path,
+// without signing: the file exists and can be read, its mode is allowed, and
+// it holds an RSA key of at least the minimum size. A file the boot keystore
+// sweep sealed in place passes once it opens, and passes unopened when this
+// process has no active keystore, because only the booted hive can open it.
+// `hive validate` calls it so a bad key_file fails there and not at the first
+// clone or push (hivecommons/hive#19919).
+func CheckKeyFile(path string) error {
+	data, err := readKeyFile(path)
+	if err != nil {
+		return err
+	}
+	if keystore.IsEnvelope(data) && keystore.Active() == nil {
+		return nil
+	}
+	_, err = parseKey(path, data)
+	return err
+}
+
 // readKey loads a PEM RSA private key, opening it first when the boot
-// keystore sweep has sealed the file in place. The mode check and the read
-// use the same open file, so the checked file is the one read. Its errors
-// name the path and never carry file contents or parser detail.
+// keystore sweep has sealed the file in place. Its errors name the path and
+// never carry file contents or parser detail.
 func readKey(path string) (*rsa.PrivateKey, error) {
+	data, err := readKeyFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return parseKey(path, data)
+}
+
+// readKeyFile reads the raw key file. The mode check and the read use the
+// same open file, so the checked file is the one read.
+func readKeyFile(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("forgejwt: signing key: %w", err)
@@ -212,6 +240,11 @@ func readKey(path string) (*rsa.PrivateKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("forgejwt: signing key: %w", err)
 	}
+	return data, nil
+}
+
+// parseKey opens a sealed key and parses the PEM RSA private key in data.
+func parseKey(path string, data []byte) (*rsa.PrivateKey, error) {
 	if keystore.IsEnvelope(data) {
 		pt, _, err := keystore.Open(context.Background(), keystore.Active(), string(data), keystore.FileAAD(path))
 		if err != nil {

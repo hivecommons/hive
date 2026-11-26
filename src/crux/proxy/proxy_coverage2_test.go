@@ -352,7 +352,7 @@ func TestQueryMaxModelLen(t *testing.T) {
 		t.Fatalf("exact match = %d, want 4096", got)
 	}
 
-	// No id match → falls back to first entry's max_model_len.
+	// No id match on a single-model listing → that model's window.
 	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"data":[{"id":"only","max_model_len":8192}]}`)
 	}))

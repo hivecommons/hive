@@ -1241,6 +1241,19 @@ function warnQuotaGuardUnprovisionedOnce() {
     'You can ignore this. To turn the guard on, set HIVE_CONTRIBUTOR_QUOTA_READING_FILE or HIVE_CONTRIBUTOR_QUOTA_READING_JSON (see src/docs/contributor-relay.md).');
 }
 
+// auth_mode the Go publisher writes for a metered API-key login
+// (AuthModeAPIKey in src/pkg/rotation/rotation.go, hivecommons/hive#19932).
+const QUOTA_AUTH_MODE_API_KEY = 'api_key';
+
+let warnedQuotaGuardMetered = false;
+
+function warnQuotaGuardMeteredOnce() {
+  if (warnedQuotaGuardMetered) return;
+  warnedQuotaGuardMetered = true;
+  console.warn(`Contributor quota guard: ${BACKEND} is logged in with an API key, which has no subscription quota windows. ` +
+    'Tasks are not held back, and each task spends metered API credits on that key.');
+}
+
 let warnedQuotaGuardAwaitingPublisher = false;
 
 function warnQuotaGuardAwaitingPublisherOnce() {
@@ -1342,7 +1355,16 @@ function evaluateContributorQuota(task, reading = readContributorQuotaReading(),
   }
   contributorQuotaPaused = false;
   writeRelayStatus();
-  return usedBankedReset ? { admit: true, reason: 'banked_reset_available' } : { admit: true };
+  if (usedBankedReset) return { admit: true, reason: 'banked_reset_available' };
+  // A metered API-key login (hivecommons/hive#19932) has no subscription
+  // windows to protect, so the publisher writes an available reading with no
+  // windows. Admit it, and say once that the work spends API credits: the
+  // guard cannot protect a per-token bill.
+  if (state === 'available' && reading.auth_mode === QUOTA_AUTH_MODE_API_KEY) {
+    warnQuotaGuardMeteredOnce();
+    return { admit: true, reason: 'metered_api_key' };
+  }
+  return { admit: true };
 }
 
 // ── Guard resume (kubestellar/hive#6951) ─────────────────────────────────────
