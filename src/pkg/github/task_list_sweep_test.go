@@ -546,6 +546,56 @@ func TestSweepTaskListIssue_NoMergedPR_DoesNotClose(t *testing.T) {
 	}
 }
 
+// TestSweepTaskListIssue_PartiallyAddressedNeedsClosingPR is #19956 on the
+// task-list path: a hive/partially-addressed issue with every box ticked is
+// not closed by a merged PR that only says Refs, but is closed by one that
+// says Fixes. An unlabelled issue keeps the #7071 behaviour (Refs suffices).
+func TestSweepTaskListIssue_PartiallyAddressedNeedsClosingPR(t *testing.T) {
+	org, repo := "hivecommons", "hive"
+	fixtures := []taskListSweepFixture{
+		{Number: 710, Body: "- [x] a\n- [x] b\n" + hiveTrailer, Labels: []string{PartiallyAddressedLabel}, AuthorLogin: "hive-app[bot]"},
+		{Number: 711, Body: "- [x] a\n- [x] b\n" + hiveTrailer, Labels: []string{PartiallyAddressedLabel}, AuthorLogin: "hive-app[bot]"},
+		{Number: 712, Body: "- [x] a\n- [x] b\n" + hiveTrailer, AuthorLogin: "hive-app[bot]"},
+	}
+	merged := []taskListMergedPR{
+		{Number: 810, Title: "partial work", Body: "Refs #710"},
+		{Number: 811, Title: "finish it", Body: "Fixes #711"},
+		{Number: 812, Title: "checklist work", Body: "Refs #712"},
+	}
+	server, obs := taskListSweepServer(t, org, repo, fixtures, merged)
+	defer server.Close()
+	c := newTestClient(t, server, org, []string{repo})
+
+	if _, err := c.SweepCompletedTaskListIssues(context.Background(), TaskListSweepOptions{}); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	closed := map[int]bool{}
+	for _, n := range obs.closed {
+		closed[n] = true
+	}
+	if closed[710] {
+		t.Errorf("partially-addressed issue 710 closed by a Refs-only PR")
+	}
+	if len(obs.commentsPosted[710]) != 0 {
+		t.Errorf("partially-addressed issue 710 got a closure comment: %v", obs.commentsPosted[710])
+	}
+	if !closed[711] {
+		t.Errorf("partially-addressed issue 711 not closed by a Fixes PR; closed = %v", obs.closed)
+	}
+	if !closed[712] {
+		t.Errorf("unlabelled issue 712 not closed by its Refs PR (#7071); closed = %v", obs.closed)
+	}
+}
+
+func TestAnyClosingMergedRef(t *testing.T) {
+	if anyClosingMergedRef(nil) || anyClosingMergedRef([]mergedPRRef{{Number: 1, Reference: true}}) {
+		t.Fatal("non-closing refs reported as closing")
+	}
+	if !anyClosingMergedRef([]mergedPRRef{{Number: 1}, {Number: 2, Closing: true}}) {
+		t.Fatal("closing ref not found")
+	}
+}
+
 // A held issue is hands-off for the sweep: no closure, no progress or
 // remainder comment, no needs-human label — whichever spelling of hold the
 // issue carries, including the exact dashboard `hive-pause/<hive-id>` label

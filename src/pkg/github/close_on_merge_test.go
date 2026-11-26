@@ -42,8 +42,21 @@ func TestCloseOnMergeResolver(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "refs plus branch claim",
+			// An explicit Refs overrules the branch name (#19956), as it
+			// does for the claim ledger (#12144).
+			name: "refs overrules branch claim",
 			pr:   mergedTestPR(42, "hive[bot]", "scanner/fix-7", "Refs #7"),
+			want: false,
+			refs: true,
+		},
+		{
+			name: "branch claim without any text reference",
+			pr:   mergedTestPR(42, "hive[bot]", "scanner/fix-7", "work"),
+			want: true,
+		},
+		{
+			name: "closing keyword wins over a refs line",
+			pr:   mergedTestPR(42, "hive[bot]", "scanner/fix-7", "Fixes #7\n\nRefs #7"),
 			want: true,
 			refs: true,
 		},
@@ -80,7 +93,12 @@ func TestCloseOnMergeDecisionClosesOrAwaits(t *testing.T) {
 		wantAction CloseOnMergeAction
 		wantPatch  bool
 	}{
-		{name: "plain open issue closes completed", wantAction: CloseOnMergeClosed, wantPatch: true},
+		{name: "plain open issue closes completed", prBody: "Fixes #7", wantAction: CloseOnMergeClosed, wantPatch: true},
+		{name: "claimed issue with refs-only PR stays open", prBody: "Refs #7", wantAction: CloseOnMergeSkipped, wantReason: "refs_only"},
+		{name: "claimed issue with part-of PR stays open", prBody: "Part of #7", wantAction: CloseOnMergeSkipped, wantReason: "refs_only"},
+		{name: "partially addressed issue with refs-only PR stays open", labels: []string{PartiallyAddressedLabel}, prBody: "Refs #7", wantAction: CloseOnMergeSkipped, wantReason: "refs_only"},
+		{name: "partially addressed issue with claim-only PR stays open", labels: []string{PartiallyAddressedLabel}, prBody: "work", wantAction: CloseOnMergeSkipped, wantReason: "partially_addressed_no_closing_keyword"},
+		{name: "partially addressed issue with closing PR closes", labels: []string{PartiallyAddressedLabel}, prBody: "Fixes #7", wantAction: CloseOnMergeClosed, wantPatch: true},
 		{name: "external PR merged by someone else stays open", external: true, mergedBy: "maintainer", prBody: "Fixes #7", wantAction: CloseOnMergeSkipped, wantReason: "untrusted_author"},
 		{name: "external PR missing merge actor stays open", external: true, lookup: true, prBody: "Fixes #7", wantAction: CloseOnMergeSkipped, wantReason: "untrusted_author"},
 		{name: "external PR merged by hive closes", external: true, mergedBy: "hive[bot]", prBody: "Fixes #7", wantAction: CloseOnMergeClosed, wantPatch: true},
@@ -217,7 +235,7 @@ func TestCloseOnMergeBackfillClosesLinkedMergedPR(t *testing.T) {
 			_ = json.NewEncoder(w).Encode([]map[string]string{})
 		case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/42":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"number": 42, "title": "fix", "body": "Refs #7", "merged": true,
+				"number": 42, "title": "fix", "body": "Fixes #7", "merged": true,
 				"merged_at": "2026-10-09T12:00:00Z", "merge_commit_sha": "abcdef0123456789",
 				"user":      map[string]string{"login": "contributor"},
 				"merged_by": map[string]string{"login": "hive[bot]"},
@@ -258,6 +276,65 @@ func TestCloseOnMergeBackfillClosesLinkedMergedPR(t *testing.T) {
 	}
 }
 
+// TestCloseOnMergeBackfillLeavesRefsOnlyPROpen is #19956 on the backfill
+// path: the issue is linked to the merged PR by a covered-by-PR comment and
+// the PR's branch names the issue, but the PR body only says Refs, so the
+// issue stays open with a refs_only verdict.
+func TestCloseOnMergeBackfillLeavesRefsOnlyPROpen(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		labels     []map[string]string
+		wantReason string
+	}{
+		{name: "claimed issue", labels: []map[string]string{{"name": CoveredByPRLabel}}, wantReason: "refs_only"},
+		{name: "partially addressed issue", labels: []map[string]string{{"name": CoveredByPRLabel}, {"name": PartiallyAddressedLabel}}, wantReason: "refs_only"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			restore := resetPRDetailCacheForTest(time.Now, 0)
+			defer restore()
+			var mutated []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues":
+					_ = json.NewEncoder(w).Encode([]map[string]any{{"number": 7, "state": "open", "labels": tc.labels}})
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/timeline":
+					_ = json.NewEncoder(w).Encode([]map[string]any{})
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7/comments":
+					_ = json.NewEncoder(w).Encode([]map[string]string{{"body": "covered by PR #42"}})
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/pulls/42":
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"number": 42, "title": "partial fix", "body": "Refs #7 (partial: the API route remains)", "merged": true,
+						"merged_at": "2026-10-09T12:00:00Z", "merge_commit_sha": "abcdef0123456789",
+						"user": map[string]string{"login": "hive[bot]"},
+						"head": map[string]string{"ref": "scanner/fix-7", "sha": "headsha"},
+						"base": map[string]any{"ref": "v6", "repo": map[string]string{"full_name": "o/r"}},
+					})
+				case r.Method == "GET" && r.URL.Path == "/repos/o/r/issues/7":
+					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "labels": tc.labels})
+				case r.Method == "POST" || r.Method == "PATCH" || r.Method == "DELETE":
+					mutated = append(mutated, r.Method+" "+r.URL.Path)
+					_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
+				default:
+					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+			c := newTestClient(t, srv, "o", []string{"r"})
+			results := c.CloseOnMergeBackfill(context.Background(), CloseOnMergeOptions{Identity: HiveIdentity{AppLogin: "hive[bot]"}})
+			if len(results) != 1 || results[0].Action != CloseOnMergeSkipped || results[0].Reason != tc.wantReason || !results[0].WrongRefs {
+				t.Fatalf("results = %+v, want one skipped/%s with WrongRefs", results, tc.wantReason)
+			}
+			if !results[0].Settles() {
+				t.Fatalf("refs_only must settle the claim: %+v", results[0])
+			}
+			if len(mutated) != 0 {
+				t.Fatalf("refs-only PR mutated the issue: %v", mutated)
+			}
+		})
+	}
+}
+
 func TestCloseOnMergePRLookupUsesDetailCache(t *testing.T) {
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	restore := resetPRDetailCacheForTest(func() time.Time { return now }, 0)
@@ -271,7 +348,7 @@ func TestCloseOnMergePRLookupUsesDetailCache(t *testing.T) {
 		}
 		pullGets++
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"number": 42, "title": "fix", "body": "Refs #7", "merged": true, "mergeable_state": "unknown",
+			"number": 42, "title": "fix", "body": "Fixes #7", "merged": true, "mergeable_state": "unknown",
 			"merged_at": "2026-10-09T12:00:00Z", "merge_commit_sha": "abcdef0123456789",
 			"user": map[string]string{"login": "hive[bot]"},
 			"head": map[string]string{"ref": "scanner/fix-7", "sha": "headsha"},
