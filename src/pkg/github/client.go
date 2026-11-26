@@ -3118,14 +3118,6 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 	return err
 }
 
-// IssueCommentPosted checks for a previously applied comment using the same
-// body matching as CreateIssueComment's reconciliation.
-func (c *Client) IssueCommentPosted(ctx context.Context, repo string, number int, body string) (bool, error) {
-	owner, repoName := c.SplitRepo(repo)
-	state, err := c.observeIssueComment(ctx, owner, repoName, number, logscrub.ScrubString(body))
-	return state.Applied, err
-}
-
 // observeIssueComment is the authoritative observation of an issue comment
 // the mutation journal holds as unresolved: the earlier attempt applied when
 // the issue already carries a comment with the same body. Bodies are compared
