@@ -37,7 +37,12 @@ import (
 //     scoped to that one remote URL. As on GitHub, a push is refused when a
 //     commit in the pushed range is authored by a hive identity without a
 //     Signed-off-by trailer (forgeHiveCommitIdentities), and a published
-//     branch is audited as agent_branch_pushed (#19960).
+//     branch is audited as agent_branch_pushed (#19960). A checkout whose
+//     config could redirect the push (url.*.insteadOf, http.proxy,
+//     http.<url>.* and the like) is refused
+//     (github.PushBranchConfigRefusal, hivecommons/hive#19959), and the push
+//     itself runs from a hive-owned GIT_DIR over the checkout's objects
+//     (github.PushBranchIsolatedGitDir), so it never reads that config.
 //   - review-requests and merge-requests are NOT served on a forge-only hive
 //     yet. Each is answered with a reason and renamed .rejected, so the agent
 //     stops waiting instead of polling a queue no relay reads.
@@ -252,7 +257,9 @@ func (r *forgeRequestRelay) handlePushBranch(ctx context.Context, path string) {
 		retry("minting push token: " + err.Error())
 		return
 	}
-	env := github.PushBranchGitEnv(req.Dir, remoteURL, token)
+	// Commands that read the agent's checkout run without the token; only
+	// the push, from a hive-owned GIT_DIR, carries it (#19959).
+	env := github.PushBranchGitEnv(req.Dir, remoteURL, "")
 	sha, err := forgePushExec(ctx, req.Dir, env, "rev-parse", "--verify", "refs/heads/"+branch)
 	if err != nil {
 		retry(fmt.Sprintf("local branch %q not found in %s: %s", branch, req.Dir, github.FirstOutputLines(sha, forgePushOutputLines)))
@@ -274,12 +281,35 @@ func (r *forgeRequestRelay) handlePushBranch(ctx context.Context, path string) {
 		return
 	}
 
+	// Refuse a checkout whose own config could redirect the push
+	// (hivecommons/hive#19959). The push below never reads that config.
+	listing, err := forgePushExec(ctx, req.Dir, env, github.PushBranchConfigListArgs()...)
+	if err != nil {
+		retry(fmt.Sprintf("reading the git config of %s: %s", req.Dir, github.FirstOutputLines(listing, forgePushOutputLines)))
+		return
+	}
+	if reason := github.PushBranchConfigRefusal(listing); reason != "" {
+		deny(reason)
+		return
+	}
+	repoInfo, err := forgePushExec(ctx, req.Dir, env, github.PushBranchRepoInfoArgs()...)
+	if err != nil {
+		retry(fmt.Sprintf("locating the git dir of %s: %s", req.Dir, github.FirstOutputLines(repoInfo, forgePushOutputLines)))
+		return
+	}
+	gitDir, isolation, cleanup, err := github.PushBranchIsolatedGitDir(repoInfo, branch, sha, fileUID)
+	if err != nil {
+		deny(err.Error())
+		return
+	}
+	defer cleanup()
+	pushEnv := append(github.PushBranchGitEnv(gitDir, remoteURL, token), isolation...)
 	args := []string{"push"}
 	if req.ForceWithLease {
 		args = append(args, "--force-with-lease")
 	}
 	args = append(args, remoteURL, "refs/heads/"+branch+":refs/heads/"+branch)
-	if out, err := forgePushExec(ctx, req.Dir, env, args...); err != nil {
+	if out, err := forgePushExec(ctx, gitDir, pushEnv, args...); err != nil {
 		retry("git push failed: " + github.FirstOutputLines(out, forgePushOutputLines))
 		return
 	}
