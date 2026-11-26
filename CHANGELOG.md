@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.377.1)
+
+### Changed
+
+- The spoke customer record store (`customers.store` / `HIVE_CUSTOMERS_STORE`) now defaults to `shadow` instead of `colony`: the JSON stays authoritative and colony is written alongside it. The hub default (`HIVE_HUB_CUSTOMER_STORE`) stays `colony`. The spoke default moves to `colony` once parity is confirmed on the project's own hive. An explicit `json`, `shadow` or `colony` keeps working, and a set but unknown value still means `json` (#19972).
+
+### Fixed
+
+- A contributor completion that reports an older PR of theirs which never names the dispatched issue no longer counts as that issue's work, so the hive does not append `Fixes #N` to the wrong PR or mark the issue covered, and a blocked verdict stands (#19985).
+- Keep an operator's fix to a broken dashboard overlay after held saves (#20075)
+
 ## 2026-11-26 (v5.377.0)
 
 ### Added
