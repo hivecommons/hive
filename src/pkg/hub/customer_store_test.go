@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -653,7 +654,13 @@ func TestHubCustomerStoreDefaultUpgradeFromJSON(t *testing.T) {
 	if !ok || mode != hubCustomerStoreColony {
 		t.Fatalf("default mode = %q (ok %v), want colony", mode, ok)
 	}
-	st := useHubCustomerStore(t, mode)
+	// The real boot entry point reads the unset env and opens colony.
+	(&HubServer{logger: slog.Default()}).startHubCustomerStore(context.Background())
+	t.Cleanup(closeHubCustomerStore)
+	st, active := hubCRM.active()
+	if st == nil || active != hubCustomerStoreColony {
+		t.Fatalf("boot with the env unset = %q (store %v), want colony", active, st != nil)
+	}
 	rec, ran, err := st.Migration(hubCustomerStoreMigration)
 	if err != nil || !ran || rec.Report.People != len(users) {
 		t.Fatalf("upgrade import = %+v ran=%v err=%v", rec, ran, err)
@@ -675,6 +682,17 @@ func TestHubCustomerStoreDefaultUpgradeFromJSON(t *testing.T) {
 	if backups, _ := filepath.Glob(hubCustomerStorePath() + hubCustomerStoreBackupPrefix + "*"); len(backups) != 1 {
 		t.Fatalf("%d colony.db backups after the second boot, want 1", len(backups))
 	}
+}
+
+// A brand-new hub, with no users directory yet, boots on the colony default
+// too: a missing directory is only treated as empty while colony.db holds
+// nobody, so a missing mount on a populated hub still fails closed.
+func TestHubCustomerStoreDefaultFreshHub(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	if err := os.RemoveAll(saasUsersDir); err != nil {
+		t.Fatal(err)
+	}
+	useHubCustomerStore(t, hubCustomerStoreColony)
 }
 
 // Nothing local_only reaches a spoke: not through the match answer to a

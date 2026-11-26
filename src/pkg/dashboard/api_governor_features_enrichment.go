@@ -34,7 +34,7 @@ type featuresEnrichmentBody struct {
 	// empty (the default, off), "off" or "gitdm_high". Any other value is
 	// rejected, so a typo is never saved and silently read as off.
 	CustomersEnrichmentAutoAccept *string `json:"customersEnrichmentAutoAccept"`
-	// CustomersStore is customers.store: empty (the default, json), "json",
+	// CustomersStore is customers.store: empty (the default, colony), "json",
 	// "shadow" or "colony". Any other value is rejected. It is read once at
 	// startup, so a change applies on the next restart.
 	CustomersStore *string `json:"customersStore"`
