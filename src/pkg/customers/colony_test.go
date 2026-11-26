@@ -728,7 +728,7 @@ func TestColonyForgottenHiveUserCanReturn(t *testing.T) {
 // colony mode (#19972), with no shadow boot in between: the first boot imports both
 // files, keeps the .pre-colony copies as they stood, reads the same records
 // (hive-only data included), and a second boot imports nothing again.
-func TestColonyUpgradeFromJSONDefaultStraightToColony(t *testing.T) {
+func TestColonyUpgradeFromJSONExplicitColony(t *testing.T) {
 	dir := fixtureDir(t)
 	clk := newClock()
 	b := bootColony(t, dir, StoreColony, clk)
