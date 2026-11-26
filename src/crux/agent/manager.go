@@ -392,9 +392,8 @@ type AgentProcess struct {
 	lastInferKickVisible    string    // stall watchdog: visible pane text just after kick delivery
 	stallNudgeSent          bool      // stall watchdog: at most one nudge per kick
 	lastSessionStallRestart time.Time // session-liveness: last restart for a hung Copilot session
-	// SessionRSSMB is the last sampled RSS of the CLI process tree (MiB);
-	// SessionRecycles counts #14842 policy recycles; lastSessionRecycle
-	// enforces the per-agent backoff after one.
+	// SessionRSSMB is the last sampled CLI process-tree RSS (MiB); SessionRecycles
+	// counts #14842 policy recycles; lastSessionRecycle enforces the backoff after one.
 	SessionRSSMB       int
 	SessionRecycles    int
 	lastSessionRecycle time.Time
