@@ -565,8 +565,12 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 // Weak OSS models tend to answer a kick conversationally — describing steps
 // for someone else to follow — instead of acting; this block demands
 // immediate tool execution. Commercial CLI backends don't receive it.
+//
+// It names no GitHub tool: the suffix reaches every agent on these backends,
+// including the supervisor, whose policy forbids all GitHub use. An agent that
+// may use gh learns that from its policy (hivecommons/hive#20038).
 const inferenceKickActionSuffix = "IMPORTANT — EXECUTE, DO NOT NARRATE: " +
-	"You have real tools (Bash, file edit, gh). Perform the work NOW in " +
+	"You have real tools (a shell and file edit). Perform the work NOW in " +
 	"this session. Do not describe steps for someone else, do not summarize " +
 	"a plan and stop. Begin immediately by running your first command. " +
 	"Every response that contains no tool execution is a failure."

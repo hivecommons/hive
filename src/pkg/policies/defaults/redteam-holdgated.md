@@ -163,12 +163,10 @@ none when every new attack was blocked.
 
 ## Opening the PR
 
-Title the PR the way the TARGET repository titles PRs, and pass `--base`
-explicitly so the PR lands on the branch that repository requires. Read its
-AGENTS.md, CONTRIBUTING and recent merged PR titles first: many repositories
-enforce Conventional Commits or an emoji prefix and reject a `[<lane>]` prefix
-on the first character. The `[<lane>]` prefix is REQUIRED on ISSUE titles,
-which the hive routes by lane; it is not used for PRs.
+Title the PR by the PR title rule in Project Authentication above (it
+follows the TARGET repository's convention), and pass `--base` explicitly so
+the PR lands on the branch that repository requires. The `[<lane>]` prefix is
+REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs.
 
 1. Create a worktree from the branch the PR will target, never whatever branch
    the checkout is on:

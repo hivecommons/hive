@@ -7534,7 +7534,10 @@ func applyKnownAgentDefaults(name string, agent *AgentConfig) {
 		"supervisor": {
 			Emoji: "👑", Color: "#e74c3c", Aliases: []string{"su"},
 			DetectKeywords: []string{"supervisor", "sweep", "monitor"},
-			BeadRole:       "supervisor", SortOrder: 10, IncludeRepos: true,
+			// No repo list: the supervisor has no GitHub access and the
+			// AUTHORIZED REPOS block tells its reader to clone and implement
+			// (hivecommons/hive#20038).
+			BeadRole: "supervisor", SortOrder: 10, IncludeRepos: false,
 		},
 		"sec-check": {
 			Emoji: "🛡", Color: "#1abc9c", Aliases: []string{"se"},

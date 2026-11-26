@@ -416,3 +416,23 @@ func TestAllowedByModeEscalation(t *testing.T) {
 		}
 	}
 }
+
+// hivecommons/hive#20040: the default policies say no agent can re-run CI. No
+// proxy rule matches an Actions write, so deny-by-default refuses re-runs and
+// workflow dispatch at every mode. If a rule is ever added, the policy text
+// that routes re-runs to a maintainer must change with it.
+func TestAllowedByModeRefusesActionsRerunAtEveryMode(t *testing.T) {
+	paths := []string{
+		"/repos/o/r/actions/runs/1/rerun",
+		"/repos/o/r/actions/runs/1/rerun-failed-jobs",
+		"/repos/o/r/actions/jobs/1/rerun",
+		"/repos/o/r/actions/workflows/ci.yml/dispatches",
+	}
+	for _, mode := range []agent.AgentMode{agent.ModeAdvisory, agent.ModeIssuesOnly, agent.ModeIssuesAndPRs, agent.ModeIssuesPRsMerge} {
+		for _, p := range paths {
+			if AllowedByMode(mode, "POST", p) {
+				t.Errorf("%s may POST %s; the policies say agents cannot re-run CI", mode, p)
+			}
+		}
+	}
+}

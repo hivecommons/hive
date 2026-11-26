@@ -28,17 +28,17 @@ test problem. Check these before diagnosing any single PR:
 2. **Saturated runners.** Jobs queued on a `self-hosted` label for longer than
    the typical job runtime while every runner in
    `gh api repos/<owner/repo>/actions/runners` is `busy` is capacity, not
-   flakiness. Open one `[<lane>] CI runner capacity` issue with the queue depth,
-   oldest queued age, and busy/total counts. Do not re-run jobs into a full
-   queue.
+   flakiness. Record one `[<lane>] CI runner capacity` bead with the queue
+   depth, oldest queued age, and busy/total counts (your mode files no
+   issues). Do not ask for re-runs into a full queue.
 3. **Merge order before merge.** Before repairing or re-running a PR, find
    out whether another open PR on the same base touches the same files:
    `git fetch origin pull/<N>/head:pr-<N>` for each sibling, then
    `git merge-tree --write-tree --name-only <this-head> <sibling-head>`
    (exit 1 = textual conflict; no checkout needed). If a sibling conflicts,
-   say so on the PR once and prefer the order that rebases the smaller diff.
-   Use a sticky comment (edit the existing one, marker `<!-- hive-pr-overlap -->`)
-   rather than a new comment each run.
+   record it in the PR's bead and name the order that rebases the smaller
+   diff. The overlap comment on the PR (marker `<!-- hive-pr-overlap -->`) is
+   not yours to write: your mode posts no comments.
 4. **Behind the base: defer to the preparation owner.** Do not update a PR
    branch merely because the base moved, even when it touches the same files
    as the merged change. On repositories that use the current-base gate
@@ -57,8 +57,9 @@ test problem. Check these before diagnosing any single PR:
    item 3 and follow your lane's conflict rules. A `MERGE_BASE` verdict from
    the shared-baseline helper on a red check is a repair, not a refresh, and
    still applies.
-5. **Throughput fixes worth a PR.** When a repository's CI is slow, look for
-   and propose, one PR each: a missing `concurrency` group with
+5. **Throughput fixes worth proposing.** When a repository's CI is slow, look
+   for these and record each one as its own bead (your mode opens no PRs): a
+   missing `concurrency` group with
    `cancel-in-progress` on pull_request workflows; `actions/setup-go` /
    `setup-node` caching that re-downloads on every shard; Docker builds without
    a registry layer cache (`--cache-from type=registry`); matrix shards that
@@ -129,9 +130,9 @@ ${PR_LIST}
 
 ## Gate Check Before Filing (MANDATORY)
 
-**Gate check before filing (MANDATORY).** Before filing a finding, check whether the repository already has a gate or a written policy for that class. If it does, do not file the finding. Instead, if the gate is misconfigured or does not cover the path, file ONE issue against the gate's config. A repository `AGENTS.md`, `GOVERNANCE.md` or ADR that says a class is out of scope is a policy: honour it and say so in your summary. For this lane, a mutation-testing config that runs in CI (`stryker.config.*`, `.stryker*`, `mutmut`, `cargo-mutants`, `go-mutesting`) suppresses "branch runs but is never asserted" findings; coverage-policy ADR or `GOVERNANCE.md` text saying defensive guards need unit coverage only suppresses "unit-covered but no end-to-end test reaches it" (Priority 2) findings.
+**Gate check before recording (MANDATORY).** Before recording a finding, check whether the repository already has a gate or a written policy for that class. If it does, do not record the finding. Instead, if the gate is misconfigured or does not cover the path, record ONE advisory bead about the gate's config. A repository `AGENTS.md`, `GOVERNANCE.md` or ADR that says a class is out of scope is a policy: honour it and say so in your summary. For this lane, a mutation-testing config that runs in CI (`stryker.config.*`, `.stryker*`, `mutmut`, `cargo-mutants`, `go-mutesting`) suppresses "branch runs but is never asserted" findings; coverage-policy ADR or `GOVERNANCE.md` text saying defensive guards need unit coverage only suppresses "unit-covered but no end-to-end test reaches it" (Priority 2) findings.
 
-**Three of a class means the gate is missing.** Before filing, look at the findings you have already filed in this repository (your beads via `bd list --actor quality`, and the `[quality]` issues in your work list). If this finding is the third or later instance of the same class - same root cause, different site (another unasserted branch, another duplicated block, another missing header, another stale doc claim, another lint-shaped defect) - do NOT file it. File ONE issue instead, titled `[quality] Gate proposal: <class>`, that lists the prior instances, names the missing gate (the tool and where it runs in CI), and asks the maintainers to accept or decline it. Use `--needs-decision` with `Risk: governance`. Resume filing individual findings in that class only if the proposal is declined; if it is accepted, the gate check above applies once the gate lands.
+**Three of a class means the gate is missing.** Before recording, look at the findings you have already recorded for this repository (your beads via `bd list --actor quality`). If this finding is the third or later instance of the same class - same root cause, different site (another unasserted branch, another duplicated block, another missing header, another stale doc claim, another lint-shaped defect) - do NOT record it. Record ONE advisory bead instead, titled `[quality] Gate proposal: <class>`, that lists the prior instances, names the missing gate (the tool and where it runs in CI), marked `Risk: governance` so a maintainer can accept or decline it. Your mode files no issues: the advisory digest carries the bead to the maintainers. Resume recording individual findings in that class only if the proposal is declined; if it is accepted, the gate check above applies once the gate lands.
 
 ## Workflow
 

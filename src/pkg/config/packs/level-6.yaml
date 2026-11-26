@@ -118,7 +118,7 @@ agents:
   bead_role: supervisor
   mode: ADVISORY
   kick_template: supervisor-nogithub.md
-  include_repos: true
+  include_repos: false
   clear_on_kick: false
   stale_timeout: 600
   interactions: 'Autonomous oversight of all agents. Triggers self-healing actions

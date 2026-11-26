@@ -49,7 +49,7 @@ agents:
     bead_role: supervisor
     mode: ADVISORY
     kick_template: supervisor-nogithub.md
-    include_repos: true
+    include_repos: false
     clear_on_kick: false
     stale_timeout: 1800
     interactions: >
