@@ -20,7 +20,7 @@ func (a *AgentConfig) SandboxBlockProblem(global AgentSandboxConfig) string {
 	if !ValidSandboxRuntimes[runtime] {
 		return fmt.Sprintf("sandbox runtime %q is not one hive has (%s, %s, %s or %s)", runtime, SandboxRuntimePodman, SandboxRuntimeJob, SandboxRuntimeOpenShell, SandboxRuntimeSubstrate)
 	}
-	if runtime == SandboxRuntimeJob && strings.TrimSpace(a.SandboxJob(global).WorkspaceClaim) == "" {
+	if job := a.SandboxJob(global); runtime == SandboxRuntimeJob && !job.CopiesWorkspace() && strings.TrimSpace(job.WorkspaceClaim) == "" {
 		return "the job sandbox runtime needs job.workspace_claim, in the agent's sandbox.job or in agent_sandbox.job"
 	}
 	return ""

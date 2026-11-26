@@ -24,6 +24,31 @@ func (s *Store) Forgotten(kind IdentityKind, value string) bool {
 	return s.tombs[s.tombstoneHash(IdentityKey(kind, value))]
 }
 
+// forgottenLocked is Forgotten with s.mu already held.
+func (s *Store) forgottenLocked(kind IdentityKind, value string) bool {
+	if kind == KindName {
+		return false
+	}
+	return s.tombs[s.tombstoneHash(IdentityKey(kind, value))]
+}
+
+// forgottenSnapshotLocked is a Forgotten that reads a copy of the
+// tombstones taken now, so it can be called without s.mu; s.mu is held.
+func (s *Store) forgottenSnapshotLocked() func(IdentityKind, string) bool {
+	tombs := make(map[string]bool, len(s.tombs))
+	for k, v := range s.tombs {
+		tombs[k] = v
+	}
+	salt := s.salt
+	return func(kind IdentityKind, value string) bool {
+		if kind == KindName {
+			return false
+		}
+		sum := sha256.Sum256([]byte(salt + "\x00" + IdentityKey(kind, value)))
+		return tombs[hex.EncodeToString(sum[:])]
+	}
+}
+
 // Tombstones is how many forgotten identities the store remembers.
 func (s *Store) Tombstones() int {
 	s.mu.Lock()

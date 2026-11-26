@@ -45,6 +45,10 @@ const (
 	taskListReasonCommentFailed = "comment-failed"
 	taskListReasonCloseFailed   = "close-failed"
 	taskListReasonPullRequest   = "pull-request"
+	// taskListReasonPartial skips a hive/partially-addressed issue whose
+	// merged PRs only reference it without a closing keyword
+	// (hivecommons/hive#19956).
+	taskListReasonPartial = "partially-addressed-no-closing-pr"
 )
 
 // TaskListSweepOptions mirrors AutoMergeSweepOptions.
@@ -317,6 +321,9 @@ type mergedPRRef struct {
 	Remainder  string
 	NeedsHuman bool
 	Handoff    bool
+	// Closing is true when the PR names the issue with a closing keyword
+	// (Fixes/Closes/Resolves), not only a non-closing reference.
+	Closing bool
 }
 
 // collectMergedReferencingPRs walks the repo's closed-PR list once per tick
@@ -358,7 +365,14 @@ func (c *Client) collectMergedReferencingPRs(ctx context.Context, displayRepo, o
 			// Both closing refs (Fixes/Closes) and non-closing refs (Refs)
 			// count. #7071 exists precisely because a merged `Refs #N`
 			// leaves the issue open; the sweep must therefore accept it.
-			refs := append(ParseClaimedIssues(text, displayRepo), ParseReferencedIssues(text, displayRepo)...)
+			closingRefs := ParseClaimedIssues(text, displayRepo)
+			closing := make(map[int]bool, len(closingRefs))
+			for _, ref := range closingRefs {
+				if strings.EqualFold(ref.Repo, displayRepo) {
+					closing[ref.Issue] = true
+				}
+			}
+			refs := append(closingRefs, ParseReferencedIssues(text, displayRepo)...)
 			seen := map[int]bool{}
 			for _, ref := range refs {
 				if !strings.EqualFold(ref.Repo, displayRepo) {
@@ -374,6 +388,7 @@ func (c *Client) collectMergedReferencingPRs(ctx context.Context, displayRepo, o
 					Title:      pr.GetTitle(),
 					URL:        pr.GetHTMLURL(),
 					MergedAt:   mergedAt,
+					Closing:    closing[ref.Issue],
 					Reference:  meta.Reference,
 					Remainder:  meta.Remainder,
 					NeedsHuman: meta.NeedsHuman,
@@ -884,6 +899,17 @@ func (c *Client) partiallyAddressedUntouchedPaths(ctx context.Context, owner, re
 	return untouchedCitedPaths(cited, changed)
 }
 
+// anyClosingMergedRef reports whether at least one merged PR names the issue
+// with a closing keyword.
+func anyClosingMergedRef(merged []mergedPRRef) bool {
+	for _, ref := range merged {
+		if ref.Closing {
+			return true
+		}
+	}
+	return false
+}
+
 func sortedMergedRefs(merged []mergedPRRef) []mergedPRRef {
 	sorted := append([]mergedPRRef(nil), merged...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Number < sorted[j].Number })
@@ -941,6 +967,14 @@ func (c *Client) trySweepTaskListIssue(ctx context.Context, displayRepo, owner, 
 			return TaskListSweepEvent{}, taskListReasonCommentFailed, fmt.Errorf("progress comment on %s#%d: %w", displayRepo, number, err)
 		}
 		return TaskListSweepEvent{}, taskListReasonHasUnticked, nil
+	}
+
+	// A hive/partially-addressed issue says work remains: ticked boxes and a
+	// merged `Refs` PR are not enough to close it. Only a merged PR that
+	// names it with a closing keyword is (hivecommons/hive#19956), the same
+	// rule close-on-merge applies.
+	if labelPresent(labels, PartiallyAddressedLabel) && !anyClosingMergedRef(mergedRefs) {
+		return TaskListSweepEvent{}, taskListReasonPartial, nil
 	}
 
 	// Full completion. Update the sweep's marker comment to a closure body

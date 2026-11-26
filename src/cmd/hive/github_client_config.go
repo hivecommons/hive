@@ -390,22 +390,7 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 	// trailer toggle is on. The same stream feeds the lifecycle timeline:
 	// agent_pr_created → pr_opened and pr_merged → merged, see
 	// recordLifecycleFromAudit.
-	client.SetAttributionAuditRecord(func(rec github.AuditRecord) {
-		b.dashSrv.AuditLogRecord("system", rec.Action, rec.Detail, rec.Agent, rec.Repo, rec.Target)
-		recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, rec)
-		b.dashSrv.ApplyPRTerminalAudit(rec)
-		// #10927/#10933: the agent card's "what is it on" and stale warning
-		// read each agent's last hive-mediated write.
-		dashboard.RecordAgentLastAction(rec, time.Now())
-		// A PR the hive merged or closed itself leaves the tracker and the
-		// governor's cached snapshot now, instead of waiting for GitHub's
-		// `closed` delivery to come back round through the hub.
-		evictHiveClosedPR(b.dashSrv, rec, time.Now())
-		// #18493: a PR the hive merged or closed releases its topic claim.
-		if state := topicStateForAudit(rec.Action); state != "" {
-			releaseTopicClaimsForPR(b.beadStores, rec.Repo, rec.Target, state, b.logger)
-		}
-	})
+	client.SetAttributionAuditRecord(b.recordWriteAudit)
 	client.SetPRTerminalObservedHook(func(obs github.PRTerminalObservation) {
 		ts := obs.ObservedAt.UTC().Format(time.RFC3339)
 		// #18493: an observed merge or close releases the PR's topic claim.
@@ -525,6 +510,30 @@ func holdMigrationFailedAlertMessage(hiveID, reportPath string) string {
 		msg += " Migration report: " + reportPath
 	}
 	return msg
+}
+
+// recordWriteAudit is the typed audit sink (#9587) for every hive-mediated
+// write: the GitHub client's attribution trail and the forge push relay
+// (#19960) both record here, so repo and target land as first-class audit
+// fields and the same entries feed the lifecycle timeline and the agent card.
+func (b *boot) recordWriteAudit(rec github.AuditRecord) {
+	if b.dashSrv == nil || b.cfg == nil {
+		return
+	}
+	b.dashSrv.AuditLogRecord("system", rec.Action, rec.Detail, rec.Agent, rec.Repo, rec.Target)
+	recordLifecycleFromAudit(b.dashSrv, b.cfg.Project.Org, rec)
+	b.dashSrv.ApplyPRTerminalAudit(rec)
+	// #10927/#10933: the agent card's "what is it on" and stale warning
+	// read each agent's last hive-mediated write.
+	dashboard.RecordAgentLastAction(rec, time.Now())
+	// A PR the hive merged or closed itself leaves the tracker and the
+	// governor's cached snapshot now, instead of waiting for GitHub's
+	// `closed` delivery to come back round through the hub.
+	evictHiveClosedPR(b.dashSrv, rec, time.Now())
+	// #18493: a PR the hive merged or closed releases its topic claim.
+	if state := topicStateForAudit(rec.Action); state != "" {
+		releaseTopicClaimsForPR(b.beadStores, rec.Repo, rec.Target, state, b.logger)
+	}
 }
 
 // evictHiveClosedPR removes a pull request from the tracker and the cached

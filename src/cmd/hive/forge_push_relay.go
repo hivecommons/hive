@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/gitidentity"
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
@@ -33,7 +34,10 @@ import (
 //     token minter a sandbox kick pushes with, at the contributor tier. Git
 //     runs with the checkout's hooks, fsmonitor and credential helpers
 //     neutralised (github.PushBranchGitEnv) and the token only as a header
-//     scoped to that one remote URL.
+//     scoped to that one remote URL. As on GitHub, a push is refused when a
+//     commit in the pushed range is authored by a hive identity without a
+//     Signed-off-by trailer (forgeHiveCommitIdentities), and a published
+//     branch is audited as agent_branch_pushed (#19960).
 //   - review-requests and merge-requests are NOT served on a forge-only hive
 //     yet. Each is answered with a reason and renamed .rejected, so the agent
 //     stops waiting instead of polling a queue no relay reads.
@@ -98,6 +102,33 @@ var forgeRepoDefaultBranch = func(ctx context.Context, cfg *config.Config, repo 
 		return "", fmt.Errorf("the forge reported no default branch for %s", repo)
 	}
 	return r.DefaultBranch, nil
+}
+
+// forgeHiveCommitIdentities is the hive's own commit identity on a forge,
+// for the push relay's sign-off check (#19960). The GitHub watcher matches
+// GitHub logins; on a forge the hive is the configured forge user
+// (project.ai_author, or the effective author), matched by author name or by
+// the local part of its commit email (Forgejo's "<user>@noreply.<host>"), and
+// every lane, which commits as "<agent>@<bot email domain>"
+// (gitidentity.AgentIdentity). A hive that still has a usable GitHub App
+// gives its lanes the App bot's noreply address instead
+// (gitidentity.AppLinkedAgentIdentity), so the bot login is included too.
+func forgeHiveCommitIdentities(cfg *config.Config) github.HiveCommitIdentities {
+	ids := github.HiveCommitIdentities{EmailDomains: []string{gitidentity.BotEmailDomain()}}
+	for _, login := range []string{cfg.Project.AIAuthor, cfg.EffectiveAIAuthor(), cfg.GitHub.BotLogin()} {
+		if login = strings.TrimSpace(login); login != "" {
+			ids.Logins = append(ids.Logins, login)
+		}
+	}
+	return ids
+}
+
+// withPushAudit sets where a published branch's agent_branch_pushed entry
+// goes: the same typed audit sink the GitHub client records to. Without one
+// the entry is not recorded.
+func (r *forgeRequestRelay) withPushAudit(audit func(github.AuditRecord)) *forgeRequestRelay {
+	r.pushAudit = audit
+	return r
 }
 
 // withPushRelay turns on the push-branch queue with authz, the manager's push
@@ -228,6 +259,21 @@ func (r *forgeRequestRelay) handlePushBranch(ctx context.Context, path string) {
 		return
 	}
 	sha = strings.TrimSpace(sha)
+
+	// Every commit a hive identity authors must carry its sign-off before it
+	// leaves the checkout, the same refusal as the GitHub push watcher. Hooks
+	// are neutralised by PushBranchGitEnv, so the relay checks itself. A
+	// failed listing is retried, never treated as "nothing to check".
+	log, err := forgePushExec(ctx, req.Dir, env, github.UnsignedHiveCommitLogArgs(sha)...)
+	if err != nil {
+		retry("listing the commits to push: " + github.FirstOutputLines(log, forgePushOutputLines))
+		return
+	}
+	if reason := github.HiveCommitSignoffRefusal(log, forgeHiveCommitIdentities(cfg)); reason != "" {
+		deny(reason)
+		return
+	}
+
 	args := []string{"push"}
 	if req.ForceWithLease {
 		args = append(args, "--force-with-lease")
@@ -236,6 +282,9 @@ func (r *forgeRequestRelay) handlePushBranch(ctx context.Context, path string) {
 	if out, err := forgePushExec(ctx, req.Dir, env, args...); err != nil {
 		retry("git push failed: " + github.FirstOutputLines(out, forgePushOutputLines))
 		return
+	}
+	if r.pushAudit != nil {
+		r.pushAudit(github.AgentBranchPushedAuditRecord(req.Agent, req.Repo, branch, sha, req.ForceWithLease))
 	}
 	result(github.PushBranchResponse{OK: true, Branch: branch, SHA: sha, Attempts: attempt})
 	r.settle(path, "", false)

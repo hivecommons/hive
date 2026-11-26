@@ -13,10 +13,13 @@ agent_sandbox.job.inference_proxy.endpoint # TODO #19619
 agent_sandbox.job.inference_proxy.listen_addr # TODO #19619
 agent_sandbox.job.relay_image # TODO #11854
 agent_sandbox.job.relay_run_as_user # TODO #11854
+agent_sandbox.job.runtime_class_name # TODO #11854
 agent_sandbox.job.volumes[].claim # TODO #11854
 agent_sandbox.job.volumes[].mount_path # TODO #11854
 agent_sandbox.job.volumes[].name # TODO #11854
 agent_sandbox.job.volumes[].read_only # TODO #11854
+agent_sandbox.job.workspace_size_limit # TODO #11854
+agent_sandbox.job.workspace_transport # TODO #11854
 agent_sandbox.openshell.allow_hosts[] # TODO #17645 (OpenShell runtime; Settings control pending)
 agent_sandbox.openshell.binaries[] # TODO #17645 (OpenShell runtime; Settings control pending)
 agent_sandbox.openshell.gateway_url # TODO #17645 (OpenShell runtime; Settings control pending)
@@ -137,6 +140,7 @@ agents.<key>.sandbox.job.inference_proxy.endpoint # TODO #19619
 agents.<key>.sandbox.job.inference_proxy.listen_addr # TODO #19619
 agents.<key>.sandbox.job.relay_image # TODO #11854
 agents.<key>.sandbox.job.relay_run_as_user # TODO #11854
+agents.<key>.sandbox.job.runtime_class_name # TODO #11854
 agents.<key>.sandbox.job.scheduler_name # TODO #11854
 agents.<key>.sandbox.job.service_account # TODO #11854
 agents.<key>.sandbox.job.ttl_seconds # TODO #11854
@@ -146,6 +150,8 @@ agents.<key>.sandbox.job.volumes[].name # TODO #11854
 agents.<key>.sandbox.job.volumes[].read_only # TODO #11854
 agents.<key>.sandbox.job.workspace_claim # TODO #11854
 agents.<key>.sandbox.job.workspace_claim_mount # TODO #11854
+agents.<key>.sandbox.job.workspace_size_limit # TODO #11854
+agents.<key>.sandbox.job.workspace_transport # TODO #11854
 agents.<key>.sandbox.network_mode # TODO #11854
 agents.<key>.sandbox.openshell.allow_hosts[] # TODO #17645 (OpenShell runtime; Settings control pending)
 agents.<key>.sandbox.openshell.binaries[] # TODO #17645 (OpenShell runtime; Settings control pending)
@@ -763,3 +769,5 @@ inbox.recording.max_seconds # see inbox.recording.enabled
 inbox.recording.max_bytes # see inbox.recording.enabled
 inbox.recording.quota_bytes # see inbox.recording.enabled
 inbox.recording.idle_finalize_minutes # see inbox.recording.enabled
+customers.enrichment.auto_accept # TODO #19857
+customers.store # TODO #19857
