@@ -58,12 +58,6 @@ const (
 	crmIdentitySourceEmail  = store.HubSourcePrefix + "provider_email"
 )
 
-// crmMaxFactValueBytes is the colony store's per-value cap. A longer value
-// (only admin notes can be, at maxContactNotesLen runes) stays JSON-only:
-// it is never truncated into colony, because a colony read would then put
-// the truncated text back on the record.
-const crmMaxFactValueBytes = 4096
-
 // crmMaxIdentityBytes and crmMaxPersonIDBytes are the colony store's caps
 // on an identity value and a person id.
 const (

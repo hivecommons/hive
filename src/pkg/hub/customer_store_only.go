@@ -406,7 +406,7 @@ func copyDirFiles(src, dst string, mode os.FileMode) error {
 		if err != nil {
 			return err
 		}
-		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, mode); err != nil {
+		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, mode); err != nil { // #nosec G703 -- dst is the migration's own new directory beside the hub data dir, and the name is a directory entry of the hub's users directory
 			return err
 		}
 	}

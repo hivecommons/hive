@@ -424,13 +424,13 @@ func TestHubCustomerStoreShadowDualWrite(t *testing.T) {
 	if c, ok := colonyPerson(t, st, users[1]).Consent("own"); !ok || !c.Covers(store.FieldCountry) {
 		t.Fatalf("consent not mirrored: %+v", c)
 	}
-	// Removing every consent withdraws it in colony.
+	// Removing every consent deletes it from colony too (colony v0.4.0).
 	path, _ := customerConsentPath(users[1])
 	if err := saveCustomerConsents(path, map[string]customerConsent{}); err != nil {
 		t.Fatal(err)
 	}
-	if c, ok := colonyPerson(t, st, users[1]).Consent("own"); !ok || c.Active() {
-		t.Fatalf("removed consent still active in colony: %+v", c)
+	if c, ok := colonyPerson(t, st, users[1]).Consent("own"); ok {
+		t.Fatalf("removed consent still in colony: %+v", c)
 	}
 }
 
