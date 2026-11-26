@@ -1,0 +1,1 @@
+- A block edited into the dashboard overlay (`ask`, `chat`, `customers` or any other block the config knows) now survives the config reload and the next save instead of being dropped silently. A block the hive cannot load, or an overlay file that is not valid YAML, is logged and kept as written rather than overwritten (#19740).
