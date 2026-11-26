@@ -152,12 +152,35 @@ func TestWorkflowBundleGetAndImportRoundTrip(t *testing.T) {
 	if !out.Verified || out.Entry.Key() != "cncf-techdocs@1" || !out.Entry.Compiled {
 		t.Fatalf("import result = %+v", out)
 	}
-	// Same bundle again: version 1 is taken, so it lands at 2.
-	raw, _ := bundle.Encode(b)
+	// Reusing version 1 allocates 2 and leaves the first import intact.
+	firstHash := out.Entry.Hash
+	b.Model.Spec.Meta.Description = "different marketplace draft"
+	updated, err := bundle.Export(b.Model, "andy", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := bundle.Encode(updated)
+	if err != nil {
+		t.Fatal(err)
+	}
 	rec = wfReq(s2, http.MethodPost, "/api/workflows/import", string(raw), true)
-	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	if rec.Code != http.StatusCreated || out.Entry.Version != "2" {
+	wfDecode(t, rec, &out)
+	if rec.Code != http.StatusCreated || out.Entry.Version != "2" || out.Entry.Description != updated.Model.Spec.Meta.Description {
 		t.Fatalf("second import: %d %+v", rec.Code, out.Entry)
+	}
+	for _, want := range []struct{ version, hash string }{{"1", firstHash}, {"2", out.Entry.Hash}} {
+		rec = wfReq(s2, http.MethodGet, "/api/workflows/cncf-techdocs/"+want.version, nil, false)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get imported version %s: %d %s", want.version, rec.Code, rec.Body)
+		}
+		var saved struct {
+			Model *workflowmodel.Model
+			Entry wfstore.Entry
+		}
+		wfDecode(t, rec, &saved)
+		if saved.Model == nil || saved.Model.Hash() != want.hash || saved.Entry.Hash != want.hash {
+			t.Fatalf("imported version %s was altered: %s", want.version, rec.Body)
+		}
 	}
 	// Non-owner, bad JSON, tampered.
 	if rec := wfReq(s2, http.MethodPost, "/api/workflows/import", string(raw), false); rec.Code != http.StatusForbidden {
