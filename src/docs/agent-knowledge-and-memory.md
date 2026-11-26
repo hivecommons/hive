@@ -368,7 +368,10 @@ conversation. `/clear` empties the chat; it does not touch anything on disk.
   (only `config.json` shared, #9444). Also per-agent: `~/.local`,
   `.claude.json`, `.npm`, `.gitconfig` (#9478). Codex gets
   `CODEX_HOME=/data/home/.codex-<name>` with only `auth.json` symlinked to the
-  shared login (`setupCodexHome`, `codexHomePath`). Legacy whole-directory
+  shared login (`setupCodexHome`, `codexHomePath`). The link is made only
+  when the path is absent or already a link: a regular `auth.json` (a login
+  made in the agent's terminal after a `codex logout`) is kept and a warning is
+  logged, never overwritten (#20002). Legacy whole-directory
   symlinks are retired on the next launch; nothing under `/data/home` is
   deleted — a pre-isolation `projects/*/memory` store is logged once for review.
   The full table is in [agent-configuration.md](agent-configuration.md#per-agent-homes-what-is-shared-and-what-is-private).
