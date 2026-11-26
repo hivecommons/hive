@@ -200,6 +200,18 @@ func DirectWriteRefusedAuditRecord(agent, kind, method, path, repo string) Audit
 		WriteTarget{Repo: repo}, "via", "proxy", "kind", kind, "method", method, "path", path, "outcome", "refused")
 }
 
+// BranchPushedAuditRecord builds the agent_branch_pushed entry for a branch
+// the hive pushed on an agent's behalf. The GitHub push watcher and the forge
+// push relay (hivecommons/hive#19960) both record it, so a push is audited
+// the same way whichever forge it went to.
+func BranchPushedAuditRecord(agent, repo, branch, sha string, forceWithLease bool) AuditRecord {
+	return writeAuditRecord(AuditActionAgentBranchPushed, InvocationMeta{Agent: agent},
+		WriteTarget{Repo: repo},
+		"branch", branch,
+		"sha", sha,
+		"force_with_lease", strconv.FormatBool(forceWithLease))
+}
+
 // WriteTarget names what one hive-mediated GitHub write touched. Write sites
 // pass it explicitly (#9587 phase 2) so the audit entry's typed repo and target
 // come from the value the write actually used, never from re-parsing a string.

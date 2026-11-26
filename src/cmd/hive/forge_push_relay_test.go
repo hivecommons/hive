@@ -18,6 +18,10 @@ import (
 
 const forgePushTestToken = "fj-push-token"
 
+// forgeHiveTestLogin is the forge token user, the hive's identity on the
+// test Forgejo.
+const forgeHiveTestLogin = "hive-bot"
+
 // gitCall is one git invocation the push relay made.
 type gitCall struct {
 	dir  string
@@ -31,6 +35,12 @@ type pushHarness struct {
 	pushErr  error
 	defErr   error
 	checkout string
+	// configList and log are what the fake git answers for the checkout
+	// config check and the sign-off log; audits are the recorded
+	// agent_branch_pushed entries.
+	configList string
+	log        string
+	audits     []github.AuditRecord
 }
 
 func newPushHarness(t *testing.T) *pushHarness {
@@ -46,13 +56,22 @@ func newPushHarness(t *testing.T) *pushHarness {
 		return nil
 	})
 
-	prevExec, prevDef := forgePushExec, forgeRepoDefaultBranch
-	t.Cleanup(func() { forgePushExec, forgeRepoDefaultBranch = prevExec, prevDef })
+	h.relay.withPushAudit(func(rec github.AuditRecord) { h.audits = append(h.audits, rec) })
+
+	prevExec, prevDef, prevIDs := forgePushExec, forgeRepoDefaultBranch, forgePushHiveIdentities
+	t.Cleanup(func() { forgePushExec, forgeRepoDefaultBranch, forgePushHiveIdentities = prevExec, prevDef, prevIDs })
+	forgePushHiveIdentities = func(context.Context, *config.Config, string) []string {
+		return []string{"", forgeHiveTestLogin}
+	}
 	forgePushExec = func(_ context.Context, dir string, env []string, args ...string) (string, error) {
 		h.calls = append(h.calls, gitCall{dir: dir, env: env, args: args})
 		switch args[0] {
 		case "rev-parse":
 			return "0123456789abcdef0123456789abcdef01234567\n", nil
+		case "config":
+			return h.configList, nil
+		case "log":
+			return h.log, nil
 		case "push":
 			if h.pushErr != nil {
 				return "! [rejected] fix-1 -> fix-1 (non-fast-forward)\n", h.pushErr
@@ -337,5 +356,174 @@ func TestForgeRepoDefaultBranch(t *testing.T) {
 				t.Fatalf("got %q, %v; want %q", got, err, tc.want)
 			}
 		})
+	}
+}
+
+// forgeRedirectingConfig is checkout config that can send the relayed push,
+// or its token header, somewhere other than the forge remote (#19959).
+var forgeRedirectingConfig = []string{
+	"url.https://evil.example/.insteadof",
+	"url.https://evil.example/.pushinsteadof",
+	"http.proxy",
+	"http.https://fj.example/.proxy",
+	"http.https://fj.example/acme/widgets.git.sslverify",
+	"http.sslcainfo",
+	"http.sslcapath",
+	"http.curloptresolve",
+	"credential.https://fj.example.helper",
+	"remote.origin.proxy",
+}
+
+// A checkout whose git config could redirect the push is refused, the result
+// says why, and nothing is pushed (#19959).
+func TestForgeRelayPushRefusesRedirectingConfig(t *testing.T) {
+	for _, key := range forgeRedirectingConfig {
+		t.Run(key, func(t *testing.T) {
+			h := newPushHarness(t)
+			h.configList = "local\x00core.bare\nfalse\x00local\x00" + key + "\nhttp://evil.example\x00"
+			path := writeRelayRequest(t, h.relay.pushDir, "a.json", h.goodPush())
+			h.relay.scanOnce(context.Background())
+
+			if len(h.pushCalls()) != 0 {
+				t.Fatalf("pushed from a checkout setting %s: %+v", key, h.calls)
+			}
+			var resp github.PushBranchResponse
+			readRelayResult(t, path, &resp)
+			if resp.OK || !strings.Contains(resp.Error, "authorization denied") || !strings.Contains(resp.Error, key) {
+				t.Errorf("resp = %+v, want a denial naming %s", resp, key)
+			}
+			assertExists(t, path+".denied", true)
+			if len(h.audits) != 0 {
+				t.Errorf("a refused push was audited as pushed: %+v", h.audits)
+			}
+		})
+	}
+}
+
+// The config check runs with the pinned git environment: system and global
+// config off, askpass cleared, helpers reset and TLS verified (#19959).
+func TestForgeRelayPushPinsGitEnv(t *testing.T) {
+	h := newPushHarness(t)
+	path := writeRelayRequest(t, h.relay.pushDir, "a.json", h.goodPush())
+	h.relay.scanOnce(context.Background())
+	var resp github.PushBranchResponse
+	readRelayResult(t, path, &resp)
+	if !resp.OK {
+		t.Fatalf("resp = %+v", resp)
+	}
+	var sawConfig bool
+	for _, c := range h.calls {
+		if c.args[0] == "config" {
+			sawConfig = true
+		}
+		env := strings.Join(c.env, "\n")
+		for _, want := range []string{"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_ASKPASS=\n", "core.askPass", "http.sslVerify"} {
+			if !strings.Contains(env+"\n", want) {
+				t.Errorf("git %v env lacks %q:\n%s", c.args, want, env)
+			}
+		}
+	}
+	if !sawConfig {
+		t.Errorf("no checkout config check before the push: %+v", h.calls)
+	}
+}
+
+// A failed config read never lets the push through: it is retried.
+func TestForgeRelayPushConfigReadFailureRetries(t *testing.T) {
+	h := newPushHarness(t)
+	forgePushExec = func(_ context.Context, dir string, env []string, args ...string) (string, error) {
+		h.calls = append(h.calls, gitCall{dir: dir, env: env, args: args})
+		switch args[0] {
+		case "rev-parse":
+			return "0123456789abcdef0123456789abcdef01234567\n", nil
+		case "config":
+			return "fatal: bad config line 3\n", errors.New("exit status 128")
+		}
+		return "", nil
+	}
+	path := writeRelayRequest(t, h.relay.pushDir, "a.json", h.goodPush())
+	h.relay.scanOnce(context.Background())
+	if len(h.pushCalls()) != 0 {
+		t.Fatalf("pushed with an unreadable config: %+v", h.calls)
+	}
+	assertExists(t, path, true)
+	var resp github.PushBranchResponse
+	readRelayResult(t, path, &resp)
+	if resp.OK || !strings.Contains(resp.Error, "bad config line") {
+		t.Errorf("resp = %+v", resp)
+	}
+}
+
+// forgeCommit is one record of the sign-off log the fake git returns.
+func forgeCommit(sha, name, email, msg string) string {
+	return sha + "\x1f" + name + "\x1f" + email + "\x1f" + msg + "\x1e"
+}
+
+// The Forgejo relay refuses a hive-authored commit without a Signed-off-by
+// trailer with the GitHub watcher's result shape, pushes signed ones, and
+// leaves other authors' commits to the PR's DCO check (#19960).
+func TestForgeRelayPushSignOffCheck(t *testing.T) {
+	signed := "fix: thing\n\nSigned-off-by: hive-bot <hive-bot@noreply.fj.example>\n"
+	for name, tc := range map[string]struct {
+		log    string
+		refuse string
+	}{
+		"unsigned by login": {log: forgeCommit("aaa111", forgeHiveTestLogin, "someone@example.com", "fix: thing\n"), refuse: "aaa111"},
+		"unsigned by email": {log: forgeCommit("bbb222", "Hive", "hive-bot@noreply.fj.example", "fix: thing\n"), refuse: "bbb222"},
+		"signed":            {log: forgeCommit("ccc333", forgeHiveTestLogin, "hive-bot@noreply.fj.example", signed)},
+		"other author":      {log: forgeCommit("ddd444", "outsider", "outsider@example.com", "fix: thing\n")},
+		"mixed": {log: forgeCommit("eee555", "outsider", "outsider@example.com", "fix: a\n") +
+			forgeCommit("fff666", forgeHiveTestLogin, "hive-bot@noreply.fj.example", "fix: b\n"), refuse: "fff666"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newPushHarness(t)
+			h.log = tc.log
+			path := writeRelayRequest(t, h.relay.pushDir, "a.json", h.goodPush())
+			h.relay.scanOnce(context.Background())
+			var resp github.PushBranchResponse
+			readRelayResult(t, path, &resp)
+
+			if tc.refuse == "" {
+				if !resp.OK || len(h.pushCalls()) != 1 {
+					t.Fatalf("resp = %+v, pushes = %d, want a push", resp, len(h.pushCalls()))
+				}
+				return
+			}
+			if len(h.pushCalls()) != 0 {
+				t.Fatalf("pushed an unsigned hive commit: %+v", h.calls)
+			}
+			want := "authorization denied: " + github.UnsignedHiveCommitRefusal(tc.log, []string{forgeHiveTestLogin})
+			if resp.OK || resp.Error != want || !strings.Contains(resp.Error, tc.refuse) || !strings.Contains(resp.Error, "Signed-off-by") {
+				t.Errorf("resp.Error = %q, want %q", resp.Error, want)
+			}
+			assertExists(t, path+".denied", true)
+		})
+	}
+}
+
+// A pushed branch is audited as agent_branch_pushed, as on the GitHub
+// watcher (#19960).
+func TestForgeRelayPushAudited(t *testing.T) {
+	h := newPushHarness(t)
+	req := h.goodPush()
+	req.ForceWithLease = true
+	path := writeRelayRequest(t, h.relay.pushDir, "a.json", req)
+	h.relay.scanOnce(context.Background())
+	var resp github.PushBranchResponse
+	readRelayResult(t, path, &resp)
+	if !resp.OK {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if len(h.audits) != 1 {
+		t.Fatalf("audits = %+v, want one agent_branch_pushed", h.audits)
+	}
+	rec := h.audits[0]
+	if rec.Action != github.AuditActionAgentBranchPushed || rec.Agent != "worker" || rec.Repo != "acme/widgets" || rec.Target != 0 {
+		t.Errorf("audit = %+v", rec)
+	}
+	for _, want := range []string{"branch=fix-1", "sha=0123456789abcdef0123456789abcdef01234567", "force_with_lease=true"} {
+		if !strings.Contains(rec.Detail, want) {
+			t.Errorf("audit detail lost %q: %q", want, rec.Detail)
+		}
 	}
 }

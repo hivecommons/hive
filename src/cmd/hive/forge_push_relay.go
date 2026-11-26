@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
 )
@@ -33,7 +34,12 @@ import (
 //     token minter a sandbox kick pushes with, at the contributor tier. Git
 //     runs with the checkout's hooks, fsmonitor and credential helpers
 //     neutralised (github.PushBranchGitEnv) and the token only as a header
-//     scoped to that one remote URL.
+//     scoped to that one remote URL. A checkout whose git config could
+//     redirect the push (url.*.insteadOf, proxies, CA overrides, per-URL
+//     http.* sections) is refused (github.PushBranchConfigRefusal, #19959).
+//     Like the GitHub watcher, a commit authored by the hive's own forge
+//     identity without a Signed-off-by trailer is refused, and a pushed
+//     branch is audited as agent_branch_pushed (#19960).
 //   - review-requests and merge-requests are NOT served on a forge-only hive
 //     yet. Each is answered with a reason and renamed .rejected, so the agent
 //     stops waiting instead of polling a queue no relay reads.
@@ -98,6 +104,46 @@ var forgeRepoDefaultBranch = func(ctx context.Context, cfg *config.Config, repo 
 		return "", fmt.Errorf("the forge reported no default branch for %s", repo)
 	}
 	return r.DefaultBranch, nil
+}
+
+// forgePushHiveIdentities lists the identities whose commits the push relay
+// requires a Signed-off-by on: project.ai_author and the login of the forge
+// token's user, which is the forge's hive identity. A forge commit email
+// ("<login>@noreply.<host>") matches its login by local part. A failed login
+// lookup leaves only ai_author. It is a variable so tests can substitute a
+// fake.
+var forgePushHiveIdentities = func(ctx context.Context, cfg *config.Config, repo string) []string {
+	ids := []string{strings.TrimSpace(cfg.Project.AIAuthor)}
+	l, err := forgeListerForRepo(cfg, repo)
+	if err != nil {
+		return ids
+	}
+	if s, ok := l.(interface {
+		Self(ctx context.Context) (string, error)
+	}); ok {
+		if login, err := s.Self(ctx); err == nil {
+			ids = append(ids, login)
+		}
+	}
+	return ids
+}
+
+// withPushAudit sets the sink the relay records agent_branch_pushed entries
+// to. A nil sink records nothing.
+func (r *forgeRequestRelay) withPushAudit(fn func(github.AuditRecord)) *forgeRequestRelay {
+	r.pushAudit = fn
+	return r
+}
+
+// forgePushAudit records a forge relay push in the dashboard audit log, the
+// sink the GitHub client's typed audit records reach, and as the agent's last
+// hive-mediated write.
+func (b *boot) forgePushAudit(rec github.AuditRecord) {
+	if b.dashSrv == nil {
+		return
+	}
+	b.dashSrv.AuditLogRecord("system", rec.Action, rec.Detail, rec.Agent, rec.Repo, rec.Target)
+	dashboard.RecordAgentLastAction(rec, time.Now())
 }
 
 // withPushRelay turns on the push-branch queue with authz, the manager's push
@@ -228,6 +274,30 @@ func (r *forgeRequestRelay) handlePushBranch(ctx context.Context, path string) {
 		return
 	}
 	sha = strings.TrimSpace(sha)
+
+	// Checkout config that could send the push, and its token header,
+	// somewhere other than remoteURL is refused (#19959). A config that
+	// cannot be read is retried, never treated as clean.
+	cfgList, err := forgePushExec(ctx, req.Dir, env, github.PushBranchConfigListArgs()...)
+	if err != nil {
+		retry(fmt.Sprintf("reading the git config of %s: %s", req.Dir, github.FirstOutputLines(cfgList, forgePushOutputLines)))
+		return
+	}
+	if reason := github.PushBranchConfigRefusal(cfgList); reason != "" {
+		deny(reason)
+		return
+	}
+
+	// Hive-authored commits must carry their sign-off before they leave the
+	// checkout, as on the GitHub watcher (#19960). Hooks are neutralised, so
+	// the relay checks itself.
+	if log, err := forgePushExec(ctx, req.Dir, env, "log", "--no-merges", "--format="+github.UnsignedHiveCommitFormat, sha, "--not", "--remotes"); err == nil && strings.TrimSpace(log) != "" {
+		if reason := github.UnsignedHiveCommitRefusal(log, forgePushHiveIdentities(ctx, cfg, req.Repo)); reason != "" {
+			deny(reason)
+			return
+		}
+	}
+
 	args := []string{"push"}
 	if req.ForceWithLease {
 		args = append(args, "--force-with-lease")
@@ -236,6 +306,9 @@ func (r *forgeRequestRelay) handlePushBranch(ctx context.Context, path string) {
 	if out, err := forgePushExec(ctx, req.Dir, env, args...); err != nil {
 		retry("git push failed: " + github.FirstOutputLines(out, forgePushOutputLines))
 		return
+	}
+	if r.pushAudit != nil {
+		r.pushAudit(github.BranchPushedAuditRecord(req.Agent, repo, branch, sha, req.ForceWithLease))
 	}
 	result(github.PushBranchResponse{OK: true, Branch: branch, SHA: sha, Attempts: attempt})
 	r.settle(path, "", false)

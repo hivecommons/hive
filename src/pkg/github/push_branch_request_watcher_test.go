@@ -99,10 +99,13 @@ func TestPushBranchRequestWatcher_PushesAndConsumes(t *testing.T) {
 	if !resp.OK || resp.Branch != "scanner/fix-1" || resp.SHA != "cafe1234" {
 		t.Errorf("result = %+v, want ok with branch and sha", resp)
 	}
-	if len(*calls) != 3 {
-		t.Fatalf("git calls = %d, want rev-parse + sign-off log + push", len(*calls))
+	if len(*calls) != 4 {
+		t.Fatalf("git calls = %d, want rev-parse + config check + sign-off log + push", len(*calls))
 	}
-	push := (*calls)[2]
+	if got := strings.Join((*calls)[1].args, " "); got != "git "+strings.Join(pushBranchConfigListArgs, " ") {
+		t.Errorf("second git call = %q, want the checkout config check", got)
+	}
+	push := (*calls)[3]
 	joined := strings.Join(push.args, " ")
 	if push.dir != checkout ||
 		!strings.Contains(joined, "https://github.com/o/r.git") ||
@@ -136,10 +139,10 @@ func TestPushBranchRequestWatcher_ForceWithLease(t *testing.T) {
 	}
 	c.ProcessPushBranchRequestsOnce(context.Background())
 
-	if len(*calls) != 3 {
-		t.Fatalf("git calls = %d, want 3", len(*calls))
+	if len(*calls) != 4 {
+		t.Fatalf("git calls = %d, want 4", len(*calls))
 	}
-	if joined := strings.Join((*calls)[2].args, " "); !strings.Contains(joined, "--force-with-lease") || strings.Contains(joined, " --force ") {
+	if joined := strings.Join((*calls)[3].args, " "); !strings.Contains(joined, "--force-with-lease") || strings.Contains(joined, " --force ") {
 		t.Errorf("push args = %q, want --force-with-lease and never a plain --force", joined)
 	}
 }
@@ -363,6 +366,8 @@ func TestPushBranchGitEnv_NeutralizesRepoLocalExecution(t *testing.T) {
 		"core.hooksPath":    os.DevNull,
 		"core.fsmonitor":    "false",
 		"credential.helper": "",
+		"core.askPass":      "",
+		"http.sslVerify":    "true",
 		"http." + strings.TrimRight(remote, "/") + ".extraHeader": "AUTHORIZATION: basic abc",
 	}
 	n, err := strconv.Atoi(got["GIT_CONFIG_COUNT"])

@@ -212,13 +212,30 @@ func pushBranchRemoteURL(owner, repo string) string {
 // directory and would otherwise run as the hive's UID with this environment —
 // including the App token header — visible to them. GIT_CONFIG_* pairs have
 // command-line precedence, so they override anything set in the checkout.
+//
+// The same checkout config can also decide WHERE the credentialed request goes
+// (hivecommons/hive#19959). System and global config are switched off, the
+// askpass programs are cleared, and TLS verification is pinned on. The keys
+// that a command-scope value cannot reliably undo (url.*.insteadOf, proxies,
+// CA overrides, per-URL http.* and credential.* sections) are refused before
+// the push instead: see pushBranchConfigRefusal.
 func pushBranchGitEnv(dir, remote, header string) []string {
-	env := []string{"GIT_TERMINAL_PROMPT=0"}
+	env := []string{
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=" + os.DevNull,
+		// Empty askpass values are ignored by git; exec.Cmd keeps the last
+		// value of a repeated key, so these win over the inherited ones.
+		"GIT_ASKPASS=",
+		"SSH_ASKPASS=",
+	}
 	pairs := [][2]string{
 		{"safe.directory", dir},
 		{"core.hooksPath", os.DevNull},
 		{"core.fsmonitor", "false"},
 		{"credential.helper", ""},
+		{"core.askPass", ""},
+		{"http.sslVerify", "true"},
 	}
 	if header != "" {
 		pairs = append(pairs, [2]string{"http." + strings.TrimRight(remote, "/") + ".extraHeader", header})
@@ -405,6 +422,20 @@ func (c *Client) handleOnePushBranchRequest(ctx context.Context, path string, no
 	}
 	sha = strings.TrimSpace(sha)
 
+	// Checkout config that could send the push, and its token header,
+	// somewhere other than remote is refused (hivecommons/hive#19959). A
+	// config that cannot be read is retried, never treated as clean.
+	cfgList, err := pushBranchExec(ctx, req.Dir, env, "git", pushBranchConfigListArgs...)
+	if err != nil {
+		c.recordPushBranchFailure(path, req, attempts,
+			fmt.Sprintf("reading the git config of %s: %s", req.Dir, firstOutputLines(cfgList, 3)), nowFn)
+		return
+	}
+	if reason := pushBranchConfigRefusal(cfgList); reason != "" {
+		c.denyPushBranchRequest(path, req, reason, nowFn)
+		return
+	}
+
 	// Every commit a hive identity authors must carry its sign-off before it
 	// leaves the checkout. An unsigned hive commit on a published branch is
 	// what later makes the automerge DCO stage re-author the PR
@@ -412,7 +443,7 @@ func (c *Client) handleOnePushBranchRequest(ctx context.Context, path string, no
 	// Hooks are neutralised by pushBranchGitEnv, so the relay checks itself.
 	if log, err := pushBranchExec(ctx, req.Dir, env, "git", "log", "--no-merges", "--format="+unsignedHiveCommitFormat, sha, "--not", "--remotes"); err == nil {
 		if bad := unsignedHiveCommits(log, c.pushHiveIdentities()); len(bad) > 0 {
-			c.denyPushBranchRequest(path, req, fmt.Sprintf("commit %s is authored by hive identity %q without a Signed-off-by trailer; hive-authored commits must be signed off at creation (git commit -s)", bad[0].SHA, bad[0].Author), nowFn)
+			c.denyPushBranchRequest(path, req, unsignedHiveCommitReason(bad[0]), nowFn)
 			return
 		}
 	}
@@ -428,11 +459,7 @@ func (c *Client) handleOnePushBranchRequest(ctx context.Context, path string, no
 		return
 	}
 
-	c.recordWriteAudit(AuditActionAgentBranchPushed, InvocationMeta{Agent: req.Agent},
-		WriteTarget{Repo: req.Repo},
-		"branch", branch,
-		"sha", sha,
-		"force_with_lease", strconv.FormatBool(req.ForceWithLease))
+	c.deliverAuditRecord(BranchPushedAuditRecord(req.Agent, req.Repo, branch, sha, req.ForceWithLease))
 	c.writePushBranchResult(path, PushBranchResponse{OK: true, Branch: branch, SHA: sha, Attempts: attempts, At: nowFn().UTC().Format(time.RFC3339)})
 	_ = os.Remove(path)
 	c.notifyAgentAction(AgentAction{Agent: req.Agent, Kind: AgentActionPush, Repo: req.Repo, Branch: branch, SHA: sha, At: nowFn()})
@@ -515,6 +542,91 @@ const unsignedHiveCommitFormat = "%H%x1f%an%x1f%ae%x1f%B%x1e"
 type unsignedHiveCommit struct {
 	SHA    string
 	Author string
+}
+
+// unsignedHiveCommitReason is the denial reason for an unsigned hive commit,
+// shared by the GitHub watcher and the forge push relay.
+func unsignedHiveCommitReason(bad unsignedHiveCommit) string {
+	return fmt.Sprintf("commit %s is authored by hive identity %q without a Signed-off-by trailer; hive-authored commits must be signed off at creation (git commit -s)", bad.SHA, bad.Author)
+}
+
+// pushBranchConfigListArgs lists every config entry git will apply in the
+// checkout, includes followed, with its scope, NUL-separated.
+var pushBranchConfigListArgs = []string{"config", "--list", "-z", "--show-scope"}
+
+// pushBranchRefusedHTTPVars are the http.<var> settings that choose the
+// proxy, the TLS trust roots or the client certificate, or pin a host to an
+// address. Any of them lets the checkout's owner see or redirect the push
+// token, and "unset" cannot be expressed at command scope, so they are
+// refused rather than overridden.
+var pushBranchRefusedHTTPVars = map[string]struct{}{
+	"proxy":                         {},
+	"proxyauthmethod":               {},
+	"proxysslcert":                  {},
+	"proxysslkey":                   {},
+	"proxysslcainfo":                {},
+	"proxysslcertpasswordprotected": {},
+	"sslcainfo":                     {},
+	"sslcapath":                     {},
+	"sslcert":                       {},
+	"sslkey":                        {},
+	"sslbackend":                    {},
+	"curloptresolve":                {},
+}
+
+// pushBranchConfigRefusal parses pushBranchConfigListArgs output and returns
+// why the push must not run, or "" when nothing in the checkout's config can
+// redirect it. Command-scope entries are the hive's own overrides and are
+// skipped. Refused: url.*.insteadOf and url.*.pushInsteadOf (they rewrite
+// even an explicit push URL), any per-URL http.<url>.* or credential.<url>.*
+// section (a per-URL value outranks the command-scope pins), the proxy and
+// TLS http.* settings above, and remote.*.proxy.
+func pushBranchConfigRefusal(listing string) string {
+	var offenders []string
+	fields := strings.Split(listing, "\x00")
+	for i := 0; i+1 < len(fields); i += 2 {
+		scope := fields[i]
+		key, _, _ := strings.Cut(fields[i+1], "\n")
+		if scope == "command" {
+			continue
+		}
+		if pushBranchConfigKeyRefused(strings.ToLower(key)) {
+			offenders = append(offenders, key)
+		}
+	}
+	if len(offenders) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("the checkout's git config sets %s, which can redirect the push or its credential away from the hive's remote; remove it (git config --unset) and request the push again", strings.Join(offenders, ", "))
+}
+
+func pushBranchConfigKeyRefused(key string) bool {
+	section, rest, ok := strings.Cut(key, ".")
+	if !ok {
+		return false
+	}
+	// rest is "<var>" or "<subsection>.<var>"; a subsection may contain dots,
+	// a variable name never does.
+	dot := strings.LastIndexByte(rest, '.')
+	sub, name := "", rest
+	if dot >= 0 {
+		sub, name = rest[:dot], rest[dot+1:]
+	}
+	switch section {
+	case "url":
+		return name == "insteadof" || name == "pushinsteadof"
+	case "http":
+		if dot >= 0 {
+			return true
+		}
+		_, refused := pushBranchRefusedHTTPVars[name]
+		return refused
+	case "credential":
+		return dot >= 0
+	case "remote":
+		return sub != "" && name == "proxy"
+	}
+	return false
 }
 
 // pushHiveIdentities lists the logins whose commits must be signed off: the

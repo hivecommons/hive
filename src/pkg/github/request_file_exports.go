@@ -80,15 +80,47 @@ func ValidatePushBranchDir(dir string, fileUID int) error {
 }
 
 // PushBranchGitEnv is the environment the push-branch relay runs git with in
-// an agent-owned checkout: no prompts, hooks, fsmonitor or credential
-// helpers from the checkout, and token as a Basic auth extraHeader scoped to
-// remote. An empty token adds no header.
+// an agent-owned checkout: no prompts, hooks, fsmonitor, askpass or
+// credential helpers from the checkout, no system or global config, TLS
+// verification on, and token as a Basic auth extraHeader scoped to remote.
+// An empty token adds no header. Config it cannot pin is checked with
+// PushBranchConfigRefusal.
 func PushBranchGitEnv(dir, remote, token string) []string {
 	header := ""
 	if token != "" {
 		header = gitBasicAuthHeader(token)
 	}
 	return pushBranchGitEnv(dir, remote, header)
+}
+
+// PushBranchConfigListArgs are the git arguments that list a checkout's
+// effective config for PushBranchConfigRefusal. Run them with the
+// PushBranchGitEnv environment.
+func PushBranchConfigListArgs() []string {
+	return append([]string(nil), pushBranchConfigListArgs...)
+}
+
+// PushBranchConfigRefusal returns why a push from a checkout whose config
+// listing (PushBranchConfigListArgs output) is listing must not run, or ""
+// when nothing in it can redirect the push or its token
+// (hivecommons/hive#19959).
+func PushBranchConfigRefusal(listing string) string {
+	return pushBranchConfigRefusal(listing)
+}
+
+// UnsignedHiveCommitFormat is the git log --format whose output
+// UnsignedHiveCommitRefusal parses.
+const UnsignedHiveCommitFormat = unsignedHiveCommitFormat
+
+// UnsignedHiveCommitRefusal returns the push relay's denial reason for the
+// first commit in log authored by one of identities (by name, or by the local
+// part of the author email) without a Signed-off-by trailer, or "" when there
+// is none. Commits by anyone else are not checked.
+func UnsignedHiveCommitRefusal(log string, identities []string) string {
+	if bad := unsignedHiveCommits(log, identities); len(bad) > 0 {
+		return unsignedHiveCommitReason(bad[0])
+	}
+	return ""
 }
 
 // FirstOutputLines returns the first n non-empty lines of a command's output,
