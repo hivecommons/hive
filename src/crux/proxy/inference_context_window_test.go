@@ -71,15 +71,15 @@ func TestSetInferenceRoute_SeedsWindowFromEarlierDiscovery(t *testing.T) {
 	p := newInferenceTestProxy()
 
 	p.SetInferenceRoute("quality", &InferenceRoute{Backend: "litellm", Endpoint: srv.URL, Model: "vllm/Qwen"})
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if w, _ := p.InferenceContextWindow("quality"); w == 262144 {
-			break
-		}
-		if time.Now().After(deadline) {
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	deadline := time.After(5 * time.Second)
+	for w, _ := p.InferenceContextWindow("quality"); w != 262144; w, _ = p.InferenceContextWindow("quality") {
+		select {
+		case <-tick.C:
+		case <-deadline:
 			t.Fatal("background probe never resolved the window")
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 
 	caller := &InferenceRoute{Backend: "litellm", Endpoint: srv.URL, Model: "vllm/Qwen"}
