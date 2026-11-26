@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -97,7 +96,12 @@ func (h *giteaForgejoHint) check(ctx context.Context, cfg *config.Config) {
 		}
 		token := ""
 		if t.sendToken {
-			token = os.Getenv(cfg.Gitea.TokenEnvName())
+			var err error
+			token, _, err = cfg.Gitea.Credentials().Governor().Resolve()
+			if err != nil {
+				h.logger.Debug("gitea token unavailable; will retry", "url", t.url, "error", err)
+				continue
+			}
 		}
 		pctx, cancel := context.WithTimeout(ctx, giteaVersionProbeTimeout)
 		version, err := probeGiteaVersion(pctx, token, forge.Options{BaseURL: t.url})

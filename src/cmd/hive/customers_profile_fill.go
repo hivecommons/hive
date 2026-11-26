@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -230,15 +229,22 @@ func customersProfileSources(d customersProfileFillDeps) []customers.ProfileLook
 	var out []customers.ProfileLookup
 	switch kind := cfg.ForgeKindForRepo(""); kind {
 	case config.ForgeGitLab, config.ForgeGitea:
-		fk, tokenEnv, source, requests := forge.KindGitLab, cfg.GitLab.TokenEnvName(), customers.ProfileSourceGitLab, forge.UserProfileMaxRequests
+		fk, gov, source, requests := forge.KindGitLab, cfg.GitLab.Credentials().Governor(), customers.ProfileSourceGitLab, forge.UserProfileMaxRequests
 		if kind == config.ForgeGitea {
-			fk, tokenEnv, source, requests = forge.KindGitea, cfg.Gitea.TokenEnvName(), customers.ProfileSourceGitea, 1
+			fk, gov, source, requests = forge.KindGitea, cfg.Gitea.Credentials().Governor(), customers.ProfileSourceGitea, 1
 		}
 		newForge := d.newForge
 		if newForge == nil {
 			newForge = forge.NewForge
 		}
-		f, err := newForge(fk, os.Getenv(tokenEnv), forge.Options{BaseURL: cfg.ForgeURLForRepo(""), Org: cfg.Project.Org})
+		token, _, err := gov.Resolve()
+		if err != nil {
+			if d.logger != nil {
+				d.logger.Warn("[customers] profile fill: forge token unavailable", "forge", kind, "error", err)
+			}
+			break
+		}
+		f, err := newForge(fk, token, forge.Options{BaseURL: cfg.ForgeURLForRepo(""), Org: cfg.Project.Org})
 		if err != nil {
 			if d.logger != nil {
 				d.logger.Warn("[customers] profile fill: forge adapter unavailable", "forge", kind, "error", err)

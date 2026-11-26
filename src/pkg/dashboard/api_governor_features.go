@@ -293,7 +293,7 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	applyPlatform, err := body.featuresPlatformBody.prepare()
+	applyPlatform, err := body.featuresPlatformBody.prepare(s.deps.Config)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return

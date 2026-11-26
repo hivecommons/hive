@@ -174,8 +174,9 @@ func CredentialStoreLine(base, token string) (string, error) {
 // access token), so every tier gets the same credential; WithTier is a no-op.
 type StaticTokenMinter struct {
 	// Token returns the current token, so a rotated secret is picked up on
-	// the next mint.
-	Token func() string
+	// the next mint. An error fails the mint, so a bad token source never
+	// reads as an empty token.
+	Token func() (string, error)
 }
 
 // MintPushToken implements TokenMinter.
@@ -183,7 +184,11 @@ func (m StaticTokenMinter) MintPushToken(context.Context, string) (string, error
 	if m.Token == nil {
 		return "", errors.New("pushbroker: static forge token source is not configured")
 	}
-	token := strings.TrimSpace(m.Token())
+	raw, err := m.Token()
+	if err != nil {
+		return "", fmt.Errorf("pushbroker: forge token: %w", err)
+	}
+	token := strings.TrimSpace(raw)
 	if token == "" {
 		return "", errors.New("pushbroker: forge token is empty")
 	}
