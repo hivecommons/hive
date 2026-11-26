@@ -421,12 +421,28 @@ compares identity provenance.
   A restart reads everything from `colony.db`. A `colony.db` that cannot be
   opened in colony-only keeps the Customers section off rather than starting
   an empty `people.json`.
+- **A `people.json` beside a migrated `colony.db`.** A migration counts as
+  finished only once its renames are done and `colony-sync.json` records
+  `migrated_at`; a restore clears it. Without `migrated_at`, `people.json` is
+  the truth and is migrated again, whatever an unfinished attempt left in
+  `colony.db`. With it, a `people.json` older than the migration (a stale copy
+  put back) is renamed `people.json.stray`, kept, and the store is read from
+  `colony.db`; one newer than the migration (an older binary that read
+  `colony-only` as `json`) is refused, and so is a `colony` or `shadow` boot
+  over that store, because choosing either copy, or the orphan forget, could
+  lose people: export or move the file aside first. A migration that does
+  not verify removes the document and attachments it wrote. The renames go
+  `people.json` first; a stop before `enrichment.json` or the marker is
+  finished by the next boot.
 - **Forget** erases the person inside that transaction, compacts the file,
   and scrubs them from the `.pre-colony` and `.migrated` files too.
 - **Rollback** is a mode change: a boot in `colony`, `shadow` or `json` that
   finds no `people.json` beside a colony-only `colony.db` writes both files
-  back from it first, and a `colony` or `shadow` boot drops the colony-only
-  document so a later restore can never go back in time. By hand: stop the
+  back from it first, then drops the colony-only document and `migrated_at`,
+  so a later restore can never go back in time (`hive colony export` into
+  the data directory does the same). A restore that could not write
+  `people.json` keeps the Customers section off in every mode; one whose
+  cleanup alone failed is logged and the hive starts. By hand: stop the
   hive and run `hive colony export --format hive-people-json [--dir
   /data/customers] [--out DIR] [--force]`; it refuses to overwrite a file
   without `--force`.

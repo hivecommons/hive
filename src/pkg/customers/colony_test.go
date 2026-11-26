@@ -764,3 +764,94 @@ func TestColonyUpgradeFromJSONExplicitColony(t *testing.T) {
 		t.Fatalf("parity after the second boot = %+v, %v", par, err)
 	}
 }
+
+// A spoke that ran the short-lived colony default (#20060) drops back to the
+// shadow default on its next upgrade (#20081). Booting shadow over the
+// colony.db and sync marker colony mode left keeps the JSON authoritative,
+// imports nothing a second time, loses and duplicates nothing, parity stays
+// clean, and going back to colony afterwards works (#19972).
+func TestColonyShadowAfterColonyDefault(t *testing.T) {
+	dir := fixtureDir(t)
+	clk := newClock()
+	migration := func(c *Colony) cstore.MigrationRecord {
+		t.Helper()
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		rec, ran, err := c.db.Migration(colonyMigrationName)
+		if err != nil || !ran {
+			t.Fatalf("migration record: ran %v, err %v", ran, err)
+		}
+		return rec
+	}
+	checkParity := func(s *Store, want StoreMode) {
+		t.Helper()
+		par, err := s.ColonyParity()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if par.Mode != want || par.JSONPeople != 3 || par.ColonyPeople != 3 || par.Mismatches != 0 || par.Failures != 0 ||
+			par.JSONIdentities != par.ColonyIdent || par.JSONHeld != par.ColonyHeld {
+			t.Fatalf("parity in %s = %+v", want, par)
+		}
+	}
+
+	// v5.376.0: the colony default, with a change written to both stores.
+	c1 := bootColony(t, dir, StoreColony, clk)
+	if _, err := c1.store.SetNotes(fixBea, "written in colony mode"); err != nil {
+		t.Fatal(err)
+	}
+	first := migration(c1.colony)
+	if err := c1.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// The upgrade to the shadow default, with nothing changed in between.
+	s1 := bootColony(t, dir, StoreShadow, clk)
+	if got := migration(s1.colony); !got.At.Equal(first.At) || got.Fingerprint != first.Fingerprint {
+		t.Fatalf("shadow ran the import again: %+v, first %+v", got, first)
+	}
+	checkParity(s1.store, StoreShadow)
+	if bea, _ := s1.store.Get(fixBea); bea.Notes != "written in colony mode" {
+		t.Fatalf("shadow lost a colony-mode change: %+v", bea)
+	}
+	if err := s1.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A json-mode run changes people.json behind colony.db's back; the next
+	// shadow boot catches colony up from the JSON (the JSON wins) and does
+	// not import again.
+	j, err := Open(dir, clk.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := j.SetProfileField(fixBea, FieldOrganization, "Json Org", "owner"); err != nil {
+		t.Fatal(err)
+	}
+	s2 := bootColony(t, dir, StoreShadow, clk)
+	if got := migration(s2.colony); !got.At.Equal(first.At) {
+		t.Fatalf("the catch-up re-ran the import: %+v", got)
+	}
+	checkParity(s2.store, StoreShadow)
+	bea := colonyPerson(t, s2.colony, fixBea)
+	if f := factAt(t, bea, FieldOrganization, cstore.RankUser); f.Value != "Json Org" {
+		t.Fatalf("colony did not catch up from the JSON: %+v", f)
+	}
+	if got, _ := s2.store.Get(fixBea); got.Profile.Organization.Value != "Json Org" || got.Notes != "written in colony mode" {
+		t.Fatalf("shadow read = %+v, want the JSON as written", got)
+	}
+	if err := s2.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// And back to colony.
+	c2 := bootColony(t, dir, StoreColony, clk)
+	checkParity(c2.store, StoreColony)
+	got, _ := c2.store.Get(fixBea)
+	if got.Profile.Organization.Value != "Json Org" || got.Notes != "written in colony mode" {
+		t.Fatalf("back in colony mode bea = %+v", got)
+	}
+	if len(c2.store.People()) != 3 {
+		t.Fatalf("people back in colony mode = %d, want 3", len(c2.store.People()))
+	}
+}

@@ -70,7 +70,18 @@ func wireCustomersAtMode(dataDir, graphDir string, mode customers.StoreMode, res
 	if mode != customers.StoreColonyOnly {
 		// A hive set back from colony-only finds no people.json: it is
 		// written back from colony.db first (#19972).
-		if _, err := customers.RestoreFromColony(dataDir, logger); err != nil {
+		if restored, err := customers.RestoreFromColony(dataDir, logger); err != nil && restored {
+			// people.json was written; only the cleanup after it failed.
+			// A later colony-only boot sees people.json is newer than the
+			// migration and refuses to choose, so nothing is lost.
+			if logger != nil {
+				logger.Warn("[customers] people.json restored from the colony-only store; cleaning up after it failed",
+					"error", err)
+			}
+		} else if err != nil {
+			// No people.json: starting would begin an empty one, which a
+			// colony or shadow boot would take as the truth. Customers
+			// stays off in every mode.
 			if logger != nil {
 				logger.Error("[customers] people.json could not be restored from the colony-only store; the Customers section is off",
 					"error", err)
