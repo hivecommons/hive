@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.373.7)
+
+### Fixed
+
+- Watch separate release versions from the same JSON index when subscriptions select different version fields. On upgrade, all existing generic index feeds establish a fresh baseline and their queued alerts are cleared.
+
 ## 2026-11-26 (v5.373.6)
 
 ### Fixed
