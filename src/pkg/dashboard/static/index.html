@@ -62711,7 +62711,7 @@ function burnAreaChart() {
       'acmm:structural-gates': 'Structural gates in settings that require human approval for risky operations.',
       'acmm:auto-qa-tuning': 'Auto-QA that self-tunes thresholds based on historical pass/fail patterns.',
       'acmm:nightly-compliance': 'Nightly compliance checks that catch drift, stale dependencies, or broken links.',
-      'acmm:copilot-review-apply': 'Automated application of review feedback — agents fix issues flagged in reviews.',
+      'acmm:copilot-review-apply': 'Automated application of review feedback. Detected by file name only: .github/workflows/copilot-review-apply.yml, apply-copilot.yml, ai-fix.yml or auto-review.yml (content is not read). Such a workflow takes reviewer text as model input and needs a token that can push. Hive\'s review-fix loop also passes this item, or declare a .acmm.yml waiver.',
       'acmm:auto-label': 'Automated issue/PR labeling that routes work to the right agents or reviewers.',
       'acmm:ai-fix-workflow': 'An AI-fix-requested workflow that assigns labeled issues to agents for automated resolution.',
       'acmm:tier-classifier': 'Change classification that categorizes PRs by risk level (trivial, standard, critical).',
