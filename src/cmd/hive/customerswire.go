@@ -54,16 +54,36 @@ func wireCustomers(cfg *config.Config, resolvers customers.Resolvers, logger *sl
 	if !cfg.CustomersEnabled() {
 		return nil, nil
 	}
-	return wireCustomersAt(customersDataDir, customersGraphDir, resolvers, logger)
+	mode := customers.ParseStoreMode(cfg.CustomersStoreMode())
+	return wireCustomersAtMode(customersDataDir, customersGraphDir, mode, resolvers, logger)
 }
 
 func wireCustomersAt(dataDir, graphDir string, resolvers customers.Resolvers, logger *slog.Logger) (*customersDashboard, func()) {
+	return wireCustomersAtMode(dataDir, graphDir, customers.StoreJSON, resolvers, logger)
+}
+
+// wireCustomersAtMode is wireCustomersAt with a customers.store mode
+// (#19855). shadow and colony open /data/customers/colony.db beside
+// people.json; a colony store that cannot be opened or imported leaves the
+// section on json, which is today's behaviour.
+func wireCustomersAtMode(dataDir, graphDir string, mode customers.StoreMode, resolvers customers.Resolvers, logger *slog.Logger) (*customersDashboard, func()) {
 	store, err := customers.Open(dataDir, nil)
 	if err != nil {
 		if logger != nil {
 			logger.Error("[customers] people store unavailable; the Customers section is off", "error", err)
 		}
 		return nil, nil
+	}
+	colony, err := customers.AttachColony(store, mode, logger)
+	if err != nil {
+		colony = nil
+		if logger != nil {
+			logger.Error("[customers] colony store unavailable; Customers stays on people.json (customers.store json)",
+				"mode", string(mode), "error", err)
+		}
+	}
+	if colony != nil {
+		logCustomersColonyParity(store, logger, true)
 	}
 	// The index holds the edges. Without it the store still works, so a
 	// failure here is logged and not fatal.
@@ -81,6 +101,7 @@ func wireCustomersAt(dataDir, graphDir string, resolvers customers.Resolvers, lo
 		if index != nil {
 			_ = index.Close()
 		}
+		_ = colony.Close()
 	}
 	svc := customers.NewService(store, index, resolvers)
 	graph, err := gql.New(svc, gql.Limits{})
@@ -91,6 +112,28 @@ func wireCustomersAt(dataDir, graphDir string, resolvers customers.Resolvers, lo
 		}
 	}
 	return &customersDashboard{svc: svc, graph: graph, logger: logger}, stop
+}
+
+// logCustomersColonyParity logs the colony parity check: counts only, never
+// a value. A clean check after a sweep is logged at debug level.
+func logCustomersColonyParity(store *customers.Store, logger *slog.Logger, boot bool) {
+	if logger == nil || store == nil || store.Colony() == nil {
+		return
+	}
+	p, err := store.ColonyParity()
+	if err != nil {
+		logger.Warn("[customers] colony parity check failed", "error", err)
+		return
+	}
+	args := []any{"mode", string(p.Mode), "json_people", p.JSONPeople, "colony_people", p.ColonyPeople,
+		"json_identities", p.JSONIdentities, "colony_identities", p.ColonyIdent, "facts_user", p.FactsUser,
+		"facts_hub_shared", p.FactsHubShared, "facts_enrichment", p.FactsEnrichment, "mismatches", p.Mismatches,
+		"write_failures", p.Failures}
+	if boot || p.Mismatches > 0 || p.Failures > 0 {
+		logger.Info("[customers] colony parity", args...)
+		return
+	}
+	logger.Debug("[customers] colony parity", args...)
 }
 
 // customersError maps a store error onto the dashboard's sentinels, which

@@ -38,6 +38,7 @@ const (
 	MaxEnrichedActivity     = 50
 	maxEnrichedTextLen      = 200
 	maxEnrichedURLLen       = 500
+	maxEnrichedMatchedByLen = 32
 	// enrichmentDateLayout is how affiliation dates are kept: a calendar
 	// date, the precision gitdm publishes.
 	enrichmentDateLayout = "2006-01-02"
@@ -50,7 +51,22 @@ type EnrichedAffiliation struct {
 	From   string `json:"from,omitempty"`
 	Until  string `json:"until,omitempty"`
 	Source string `json:"source"`
+	// Confidence is the provider's confidence ("high", "medium", "low"),
+	// and MatchedBy the identifier kind that matched ("github_login",
+	// "email"), never its value. Both are empty in files written before
+	// they were recorded.
+	Confidence string `json:"confidence,omitempty"`
+	MatchedBy  string `json:"matched_by,omitempty"`
 }
+
+// Enrichment confidence and match kinds, as colony's gitdm provider reports
+// them.
+const (
+	EnrichConfidenceHigh   = "high"
+	EnrichConfidenceMedium = "medium"
+	EnrichConfidenceLow    = "low"
+	EnrichMatchedByLogin   = "github_login"
+)
 
 // EnrichedActivity is one project's public contribution count.
 type EnrichedActivity struct {
@@ -80,6 +96,20 @@ type EnrichmentStore struct {
 	mu     sync.Mutex
 	people map[string]PersonEnrichment
 	saved  []byte
+	// colony mirrors every change into colony.db and, in colony mode,
+	// answers reads; nil in json mode.
+	colony *Colony
+}
+
+// SetColony wires the colony mirror (the people store's Colony). Call it
+// before the store is shared.
+func (e *EnrichmentStore) SetColony(c *Colony) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.colony = c
 }
 
 // OpenEnrichment opens <dir>/enrichment.json. A missing file is empty. A
@@ -121,7 +151,10 @@ func (e *EnrichmentStore) Get(id string) (PersonEnrichment, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	pe, ok := e.people[id]
-	return clonePersonEnrichment(pe), ok
+	if !ok {
+		return PersonEnrichment{}, false
+	}
+	return e.colony.enrichmentFromColony(id, clonePersonEnrichment(pe)), true
 }
 
 // IDs returns every person id enrichment holds, sorted.
@@ -174,7 +207,7 @@ func (e *EnrichmentStore) SetSource(id, source string, affs []EnrichedAffiliatio
 	}
 	pe.FetchedAt[source] = at.UTC()
 	e.people[id] = pe
-	return e.saveLocked()
+	return e.saveLocked(map[string]PersonEnrichment{id: clonePersonEnrichment(pe)}, nil)
 }
 
 // DropSource removes one source's facts from every person, for a source
@@ -183,6 +216,8 @@ func (e *EnrichmentStore) DropSource(source string) (int, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	n := 0
+	changed := map[string]PersonEnrichment{}
+	var removed []string
 	for id, pe := range e.people {
 		_, fetched := pe.FetchedAt[source]
 		if !fetched && !holdsSource(pe, source) {
@@ -194,15 +229,17 @@ func (e *EnrichmentStore) DropSource(source string) (int, error) {
 		delete(pe.FetchedAt, source)
 		if len(pe.Affiliations) == 0 && len(pe.Activity) == 0 && len(pe.FetchedAt) == 0 {
 			delete(e.people, id)
+			removed = append(removed, id)
 		} else {
 			e.people[id] = pe
+			changed[id] = clonePersonEnrichment(pe)
 		}
 		n++
 	}
 	if n == 0 {
 		return 0, nil
 	}
-	return n, e.saveLocked()
+	return n, e.saveLocked(changed, removed)
 }
 
 // Delete removes everything enrichment holds for a person. Forget calls it.
@@ -216,7 +253,7 @@ func (e *EnrichmentStore) Delete(id string) error {
 		return nil
 	}
 	delete(e.people, id)
-	return e.saveLocked()
+	return e.saveLocked(nil, []string{id})
 }
 
 // Prune removes the people keep says are gone (forgotten, merged away or
@@ -225,19 +262,24 @@ func (e *EnrichmentStore) Prune(keep func(id string) bool) (int, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	n := 0
+	var removed []string
 	for id := range e.people {
 		if !keep(id) {
 			delete(e.people, id)
+			removed = append(removed, id)
 			n++
 		}
 	}
 	if n == 0 {
 		return 0, nil
 	}
-	return n, e.saveLocked()
+	return n, e.saveLocked(nil, removed)
 }
 
-func (e *EnrichmentStore) saveLocked() error {
+// saveLocked writes enrichment.json and then mirrors the people it changed
+// (changed holds their new state, removed the ids it dropped) into
+// colony.db. The JSON is written first and stays the rollback copy.
+func (e *EnrichmentStore) saveLocked(changed map[string]PersonEnrichment, removed []string) error {
 	data, err := json.MarshalIndent(enrichmentFile{People: e.people}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("customers: encoding %s: %w", EnrichmentFileName, err)
@@ -249,6 +291,7 @@ func (e *EnrichmentStore) saveLocked() error {
 		return err
 	}
 	e.saved = data
+	e.colony.mirrorEnrichment(changed, removed, data)
 	return nil
 }
 
@@ -360,7 +403,17 @@ func cleanEnrichedAffiliation(a EnrichedAffiliation, source string) (EnrichedAff
 	if !okF || !okU {
 		return EnrichedAffiliation{}, false
 	}
-	return EnrichedAffiliation{Org: org, From: from, Until: until, Source: source}, true
+	conf := strings.ToLower(strings.TrimSpace(a.Confidence))
+	switch conf {
+	case "", EnrichConfidenceHigh, EnrichConfidenceMedium, EnrichConfidenceLow:
+	default:
+		conf = ""
+	}
+	by, okB := enrichedText(a.MatchedBy, maxEnrichedMatchedByLen)
+	if !okB {
+		by = ""
+	}
+	return EnrichedAffiliation{Org: org, From: from, Until: until, Source: source, Confidence: conf, MatchedBy: by}, true
 }
 
 func cleanEnrichedActivity(t EnrichedActivity, source string) (EnrichedActivity, bool) {

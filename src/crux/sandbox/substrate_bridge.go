@@ -123,6 +123,13 @@ func (b *routerBridge) Pull(ctx context.Context, ref *substrateapi.ObjectRef, wo
 	return substrateReplaceDir(resp.Body, workspace)
 }
 
+// ReplaceWorkspace replaces workspace with the substratebridge.Pack stream,
+// swapping the new tree in only once it is fully unpacked. The Job runtime's
+// copy transport pulls its workspace back with it (#19621).
+func ReplaceWorkspace(stream io.Reader, workspace string) error {
+	return substrateReplaceDir(stream, workspace)
+}
+
 func substrateReplaceDir(stream io.Reader, workspace string) error {
 	parent := filepath.Dir(filepath.Clean(workspace))
 	staging, err := os.MkdirTemp(parent, ".substrate-pull-*")

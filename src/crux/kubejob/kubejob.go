@@ -17,6 +17,8 @@
 // Podman launcher uses. When the Job is scheduled onto a different node than
 // hive, that claim has to be ReadWriteMany — the launcher cannot check this
 // and says so in its documentation rather than guessing.
+// workspace_transport: copy (#19621, copy.go) copies the workspace into a
+// pod-local volume and back instead, so no shared claim is needed.
 //
 // The credential boundary is the whole point of keeping the executor
 // unchanged: the Job gets only the Secrets the operator names in
@@ -110,7 +112,8 @@ const (
 )
 
 // Options is everything an operator can set on the Job beyond what the
-// LaunchSpec carries. All fields are optional except WorkspaceClaim.
+// LaunchSpec carries. All fields are optional except WorkspaceClaim, which
+// the copy WorkspaceTransport does not need.
 type Options struct {
 	// WorkspaceClaim names the PersistentVolumeClaim hive's sandbox workspace
 	// root lives on. Required: without it there is no way for the Job to see
@@ -119,6 +122,13 @@ type Options struct {
 	// WorkspaceClaimMount is where that claim is mounted INSIDE THE HIVE POD
 	// (default /data). The Job's subPath is the workspace path relative to it.
 	WorkspaceClaimMount string
+	// WorkspaceTransport is "claim" (the default, empty) or "copy", which
+	// copies the workspace into a pod-local volume and back (#19621; see
+	// copy.go).
+	WorkspaceTransport string
+	// WorkspaceSizeLimit is the sizeLimit of the copy transport's workspace
+	// emptyDir (default DefaultWorkspaceSizeLimit).
+	WorkspaceSizeLimit string
 	// NodeSelector, Affinity, Tolerations, Resources, ServiceAccount are passed
 	// through to the pod template verbatim.
 	NodeSelector   map[string]string
@@ -130,6 +140,10 @@ type Options struct {
 	// whose admission webhook requires device-requesting pods to use a custom
 	// scheduler. Empty leaves the cluster default.
 	SchedulerName string
+	// RuntimeClassName is the pod's runtimeClassName (for example "kata").
+	// Empty leaves the cluster default. The copy transport refuses to run
+	// with it empty when hive's own pod has a runtime class (copy.go).
+	RuntimeClassName string
 	// EnvFromSecrets are Secret names whose keys become environment variables
 	// in the Job. This is the ONLY credential path into the Job.
 	EnvFromSecrets []string
@@ -232,6 +246,16 @@ type Launcher struct {
 	// PodName is hive's own pod, read to resolve the relay image; empty
 	// falls back to $POD_NAME, then $HOSTNAME, then os.Hostname.
 	PodName string
+	// BridgeURL and BridgeClient replace the job bridge's address (the pod
+	// IP) and HTTP client on the copy transport (tests).
+	BridgeURL    string
+	BridgeClient *http.Client
+
+	// copyPlan is set on a per-run copy of the Launcher on the copy
+	// transport.
+	copyPlan *copyPlan
+	// bridgeToken fixes the job bridge token instead of a random one (tests).
+	bridgeToken string
 }
 
 var _ sandbox.Launcher = (*Launcher)(nil)
@@ -239,11 +263,14 @@ var _ sandbox.Launcher = (*Launcher)(nil)
 // Validate reports the configuration errors that would otherwise surface only
 // as a failed kick.
 func (o Options) Validate() error {
-	if strings.TrimSpace(o.WorkspaceClaim) == "" {
-		return errors.New("kubejob: workspace_claim is required (the PVC hive's sandbox workspace root lives on)")
+	if err := o.validateTransport(); err != nil {
+		return err
 	}
 	if o.TTLSeconds < 0 {
 		return errors.New("kubejob: ttl_seconds must not be negative")
+	}
+	if err := config.ValidateRuntimeClassName(o.RuntimeClassName); err != nil {
+		return fmt.Errorf("kubejob: %w", err)
 	}
 	for i, v := range o.ExtraVolumes {
 		if strings.TrimSpace(v.Claim) == "" || strings.TrimSpace(v.MountPath) == "" {
@@ -288,16 +315,27 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 	if strings.TrimSpace(spec.Workspace) == "" {
 		return res, errors.New("kubejob: workspace is required")
 	}
-	subPath, err := workspaceSubPath(spec.Workspace, l.Options.WorkspaceClaimMount)
-	if err != nil {
-		return res, err
+	copyMode := l.Options.copiesWorkspace()
+	if copyMode {
+		if err := refuseCopyWhenHardened(os.Getenv); err != nil {
+			return res, err
+		}
+	}
+	subPath := ""
+	if !copyMode {
+		var err error
+		if subPath, err = workspaceSubPath(spec.Workspace, l.Options.WorkspaceClaimMount); err != nil {
+			return res, err
+		}
 	}
 	ns, err := l.namespace()
 	if err != nil {
 		return res, err
 	}
 	var relays *relayPlan
-	if spec.Relays {
+	// The relay spool needs a directory hive and the Job share while the
+	// kick runs, which the copy transport does not have.
+	if spec.Relays && !copyMode {
 		if relays, err = l.resolveRelays(ctx, ns); err != nil {
 			return res, err
 		}
@@ -307,6 +345,15 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 	}
 	if spec.Relays && l.Options.setupEnabled() && len(spec.Command) == 0 {
 		return res, errors.New("kubejob: sandbox.setup needs an explicit command to run the agent after it; this launch has none")
+	}
+	if copyMode {
+		plan, err := l.resolveCopy(ctx, ns, spec)
+		if err != nil {
+			return res, err
+		}
+		cp := *l
+		cp.copyPlan = plan
+		l = &cp
 	}
 	return l.runWithRetry(ctx, spec, ns, subPath, relays)
 }
@@ -527,6 +574,9 @@ func (l *Launcher) jobManifest(ns, name, subPath string, spec sandbox.LaunchSpec
 	}
 	if l.Options.SchedulerName != "" {
 		podSpec["schedulerName"] = l.Options.SchedulerName
+	}
+	if rc := strings.TrimSpace(l.Options.RuntimeClassName); rc != "" {
+		podSpec["runtimeClassName"] = rc
 	}
 	if l.Options.network() == NetworkHost {
 		podSpec["hostNetwork"] = true

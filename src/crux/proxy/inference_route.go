@@ -27,8 +27,10 @@ type InferenceRoute struct {
 	// entitlement rewrite can fall back to it when Model is one the gateway's
 	// team is NOT entitled to (hivecommons/hive#9945). Empty when the backend
 	// has no default.
-	DefaultModel  string
-	MaxContextLen int    // from vLLM /v1/models max_model_len; 0 = unknown
+	DefaultModel string
+	// MaxContextLen is the model's context window in tokens, discovered from
+	// the endpoint's /v1/models (see queryMaxModelLen); 0 = unknown.
+	MaxContextLen int
 	Preamble      string // prepended to the system prompt for inference backends; empty = use DefaultInferencePreamble
 	APIKey        string // optional bearer token for the upstream (litellm requires auth); never logged
 	CABundle      string // optional PEM path for a private CA; verification is never disabled
@@ -137,13 +139,33 @@ type inferenceRouter struct {
 	// cleared remembers agents whose route was removed, so a later "no route"
 	// can be told apart from an agent that never had one.
 	cleared map[string]struct{}
+	// windows caches each discovered context window by endpoint and model,
+	// so a route set again for the same model (a relaunch, another agent on
+	// it) carries the window from the start instead of waiting for a new
+	// background probe. The agent's CLI reads its window only at launch
+	// (hivecommons/hive#19913).
+	windows map[string]int
 }
 
 func newInferenceRouter() *inferenceRouter {
 	return &inferenceRouter{
 		routes:  make(map[string]*InferenceRoute),
 		cleared: make(map[string]struct{}),
+		windows: make(map[string]int),
 	}
+}
+
+// contextWindowKey is the windows cache key for one model on one endpoint.
+func contextWindowKey(endpoint, model string) string {
+	return endpoint + "\x00" + model
+}
+
+// cachedContextWindow returns the last discovered window for model on
+// endpoint, or 0 when none was discovered.
+func (ir *inferenceRouter) cachedContextWindow(endpoint, model string) int {
+	ir.mu.RLock()
+	defer ir.mu.RUnlock()
+	return ir.windows[contextWindowKey(endpoint, model)]
 }
 
 func (ir *inferenceRouter) Set(agentName string, route *InferenceRoute) {
@@ -195,6 +217,9 @@ func (ir *inferenceRouter) UpdateMaxContextLen(agentName, endpoint, model string
 	route, ok := ir.routes[agentName]
 	if !ok || route.Endpoint != endpoint || route.Model != model {
 		return false
+	}
+	if maxLen > 0 {
+		ir.windows[contextWindowKey(endpoint, model)] = maxLen
 	}
 	updated := *route // shallow copy; InferenceRoute has no reference-type fields that alias mutably
 	updated.MaxContextLen = maxLen
@@ -384,8 +409,15 @@ const endpointQueryTimeout = 3 * time.Second
 
 const maxModelLenQueryTimeout = 3 * time.Second
 
-// queryMaxModelLen queries the /v1/models endpoint and returns the
-// max_model_len for the given model. Returns 0 if the query fails.
+// queryMaxModelLen queries the /v1/models endpoint and returns the context
+// window, in tokens, of the given model. Returns 0 if the query fails or the
+// listing names no window for it.
+//
+// Servers spell the window differently: vLLM sends max_model_len, gufo and
+// OpenRouter send context_length, some gateways send max_input_tokens. The first
+// positive one, in that order, wins (hivecommons/hive#19913). When no entry
+// has the model's id, the first entry is used only if it is the ONLY entry:
+// on a multi-model gateway another model's window would be wrong.
 // apiKey and caBundle are optional (see FindEndpointForModel).
 func queryMaxModelLen(endpoint, model, apiKey, caBundle string) int {
 	rt, rtErr := inferenceTransport(caBundle)
@@ -410,24 +442,46 @@ func queryMaxModelLen(endpoint, model, apiKey, caBundle string) int {
 		return 0
 	}
 	var result struct {
-		Data []struct {
-			ID          string `json:"id"`
-			MaxModelLen int    `json:"max_model_len"`
-		} `json:"data"`
+		Data []modelWindowEntry `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		return 0
 	}
 	for _, m := range result.Data {
 		if m.ID == model {
-			return m.MaxModelLen
+			return m.window()
 		}
 	}
-	if len(result.Data) > 0 {
-		return result.Data[0].MaxModelLen
+	if len(result.Data) == 1 {
+		return result.Data[0].window()
 	}
 	return 0
 }
+
+// modelWindowEntry is one /v1/models entry, reduced to the fields that can
+// carry a context window. The windows decode as float64 so a server that
+// writes them as 262144.0 still parses; null leaves a field at 0.
+type modelWindowEntry struct {
+	ID             string  `json:"id"`
+	MaxModelLen    float64 `json:"max_model_len"`
+	ContextLength  float64 `json:"context_length"`
+	MaxInputTokens float64 `json:"max_input_tokens"`
+}
+
+// window returns the entry's first window field of at least one token, or 0.
+func (e modelWindowEntry) window() int {
+	for _, v := range []float64{e.MaxModelLen, e.ContextLength, e.MaxInputTokens} {
+		if v >= 1 && v <= maxDiscoveredContextWindow {
+			return int(v)
+		}
+	}
+	return 0
+}
+
+// maxDiscoveredContextWindow bounds a discovered window, so a garbage value
+// in a /v1/models listing cannot overflow int conversion. It is far above any
+// real model's window.
+const maxDiscoveredContextWindow = 1 << 40
 
 // charsPerToken is a conservative estimate for tokenization overhead.
 // Tokenizers average ~3-4 chars/token, but system prompts, tool schemas,

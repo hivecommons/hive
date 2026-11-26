@@ -226,6 +226,7 @@
     // tooltip: the source, the login it was read for and when.
     function customersFieldProvenance(f) {
       if (f && f.rule === 'location') return 'Derived from the location';
+      if (f && f.rule === 'gitdm_auto_accepted') return 'Auto-accepted from cncf/gitdm (a GitHub login match, auto-accept policy gitdm_high). Dismiss clears it.';
       const label = customersFieldSourceLabel(f) || 'GitHub';
       let t = 'From the public ' + label + ' profile';
       if (f && f.login) t += ' of ' + f.login;
@@ -621,11 +622,12 @@
         const manual = cur.source === 'manual';
         // A hub value carries its hub label (#19163, #19306); editing it
         // here makes it manual.
-        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : 'from ' + (customersFieldSourceLabel(cur) || 'GitHub')))) : (manual ? 'cleared by hand' : 'not known');
+        const mark = cur.value ? (manual ? 'set by hand' : (cur.source === 'hub' ? customersHubLabel(cur) : (cur.rule === 'location' ? 'from location' : (cur.rule === 'gitdm_auto_accepted' ? 'auto-accepted from cncf/gitdm' : 'from ' + (customersFieldSourceLabel(cur) || 'GitHub'))))) : (manual ? 'cleared by hand' : 'not known');
         const tip = cur.value && cur.source === 'auto' ? ' title="' + escapeHtml(customersFieldProvenance(cur)) + '"' : '';
         return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs"' + tip + '>(' + mark + ')</span>' +
           '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
-          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let the public profile fill this in again">Auto</button>' : '');
+          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let the public profile fill this in again">Auto</button>' : '') +
+          (cur.value && cur.source === 'auto' && cur.rule === 'gitdm_auto_accepted' ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersAffiliationDismiss" data-arg0="' + escapeHtml(cur.value) + '" title="Clear this auto-accepted organization and do not accept it again">Dismiss</button>' : '');
       }).join('');
       const cc = customersProfileValue(p, 'country');
       const ccLine = /^[A-Z]{2}$/.test(cc) ? '<div class="muted-xs" data-customers-field="country-line"><span aria-hidden="true">' + customersFlagEmoji(cc) + '</span> ' + escapeHtml(cc) + ' ' + escapeHtml(customersCountryName(cc)) + '</div>' : '';

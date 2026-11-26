@@ -736,7 +736,8 @@ type Manager struct {
 	// — the process never reaches MarkReady, /api/health stays "starting", and
 	// the startup probe kills the pod (a cluster-wide crash-loop we hit live).
 	// An atomic read is lock-free and safe from any lock context.
-	isGatewayBackend atomic.Pointer[func(backend string) bool]
+	isGatewayBackend       atomic.Pointer[func(backend string) bool]
+	inferenceContextWindow atomic.Pointer[func(agentName string) (window int, model string)] // see SetInferenceContextWindowLookup
 
 	// persistPauseCallback, when set, persists an agent's paused state to
 	// the on-disk config so it survives restarts. Nil in tests / bare setups.

@@ -355,4 +355,7 @@ func TestBootAgentsWith_ArmsForgeRequestRelayWithManagerGates(t *testing.T) {
 	if got.cfg() != b.cfg {
 		t.Fatal("forge request relay does not read the live config")
 	}
+	if got.pushAudit == nil {
+		t.Fatal("forge request relay does not audit pushed branches (#19960)")
+	}
 }

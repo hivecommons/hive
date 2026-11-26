@@ -2463,7 +2463,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// answers review and merge requests with a reason (#19916).
 	if deps.startForgeRequestRelay != nil {
 		_ = deps.startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
-			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger).withPushRelay(b.agentMgr.AuthorizePushBranch))
+			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger).withPushRelay(b.agentMgr.AuthorizePushBranch).withPushAudit(b.recordWriteAudit))
 	}
 	// Forgejo repos (#19671): the GitHub sweeps above skip them (RepoOnGitHub),
 	// so they get their own sweeps, which need no GitHub client. A gitea config
@@ -4660,6 +4660,9 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 				deps.clearInferenceRoute(b.githubProxy, agentName)
 			},
 		)
+		if deps.installContextWindowLookup != nil {
+			deps.installContextWindowLookup(b.agentMgr, b.githubProxy)
+		}
 
 		deps.startProxy(b.githubProxy, b.logger)
 		b.wireSandboxGitHubReadRelay()
