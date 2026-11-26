@@ -80,3 +80,18 @@ func TestAppLinkedAgentIdentityRejectsIncompleteInputs(t *testing.T) {
 		}
 	}
 }
+
+func TestBotEmailDomain(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
+	if got := BotEmailDomain(); got != DefaultBotEmailDomain {
+		t.Fatalf("default domain = %q, want %q", got, DefaultBotEmailDomain)
+	}
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", " bots.example ")
+	if got := BotEmailDomain(); got != "bots.example" {
+		t.Fatalf("configured domain = %q, want bots.example", got)
+	}
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "bad domain")
+	if got := BotEmailDomain(); got != DefaultBotEmailDomain {
+		t.Fatalf("unsafe domain = %q, want the default", got)
+	}
+}

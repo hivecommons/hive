@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/gitidentity"
 	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/config"
@@ -31,6 +32,10 @@ type pushHarness struct {
 	pushErr  error
 	defErr   error
 	checkout string
+	// log is what the sign-off check's git log prints; logErr fails it.
+	log    string
+	logErr error
+	audits []github.AuditRecord
 }
 
 func newPushHarness(t *testing.T) *pushHarness {
@@ -44,7 +49,7 @@ func newPushHarness(t *testing.T) *pushHarness {
 			return errors.New("not this agent's request")
 		}
 		return nil
-	})
+	}).withPushAudit(func(rec github.AuditRecord) { h.audits = append(h.audits, rec) })
 
 	prevExec, prevDef := forgePushExec, forgeRepoDefaultBranch
 	t.Cleanup(func() { forgePushExec, forgeRepoDefaultBranch = prevExec, prevDef })
@@ -53,6 +58,8 @@ func newPushHarness(t *testing.T) *pushHarness {
 		switch args[0] {
 		case "rev-parse":
 			return "0123456789abcdef0123456789abcdef01234567\n", nil
+		case "log":
+			return h.log, h.logErr
 		case "push":
 			if h.pushErr != nil {
 				return "! [rejected] fix-1 -> fix-1 (non-fast-forward)\n", h.pushErr
@@ -227,6 +234,187 @@ func TestForgeRelayPushWithoutTokenRetries(t *testing.T) {
 	readRelayResult(t, path, &resp)
 	if resp.OK || !strings.Contains(resp.Error, "minting push token") {
 		t.Errorf("resp = %+v", resp)
+	}
+}
+
+// forgePushTestSHA is the head the push harness's rev-parse reports.
+const forgePushTestSHA = "0123456789abcdef0123456789abcdef01234567"
+
+// commitRecord is one commit in the sign-off check's git log format.
+func commitRecord(sha, name, email, msg string) string {
+	return sha + "\x1f" + name + "\x1f" + email + "\x1f" + msg + "\x1e"
+}
+
+// A forge-only hive refuses a push that would publish a hive-authored commit
+// without a Signed-off-by trailer, with the GitHub watcher's result and error
+// shape, and pushes nothing (#19960). The hive identity is the configured
+// forge user (by name or its Forgejo noreply address) and every lane's commit
+// address, never a GitHub login.
+func TestForgeRelayRefusesUnsignedHiveCommits(t *testing.T) {
+	_, laneEmail, ok := gitidentity.AgentIdentity("worker")
+	if !ok {
+		t.Fatal("no lane identity for worker")
+	}
+	cases := map[string]struct {
+		log    string
+		author string
+	}{
+		"lane address": {
+			log:    commitRecord("cafe1234", "worker", laneEmail, "fix: thing\n"),
+			author: laneEmail,
+		},
+		"another lane in a shared checkout": {
+			log:    commitRecord("cafe1234", "scanner", "scanner@"+gitidentity.BotEmailDomain(), "fix: thing\n"),
+			author: "scanner@" + gitidentity.BotEmailDomain(),
+		},
+		"forge user by name": {
+			log:    commitRecord("cafe1234", "hive-bot", "someone@example.com", "fix: thing\n"),
+			author: "hive-bot",
+		},
+		"forge user by noreply address": {
+			log:    commitRecord("cafe1234", "Hive Bot", "hive-bot@noreply.fj.example", "fix: thing\n"),
+			author: "hive-bot",
+		},
+		"one unsigned among signed": {
+			log: commitRecord("beef0001", "worker", laneEmail, "a\n\nSigned-off-by: worker <"+laneEmail+">\n") +
+				commitRecord("cafe1234", "worker", laneEmail, "b\n"),
+			author: laneEmail,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newPushHarness(t)
+			h.cfg.Project.AIAuthor = "hive-bot"
+			h.log = tc.log
+			path := writeRelayRequest(t, h.relay.pushDir, "a.json", h.goodPush())
+			h.relay.scanOnce(context.Background())
+
+			if len(h.pushCalls()) != 0 {
+				t.Fatalf("pushed an unsigned hive commit: %+v", h.calls)
+			}
+			var resp github.PushBranchResponse
+			readRelayResult(t, path, &resp)
+			want := "authorization denied: " + github.HiveCommitSignoffRefusal(tc.log, github.HiveCommitIdentities{Logins: []string{"hive-bot"}, EmailDomains: []string{gitidentity.BotEmailDomain()}})
+			if resp.OK || resp.Error != want || !strings.Contains(resp.Error, "cafe1234") || !strings.Contains(resp.Error, tc.author) || !strings.Contains(resp.Error, "Signed-off-by") {
+				t.Errorf("resp = %+v, want error %q naming cafe1234 and %q", resp, want, tc.author)
+			}
+			if resp.Branch != "fix-1" {
+				t.Errorf("resp branch = %q, want fix-1", resp.Branch)
+			}
+			assertExists(t, path+".denied", true)
+			if len(h.audits) != 0 {
+				t.Errorf("a refused push was audited as pushed: %+v", h.audits)
+			}
+		})
+	}
+}
+
+// Signed hive commits, and commits by anyone else whatever their trailers,
+// are pushed: the relay checks only the hive's own commits (#19960).
+func TestForgeRelayPushesSignedAndOtherAuthorsCommits(t *testing.T) {
+	_, laneEmail, _ := gitidentity.AgentIdentity("worker")
+	cases := map[string]string{
+		"signed lane commit":                     commitRecord("a1", "worker", laneEmail, "fix\n\nSigned-off-by: worker <"+laneEmail+">\n"),
+		"signed forge user commit":               commitRecord("a2", "hive-bot", "hive-bot@noreply.fj.example", "fix\n\nSigned-off-by: hive-bot <hive-bot@noreply.fj.example>\n"),
+		"unsigned other author":                  commitRecord("a3", "Mallory", "mallory@example.com", "theirs\n"),
+		"github login is not the forge identity": commitRecord("a4", "hivecommons-hive[bot]", "280983584+hivecommons-hive[bot]@users.noreply.github.com", "theirs\n"),
+		"nothing new":                            "",
+	}
+	for name, log := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newPushHarness(t)
+			h.cfg.Project.AIAuthor = "hive-bot"
+			h.log = log
+			path := writeRelayRequest(t, h.relay.pushDir, "a.json", h.goodPush())
+			h.relay.scanOnce(context.Background())
+			if len(h.pushCalls()) != 1 {
+				t.Fatalf("git calls = %+v, want one push", h.calls)
+			}
+			var resp github.PushBranchResponse
+			readRelayResult(t, path, &resp)
+			if !resp.OK {
+				t.Errorf("resp = %+v, want OK", resp)
+			}
+		})
+	}
+}
+
+// The sign-off check lists exactly the commits the push would publish, in the
+// pushed checkout with the push's neutralised env, before the push runs.
+func TestForgeRelaySignoffCheckRunsBeforePush(t *testing.T) {
+	h := newPushHarness(t)
+	writeRelayRequest(t, h.relay.pushDir, "a.json", h.goodPush())
+	h.relay.scanOnce(context.Background())
+	var logAt, pushAt = -1, -1
+	for i, c := range h.calls {
+		switch c.args[0] {
+		case "log":
+			logAt = i
+			if strings.Join(c.args, " ") != strings.Join(github.UnsignedHiveCommitLogArgs(forgePushTestSHA), " ") {
+				t.Errorf("log args = %v", c.args)
+			}
+			if c.dir != h.checkout || !strings.Contains(strings.Join(c.env, "\n"), "core.hooksPath") {
+				t.Errorf("log ran in %q without the push env", c.dir)
+			}
+		case "push":
+			pushAt = i
+		}
+	}
+	if logAt < 0 || pushAt < 0 || logAt > pushAt {
+		t.Fatalf("sign-off check did not run before the push: %+v", h.calls)
+	}
+}
+
+// A sign-off listing that fails is retried, never read as "nothing to check".
+func TestForgeRelaySignoffListingFailureRetries(t *testing.T) {
+	h := newPushHarness(t)
+	h.log, h.logErr = "fatal: bad revision\n", errors.New("exit status 128")
+	path := writeRelayRequest(t, h.relay.pushDir, "a.json", h.goodPush())
+	h.relay.scanOnce(context.Background())
+	if len(h.pushCalls()) != 0 {
+		t.Fatalf("pushed without the sign-off check: %+v", h.calls)
+	}
+	assertExists(t, path, true)
+	var resp github.PushBranchResponse
+	readRelayResult(t, path, &resp)
+	if resp.OK || resp.Attempts != 1 || !strings.Contains(resp.Error, "listing the commits to push") || !strings.Contains(resp.Error, "bad revision") {
+		t.Errorf("resp = %+v", resp)
+	}
+}
+
+// A published branch is audited as agent_branch_pushed, the same entry the
+// GitHub watcher writes (#19960); a failed push is not.
+func TestForgeRelayAuditsPushedBranch(t *testing.T) {
+	h := newPushHarness(t)
+	req := h.goodPush()
+	req.ForceWithLease = true
+	writeRelayRequest(t, h.relay.pushDir, "a.json", req)
+	h.relay.scanOnce(context.Background())
+	want := github.AgentBranchPushedAuditRecord("worker", "widgets", "fix-1", forgePushTestSHA, true)
+	if len(h.audits) != 1 || h.audits[0] != want {
+		t.Fatalf("audits = %+v, want [%+v]", h.audits, want)
+	}
+	if h.audits[0].Action != github.AuditActionAgentBranchPushed || h.audits[0].Repo != "widgets" {
+		t.Errorf("audit = %+v", h.audits[0])
+	}
+
+	failed := newPushHarness(t)
+	failed.pushErr = errors.New("exit status 1")
+	writeRelayRequest(t, failed.relay.pushDir, "a.json", failed.goodPush())
+	failed.relay.scanOnce(context.Background())
+	if len(failed.audits) != 0 {
+		t.Errorf("a failed push was audited: %+v", failed.audits)
+	}
+
+	// Without a sink the push still goes through.
+	bare := newPushHarness(t)
+	bare.relay.pushAudit = nil
+	path := writeRelayRequest(t, bare.relay.pushDir, "a.json", bare.goodPush())
+	bare.relay.scanOnce(context.Background())
+	var resp github.PushBranchResponse
+	readRelayResult(t, path, &resp)
+	if !resp.OK {
+		t.Errorf("push without an audit sink: resp = %+v", resp)
 	}
 }
 

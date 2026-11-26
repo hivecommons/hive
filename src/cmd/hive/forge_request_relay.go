@@ -103,6 +103,7 @@ type forgeRequestRelay struct {
 	// The push-branch, review and merge queues (forge_push_relay.go, #19916).
 	pushAuthz   github.PushBranchRequestAuthorizer
 	pushRemote  pushbroker.ForgeRemoteResolver
+	pushAudit   func(github.AuditRecord)
 	pushDir     string
 	reviewDir   string
 	mergeDir    string
