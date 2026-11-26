@@ -576,9 +576,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=19.1.0
-ARG OMP_SHA256_AMD64=be2b45c437b623e15c29b1f8c98aacb842f92118196454b5e9eed884359e9a01
-ARG OMP_SHA256_ARM64=785e8e519acb55852a85e5495271d768a221ca92c095c043cd3eb0d7f8d3eafc
+ARG OMP_VERSION=19.2.1
+ARG OMP_SHA256_AMD64=e8b937f9bf023baa147bdd300ad5421af0a6ef8b1f350c47a9a93d5fca94feca
+ARG OMP_SHA256_ARM64=92d4cce4b14814f6b838aa86dcec6359f0cb089cbcc300e8463cbb5326991fe0
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \
