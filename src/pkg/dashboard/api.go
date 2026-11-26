@@ -541,6 +541,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Settings → Features → Chat → Config assist toggle (#19979, api_chat_config_assist.go).
 	s.mux.HandleFunc("GET /api/config/chat/config-assist", s.handleChatConfigAssistGet)
 	s.mux.HandleFunc("PUT /api/config/chat/config-assist", s.handleChatConfigAssistPut)
+	// Chat config assist card Dismiss (#19978, api_chat_config_proposal.go).
+	s.mux.HandleFunc("POST /api/chat/config-proposals/{id}/decline", s.handleChatConfigProposalDecline)
 	// Write-back containment (api_writeback.go): suppressed-write drill-down
 	// and the sentinel findings held internally, written or not.
 	s.mux.HandleFunc("GET /api/writeback/suppressed", s.handleWritebackSuppressed)

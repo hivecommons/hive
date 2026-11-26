@@ -40,6 +40,9 @@
             document.querySelector('.config-title').textContent = `${dn} Configuration`;
           }
           try {
+            // A chat config proposal (#19978) fills its value in before the
+            // first tab renders, so the form shows it.
+            if (type === 'agent' && typeof applyChatConfigProposal === 'function') applyChatConfigProposal();
             switchConfigTab(initialTab);
             if (type === 'governor' && _configState.initialSearch) settingsSearchPrefill(_configState.initialSearch);
           } catch (err) {
@@ -59,6 +62,8 @@
       _configLoadSeq++;
       if (_configLoadAbort) { _configLoadAbort.abort(); _configLoadAbort = null; }
       _configState = { type: null, agent: null, tab: null, data: {}, dirty: {}, promptTemplateDirty: false, promptTemplateValue: '' };
+      const chatProposalBanner = document.getElementById('config-chat-proposal-banner');
+      if (chatProposalBanner) chatProposalBanner.remove();
       setupSettingsSearchControls(null);
       document.getElementById('config-overlay').classList.add('hidden');
       if (location.hash.startsWith('#config/')) history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash('') : location.pathname);

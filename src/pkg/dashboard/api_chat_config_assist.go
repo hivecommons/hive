@@ -70,7 +70,7 @@ func (s *Server) handleChatConfigAssistPut(w http.ResponseWriter, r *http.Reques
 	jsonResponse(w, map[string]interface{}{"enabled": after, "changed": before != after})
 }
 
-var chatConfigShapedRE = regexp.MustCompile(`(?i)\b(switch|change|set|use|configure|reconfigure|update)\b.*\b(model|reasoning|effort|cadence|interval|schedule|agent|enable|disable|every)\b`)
+var chatConfigShapedRE = regexp.MustCompile(`(?i)\b(switch|change|set|use|configure|reconfigure|update|run|disable|stop|pause)\b.*\b(model|reasoning|effort|cadence|interval|schedule|agent|enable|disable|every)\b`)
 
 // chatConfigAssistHint is the one-line NUX note appended for an owner whose
 // config-shaped question arrives while config assist is off. Non-owners and
