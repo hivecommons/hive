@@ -395,6 +395,16 @@ func rewriteRefsIssueLinkToClosing(body, repo string, issue int) (string, bool) 
 		return "", false
 	}
 	out := body[:loc[0]] + "Fixes" + body[loc[2]:]
+	// Keep the marker above a recognized attribution trailer.
+	if _, i := attributionTrailerLine(out); i >= 0 {
+		lines := strings.Split(out, "\n")
+		head := strings.TrimRight(strings.Join(lines[:i], "\n"), " \t\r\n")
+		tail := strings.Join(lines[i:], "\n")
+		if head == "" {
+			return issueLinkFixedMarker + "\n\n" + tail, true
+		}
+		return head + "\n\n" + issueLinkFixedMarker + "\n\n" + tail, true
+	}
 	out = strings.TrimRight(out, " \t\r\n") + "\n\n" + issueLinkFixedMarker
 	return out, true
 }

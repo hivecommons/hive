@@ -2467,6 +2467,35 @@ test('MLX endpoint failure refuses execution rather than falling back to a hoste
 function headlessProgressFrames(relay, taskId) {
   return relay.__sent.filter(m => m.type === 'task_progress' && m.task_id === taskId);
 }
+test('#19993 headless progress and terminal reports refresh codex rollout models', () => {
+  const root = fs.mkdtempSync(path.join(require('os').tmpdir(), 'relay-codex-'));
+  const dir = path.join(root, 'sessions', '2026', '11', '26');
+  fs.mkdirSync(dir, { recursive: true });
+  const rollout = (name, model) => fs.writeFileSync(path.join(dir, `rollout-${name}.jsonl`), JSON.stringify({ type: 'turn_context', payload: { model } }) + '\n');
+  try {
+    for (const outcome of ['complete', 'failed']) {
+      rollout('01', 'gpt-old');
+      const relay = loadRelay({ backend: 'codex', mode: 'headless', env: { CODEX_HOME: root }, execFileResult: { defer: true } });
+      try {
+        const task = { task_id: `codex-${outcome}`, task_gen: 2, kind: 'issue', repo: 'x/y', number: 1 };
+        relay.setCurrentTask(task);
+        relay.runHeadlessTask(task);
+        rollout('02', 'gpt-progress');
+        relay.headlessProgressTick(task);
+        assert.strictEqual(headlessProgressFrames(relay, task.task_id).pop().model, 'gpt-progress');
+        rollout('03', 'gpt-terminal');
+        relay.__completeDeferredExecFile(outcome === 'failed' ? Object.assign(new Error('failed'), { code: 1 }) : null);
+        const terminal = relay.__sent.find(m => m.type === `task_${outcome}`);
+        assert.strictEqual(terminal.model, 'gpt-terminal');
+      } finally {
+        teardown(relay);
+        fs.rmSync(path.join(dir, 'rollout-02.jsonl'), { force: true });
+        fs.rmSync(path.join(dir, 'rollout-03.jsonl'), { force: true });
+      }
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
 
 test('#7778 a headless task arms the progress timer and renews the hub lease while its child runs', () => {
   const relay = loadRelay({ backend: 'codex', mode: 'headless', execFileResult: { defer: true } });
