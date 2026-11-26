@@ -1,1 +1,0 @@
-- Watch separate release versions from the same JSON index when subscriptions select different version fields. On upgrade, all existing generic index feeds establish a fresh baseline and their queued alerts are cleared.
