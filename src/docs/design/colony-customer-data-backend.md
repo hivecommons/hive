@@ -1,7 +1,8 @@
 # Colony as the customer-data backend
 
-Status: **Design only / proposed. The operator reviews it before P2 to P5
-start.** Tracking issue
+Status: **Accepted; phases 1 to 3 built.** P3, the spoke on the colony store,
+is described in [Spoke implementation (P3)](#spoke-implementation-p3). Tracking
+issue
 [#19851](https://github.com/hivecommons/hive/issues/19851). Phase 1 (hub
 Affiliation from colony) and the trust-domain enforcement are built in their
 own PR, and every later phase ships behind its own issue. Related records:
@@ -266,6 +267,56 @@ kilobytes per person.
 
 **Forget:** forget erases the person from both stores in every mode and writes
 the tombstone to both.
+
+### Spoke implementation (P3)
+
+Built in [#19855](https://github.com/hivecommons/hive/issues/19855) on colony
+v0.3.0 (`src/pkg/customers/colony.go`). What it does beyond the steps above:
+
+- **The import** runs through colony's `Migrate` under the name
+  `hive-people-json`, in one transaction, with the hashes of `people.json` and
+  `enrichment.json` as its fingerprint. The boot checks that colony wrote as
+  many people as `people.json` holds and fails closed to `json` otherwise.
+  Before the first import, `people.json.pre-colony` and
+  `enrichment.json.pre-colony` keep the files as they stood; a later import
+  never replaces them.
+- **Idempotence.** `colony-sync.json` records the hashes of the JSON files
+  `colony.db` was last brought in line with. A boot whose files match does
+  nothing. A boot whose files differ (a `json`-mode run in between, or a
+  colony write that failed) imports again from the JSON, which is never older
+  than `colony.db`: the JSON is always written first.
+- **`colony` mode** reads at boot: for each person, what `colony.db` holds
+  replaces the JSON copy of the identities colony can hold, the profile
+  fields, the dismissed affiliations and the status, and the result is
+  written back to `people.json`. Enrichment is read from `colony.db` on every
+  request; the display detail only hive keeps (project name, period, link,
+  history) still comes from `enrichment.json`.
+- **What stays in hive.** Identity kinds colony has no kind for (Discord,
+  Teams, Meet and Zoom handles, display names) stay in `people.json`, as do
+  the tags, goals, satisfaction, suggestions, pins, hints, merge records and
+  the edge index. A dashboard user (`hive_user`) is colony's `oidc` kind, always
+  `local_only`. Tombstones written before the import stay in `people.json`
+  and keep being enforced there: they are salted hashes under hive's own salt
+  and cannot be turned into colony tombstones without the identity. Every
+  forget after the import writes both.
+- **Locality.** Values a hive user typed, values from the hub and anything not
+  derived from the person's public GitHub login are `local_only`. Email
+  identities on a domain that is not free-mail are `local_only` (colony
+  enforces it). No spoke path exports from `colony.db`.
+- **A merge** empties the merged person's colony record and marks it
+  `removed`, so the identities can move and an unmerge brings the same id
+  back. A forget erases the record.
+- **Forget** in shadow and colony mode goes through the mirror; in `json` mode
+  it opens a `colony.db` an earlier run left behind, only to forget. Either
+  way the file is compacted afterwards, because bbolt keeps freed pages, and
+  the person is removed from both `.pre-colony` backups (their tombstones are
+  added there).
+- **Parity** runs at boot and after each discovery sweep and logs counts only:
+  people and identities on each side, facts per rank, people that differ,
+  and failed colony writes.
+- **Backups.** `colony.db` sits in `/data/customers` with `people.json`. The
+  downloadable spoke backup carries neither; a volume-level backup of `/data`
+  covers both (see [backup and restore](../backup-restore.md)).
 
 ## Providers
 

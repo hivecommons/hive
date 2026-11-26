@@ -441,11 +441,58 @@ func TestUnsignedHiveCommits(t *testing.T) {
 		"a2\x1fscanner\x1f280983584+hivecommons-hive[bot]@users.noreply.github.com\x1fsubject\n\x1e" +
 		"a3\x1fhivecommons-hive[bot]\x1fhivecommons-hive@hive.kubestellar.io\x1fsubject\n\nSigned-off-by: hivecommons-hive[bot] <hivecommons-hive@hive.kubestellar.io>\n\x1e" +
 		"a4\x1fMallory\x1fmallory@example.com\x1fsubject\n\x1e"
-	got := unsignedHiveCommits(log, logins)
+	got := unsignedHiveCommits(log, HiveCommitIdentities{Logins: logins})
 	if len(got) != 2 || got[0].SHA != "a1" || got[0].Author != "thatguywob" || got[1].SHA != "a2" || got[1].Author != "hivecommons-hive[bot]" {
 		t.Errorf("unsignedHiveCommits = %+v, want a1 (ai_author) and a2 (App by noreply address) only", got)
 	}
-	if got := unsignedHiveCommits("", logins); len(got) != 0 {
+	if got := unsignedHiveCommits("", HiveCommitIdentities{Logins: logins}); len(got) != 0 {
 		t.Errorf("empty log flagged %+v", got)
+	}
+}
+
+// The forge push relay reuses the sign-off check with its own identities
+// (hivecommons/hive#19960): a lane's commit address at the bot email domain is
+// a hive identity, whatever the author name; anyone else is not checked.
+func TestHiveCommitSignoffRefusalEmailDomains(t *testing.T) {
+	ids := HiveCommitIdentities{Logins: []string{"hive-bot"}, EmailDomains: []string{" Bots.Example "}}
+	unsigned := "b1\x1fsomeone\x1fworker@bots.example\x1fsubject\n\x1e"
+	got := HiveCommitSignoffRefusal(unsigned, ids)
+	want := `commit b1 is authored by hive identity "worker@bots.example" without a Signed-off-by trailer; hive-authored commits must be signed off at creation (git commit -s)`
+	if got != want {
+		t.Errorf("refusal = %q, want %q", got, want)
+	}
+	for name, log := range map[string]string{
+		"signed":       "b2\x1fworker\x1fworker@bots.example\x1fsubject\n\nSigned-off-by: worker <worker@bots.example>\n\x1e",
+		"other domain": "b3\x1fworker\x1fworker@bots.example.org\x1fsubject\n\x1e",
+		"no address":   "b4\x1fworker\x1fworker\x1fsubject\n\x1e",
+		"empty":        "",
+	} {
+		if got := HiveCommitSignoffRefusal(log, ids); got != "" {
+			t.Errorf("%s: refusal = %q, want none", name, got)
+		}
+	}
+	if got := HiveCommitSignoffRefusal(unsigned, HiveCommitIdentities{EmailDomains: []string{""}}); got != "" {
+		t.Errorf("an empty domain matched: %q", got)
+	}
+}
+
+func TestUnsignedHiveCommitLogArgs(t *testing.T) {
+	got := strings.Join(UnsignedHiveCommitLogArgs("abc123"), " ")
+	want := "log --no-merges --format=" + unsignedHiveCommitFormat + " abc123 --not --remotes"
+	if got != want {
+		t.Errorf("args = %q, want %q", got, want)
+	}
+}
+
+// The agent_branch_pushed entry both push relays record (#19960).
+func TestAgentBranchPushedAuditRecord(t *testing.T) {
+	rec := AgentBranchPushedAuditRecord("worker", "acme/widgets", "fix-1", "abc123", true)
+	if rec.Action != AuditActionAgentBranchPushed || rec.Agent != "worker" || rec.Repo != "acme/widgets" || rec.Target != 0 {
+		t.Errorf("record = %+v", rec)
+	}
+	for _, part := range []string{"repo=acme/widgets", "branch=fix-1", "sha=abc123", "force_with_lease=true"} {
+		if !strings.Contains(rec.Detail, part) {
+			t.Errorf("detail %q missing %q", rec.Detail, part)
+		}
 	}
 }

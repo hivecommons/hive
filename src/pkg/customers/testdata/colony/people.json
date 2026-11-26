@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "salt": "00112233445566778899aabbccddeeff",
+  "people": [
+    {
+      "id": "p_000000000001",
+      "name": "Ada Example",
+      "status": "customer",
+      "origin": "manual",
+      "identities": [
+        {"kind": "github", "value": "ada-example", "source": "manual", "confidence": 1, "manual": true, "at": "2026-01-02T03:04:05Z", "by": "owner"},
+        {"kind": "email", "value": "ada@example.com", "source": "manual", "confidence": 1, "manual": true, "at": "2026-01-02T03:04:05Z", "by": "owner"},
+        {"kind": "discord", "value": "ada.example", "source": "manual", "confidence": 1, "manual": true, "at": "2026-01-02T03:04:05Z", "by": "owner"}
+      ],
+      "tags": [{"name": "contributor", "state": "on", "source": "auto", "rule": "role:contributor", "at": "2026-01-02T03:04:05Z"}],
+      "satisfaction": {"level": "unknown"},
+      "profile": {
+        "real_name": {"value": "Ada Example", "source": "auto", "rule": "github_profile", "at": "2026-01-03T00:00:00Z", "login": "ada-example"},
+        "organization": {"value": "Initech", "source": "manual", "at": "2026-01-04T00:00:00Z", "by": "owner"},
+        "location": {"value": "Lisbon, Portugal", "source": "auto", "rule": "github_profile", "at": "2026-01-03T00:00:00Z", "login": "ada-example"},
+        "country": {"value": "PT", "source": "auto", "rule": "location", "at": "2026-01-03T00:00:00Z"},
+        "dismissed_affiliations": ["umbrella"]
+      },
+      "created_at": "2026-01-02T03:04:05Z",
+      "updated_at": "2026-01-04T00:00:00Z"
+    },
+    {
+      "id": "p_000000000002",
+      "name": "Bea Sample",
+      "status": "customer",
+      "origin": "accepted",
+      "identities": [
+        {"kind": "github", "value": "bea-sample", "source": "accepted", "confidence": 0.8, "at": "2026-01-02T03:04:05Z"},
+        {"kind": "email", "value": "bea.sample@gmail.com", "source": "manual", "confidence": 1, "manual": true, "at": "2026-01-02T03:04:05Z"}
+      ],
+      "satisfaction": {"level": "satisfied", "source": "manual", "at": "2026-01-05T00:00:00Z", "by": "owner"},
+      "profile": {
+        "organization": {"value": "Globex", "source": "hub", "rule": "hub_email_domain", "at": "2026-01-06T00:00:00Z"},
+        "country": {"value": "DE", "source": "hub", "rule": "hub_person", "at": "2026-01-06T00:00:00Z"}
+      },
+      "created_at": "2026-01-02T03:04:05Z",
+      "updated_at": "2026-01-06T00:00:00Z"
+    },
+    {
+      "id": "p_000000000003",
+      "name": "cy",
+      "status": "customer",
+      "origin": "hive_user",
+      "identities": [
+        {"kind": "hive_user", "value": "cy", "source": "access_list", "confidence": 1, "at": "2026-01-02T03:04:05Z"},
+        {"kind": "email", "value": "cy@example.org", "source": "self", "claimed": true, "at": "2026-01-02T03:04:05Z", "by": "cy"}
+      ],
+      "satisfaction": {"level": "unknown"},
+      "created_at": "2026-01-02T03:04:05Z",
+      "updated_at": "2026-01-02T03:04:05Z"
+    }
+  ],
+  "pins": [{"kind": "distinct", "person": "p_000000000001", "other": "p_000000000002", "at": "2026-01-07T00:00:00Z", "by": "owner"}],
+  "tombstones": ["0000000000000000000000000000000000000000000000000000000000000000"]
+}

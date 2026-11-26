@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.370.0)
+
+### Added
+
+- A hive that authenticates with a personal access token can now rotate it without a restart through the owner-only `PUT /api/github-token` route. The new token is checked against the configured GitHub API first (it must sign in, read every project repo and carry the scopes the hive's ACMM level needs); a token that fails is refused and the current one keeps working. A verified token is saved like any other setting, takes effect at once for the hive, its agents and relays, and is recorded in the audit log by fingerprint. The token is never shown back; `GET /api/github-token` reports only its fingerprint, login and when it was verified. The route is refused on GitHub App hives, needs a JSON body and refuses cross-site requests, reports whether the token was sealed (a plaintext token keeps the config file owner-only), refuses a config with no source path, and answers 429 for 15 seconds after a rejected token. The Settings field and `hivectl` command (#19633) are not part of this change.
+
+### Fixed
+
+- The supervisor policy (`supervisor-nogithub.md`, `supervisor-advisory.md`) no longer tells the supervisor to kick agents. Agents have no kick route (`POST /api/kick/{agent}` is owner-only since #6557), so every 5-minute supervisor turn spent tool calls hunting for one and reported "no kick endpoint". The policy now says the governor kicks on cadence and the supervisor records stale or stuck agents in an advisory bead, and forbids the dashboard API, the `hive` binary, `pluk-send` and tmux as kick paths. Reported by sdwilsh ([#19891](https://github.com/hivecommons/hive/issues/19891)).
+- Forgejo and Gitea label requests now report an error when the repo lacks a requested label, so the PR relay flags a PR that opened without its ready-for-review hold.
+- Reject conflicting archive and destination paths during spoke restore dry runs and before replacing any files.
+
 ## 2026-11-26 (v5.369.6)
 
 ### Changed

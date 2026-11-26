@@ -21,11 +21,18 @@ func AgentIdentity(agentName string) (name, email string, ok bool) {
 	if !isIdentToken(agentName, true) {
 		return "", "", false
 	}
+	return agentName, agentName + "@" + BotEmailDomain(), true
+}
+
+// BotEmailDomain is the domain of every lane's commit address
+// (AgentIdentity): HIVE_GIT_BOT_EMAIL_DOMAIN when it is a valid domain, else
+// DefaultBotEmailDomain.
+func BotEmailDomain() string {
 	domain := strings.TrimSpace(os.Getenv("HIVE_GIT_BOT_EMAIL_DOMAIN"))
 	if !isIdentToken(domain, false) {
-		domain = DefaultBotEmailDomain
+		return DefaultBotEmailDomain
 	}
-	return agentName, agentName + "@" + domain, true
+	return domain
 }
 
 // AppLinkedAgentIdentity returns the lane name with the App bot's GitHub

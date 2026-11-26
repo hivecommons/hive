@@ -1,1 +1,0 @@
-- Reject conflicting archive and destination paths during spoke restore dry runs and before replacing any files.
