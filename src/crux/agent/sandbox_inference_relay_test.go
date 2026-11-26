@@ -102,17 +102,19 @@ func TestEnrollInferenceRelayCarriesContextSettings(t *testing.T) {
 			e := &SandboxExecutor{InferenceRelay: &fakeInferenceRelay{}}
 			env, release := e.enrollInferenceRelay(SandboxKickSpec{
 				Agent: "scanner", Runtime: config.SandboxRuntimeJob, InferenceRouted: true,
-				ClaudeContextEnv: m.sandboxClaudeContextEnv(agent, cfg.Backend, cfg.Model),
+				ClaudeContextEnv: m.claudeContextEnv(agent, cfg.Backend, cfg.Model),
 			}, t.TempDir())
 			defer release()
 			got := sandbox.SanitizedEnv(nil, nil, env)
-			for _, entry := range got {
-				if strings.HasPrefix(entry, claudeAutoCompactPercentEnv+"=") || strings.HasPrefix(entry, claudeMaxContextTokensEnv+"=") {
-					t.Fatalf("unsafe job context env = %v", got)
-				}
+			if !slices.Contains(got, claudeMaxContextTokensEnv+"=262144") {
+				t.Fatalf("context window missing from job env: %v", got)
 			}
-			if window != 0 && !slices.Contains(got, claudeAutoCompactWindowEnv+"=160000") {
-				t.Fatalf("explicit compaction window missing from job env: %v", got)
+			if window == 0 {
+				if !slices.Contains(got, claudeAutoCompactPercentEnv+"=80") {
+					t.Fatalf("compaction percentage missing from job env: %v", got)
+				}
+			} else if !slices.Contains(got, claudeAutoCompactWindowEnv+"=160000") || slices.Contains(got, claudeAutoCompactPercentEnv+"=80") {
+				t.Fatalf("explicit compaction window must override percentage: %v", got)
 			}
 		})
 	}

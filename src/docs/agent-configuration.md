@@ -694,11 +694,10 @@ exported context window, so it inherits the discovery, model-ID, and
 `HIVE_INFERENCE_PASS_CONTEXT_WINDOW` limitations above and below. The explicit
 per-agent setting does not depend on the context-window export and also works
 for Claude model IDs. It describes the configured model and is dropped for a
-review head using a different model. Sandbox Job kicks receive the explicit
-per-agent window, but not the percentage fallback: the sandbox filters out the
-context-window variable on which the percentage depends.
+review head using a different model. Sandbox Job kicks receive the same context
+and compaction settings as pane launches.
 
-Hive does not export the variable for model IDs that contain `claude` (for example `anthropic/claude-sonnet-5-5`), because the CLI already knows those windows. Set `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` to turn the export off for the whole hive. Sandbox Job kicks do not get the variable yet: the sandbox drops every variable whose name contains `TOKEN`.
+Hive does not export the variable for model IDs that contain `claude` (for example `anthropic/claude-sonnet-5-5`), because the CLI already knows those windows. Set `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` to turn the export off for the whole hive.
 
 ### Per-agent homes: what is shared and what is private
 

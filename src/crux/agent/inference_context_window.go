@@ -107,14 +107,6 @@ func (m *Manager) claudeContextEnv(agent *AgentProcess, backend, model string) m
 	return env
 }
 
-// sandboxClaudeContextEnv omits the percentage because sandbox filtering
-// removes CLAUDE_CODE_MAX_CONTEXT_TOKENS, which the percentage depends on.
-func (m *Manager) sandboxClaudeContextEnv(agent *AgentProcess, backend, model string) map[string]string {
-	env := m.claudeContextEnv(agent, backend, model)
-	delete(env, claudeAutoCompactPercentEnv)
-	return env
-}
-
 // modelOverridden reports whether the agent runs a model other than its
 // configured one.
 func modelOverridden(agent *AgentProcess) bool {
