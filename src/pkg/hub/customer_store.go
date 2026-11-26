@@ -3,19 +3,23 @@ package hub
 // The hub CRM fields on the colony store (hivecommons/hive#19856, phase 4 of
 // src/docs/design/colony-customer-data-backend.md).
 //
-// HIVE_HUB_CUSTOMER_STORE picks the mode, read once at boot:
+// HIVE_HUB_CUSTOMER_STORE picks the mode, read once at boot. Unset means
+// colony (the default since #19972); a set but unknown value means json.
 //
-//   - json (the default): today's behaviour. No colony.db is created. If one
-//     exists from an earlier shadow or colony boot, it is opened only so that
-//     deleting a user also erases them from it.
+//   - json: the behaviour before the colony store, and the rollback. No
+//     colony.db is created. If one exists from an earlier shadow or colony
+//     boot, it is opened only so that deleting a user also erases them from
+//     it.
 //   - shadow: on boot, every SaaSUser JSON record is imported into
 //     /data/saas/colony.db (first boot: one transaction, with the source
 //     fingerprint recorded), then reconciled person by person and checked by
 //     counts. Every later write goes to both stores; the JSON stays
 //     authoritative for reads.
-//   - colony: as shadow, and reads of the CRM fields come from colony. A
-//     field or person colony does not hold reads from the JSON (dual-read),
-//     and the JSON is still written, so setting json again loses nothing.
+//   - colony (the default): as shadow, and reads of the CRM fields come from
+//     colony. A field or person colony does not hold reads from the JSON
+//     (dual-read), and the JSON is still written, so setting json again
+//     loses nothing. A hub upgrading from the json default runs the import
+//     on that boot; if it fails, the hub stays on json.
 //
 // The JSON files are never rewritten by the migration. They are the backup
 // and the rollback path. Before each shadow or colony boot opens colony.db,
@@ -77,13 +81,18 @@ const (
 	hubCustomerStoreOrphanFloor      = 10
 )
 
-// parseHubCustomerStoreMode reads the mode. An unknown value is json, so a
-// typo can only keep today's behaviour.
+// hubCustomerStoreDefault is the mode when HIVE_HUB_CUSTOMER_STORE is unset
+// or blank (#19972). json stays a valid value and the rollback.
+const hubCustomerStoreDefault = hubCustomerStoreColony
+
+// parseHubCustomerStoreMode reads the mode. Unset is the colony default; an
+// unknown value is json, so a mistyped rollback can never move the hub onto
+// colony.
 func parseHubCustomerStoreMode(raw string) (string, bool) {
 	switch m := strings.ToLower(strings.TrimSpace(raw)); m {
-	case "", hubCustomerStoreJSON:
-		return hubCustomerStoreJSON, true
-	case hubCustomerStoreShadow, hubCustomerStoreColony:
+	case "":
+		return hubCustomerStoreDefault, true
+	case hubCustomerStoreJSON, hubCustomerStoreShadow, hubCustomerStoreColony:
 		return m, true
 	}
 	return hubCustomerStoreJSON, false
