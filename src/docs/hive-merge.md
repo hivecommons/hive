@@ -982,12 +982,23 @@ come first, so a refused or impossible case costs no API call:
   hive's transient re-run is not still owed and did not re-run nothing;
 - the failing required check set (the branch-protection list when it is
   known, otherwise every failing check) has at most 5 checks;
-- no other open PR in the same snapshot, by a bot or a person, fails any of
-  those checks. One check red on several PRs is a shared cause (a secret the
-  bot's PRs cannot read, a runner problem), not one bump's;
-- no bot rebase request is pending for the head;
-- the PR's failure excerpt has a line beyond the bare "Process completed with
-  exit code N".
+- no other open PR in the same snapshot, by a bot or a person, fails one of
+  those checks for what reads as the same cause, judged first from the
+  failure-level annotations the snapshot already holds (no API call;
+  warnings never count, so a deprecation warning every run prints is no
+  shared cause, nor is a generic line such as "exit status 1" or "The
+  operation was canceled."). Another PR counts at once when both PRs run
+  without the repository's Actions secrets (a PR from a fork, a Dependabot
+  PR), whatever their messages say, since a missing secret's message often
+  names a PR-specific token. Otherwise it counts when both carry such a
+  message for the check and they share one (spacing, case, digits, UUIDs
+  and hex runs of 7 or more characters aside): the same failure, such as a
+  runner problem. Different messages are different failures. With no
+  message on one side, the two failed jobs' logs are compared later
+  (below). A check
+  name alone is not a shared cause: a catch-all check that runs a whole
+  test suite is red on unrelated PRs for unrelated reasons;
+- no bot rebase request is pending for the head.
 
 Then, for at most 3 PRs per pass (the evaluation budget), it reads GitHub:
 
@@ -1030,12 +1041,24 @@ Then, for at most 3 PRs per pass (the evaluation budget), it reads GitHub:
     always behind after 4 hours;
 
   A single failed attempt on a single head files nothing;
-- each base tip's successful run must have finished after the head's newest
-  failing run started. An older base proof, or a missing time on either side,
-  is unknown: nothing is filed. This holds on both paths; on the cross-head
+- each base tip's successful run must have started after the head's newest
+  failing run started (a base run that started before the breakage proves
+  nothing about it, however late it finished). An older base proof, or a
+  missing time on either side, is unknown: nothing is filed. This holds on both paths; on the cross-head
   path it is not enough by itself when the head is behind the tip (below);
-- the newest failing runs must carry at least one failure-level annotation
-  beyond the bare exit code; warnings do not count;
+- what the issue quotes: only the newest failing runs' failure-level
+  annotations beyond the bare exit code (warnings do not count), with
+  credential-shaped text masked before each is cut to one line and 300
+  bytes. It never quotes a job's log: the issue is public, the log is not,
+  and no scrubber knows every secret format. A failed shell step leaves only
+  the exit code unless the workflow prints `::error::`; for such a check (a
+  GitHub Actions job, at most 3 per evaluation) the filer reads the job's
+  failed step names (one call each), and the issue names the job and those
+  steps, links the runs, and says the job's own log has the details (the
+  check's details page when there is no run link, as with other CI). For a
+  Dependabot PR or a PR from a fork it adds that a repository secret those
+  runs cannot see is a possible cause. With nothing to quote at all, the
+  issue is still filed once every proof holds;
 - one open-issue listing: no open `[shared-ci] <check> failing across <repo>`
   incident for any of the checks, and an open issue whose body opens with the
   same marker is linked only if the hive wrote it. One the hive did not write
@@ -1043,7 +1066,39 @@ Then, for at most 3 PRs per pass (the evaluation budget), it reads GitHub:
   holds when the issue create reuses an open issue with the same title: it
   is read and linked only if the hive wrote it. No issue
   with the marker closed in the last 24 hours (7 days when closed as not
-  planned).
+  planned);
+- for another PR whose failure of a check could not be compared from the
+  snapshot (no failure-level message on one side), the two failed jobs'
+  logs: one call per job for this PR and for at most 2 other PRs (more than
+  2 to compare files nothing). The filer asks the storage for the last
+  4 MiB (a suffix Range; storage that ignores it is read from its start, up
+  to 4 MiB), keeps the last 10 distinct error lines (`Error`, `ERROR`,
+  `error:`, `FAILED`, `failed`, `::error`, `panic:`, `fatal:`, `##[error]`),
+  strips GitHub's timestamps, color codes and the step's echoed script, and
+  compares them with spacing, case, digits and hex ids aside and generic
+  lines left out. The same error line on both, no error line on one side
+  or both, or a log that cannot be read is a shared cause: nothing is
+  filed. Different error lines on both sides are not. The lines are
+  compared in memory only: never logged (the log line says only which
+  basis refused), stored or posted. The download uses the hive's
+  proxy-aware transport without a GitHub token, each download has 30
+  seconds and all of one evaluation's 60, and no error names the signed
+  link. A failed or broken-off read files nothing now;
+- the PR's newest timeline events (at most two calls of 100: the first page
+  and, when there are more, the last), for an issue a person already filed:
+  open, in the same repository, cross-referencing the PR, opened by an
+  owner, member or collaborator who is not the PR's author, not the hive and
+  not a bot, created at or after the PR was opened, and naming the PR in its
+  title or body (`#N`, `owner/repo#N`, or a link to the PR or to the same
+  number as an issue). Anyone can
+  open an issue on a public repository, and a tracker that only mentions
+  the PR does not count. The newest such issue is not filed beside: the
+  hand-off names it ("A person already filed #N, which names this pull
+  request") and
+  it is recorded. That is not final: about once an hour (at most 5 reads per
+  pass) the parked path checks that the issue is still open, and once it
+  closed with the PR still red the head is judged again and may get the
+  hive's own issue. The hive never posts a note on a person's issue.
 
 Any PR past the evaluation budget, and any PR that fails a condition, is
 handed off at once exactly as with the switch off. No hand-off waits for the
@@ -1059,6 +1114,14 @@ budget is no attempt), then it is judged and logged once, so a lasting
 error cannot take an evaluation slot every pass and keep other PRs waiting.
 Any other 4xx (for example 410 when issues are disabled, or 422) is final
 for the head at once.
+
+A head refused under the filer's first rules (a red-head record with no
+rules version), the hand-off's own head included, is judged once more under
+the current rules on the parked path, unless an issue is already recorded
+for it. The current rules stopped counting a check name alone as a shared
+cause and stopped refusing for a missing annotation excerpt; this lets a
+head refused for either reason before the upgrade get the new rules once,
+inside the same per-pass budget and attempt cap.
 
 #### Reproduced across heads
 

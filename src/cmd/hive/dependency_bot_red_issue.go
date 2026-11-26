@@ -37,11 +37,16 @@ import (
 //   - the hive can tell its own issues from copies, the issue_file gate
 //     admits the write, and the repository is on GitHub;
 //   - the failure was not triaged as transient, external or shared, no other
-//     open PR in the snapshot fails any of the same checks, and no open
-//     `[shared-ci]` incident names one (a shared cause, such as a secret
-//     every bot PR lacks);
+//     open PR in the snapshot fails one of the same checks for what reads
+//     as the same cause (sharedCause: both PRs running without the
+//     repository's secrets, or the same failure-level annotation message;
+//     with no message on one side, logSharedCause compares the two failed
+//     jobs' logs at filing time, in memory only),
+//     and no open `[shared-ci]` incident names one (a shared cause, such as
+//     a secret every bot PR lacks). A check name alone is no shared cause:
+//     a catch-all check is red on unrelated PRs for unrelated reasons;
 //   - every failing required check concluded success on the base tip (not
-//     skipped or neutral), in a run that finished after this head's failing
+//     skipped or neutral), in a run that started after this head's failing
 //     run started;
 //   - the failure reproduced, one of two ways, and no run of these checks
 //     passed on the head:
@@ -62,8 +67,11 @@ import (
 //     the bot PRs of a busy repository are nearly always behind after the
 //     hand-off's 4 hours and a re-run needs Actions write, which an App may
 //     not have;
-//   - the newest failing runs left failure-level annotations beyond the bare
-//     exit code.
+//   - nothing else: the issue quotes the newest failing runs' failure-level
+//     annotations beyond the bare exit code; for a check that left only that
+//     exit code (a failed shell step), it names the job and its failed steps
+//     (jobStepsEvidence) and points at the job's own log, linked, never
+//     quoting it.
 //
 // At most depBotRedIssueMaxPerPass PRs per pass do the reads; any other PR is
 // handed off at once without the issue, exactly as with the switch off. No
@@ -78,6 +86,13 @@ import (
 // only; the PR gets no new comment, and the issue's mention of the PR shows
 // in the PR's timeline.
 //
+// An open issue a member (owner, member or collaborator, not the PR's
+// author) filed in the repository about the PR since it opened, naming it,
+// is not filed beside: the hand-off names it instead (personIssueLine) and
+// it is recorded. That answer is not final: the parked path re-reads the
+// issue now and then (recheckPersonIssue), and once it closes with the PR
+// still red the head is judged again. The hive never notes on it.
+//
 // Lifecycle: when the PR later merges, closes or goes green, the sweep posts
 // one note on the issue it filed (only while that issue is open and is the
 // hive's own) and forgets it. It never closes an issue.
@@ -89,6 +104,39 @@ const depBotRedIssueMaxPerPass = 3
 // depBotRedIssueMaxChecks bounds the failing check set the filer reads runs
 // for (two calls per check). A wider red is unlikely to be one bump's.
 const depBotRedIssueMaxChecks = 5
+
+// depBotRedIssueMaxJobSteps bounds the failed jobs whose steps one
+// evaluation reads (jobStepsEvidence: one call per job). A check past it is
+// filed without its step names.
+const depBotRedIssueMaxJobSteps = 3
+
+// depBotRedIssueMaxPeerLogs bounds the other PRs whose job log one
+// evaluation reads to compare with this PR's (logSharedCause: one call per
+// peer, plus one per check for this PR's own log). More peers than that to
+// compare is refused: an unread peer may share the cause.
+const depBotRedIssueMaxPeerLogs = 2
+
+// depBotRedIssueLogDeadline bounds all the log reads of one evaluation
+// together, on top of each download's own timeout; past it the reads fail
+// and the head is tried again on a later pass.
+const depBotRedIssueLogDeadline = 60 * time.Second
+
+// depBotRedIssuePersonRecheck is how often a recorded person-filed issue is
+// read again to see whether it is still open, and
+// depBotRedIssueMaxPersonChecksPerPass caps those reads per pass.
+const (
+	depBotRedIssuePersonRecheck          = time.Hour
+	depBotRedIssueMaxPersonChecksPerPass = 5
+)
+
+// depBotRedIssueRules is the version of the filer's rules a head's outcome
+// was reached under, kept on its red-head record. A head with no issue whose
+// record carries an older version is judged once more on the parked path
+// (reopenRedHeadForRules). Version 2 stopped counting a check name alone as
+// a shared cause and files without a quotable excerpt, so a head refused
+// under version 1 (records without a version) for either reason, a final
+// answer then, gets the new rules.
+const depBotRedIssueRules = 2
 
 // depBotRedIssueMaxNotesPerPass caps the lifecycle notes one pass posts, and
 // depBotRedIssueMaxStateReadsPerPass the PR state reads the lifecycle makes
@@ -109,7 +157,6 @@ const (
 	depBotRedIssueSkipTooMany      = "too-many-failing-checks"
 	depBotRedIssueSkipOtherPRs     = "same-check-failing-on-other-prs"
 	depBotRedIssueSkipRebasePend   = "bot-rebase-pending"
-	depBotRedIssueSkipNoExcerpt    = "no-annotation-excerpt"
 	depBotRedIssueSkipBudget       = "pass-budget-spent"
 	depBotRedIssueSkipNoBase       = "base-unreadable"
 	depBotRedIssueSkipBaseVerdict  = "base-not-green"
@@ -125,11 +172,12 @@ const (
 	depBotRedIssueSkipPrevPassed   = "cross-head-previous-head-passed"
 	depBotRedIssueSkipPassed       = "check-passed-on-head"
 	depBotRedIssueSkipRunsRead     = "runs-unreadable"
-	depBotRedIssueSkipNoErrors     = "no-error-annotation"
+	depBotRedIssueSkipJobLog       = "job-log-unreadable"
 	depBotRedIssueSkipLookup       = "issue-lookup-failed"
 	depBotRedIssueSkipSharedCI     = "shared-ci-incident-open"
 	depBotRedIssueSkipNotOwned     = "marker-issue-not-hive-written"
 	depBotRedIssueSkipRecentClosed = "recently-closed"
+	depBotRedIssueSkipTimeline     = "pr-timeline-unreadable"
 	depBotRedIssueSkipCreate       = "create-failed"
 )
 
@@ -144,8 +192,12 @@ type depBotRedIssueGitHub interface {
 	DependencyBotRedAnyPassed(ctx context.Context, repo, headSHA string, checks []string) (string, error)
 	StaleRedNeedsHumanLabeledByApp(ctx context.Context, repo string, number int) (bool, error)
 	DependencyBotRedRunFacts(ctx context.Context, repo, headSHA string, checks []string) (map[string]github.DependencyBotRedCheckRuns, error)
+	DependencyBotRedJobErrorLines(ctx context.Context, repo string, jobID int64) (github.DependencyBotRedJobLines, error)
+	DependencyBotRedJobSteps(ctx context.Context, repo string, jobID int64) github.DependencyBotRedFailedJob
 	DependencyBotRedIssueIsOwn(ctx context.Context, repo string, number int, marker string) (bool, error)
 	LookupDependencyBotRedIssue(ctx context.Context, repo, marker string, checks []string, now time.Time) (github.DependencyBotRedIssueLookup, error)
+	DependencyBotRedPersonIssue(ctx context.Context, repo string, q github.DependencyBotRedPersonIssueQuery) (github.DependencyBotRedPersonIssue, error)
+	DependencyBotRedIssueOpen(ctx context.Context, repo string, number int) (bool, error)
 	FileDependencyBotRedIssue(ctx context.Context, repo, title, body string) (github.CreateIssueResult, error)
 	NoteDependencyBotRedIssue(ctx context.Context, repo string, number int, marker, body string) (bool, error)
 }
@@ -193,17 +245,18 @@ type depBotRedIssueBase struct {
 type depBotRedIssuePass struct {
 	policy depBotRedIssuePolicy
 	// failing maps "<owner/repo>\x00<check>" (lower case) to the open PRs
-	// in the snapshot failing that check.
-	failing map[string][]int
+	// in the snapshot failing that check, with what sharedCause compares.
+	failing map[string][]depBotRedIssuePeer
 	// states are the closed-PR states the undo pass already read this
 	// pass, by store key.
 	states map[string]github.PRState
 	// bases caches each "<owner/repo>\x00<base ref>" tip read this pass, so
 	// PRs on one base share one read of its tip and check runs.
-	bases      map[string]depBotRedIssueBase
-	evaluated  int
-	notes      int
-	stateReads int
+	bases        map[string]depBotRedIssueBase
+	evaluated    int
+	notes        int
+	stateReads   int
+	personChecks int
 }
 
 func newDepBotRedIssuePass(p depBotRedIssuePolicy, seen map[string]github.PullRequest) *depBotRedIssuePass {
@@ -214,7 +267,7 @@ func newDepBotRedIssuePass(p depBotRedIssuePolicy, seen map[string]github.PullRe
 	}
 	pass.states = map[string]github.PRState{}
 	pass.bases = map[string]depBotRedIssueBase{}
-	pass.failing = map[string][]int{}
+	pass.failing = map[string][]depBotRedIssuePeer{}
 	for key, pr := range seen {
 		repo, _, ok := splitEscalationKey(key)
 		if !ok || !pr.HasFailingCheck() {
@@ -222,27 +275,212 @@ func newDepBotRedIssuePass(p depBotRedIssuePolicy, seen map[string]github.PullRe
 		}
 		for _, check := range github.DependencyBotRedChecks(pr.FailingChecks) {
 			k := strings.ToLower(repo) + "\x00" + strings.ToLower(check)
-			pass.failing[k] = append(pass.failing[k], pr.Number)
+			pass.failing[k] = append(pass.failing[k], depBotRedIssuePeer{
+				number:         pr.Number,
+				messages:       depBotRedIssueMessages(pr.CIFailureAnnotations, check),
+				withoutSecrets: depBotRedIssueWithoutSecrets(pr),
+				jobID:          depBotRedIssueRunID(pr, check),
+			})
 		}
 	}
 	return pass
+}
+
+// depBotRedIssuePeer is one open PR in the snapshot failing a check, with
+// what the shared-cause test compares.
+type depBotRedIssuePeer struct {
+	number int
+	// messages are the PR's failure-level annotation messages for the
+	// check (depBotRedIssueMessages); none when it left only the exit code.
+	messages map[string]bool
+	// withoutSecrets: its workflows run without the repository's Actions
+	// secrets (depBotRedIssueWithoutSecrets).
+	withoutSecrets bool
+	// jobID is its failing run of the check, an Actions job id when
+	// Actions ran it (0: unknown), whose log logSharedCause may compare.
+	jobID int64
+}
+
+// depBotRedIssueRunID is the id of pr's failing run of check in the
+// snapshot (FailingCheckRunIDs, in FailingChecks' order; 0: unknown).
+func depBotRedIssueRunID(pr github.PullRequest, check string) int64 {
+	for i, name := range pr.FailingChecks {
+		if strings.EqualFold(strings.TrimSpace(name), check) && i < len(pr.FailingCheckRunIDs) {
+			return pr.FailingCheckRunIDs[i]
+		}
+	}
+	return 0
+}
+
+// depBotRedIssueMessages are the failure-level annotation messages beyond
+// the bare exit code that a PR's snapshot (CIFailureAnnotations,
+// "<check>: <message>" lines, no warnings) carries for check, normalized
+// (github.DependencyBotRedNormalizeLine) so the same message on two PRs
+// compares equal, without the generic ones every failing step prints
+// ("exit status 1", "The operation was canceled."). It reads nothing.
+func depBotRedIssueMessages(annotations, check string) map[string]bool {
+	var out map[string]bool
+	for _, line := range github.DependencyBotRedExcerpt(annotations, []string{check}) {
+		msg := github.DependencyBotRedNormalizeLine(strings.TrimPrefix(line, check+": "))
+		if github.DependencyBotRedGenericLine(msg) {
+			continue
+		}
+		if out == nil {
+			out = map[string]bool{}
+		}
+		out[msg] = true
+	}
+	return out
+}
+
+// depBotRedIssueWithoutSecrets reports whether pr's workflows run without
+// the repository's Actions secrets, which a push to the base has: a pull
+// request from a fork (no secrets) or one Dependabot opened (only the
+// Dependabot secrets).
+func depBotRedIssueWithoutSecrets(pr github.PullRequest) bool {
+	return pr.FromFork || strings.EqualFold(strings.TrimSpace(pr.Author), depBotDependabotAuthor)
 }
 
 func (p *depBotRedIssuePass) on() bool {
 	return p != nil && p.policy.Enabled && p.policy.GitHub != nil
 }
 
-// otherPRFailing returns another open PR in the snapshot that fails one of
-// checks in repo (0: none).
-func (p *depBotRedIssuePass) otherPRFailing(repo string, number int, checks []string) int {
+// Bases on which sharedCause or logSharedCause counts another PR's failure
+// as pr's cause, logged with the refusal (never the text compared).
+const (
+	depBotRedIssueSharedMessage   = "same-message"
+	depBotRedIssueSharedNoSecrets = "no-message-both-without-repository-secrets"
+	depBotRedIssueSharedLogLine   = "same-job-log-error-line"
+	depBotRedIssueSharedNoLines   = "no-job-log-error-line-on-either"
+	depBotRedIssueSharedOneSided  = "job-log-error-lines-on-one-side-only"
+	depBotRedIssueSharedNoLog     = "no-job-log-to-compare"
+	depBotRedIssueSharedTooMany   = "too-many-peers-to-compare"
+)
+
+// depBotRedIssueComparison is one other PR failing one of the checks whose
+// failure the snapshot cannot tell apart from pr's (no failure-level
+// message on one side or both): logSharedCause compares the two job logs.
+type depBotRedIssueComparison struct {
+	check string
+	peer  depBotRedIssuePeer
+}
+
+// sharedCause is the cheap half of the shared-cause test, from the
+// snapshot alone (it reads nothing). It returns another open PR whose
+// failure of one of checks in repo reads as the same cause as pr's (0:
+// none) and the basis, and the other PRs it cannot judge from the snapshot,
+// for logSharedCause. Failing a check of the same name is not enough: a
+// catch-all check (one job running a whole test suite) is red on unrelated
+// PRs for unrelated reasons. Another PR counts at once when
+//   - both PRs carry failure-level annotation messages for the check
+//     (CIFailureAnnotations: no warnings, so a deprecation warning every
+//     run prints is no shared cause, and no generic line such as "exit
+//     status 1") and they share one: the same failure (a missing secret, a
+//     broken runner) on both. Different messages are different failures;
+//   - or both PRs' workflows run without the repository's secrets (a
+//     fork's PR, Dependabot's), whatever their messages say (a missing
+//     secret's message often names a PR-specific token or id). A secret
+//     those runs lack fails them alike while the base, which has it, stays
+//     green.
+//
+// Any other PR with no message to compare on one side is returned for
+// logSharedCause, which compares the two failed jobs' logs once every other
+// proof holds.
+func (p *depBotRedIssuePass) sharedCause(repo string, pr github.PullRequest, checks []string) (int, string, []depBotRedIssueComparison) {
+	without := depBotRedIssueWithoutSecrets(pr)
+	var compare []depBotRedIssueComparison
 	for _, check := range checks {
-		for _, n := range p.failing[strings.ToLower(repo)+"\x00"+strings.ToLower(check)] {
-			if n != number {
-				return n
+		mine := depBotRedIssueMessages(pr.CIFailureAnnotations, check)
+		for _, other := range p.failing[strings.ToLower(repo)+"\x00"+strings.ToLower(check)] {
+			if other.number == pr.Number {
+				continue
+			}
+			if without && other.withoutSecrets {
+				// Both without the repository's secrets: refused whatever
+				// the messages say, since a missing secret's message often
+				// carries a PR-specific token or id.
+				return other.number, depBotRedIssueSharedNoSecrets, nil
+			}
+			if len(mine) > 0 && len(other.messages) > 0 {
+				for msg := range mine {
+					if other.messages[msg] {
+						return other.number, depBotRedIssueSharedMessage, nil
+					}
+				}
+				continue
+			}
+			compare = append(compare, depBotRedIssueComparison{check: check, peer: other})
+		}
+	}
+	return 0, "", compare
+}
+
+// logSharedCause is the read half of the shared-cause test, for the other
+// PRs sharedCause could not judge, at filing time only (after every other
+// proof, inside the per-pass budget). For each, it reads the failed job's
+// log of the check on this PR (once per check) and on the other PR
+// (github.DependencyBotRedJobErrorLines: the last error lines, normalized,
+// without generic ones) and counts the other PR as the same cause when
+//   - the two logs share an error line (the same curl 404, the same build
+//     error);
+//   - or either log has no error line (on one side or both): nothing
+//     comparable tells the failures apart;
+//   - or either log cannot be read (no Actions job, no log, no access):
+//     nothing to compare, so it fails closed.
+//
+// Different error lines on both sides are different failures. More than
+// depBotRedIssueMaxPeerLogs other PRs to compare is refused unread, and all
+// the reads share one deadline (depBotRedIssueLogDeadline). The
+// lines are compared in memory only: never logged, stored or posted (an
+// Actions log may carry secrets, and the issue is public). err is a failed
+// read the caller retries.
+func (p *depBotRedIssuePass) logSharedCause(ctx context.Context, repo string, runs map[string]github.DependencyBotRedCheckRuns, compare []depBotRedIssueComparison) (other int, basis string, err error) {
+	if len(compare) == 0 {
+		return 0, "", nil
+	}
+	if len(compare) > depBotRedIssueMaxPeerLogs {
+		return compare[0].peer.number, depBotRedIssueSharedTooMany, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, depBotRedIssueLogDeadline)
+	defer cancel()
+	gh := p.policy.GitHub
+	mine := map[string]github.DependencyBotRedJobLines{}
+	for _, c := range compare {
+		own, read := mine[c.check]
+		if !read {
+			if id := runs[c.check].JobID; id > 0 {
+				if own, err = gh.DependencyBotRedJobErrorLines(ctx, repo, id); err != nil {
+					return 0, "", err
+				}
+			}
+			mine[c.check] = own
+		}
+		if !own.Read || c.peer.jobID <= 0 {
+			return c.peer.number, depBotRedIssueSharedNoLog, nil
+		}
+		theirs, err := gh.DependencyBotRedJobErrorLines(ctx, repo, c.peer.jobID)
+		if err != nil {
+			return 0, "", err
+		}
+		switch {
+		case !theirs.Read:
+			return c.peer.number, depBotRedIssueSharedNoLog, nil
+		case len(own.Lines) == 0 && len(theirs.Lines) == 0:
+			return c.peer.number, depBotRedIssueSharedNoLines, nil
+		case len(own.Lines) == 0 || len(theirs.Lines) == 0:
+			return c.peer.number, depBotRedIssueSharedOneSided, nil
+		}
+		seen := map[string]bool{}
+		for _, l := range own.Lines {
+			seen[l] = true
+		}
+		for _, l := range theirs.Lines {
+			if seen[l] {
+				return c.peer.number, depBotRedIssueSharedLogLine, nil
 			}
 		}
 	}
-	return 0
+	return 0, "", nil
 }
 
 // baseFor reads repo's baseRef tip once per pass.
@@ -372,6 +610,26 @@ func depBotRedIssueAfterFix(pr github.PullRequest, regenerated bool) string {
 // previous head when the failure counted as reproduced across heads ("":
 // in-suite).
 func dependencyBotRedIssueLine(pr github.PullRequest, number int, regenerated bool, prevHead string) string {
+	return dependencyBotRedIssueLineFor(pr, depBotRedIssueRecord{Issue: number, PreviousHead: prevHead}, regenerated)
+}
+
+// personIssueLine is the hand-off line when a person already filed an open
+// issue in the repository that references the PR: the hive files none
+// beside it, and the line says what then happens to this PR, as for the
+// hive's own.
+func personIssueLine(pr github.PullRequest, number int, regenerated bool) string {
+	return fmt.Sprintf("A person already filed #%d, which names this pull request, so Hive files no issue of its own; its failing checks pass on %s, so the fix most likely belongs in the repository, not on the bot's branch. %s",
+		number, depBotRedIssueBaseName(pr), depBotRedIssueAfterFix(pr, regenerated))
+}
+
+// dependencyBotRedIssueLineFor is the hand-off line for a recorded issue:
+// personIssueLine for one a person filed, else the hive issue's line
+// (dependencyBotRedIssueLine).
+func dependencyBotRedIssueLineFor(pr github.PullRequest, rec depBotRedIssueRecord, regenerated bool) string {
+	if rec.PersonFiled {
+		return personIssueLine(pr, rec.Issue, regenerated)
+	}
+	number, prevHead := rec.Issue, rec.PreviousHead
 	base := depBotRedIssueBaseName(pr)
 	why := fmt.Sprintf("its failing checks pass on %s, which this head already contains", base)
 	switch {
@@ -447,10 +705,11 @@ func (p *depBotRedIssuePass) judge(ctx context.Context, store *depBotConflictSto
 	case len(checks) > depBotRedIssueMaxChecks:
 		return skip(depBotRedIssueSkipTooMany, "checks", len(checks))
 	}
-	if other := p.otherPRFailing(repo, pr.Number, checks); other > 0 {
-		// The same check is red on another open PR: a shared cause (a
-		// missing secret, a broken runner), not this bump.
-		return skip(depBotRedIssueSkipOtherPRs, "other_pr", other)
+	other, basis, compare := p.sharedCause(repo, pr, checks)
+	if other > 0 {
+		// Another open PR fails the same check for what reads as the same
+		// cause (a missing secret, a broken runner), not this bump.
+		return skip(depBotRedIssueSkipOtherPRs, "other_pr", other, "basis", basis)
 	}
 	if st, found := store.rebaseState(key); found && !st.RequestedAt.IsZero() && strings.EqualFold(st.HeadSHA, pr.HeadSHA) {
 		// The bot was asked to rebase this head; its new head decides.
@@ -462,13 +721,12 @@ func (p *depBotRedIssuePass) judge(ctx context.Context, store *depBotConflictSto
 		// did not go out: link it, read nothing. A later head is judged
 		// again, and the marker lookup finds the open issue.
 		regenerated := depBotRedIssueRegenerated(store, key, pr, checks)
-		return depBotRedIssueOutcome{Number: rec.Issue, Line: dependencyBotRedIssueLine(pr, rec.Issue, regenerated, rec.PreviousHead)}
+		return depBotRedIssueOutcome{Number: rec.Issue, Line: dependencyBotRedIssueLineFor(pr, rec, regenerated)}
 	}
-	// A first cheap look at the evidence the issue would quote: without a
-	// line beyond the bare exit code there is nothing to file.
-	if len(github.DependencyBotRedExcerpt(pr.CIFailureExcerpt, checks)) == 0 {
-		return skip(depBotRedIssueSkipNoExcerpt)
-	}
+	// No look at the excerpt here: a failed shell step leaves only the bare
+	// exit code in its annotations, which says nothing about whose fault
+	// the failure is. The proofs below decide; the excerpt is only what the
+	// issue quotes.
 	if strings.TrimSpace(pr.BaseRef) == "" {
 		return skip(depBotRedIssueSkipNoBase)
 	}
@@ -530,6 +788,9 @@ func (p *depBotRedIssuePass) judge(ctx context.Context, store *depBotConflictSto
 	}
 	allReproduced := true
 	var errorLines []string
+	// quoteless are the failed Actions jobs of checks whose newest failing
+	// run left no annotation beyond the exit code, in check order.
+	var quoteless []depBotRedIssueJob
 	for _, check := range checks {
 		r := runs[check]
 		if r.Passed {
@@ -538,18 +799,19 @@ func (p *depBotRedIssuePass) judge(ctx context.Context, store *depBotConflictSto
 		}
 		allReproduced = allReproduced && r.Reproduced
 		// The base proof must be a run that concluded success (not skipped
-		// or neutral) and no older than the failure: it finished after the
-		// head's newest failing run started.
-		done := base.SucceededAt[check]
-		if done.IsZero() || r.FailureStartedAt.IsZero() || !done.After(r.FailureStartedAt) {
-			return skip(depBotRedIssueSkipBaseStale, "check", check, "base_succeeded_at", done, "failure_started_at", r.FailureStartedAt)
+		// or neutral) and no older than the failure: it started after the
+		// head's newest failing run started. A base run that started before
+		// the breakage proves nothing about it, however late it finished.
+		started := base.SucceededStartedAt[check]
+		if base.SucceededAt[check].IsZero() || started.IsZero() || r.FailureStartedAt.IsZero() || !started.After(r.FailureStartedAt) {
+			return skip(depBotRedIssueSkipBaseStale, "check", check, "base_started_at", started, "failure_started_at", r.FailureStartedAt)
 		}
 		for _, msg := range r.Errors {
 			errorLines = append(errorLines, check+": "+msg)
 		}
-	}
-	if len(errorLines) == 0 {
-		return skip(depBotRedIssueSkipNoErrors)
+		if len(r.Errors) == 0 && r.JobID > 0 {
+			quoteless = append(quoteless, depBotRedIssueJob{check: check, id: r.JobID})
+		}
 	}
 	reproduced, prevHead, mergeBase := "", "", ""
 	switch {
@@ -588,6 +850,35 @@ func (p *depBotRedIssuePass) judge(ctx context.Context, store *depBotConflictSto
 		return skip(depBotRedIssueSkipRecentClosed)
 	}
 
+	// Other PRs failing a check whose snapshot gave nothing to compare:
+	// their job logs against this PR's, in memory only. Only the count of
+	// lines and the basis are logged.
+	if other, basis, err := p.logSharedCause(ctx, repo, runs, compare); err != nil {
+		return failed(depBotRedIssueSkipJobLog, err)
+	} else if other > 0 {
+		return skip(depBotRedIssueSkipOtherPRs, "other_pr", other, "basis", basis, "compared", len(compare))
+	}
+
+	// A person may already have filed the issue: one timeline page of the
+	// PR. An open issue a member filed about the PR is named instead of
+	// filing a second one, and recorded; later passes re-check that it is
+	// still open (recheckPersonIssue).
+	person, err := gh.DependencyBotRedPersonIssue(ctx, repo, github.DependencyBotRedPersonIssueQuery{
+		Number: pr.Number, Author: pr.Author, URL: pr.URL, Since: pr.CreatedAt,
+	})
+	if err != nil {
+		return failed(depBotRedIssueSkipTimeline, err)
+	}
+	if person.Number > 0 {
+		store.markRedIssue(key, depBotRedIssueRecord{ChecksKey: checksKey, Checks: checks, Issue: person.Number, URL: person.URL, HeadSHA: pr.HeadSHA, PreviousHead: prevHead, PersonFiled: true, FiledAt: now, CheckedAt: now})
+		logger.Info("dependency-bot red CI: a person already filed an issue for this pull request; naming it instead of filing",
+			"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "issue", person.Number, "checks", checks)
+		return depBotRedIssueOutcome{Number: person.Number, Line: personIssueLine(pr, person.Number, regenerated)}
+	}
+
+	// Only now, with every proof made and an issue about to be filed, the
+	// failed steps of the jobs that left nothing to quote.
+	failedJobs := p.jobStepsEvidence(ctx, repo, quoteless)
 	title := github.DependencyBotRedIssueTitle(pr.Number, checks)
 	body := github.RenderDependencyBotRedIssueBody(github.DependencyBotRedIssueFacts{
 		PRNumber:        pr.Number,
@@ -601,6 +892,8 @@ func (p *depBotRedIssuePass) judge(ctx context.Context, store *depBotConflictSto
 		Checks:          checks,
 		Runs:            depBotRedIssueRuns(pr, checks),
 		ErrorLines:      errorLines,
+		FailedJobs:      failedJobs,
+		WithoutSecrets:  depBotRedIssueWithoutSecrets(pr),
 		Regenerated:     regenerated,
 		PreviousHeadSHA: prevHead,
 		MergeBaseSHA:    mergeBase,
@@ -632,8 +925,34 @@ func (p *depBotRedIssuePass) judge(ctx context.Context, store *depBotConflictSto
 	}
 	store.markRedIssue(key, depBotRedIssueRecord{ChecksKey: checksKey, Checks: checks, Issue: res.Number, URL: res.URL, HeadSHA: pr.HeadSHA, PreviousHead: prevHead, FiledAt: now})
 	logger.Info("dependency-bot red CI: repository issue filed",
-		"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "issue", res.Number, "checks", checks, "already_existed", res.AlreadyExisted, "previous_head", prevHead)
+		"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "issue", res.Number, "checks", checks, "already_existed", res.AlreadyExisted, "previous_head", prevHead,
+		"annotation_lines", len(errorLines), "failed_jobs", len(failedJobs))
 	return depBotRedIssueOutcome{Number: res.Number, Line: dependencyBotRedIssueLine(pr, res.Number, regenerated, prevHead)}
+}
+
+// depBotRedIssueJob is the failed GitHub Actions job of one failing check.
+type depBotRedIssueJob struct {
+	check string
+	id    int64
+}
+
+// jobStepsEvidence reads, for the first depBotRedIssueMaxJobSteps of jobs,
+// the job's name and failed steps (DependencyBotRedJobSteps), so an issue
+// with nothing to quote still says where each job failed. The steps come
+// from the workflow, not the job's output; the job's log is never quoted.
+// A job read that fails only leaves its steps out.
+func (p *depBotRedIssuePass) jobStepsEvidence(ctx context.Context, repo string, jobs []depBotRedIssueJob) []github.DependencyBotRedFailedJob {
+	var out []github.DependencyBotRedFailedJob
+	for i, j := range jobs {
+		if i >= depBotRedIssueMaxJobSteps {
+			break
+		}
+		if fj := p.policy.GitHub.DependencyBotRedJobSteps(ctx, repo, j.id); len(fj.Steps) > 0 {
+			fj.Check = j.check
+			out = append(out, fj)
+		}
+	}
+	return out
 }
 
 // noteDependencyBotRedIssues is the minimal lifecycle: once the PR an issue
@@ -695,6 +1014,14 @@ func (p *depBotRedIssuePass) noteDependencyBotRedIssues(ctx context.Context, sto
 					"this issue stays open until a person closes it.", number)
 			}
 		}
+		if rec.PersonFiled {
+			// A person's issue: the hive posts nothing on it, and only
+			// forgets it once the PR is done with.
+			store.forgetRedIssue(key)
+			logger.Info("dependency-bot red CI: pull request done; forgetting the person-filed issue it named",
+				"repo", repo, "pr", number, "issue", rec.Issue)
+			continue
+		}
 		p.notes++
 		posted, err := p.policy.GitHub.NoteDependencyBotRedIssue(ctx, repo, rec.Issue, github.DependencyBotRedIssueMarker(number, rec.Checks), note)
 		if err != nil {
@@ -715,18 +1042,56 @@ func (p *depBotRedIssuePass) noteDependencyBotRedIssues(ctx context.Context, sto
 	}
 }
 
+// recheckPersonIssue re-reads the person-filed issue rec names for pr's
+// head, at most every depBotRedIssuePersonRecheck and
+// depBotRedIssueMaxPersonChecksPerPass reads per pass (one Issues.Get
+// each). Still open: nothing changes. Closed or gone with the PR still red:
+// the record is forgotten and the head reopened (pending for the hand-off's
+// own head), so the caller judges it again now and may file. A failed read
+// keeps the record for a later pass. It reports whether to judge.
+func (p *depBotRedIssuePass) recheckPersonIssue(ctx context.Context, store *depBotConflictStore, repo, key string, pr github.PullRequest, rec depBotRedIssueRecord, handoffHead bool, now time.Time, logger *slog.Logger) bool {
+	if !rec.CheckedAt.IsZero() && now.Sub(rec.CheckedAt) < depBotRedIssuePersonRecheck {
+		return false
+	}
+	if p.personChecks >= depBotRedIssueMaxPersonChecksPerPass {
+		return false
+	}
+	p.personChecks++
+	open, err := p.policy.GitHub.DependencyBotRedIssueOpen(ctx, repo, rec.Issue)
+	if err != nil {
+		logger.Warn("dependency-bot red CI: reading the person-filed issue failed; will retry",
+			"repo", repo, "pr", pr.Number, "issue", rec.Issue, "error", err)
+		return false
+	}
+	if open {
+		rec.CheckedAt = now
+		store.markRedIssue(key, rec)
+		return false
+	}
+	store.forgetRedIssue(key)
+	store.reopenRedHead(key, pr.HeadSHA, handoffHead)
+	logger.Info("dependency-bot red CI: the person-filed issue closed with the pull request still red; judging it again",
+		"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "issue", rec.Issue)
+	return true
+}
+
 // depBotRedIssueRecord is the persisted issue for one PR: the failing check
 // set it was filed for and its number. One per PR; a new check set that
 // gets its own issue replaces it. PreviousHead is set when the failure
 // counted as reproduced across heads (the hand-off line says so).
 type depBotRedIssueRecord struct {
-	ChecksKey    string    `json:"checks_key"`
-	Checks       []string  `json:"checks,omitempty"`
-	Issue        int       `json:"issue"`
-	URL          string    `json:"url,omitempty"`
-	HeadSHA      string    `json:"head_sha,omitempty"`
-	PreviousHead string    `json:"previous_head,omitempty"`
-	FiledAt      time.Time `json:"filed_at"`
+	ChecksKey    string   `json:"checks_key"`
+	Checks       []string `json:"checks,omitempty"`
+	Issue        int      `json:"issue"`
+	URL          string   `json:"url,omitempty"`
+	HeadSHA      string   `json:"head_sha,omitempty"`
+	PreviousHead string   `json:"previous_head,omitempty"`
+	// PersonFiled: Issue is an open issue a member filed about the PR,
+	// named instead of filing; the hive never notes on it. CheckedAt is
+	// when it was last seen open (recheckPersonIssue).
+	PersonFiled bool      `json:"person_filed,omitempty"`
+	FiledAt     time.Time `json:"filed_at"`
+	CheckedAt   time.Time `json:"checked_at,omitzero"`
 }
 
 func (s *depBotConflictStore) redIssue(key string) (depBotRedIssueRecord, bool) {
@@ -854,7 +1219,7 @@ type depBotCrossHeadProof struct {
 //     base commit A did not have. A commit stacked on A with no base update
 //     is not evidence;
 //   - every failing check's newest run on M itself concluded success. When
-//     M is the tip, the tip's run already had to finish after B's failure
+//     M is the tip, the tip's run already had to start after B's failure
 //     started; when B is behind the tip, M's own runs are read (one listing)
 //     and a success at any time counts, since it is the very commit B
 //     contains. A pass on the tip alone proves nothing then: the fix may
@@ -945,6 +1310,9 @@ type depBotRedHeads struct {
 	Judged   string `json:"judged,omitempty"`
 	Pending  string `json:"pending,omitempty"`
 	Attempts int    `json:"attempts,omitempty"`
+	// Rules is the depBotRedIssueRules version the newest head's outcome
+	// was reached under (0: a record from before versions were kept).
+	Rules int `json:"rules,omitempty"`
 }
 
 // depBotRedHeadNotEvidence is why pr's red is not the bump's own, "" when
@@ -976,7 +1344,7 @@ func (s *depBotConflictStore) noteRedHead(key string, h depBotRedHead) {
 	r := s.redHeads[key]
 	switch {
 	case r == nil:
-		s.redHeads[key] = &depBotRedHeads{Last: h}
+		s.redHeads[key] = &depBotRedHeads{Last: h, Rules: depBotRedIssueRules}
 	case strings.EqualFold(r.Last.HeadSHA, h.HeadSHA):
 		if h.NotEvidence == "" {
 			h.NotEvidence = r.Last.NotEvidence
@@ -989,7 +1357,7 @@ func (s *depBotConflictStore) noteRedHead(key string, h depBotRedHead) {
 	default:
 		successive := !r.Skipped && (r.Next == "" || strings.EqualFold(r.Next, h.HeadSHA)) &&
 			!h.SeenAt.Before(r.Last.SeenAt) && h.SeenAt.Sub(r.Last.SeenAt) <= depBotRedHeadMaxGap
-		n := &depBotRedHeads{Last: h}
+		n := &depBotRedHeads{Last: h, Rules: depBotRedIssueRules}
 		if successive {
 			prev := r.Last
 			n.Prev = &prev
@@ -1080,10 +1448,65 @@ func (s *depBotConflictStore) redHeadsForLocked(key, headSHA string) *depBotRedH
 	}
 	r := s.redHeads[key]
 	if r == nil {
-		r = &depBotRedHeads{Last: depBotRedHead{HeadSHA: headSHA}}
+		r = &depBotRedHeads{Last: depBotRedHead{HeadSHA: headSHA}, Rules: depBotRedIssueRules}
 		s.redHeads[key] = r
 	}
 	return r
+}
+
+// markRedHeadRules records that headSHA's outcome was reached under the
+// current rules (the hand-off's own head, whose final outcome is otherwise
+// not recorded), so reopenRedHeadForRules leaves it alone.
+func (s *depBotConflictStore) markRedHeadRules(key, headSHA string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.redHeads[key]
+	if r == nil || !strings.EqualFold(r.Last.HeadSHA, headSHA) || r.Rules >= depBotRedIssueRules {
+		return
+	}
+	r.Rules = depBotRedIssueRules
+	s.saveRedIssuesLocked()
+}
+
+// reopenRedHeadForRules lets headSHA, the PR's newest red head, be judged
+// once more when its outcome was reached under older rules (Rules below
+// depBotRedIssueRules): a final answer then (Judged) is cleared, and the
+// hand-off's own head (handoffHead), whose final answer is not recorded at
+// all, is marked pending, with its attempts started over. The record then
+// carries the current rules, so this happens once per head. The caller
+// checks first that no issue is recorded for the head, so nothing filed is
+// filed again; the judgement keeps its per-pass budget and attempt cap.
+func (s *depBotConflictStore) reopenRedHeadForRules(key, headSHA string, handoffHead bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := s.redHeads[key]
+	if r == nil || r.Rules >= depBotRedIssueRules || !strings.EqualFold(r.Last.HeadSHA, headSHA) {
+		return false
+	}
+	s.reopenRedHeadLocked(r, headSHA, handoffHead)
+	return true
+}
+
+// reopenRedHead lets headSHA be judged again (a person-filed issue it was
+// answered with closed): reopenRedHeadForRules without the rules check.
+func (s *depBotConflictStore) reopenRedHead(key, headSHA string, handoffHead bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reopenRedHeadLocked(s.redHeadsForLocked(key, headSHA), headSHA, handoffHead)
+}
+
+// reopenRedHeadLocked clears a final answer for headSHA, marks the
+// hand-off's own head pending with its attempts started over, and stamps
+// the current rules. Callers hold s.mu.
+func (s *depBotConflictStore) reopenRedHeadLocked(r *depBotRedHeads, headSHA string, handoffHead bool) {
+	r.Rules = depBotRedIssueRules
+	if strings.EqualFold(r.Judged, headSHA) {
+		r.Judged = ""
+	}
+	if handoffHead || strings.EqualFold(r.Pending, headSHA) {
+		r.Pending, r.Attempts = headSHA, 0
+	}
+	s.saveRedIssuesLocked()
 }
 
 // redHeadJudged reports whether the filer reached a final outcome for
@@ -1105,6 +1528,9 @@ func (s *depBotConflictStore) markRedHeadJudged(key, headSHA string) {
 	if strings.EqualFold(r.Pending, headSHA) {
 		r.Pending, r.Attempts = "", 0
 	}
+	if strings.EqualFold(r.Last.HeadSHA, headSHA) {
+		r.Rules = depBotRedIssueRules
+	}
 	s.saveRedIssuesLocked()
 }
 
@@ -1125,6 +1551,9 @@ func (s *depBotConflictStore) markRedHeadPending(key, headSHA string, attempt bo
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := s.redHeadsForLocked(key, headSHA)
+	if strings.EqualFold(r.Last.HeadSHA, headSHA) {
+		r.Rules = depBotRedIssueRules
+	}
 	if !strings.EqualFold(r.Pending, headSHA) {
 		r.Pending, r.Attempts = headSHA, 0
 	} else if !attempt {
@@ -1208,13 +1637,19 @@ func (p *depBotRedIssuePass) fileForParkedHead(ctx context.Context, store *depBo
 		return false
 	}
 	sameHead := strings.EqualFold(rec.HeadSHA, pr.HeadSHA)
+	if r, ok := store.redIssue(key); ok && r.Issue > 0 && strings.EqualFold(r.HeadSHA, pr.HeadSHA) {
+		if !r.PersonFiled || !p.recheckPersonIssue(ctx, store, repo, key, pr, r, sameHead, now, logger) {
+			return false
+		}
+	}
+	// A head with no issue whose answer came from older rules (one refused
+	// for a check name alone or for no annotation excerpt) is judged once
+	// more under these.
+	store.reopenRedHeadForRules(key, pr.HeadSHA, sameHead)
 	if sameHead && !store.redHeadPending(key, pr.HeadSHA) {
 		return false
 	}
 	if store.redHeadJudged(key, pr.HeadSHA) || store.staleRedLabelNotOwn(key, pr.HeadSHA) {
-		return false
-	}
-	if r, ok := store.redIssue(key); ok && r.Issue > 0 && strings.EqualFold(r.HeadSHA, pr.HeadSHA) {
 		return false
 	}
 	rerun := depBotTransientRerunFor(dbrLedger(), repo, pr)

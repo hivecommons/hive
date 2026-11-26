@@ -74,10 +74,29 @@ type depBotRedIssueFake struct {
 	runsErr error
 	// runsErrHead fails the run read for one head only.
 	runsErrHead map[string]error
-	sharedCI    map[string]int
-	lookupErr   error
-	refuse      bool
-	createErr   error
+	// jobLines answers DependencyBotRedJobErrorLines per job id (default:
+	// no log to read), jobLinesErr fails it; jobSteps answers
+	// DependencyBotRedJobSteps.
+	jobLines    map[int64]github.DependencyBotRedJobLines
+	jobLinesErr error
+	logReads    int
+	jobSteps    map[int64]github.DependencyBotRedFailedJob
+	stepReads   int
+	// issueOpen answers DependencyBotRedIssueOpen per issue (default:
+	// open), issueOpenErr fails it.
+	issueOpen    map[int]bool
+	issueOpenErr error
+	openReads    int
+	personQuery  github.DependencyBotRedPersonIssueQuery
+	// person is the person-filed open issue the PR's timeline shows (0:
+	// none), timelineErr fails the read.
+	person        github.DependencyBotRedPersonIssue
+	timelineErr   error
+	timelineReads int
+	sharedCI      map[string]int
+	lookupErr     error
+	refuse        bool
+	createErr     error
 	// existing makes the create return this issue as AlreadyExisted.
 	existing   *depBotRedIssueFakeIssue
 	isOwnErr   error
@@ -101,6 +120,9 @@ func newDepBotRedIssueFake() *depBotRedIssueFake {
 			Red:         map[string]bool{},
 			Reported:    map[string]bool{},
 			SucceededAt: map[string]time.Time{},
+			// The base's passing runs started half an hour after the
+			// failure.
+			SucceededStartedAt: map[string]time.Time{},
 		},
 		nextNumber: 100,
 	}
@@ -114,6 +136,7 @@ func (f *depBotRedIssueFake) baseGreen(checks ...string) {
 		f.base.Completed[c] = true
 		f.base.Reported[c] = true
 		f.base.SucceededAt[c] = depBotRedFailStart.Add(time.Hour)
+		f.base.SucceededStartedAt[c] = depBotRedFailStart.Add(30 * time.Minute)
 	}
 }
 
@@ -122,7 +145,7 @@ func (f *depBotRedIssueFake) policy() depBotRedIssuePolicy {
 }
 
 func (f *depBotRedIssueFake) reads() int {
-	return f.baseReads + f.compares + f.runReads + f.lookups + f.passReads + f.labelReads
+	return f.baseReads + f.compares + f.runReads + f.lookups + f.passReads + f.labelReads + f.logReads + f.timelineReads + f.stepReads + f.openReads
 }
 
 func (f *depBotRedIssueFake) DependencyBotRedIssueOwnAccountsKnown() bool { return !f.ownUnknown }
@@ -200,6 +223,34 @@ func (f *depBotRedIssueFake) DependencyBotRedRunFacts(_ context.Context, _ strin
 		out[c] = r
 	}
 	return out, nil
+}
+
+func (f *depBotRedIssueFake) DependencyBotRedJobErrorLines(_ context.Context, _ string, jobID int64) (github.DependencyBotRedJobLines, error) {
+	f.logReads++
+	if f.jobLinesErr != nil {
+		return github.DependencyBotRedJobLines{}, f.jobLinesErr
+	}
+	return f.jobLines[jobID], nil
+}
+
+func (f *depBotRedIssueFake) DependencyBotRedJobSteps(_ context.Context, _ string, jobID int64) github.DependencyBotRedFailedJob {
+	f.stepReads++
+	return f.jobSteps[jobID]
+}
+
+func (f *depBotRedIssueFake) DependencyBotRedPersonIssue(_ context.Context, _ string, q github.DependencyBotRedPersonIssueQuery) (github.DependencyBotRedPersonIssue, error) {
+	f.timelineReads++
+	f.personQuery = q
+	return f.person, f.timelineErr
+}
+
+func (f *depBotRedIssueFake) DependencyBotRedIssueOpen(_ context.Context, _ string, number int) (bool, error) {
+	f.openReads++
+	if f.issueOpenErr != nil {
+		return false, f.issueOpenErr
+	}
+	open, ok := f.issueOpen[number]
+	return open || !ok, nil
 }
 
 func (f *depBotRedIssueFake) LookupDependencyBotRedIssue(_ context.Context, _ string, marker string, checks []string, now time.Time) (github.DependencyBotRedIssueLookup, error) {
@@ -314,6 +365,8 @@ func depBotRedBump(sha string) github.PullRequest {
 		p.Title = "Bump example.com/lib from 1.2.0 to 2.0.0"
 		p.URL = "https://github.com/acme/widgets/pull/42"
 		p.CIFailureExcerpt = "build: undefined: lib.OldName\ntest: exit status 1"
+		p.CIFailureAnnotations = "build: undefined: lib.OldName\ntest: exit status 1"
+		p.CreatedAt = depBotT0.Add(-48 * time.Hour)
 	})
 }
 
@@ -438,6 +491,9 @@ func TestDependencyBotRedIssueFilesOncePerPRAndChecks(t *testing.T) {
 	if len(h.writer.comments) != 2 || !strings.Contains(h.writer.comments[1], fmt.Sprintf("Issue #%d", is.number)) {
 		t.Fatalf("next head hand-off = %v, want it to name #%d", h.writer.comments, is.number)
 	}
+	if f.timelineReads != 1 {
+		t.Fatalf("timeline reads = %d, want one, before the first filing only (the hive's own issue is linked without it)", f.timelineReads)
+	}
 
 	// Restart with the ledger on disk.
 	h.store = loadDepBotConflictStore(h.path)
@@ -514,13 +570,16 @@ func TestDependencyBotRedIssueOnlyReproducedFailures(t *testing.T) {
 }
 
 // The base proof must be no older than the failure: a passing base run that
-// finished before the head's failing run started, or without a time, is
-// unknown, on the re-run-done path too.
+// started before the head's failing run started (however late it
+// finished), or without a time, is unknown, on the re-run-done path too.
 func TestDependencyBotRedIssueBaseProofMustPostdateFailure(t *testing.T) {
 	for name, mut := range map[string]func(*depBotRedIssueFake){
-		"base run finished before the failure": func(f *depBotRedIssueFake) { f.base.SucceededAt["test"] = depBotRedFailStart.Add(-time.Minute) },
-		"base run finished at the same time":   func(f *depBotRedIssueFake) { f.base.SucceededAt["test"] = depBotRedFailStart },
-		"base run time unknown":                func(f *depBotRedIssueFake) { delete(f.base.SucceededAt, "test") },
+		// Finished after the failure started, but started before it: no
+		// proof about the breakage.
+		"base run started before the failure": func(f *depBotRedIssueFake) { f.base.SucceededStartedAt["test"] = depBotRedFailStart.Add(-time.Minute) },
+		"base run started at the same time":   func(f *depBotRedIssueFake) { f.base.SucceededStartedAt["test"] = depBotRedFailStart },
+		"base run start unknown":              func(f *depBotRedIssueFake) { delete(f.base.SucceededStartedAt, "test") },
+		"base run time unknown":               func(f *depBotRedIssueFake) { delete(f.base.SucceededAt, "test") },
 		// A skipped or neutral base run is completed and not red, so the
 		// stale-red verdict clears, but it has no success time.
 		"base run skipped or neutral": func(f *depBotRedIssueFake) {
@@ -548,27 +607,216 @@ func TestDependencyBotRedIssueBaseProofMustPostdateFailure(t *testing.T) {
 	}
 }
 
-// Junk evidence files nothing: an excerpt of exit-code-only lines (no read
-// at all), or newest failing runs with no failure-level error annotation.
-func TestDependencyBotRedIssueNeedsRealErrors(t *testing.T) {
+// A failed shell step leaves only the bare exit code in its annotations:
+// that refuses nothing. The issue names the job and its failed steps, points
+// at the job's own log, never quotes it, and for a Dependabot PR (no Actions
+// secrets) names a missing secret as a possible cause.
+func TestDependencyBotRedIssueBareExitCodeNamesSteps(t *testing.T) {
 	h := newDepBotHarness(t)
 	f := newDepBotRedIssueFake()
+	f.runs = map[string]github.DependencyBotRedCheckRuns{
+		"build": {Reproduced: true, FailureStartedAt: depBotRedFailStart, JobID: 11},
+		"test":  {Reproduced: true, FailureStartedAt: depBotRedFailStart, JobID: 12},
+	}
+	f.jobSteps = map[int64]github.DependencyBotRedFailedJob{12: {Job: "Unit tests", Steps: []string{"Run pytest"}}}
+	// A log is there, but nothing compares it: it must not be read.
+	f.jobLines = map[int64]github.DependencyBotRedJobLines{11: {Read: true, Lines: []string{"log-only text"}}}
 	pr := depBotRedBump("sha-1")
-	pr.CIFailureExcerpt = "build: Process completed with exit code 1.\nlint: something else"
+	pr.CIFailureExcerpt = "build: Process completed with exit code 1.\ntest: Process completed with exit code 1."
+	pr.CIFailureAnnotations = ""
 	h.redIssuePastGrace(depBotT0, f.policy(), pr)
-	h.wantPlainHandoff(f, "exit-code excerpt")
-	if f.reads() != 0 {
-		t.Fatalf("exit-code excerpt read GitHub %d times", f.reads())
+	if f.creates != 1 || f.stepReads != 2 || f.logReads != 0 {
+		t.Fatalf("creates=%d step reads=%d log reads=%d, want one issue, both jobs' steps and no log read", f.creates, f.stepReads, f.logReads)
+	}
+	body := f.issues[0].body
+	for _, want := range []string{
+		"- Failed steps:\n  - `test` (job `Unit tests`): `Run pytest`\n",
+		"The failing runs left no annotation beyond the exit code; the check's details page has the full output.",
+		"This pull request's runs cannot see the repository's Actions secrets (Dependabot runs get only the Dependabot secrets, and runs from a fork get none), so a secret the workflow needs is a possible cause.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body has no %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "```") || strings.Contains(body, "log-only text") {
+		t.Errorf("body quotes something with no annotation to quote:\n%s", body)
+	}
+	if c := h.wantOneHandoff("steps"); !strings.Contains(c, depBotRedIssueLineText) {
+		t.Fatalf("hand-off does not name the issue: %q", c)
+	}
+}
+
+// A PR that runs with the repository's secrets (mergeraptor) gets no
+// missing-secret sentence; a check from other CI (no job) gets no steps,
+// and at most depBotRedIssueMaxJobSteps jobs are read.
+func TestDependencyBotRedIssueFilesWithoutExcerpt(t *testing.T) {
+	h := newDepBotHarness(t)
+	f := newDepBotRedIssueFake()
+	f.runs = map[string]github.DependencyBotRedCheckRuns{}
+	pr := depBotCrossHeadPR("sha-1")
+	pr.FailingChecks = nil
+	pr.CIFailureAnnotations = ""
+	for i := 0; i < depBotRedIssueMaxChecks; i++ {
+		check := fmt.Sprintf("check-%d", i)
+		f.baseGreen(check)
+		r := github.DependencyBotRedCheckRuns{Reproduced: true, FailureStartedAt: depBotRedFailStart}
+		if i > 0 {
+			r.JobID = int64(20 + i)
+		}
+		f.runs[check] = r
+		pr.FailingChecks = append(pr.FailingChecks, check)
+	}
+	h.redIssuePastGrace(depBotT0, f.policy(), pr)
+	if f.creates != 1 || f.stepReads != depBotRedIssueMaxJobSteps {
+		t.Fatalf("creates=%d step reads=%d, want one issue and %d step reads", f.creates, f.stepReads, depBotRedIssueMaxJobSteps)
+	}
+	body := f.issues[0].body
+	if !strings.Contains(body, "the check's details page has the full output.") || strings.Contains(body, "Actions secrets") ||
+		strings.Contains(body, "```") || strings.Contains(body, "Failed steps") {
+		t.Errorf("body:\n%s", body)
+	}
+}
+
+// depBotRedLogPeers is the utah#1584/#1579 shape: a mergeraptor bump (in
+// the repository, so with its secrets) and a person's in-repository PR both
+// fail kernel_cache with only an exit code. The bump's failed job is 11,
+// the other PR's 21.
+func depBotRedLogPeers(f *depBotRedIssueFake) (github.PullRequest, github.PullRequest) {
+	f.baseGreen("kernel_cache")
+	f.runs = map[string]github.DependencyBotRedCheckRuns{"kernel_cache": {Reproduced: true, FailureStartedAt: depBotRedFailStart, JobID: 11}}
+	bump := depBotCrossHeadPR("sha-1")
+	bump.FailingChecks = []string{"kernel_cache"}
+	bump.CIFailureExcerpt = "kernel_cache: Process completed with exit code 22."
+	bump.CIFailureAnnotations = ""
+	other := depBotPR("alice", "sha-9", func(p *github.PullRequest) {
+		redCI(p)
+		p.Number = 79
+		p.FailingChecks = []string{"kernel_cache"}
+		p.FailingCheckRunIDs = []int64{21}
+		p.CIFailureExcerpt = "kernel_cache: Process completed with exit code 22."
+	})
+	return bump, other
+}
+
+// With nothing in either snapshot to compare, the two failed jobs' logs are
+// compared at filing time: the same error line (the same curl 404), no
+// error line on one side or both, or a log that cannot be read, is a shared
+// cause; different error lines on both sides are not. A failed read keeps the head; more peers
+// than depBotRedIssueMaxPeerLogs are refused unread. The log text never
+// reaches the issue.
+func TestDependencyBotRedIssueComparesJobLogs(t *testing.T) {
+	curl := "curl: (0) the requested url returned error: 0"
+	for name, tc := range map[string]struct {
+		mine, theirs github.DependencyBotRedJobLines
+		want         int
+	}{
+		"same error line":          {github.DependencyBotRedJobLines{Read: true, Lines: []string{curl, "error: kernel cache build failed"}}, github.DependencyBotRedJobLines{Read: true, Lines: []string{"warning text", curl}}, 0},
+		"different error lines":    {github.DependencyBotRedJobLines{Read: true, Lines: []string{"assertionerror: 'a' != 'b'"}}, github.DependencyBotRedJobLines{Read: true, Lines: []string{"assertionerror: 'c' != 'd'"}}, 1},
+		"no error line on either":  {github.DependencyBotRedJobLines{Read: true}, github.DependencyBotRedJobLines{Read: true}, 0},
+		"error lines on one side":  {github.DependencyBotRedJobLines{Read: true, Lines: []string{curl}}, github.DependencyBotRedJobLines{Read: true}, 0},
+		"error lines on the other": {github.DependencyBotRedJobLines{Read: true}, github.DependencyBotRedJobLines{Read: true, Lines: []string{curl}}, 0},
+		"other log unreadable":     {github.DependencyBotRedJobLines{Read: true, Lines: []string{curl}}, github.DependencyBotRedJobLines{}, 0},
+		"own log unreadable":       {github.DependencyBotRedJobLines{}, github.DependencyBotRedJobLines{Read: true, Lines: []string{curl}}, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newDepBotHarness(t)
+			f := newDepBotRedIssueFake()
+			bump, other := depBotRedLogPeers(f)
+			f.jobLines = map[int64]github.DependencyBotRedJobLines{11: tc.mine, 21: tc.theirs}
+			h.redIssuePastGrace(depBotT0, f.policy(), bump, other)
+			if f.creates != tc.want {
+				t.Fatalf("creates=%d, want %d", f.creates, tc.want)
+			}
+			if f.logReads == 0 || f.logReads > 2 {
+				t.Fatalf("log reads = %d, want this PR's and the other's", f.logReads)
+			}
+			for _, is := range f.issues {
+				for _, l := range append(tc.mine.Lines, tc.theirs.Lines...) {
+					if strings.Contains(strings.ToLower(is.body), l) {
+						t.Fatalf("the issue quotes job log text %q:\n%s", l, is.body)
+					}
+				}
+			}
+		})
 	}
 
-	h2 := newDepBotHarness(t)
-	f2 := newDepBotRedIssueFake()
-	f2.runs = map[string]github.DependencyBotRedCheckRuns{
-		"build": {Reproduced: true, FailureStartedAt: depBotRedFailStart},
-		"test":  {Reproduced: true, FailureStartedAt: depBotRedFailStart},
+	// A temporary failure reading a log files nothing and keeps the head.
+	h := newDepBotHarness(t)
+	f := newDepBotRedIssueFake()
+	bump, other := depBotRedLogPeers(f)
+	f.jobLinesErr = errors.New("502")
+	h.redIssuePastGrace(depBotT0, f.policy(), bump, other)
+	if f.creates != 0 || !h.store.redHeadPending(depBotKey, "sha-1") {
+		t.Fatalf("log read failed: creates=%d pending=%v, want nothing filed and the head kept", f.creates, h.store.redHeadPending(depBotKey, "sha-1"))
 	}
-	h2.redIssuePastGrace(depBotT0, f2.policy(), depBotRedBump("sha-1"))
-	h2.wantPlainHandoff(f2, "no error annotations")
+
+	// Three other PRs to compare: refused without reading any log.
+	h = newDepBotHarness(t)
+	f = newDepBotRedIssueFake()
+	bump, other = depBotRedLogPeers(f)
+	prs := []github.PullRequest{bump}
+	for i := 0; i < depBotRedIssueMaxPeerLogs+1; i++ {
+		o := other
+		o.Number = 80 + i
+		prs = append(prs, o)
+	}
+	h.redIssuePastGrace(depBotT0, f.policy(), prs...)
+	if f.creates != 0 || f.logReads != 0 {
+		t.Fatalf("too many peers: creates=%d log reads=%d, want a refusal with no log read", f.creates, f.logReads)
+	}
+}
+
+// Only failure-level, non-generic annotation messages make a same-message
+// cause: a deprecation warning every run prints, or "exit status 1", does
+// not.
+func TestDependencyBotRedIssueMessagesFailureLevelOnly(t *testing.T) {
+	h := newDepBotHarness(t)
+	f := newDepBotRedIssueFake()
+	bump := depBotRedBump("sha-1")
+	bump.FailingChecks = []string{"build"}
+	bump.CIFailureExcerpt = "build: Node.js 20 actions are deprecated\nbuild: undefined: lib.OldName"
+	bump.CIFailureAnnotations = "build: undefined: lib.OldName\nbuild: exit status 1"
+	other := depBotPR("alice", "sha-9", func(p *github.PullRequest) {
+		redCI(p)
+		p.Number = 79
+		p.FailingChecks = []string{"build"}
+		p.CIFailureExcerpt = "build: Node.js 20 actions are deprecated\nbuild: other error"
+		p.CIFailureAnnotations = "build: other error\nbuild: exit status 1"
+	})
+	h.redIssuePastGrace(depBotT0, f.policy(), bump, other)
+	if f.creates != 1 || f.logReads != 0 {
+		t.Fatalf("creates=%d log reads=%d, want the issue filed on differing failure messages, with no log read", f.creates, f.logReads)
+	}
+	if got := depBotRedIssueMessages("build: exit status 1\nbuild: The operation was canceled.\nbuild: Error 2 in   step 7", "build"); len(got) != 1 || !got["error 0 in step 0"] {
+		t.Fatalf("messages = %v, want only the normalized non-generic one", got)
+	}
+}
+
+// Two PRs whose runs lack the repository's secrets (two Dependabot PRs, or
+// one from a fork) are one cause whatever their messages say: a missing
+// secret's message often names a PR-specific token, so differing messages
+// are no proof. Nothing is read.
+func TestDependencyBotRedIssueWithoutSecretsDifferentMessages(t *testing.T) {
+	for name, fork := range map[string]bool{"two Dependabot PRs": false, "Dependabot and a fork": true} {
+		t.Run(name, func(t *testing.T) {
+			h := newDepBotHarness(t)
+			f := newDepBotRedIssueFake()
+			bump := depBotRedBump("sha-1")
+			bump.FailingChecks = []string{"build"}
+			bump.CIFailureAnnotations = "build: secret DEPLOY_TOKEN missing for request gh-req-A1"
+			other := depBotRedBump("sha-7")
+			other.Number = 43
+			other.FailingChecks = []string{"build"}
+			other.CIFailureAnnotations = "build: secret DEPLOY_TOKEN missing for request gh-req-Z9"
+			if fork {
+				other.Author, other.FromFork = "alice", true
+			}
+			h.redIssuePastGrace(depBotT0, f.policy(), bump, other)
+			if f.creates != 0 || f.reads() != 0 {
+				t.Fatalf("creates=%d reads=%d, want a refusal from the snapshot alone", f.creates, f.reads())
+			}
+		})
+	}
 }
 
 // The Dependabot-secrets scenario: the same check failing on five bot PRs
@@ -582,6 +830,7 @@ func TestDependencyBotRedIssueSkipsCheckFailingOnOtherPRs(t *testing.T) {
 		pr.Number = 60 + i
 		pr.FailingChecks = []string{"build"}
 		pr.CIFailureExcerpt = "build: secret DEPLOY_TOKEN is empty"
+		pr.CIFailureAnnotations = "build: secret DEPLOY_TOKEN is empty"
 		prs = append(prs, pr)
 	}
 	h.redIssuePastGrace(depBotT0, f.policy(), prs...)
@@ -594,14 +843,44 @@ func TestDependencyBotRedIssueSkipsCheckFailingOnOtherPRs(t *testing.T) {
 		}
 	}
 
-	// A human PR failing the same check counts too.
-	h2 := newDepBotHarness(t)
-	f2 := newDepBotRedIssueFake()
-	human := depBotPR("alice", "sha-9", redCI)
-	human.Number = 77
-	h2.redIssuePastGrace(depBotT0, f2.policy(), depBotRedBump("sha-1"), human)
-	if f2.creates != 0 {
-		t.Fatalf("human PR failing the same check: creates=%d, want none", f2.creates)
+	// Another PR (here a person's) red on the same check is a shared cause
+	// only on evidence: the same failure-level message (cheap, no read). A
+	// different message leaves the issue path to the base and reproduction
+	// proofs. Nothing to compare (one side has only the exit code) while
+	// that PR runs with the repository's secrets goes to the job-log
+	// comparison, which fails closed here (no log to read; see
+	// TestDependencyBotRedIssueComparesJobLogs). Nothing to compare and both
+	// PRs without the repository's secrets (a fork's PR and Dependabot's)
+	// counts at once.
+	for name, tc := range map[string]struct {
+		annotations string
+		fork        bool
+		want        int
+		cheap       bool
+	}{
+		"different message":                        {"build: tests/test_release.py:526 AssertionError", false, 1, false},
+		"nothing to compare, no log to compare":    {"", false, 0, false},
+		"same message":                             {"build: undefined: lib.OldName", false, 0, true},
+		"same message, other case and spacing":     {"build:   Undefined:  lib.oldname", false, 0, true},
+		"nothing to compare, both without secrets": {"", true, 0, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h2 := newDepBotHarness(t)
+			f2 := newDepBotRedIssueFake()
+			human := depBotPR("alice", "sha-9", redCI)
+			human.Number = 77
+			human.FailingChecks = []string{"build"}
+			human.CIFailureExcerpt = tc.annotations
+			human.CIFailureAnnotations = tc.annotations
+			human.FromFork = tc.fork
+			h2.redIssuePastGrace(depBotT0, f2.policy(), depBotRedBump("sha-1"), human)
+			if f2.creates != tc.want {
+				t.Fatalf("creates=%d, want %d", f2.creates, tc.want)
+			}
+			if tc.cheap && f2.reads() != 0 {
+				t.Fatalf("a snapshot-proven shared cause read GitHub %d times", f2.reads())
+			}
+		})
 	}
 }
 
@@ -1274,15 +1553,12 @@ func TestDependencyBotRedIssueCrossHeadFailsClosed(t *testing.T) {
 		{"the previous-head compare failed", func(f *depBotRedIssueFake) { f.behindErr, f.behindErrBase = errors.New("502"), "base-2" }, nil},
 		{"the merge base never ran a check", func(f *depBotRedIssueFake) { delete(f.baseAt["base-2"].SucceededAt, "test") }, nil},
 		{"the merge base unreadable", func(f *depBotRedIssueFake) { f.baseAtErr = errors.New("502") }, nil},
-		{"base proof older than the newer failure", func(f *depBotRedIssueFake) { f.base.SucceededAt["test"] = depBotRedFailStart.Add(-time.Minute) }, nil},
+		{"base proof older than the newer failure", func(f *depBotRedIssueFake) { f.base.SucceededStartedAt["test"] = depBotRedFailStart.Add(-time.Minute) }, nil},
 		{"a run passed on the newer head", func(f *depBotRedIssueFake) {
 			f.runs["test"] = github.DependencyBotRedCheckRuns{Passed: true, FailureStartedAt: depBotRedFailStart, Errors: []string{"test broke"}}
 		}, nil},
 		{"base red on the check", func(f *depBotRedIssueFake) { f.base.Red["test"] = true }, nil},
 		{"an open shared-ci incident", func(f *depBotRedIssueFake) { f.sharedCI = map[string]int{"build": 9} }, nil},
-		{"no error annotation", func(f *depBotRedIssueFake) {
-			f.runs = map[string]github.DependencyBotRedCheckRuns{"build": {FailureStartedAt: depBotRedFailStart}, "test": {FailureStartedAt: depBotRedFailStart}}
-		}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1772,5 +2048,166 @@ func TestDependencyBotRedHeadPendingAttempts(t *testing.T) {
 	}
 	if !s.markRedHeadPending("k", "b", true) || !s.redHeadJudged("k", "b") || s.redHeadPending("k", "b") {
 		t.Fatal("the last attempt did not judge the head")
+	}
+}
+
+// An open issue a member filed about the PR (the client's filters are in
+// pkg/github) is named in the hand-off instead of filing a second one, and
+// recorded; passes within depBotRedIssuePersonRecheck read nothing; the hive
+// never notes on it and forgets it once the PR goes green. An unreadable
+// timeline files nothing and keeps the head.
+func TestDependencyBotRedIssuePersonFiledIssueNamed(t *testing.T) {
+	h := newDepBotHarness(t)
+	f := newDepBotRedIssueFake()
+	f.person = github.DependencyBotRedPersonIssue{Number: 7, URL: "https://github.com/acme/widgets/issues/7"}
+	pr := depBotRedBump("sha-1")
+	at := h.redIssuePastGrace(depBotT0, f.policy(), pr)
+	comment := h.wantOneHandoff("person-filed issue")
+	if f.creates != 0 || f.timelineReads != 1 {
+		t.Fatalf("creates=%d timeline reads=%d, want no filing after one timeline read", f.creates, f.timelineReads)
+	}
+	if q := f.personQuery; q.Number != 42 || q.Author != "dependabot[bot]" || q.URL != pr.URL || !q.Since.Equal(pr.CreatedAt) {
+		t.Fatalf("person query = %+v, want the PR's number, author, URL and creation time", q)
+	}
+	if !strings.Contains(comment, "A person already filed #7, which names this pull request, so Hive files no issue of its own") || strings.Contains(comment, depBotRedIssueLineText) {
+		t.Fatalf("hand-off does not name the person's issue: %q", comment)
+	}
+	for _, bad := range []string{"\u2014", "\u2013", "@"} {
+		if strings.Contains(comment, bad) {
+			t.Errorf("hand-off contains %q", bad)
+		}
+	}
+	if rec, ok := h.store.redIssue(depBotKey); !ok || rec.Issue != 7 || !rec.PersonFiled || rec.HeadSHA != "sha-1" {
+		t.Fatalf("record = %+v (ok=%v), want the person's #7 for sha-1", rec, ok)
+	}
+	reads := f.reads()
+	h.redIssuePassAt(at.Add(depBotRedIssuePersonRecheck/2), depBotAdoptPolicy{}, f.policy(), depBotParked(pr))
+	if f.reads() != reads || f.creates != 0 || len(h.writer.comments) != 1 {
+		t.Fatalf("later pass: reads=%d (was %d) creates=%d, want nothing", f.reads(), reads, f.creates)
+	}
+	h.redIssuePassAt(at.Add(2*time.Hour), depBotAdoptPolicy{}, f.policy(), depBotPR("dependabot[bot]", "sha-2", nil))
+	if _, ok := h.store.redIssue(depBotKey); ok || len(f.notes) != 0 {
+		t.Fatalf("green PR: record kept or notes=%v, want it forgotten without a note", f.notes)
+	}
+
+	// Not final: past depBotRedIssuePersonRecheck the issue is read again.
+	// Still open, nothing changes; once it closed with the PR still red,
+	// the head is judged again and, with no other person's issue, filed.
+	// The PR gets no second comment.
+	hr := newDepBotHarness(t)
+	fr := newDepBotRedIssueFake()
+	fr.person = github.DependencyBotRedPersonIssue{Number: 7}
+	at = hr.redIssuePastGrace(depBotT0, fr.policy(), pr)
+	hr.redIssuePassAt(at.Add(depBotRedIssuePersonRecheck), depBotAdoptPolicy{}, fr.policy(), depBotParked(pr))
+	if fr.openReads != 1 || fr.creates != 0 {
+		t.Fatalf("still open: open reads=%d creates=%d, want one read and nothing filed", fr.openReads, fr.creates)
+	}
+	hr.redIssuePassAt(at.Add(depBotRedIssuePersonRecheck+time.Minute), depBotAdoptPolicy{}, fr.policy(), depBotParked(pr))
+	if fr.openReads != 1 {
+		t.Fatalf("re-read within the interval: open reads=%d", fr.openReads)
+	}
+	fr.issueOpen = map[int]bool{7: false}
+	fr.person = github.DependencyBotRedPersonIssue{}
+	hr.redIssuePassAt(at.Add(3*depBotRedIssuePersonRecheck), depBotAdoptPolicy{}, fr.policy(), depBotParked(pr))
+	if fr.openReads != 2 || fr.creates != 1 || len(hr.writer.comments) != 1 {
+		t.Fatalf("closed: open reads=%d creates=%d comments=%d, want the head judged again and filed", fr.openReads, fr.creates, len(hr.writer.comments))
+	}
+	if rec, ok := hr.store.redIssue(depBotKey); !ok || rec.PersonFiled || rec.Issue != fr.nextNumber {
+		t.Fatalf("record = %+v, want the hive's own issue", rec)
+	}
+
+	// No person's open issue (a closed one is not returned): files as
+	// usual.
+	h2 := newDepBotHarness(t)
+	f2 := newDepBotRedIssueFake()
+	h2.redIssuePastGrace(depBotT0, f2.policy(), depBotRedBump("sha-1"))
+	if f2.creates != 1 || f2.timelineReads != 1 {
+		t.Fatalf("no person's issue: creates=%d timeline reads=%d, want the issue filed", f2.creates, f2.timelineReads)
+	}
+
+	// The timeline unreadable: no issue, the head kept for a later pass.
+	h3 := newDepBotHarness(t)
+	f3 := newDepBotRedIssueFake()
+	f3.timelineErr = errors.New("502")
+	h3.redIssuePastGrace(depBotT0, f3.policy(), depBotRedBump("sha-1"))
+	h3.wantPlainHandoff(f3, "timeline unreadable")
+	if !h3.store.redHeadPending(depBotKey, "sha-1") {
+		t.Fatal("an unreadable timeline did not keep the head")
+	}
+}
+
+// A head refused under the first rules (its red-head record carries no
+// rules version) is judged once more under these, whether it was the
+// hand-off's own head (whose final answer was never recorded) or a parked
+// newer head judged then; a head with an issue, or one answered under these
+// rules, is not.
+func TestDependencyBotRedIssueOldRulesRefusalJudgedAgain(t *testing.T) {
+	newTestEscalationStore(t)
+	ctx := context.Background()
+
+	// The hand-off's own head, refused under the first rules.
+	f := newDepBotRedIssueFake()
+	parked := depBotParked(depBotRedBump("sha-1"))
+	store := loadDepBotConflictStore("")
+	store.markCommented(depBotKey, "sha-1", depBotHandoffRedCI, depBotT0.Add(-time.Hour))
+	store.setLabelApplied(depBotKey, true)
+	store.noteRedHead(depBotKey, depBotRedHead{HeadSHA: "sha-1", Checks: []string{"build", "test"}, SeenAt: depBotT0.Add(-time.Hour)})
+	store.redHeads[depBotKey].Rules = 0
+	newDepBotRedIssuePass(f.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, depBotT0, discardLogger())
+	if f.creates != 1 || !store.redHeadJudged(depBotKey, "sha-1") {
+		t.Fatalf("old-rules hand-off head: creates=%d judged=%v, want it judged again and filed", f.creates, store.redHeadJudged(depBotKey, "sha-1"))
+	}
+	reads := f.reads()
+	newDepBotRedIssuePass(f.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, depBotT0.Add(time.Hour), discardLogger())
+	if f.reads() != reads || f.creates != 1 {
+		t.Fatalf("after the new judgement: reads=%d (was %d) creates=%d, want nothing more", f.reads(), reads, f.creates)
+	}
+
+	// The same head answered under these rules: not judged again.
+	fc := newDepBotRedIssueFake()
+	store = loadDepBotConflictStore("")
+	store.markCommented(depBotKey, "sha-1", depBotHandoffRedCI, depBotT0.Add(-time.Hour))
+	store.setLabelApplied(depBotKey, true)
+	store.noteRedHead(depBotKey, depBotRedHead{HeadSHA: "sha-1", Checks: []string{"build", "test"}, SeenAt: depBotT0.Add(-time.Hour)})
+	newDepBotRedIssuePass(fc.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, depBotT0, discardLogger())
+	if fc.reads() != 0 || fc.creates != 0 {
+		t.Fatalf("current-rules hand-off head: reads=%d creates=%d, want none", fc.reads(), fc.creates)
+	}
+
+	// An old-rules head with an issue recorded: nothing read, nothing
+	// filed again.
+	fi := newDepBotRedIssueFake()
+	store.redHeads[depBotKey].Rules = 0
+	store.markRedIssue(depBotKey, depBotRedIssueRecord{ChecksKey: github.DependencyBotRedChecksKey([]string{"build", "test"}), Checks: []string{"build", "test"}, Issue: 5, HeadSHA: "sha-1", FiledAt: depBotT0})
+	newDepBotRedIssuePass(fi.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, depBotT0, discardLogger())
+	if fi.reads() != 0 || fi.creates != 0 {
+		t.Fatalf("old-rules head with an issue: reads=%d creates=%d, want none", fi.reads(), fi.creates)
+	}
+
+	// A parked newer head judged under the first rules: judged again after
+	// its grace, once.
+	fp := newDepBotCrossHeadFake()
+	newer := depBotParked(depBotCrossHeadPR("sha-2"))
+	store = depBotParkedStore()
+	store.markRedHeadJudged(depBotKey, "sha-2")
+	store.redHeads[depBotKey].Rules = 0
+	past := depBotT0.Add(depBotRedCIGrace)
+	newDepBotRedIssuePass(fp.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, newer, depBotT0, discardLogger())
+	newDepBotRedIssuePass(fp.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, newer, past, discardLogger())
+	if fp.creates != 1 || !store.redHeadJudged(depBotKey, "sha-2") {
+		t.Fatalf("old-rules parked head: creates=%d judged=%v, want it judged again and filed", fp.creates, store.redHeadJudged(depBotKey, "sha-2"))
+	}
+
+	// Stamps: a new record, and a final or pending answer, carry these
+	// rules.
+	s := loadDepBotConflictStore("")
+	s.noteRedHead("k", depBotRedHead{HeadSHA: "a", Checks: []string{"build"}, SeenAt: depBotT0})
+	if s.redHeads["k"].Rules != depBotRedIssueRules {
+		t.Fatalf("new record rules = %d", s.redHeads["k"].Rules)
+	}
+	s.redHeads["k"].Rules = 0
+	s.markRedHeadRules("k", "a")
+	if s.redHeads["k"].Rules != depBotRedIssueRules || s.reopenRedHeadForRules("k", "a", true) {
+		t.Fatal("a hand-off answer under these rules can be reopened")
 	}
 }
