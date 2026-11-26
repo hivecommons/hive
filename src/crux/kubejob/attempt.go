@@ -90,44 +90,28 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 		jobSpec["activeDeadlineSeconds"] = l.activeDeadline(ctx)
 	}
 	avoidNodes(manifest, l.Options.Affinity, avoid)
+	if jobSpec, ok := manifest["spec"].(map[string]any); ok && l.ownsPerJobObjects() {
+		// No pod may start before its NetworkPolicy exists, and the policy
+		// names the Job's UID as its owner, so the Job starts suspended.
+		jobSpec["suspend"] = true
+	}
 	body, err := json.Marshal(manifest)
 	if err != nil {
 		return res, err
 	}
 	jobsPath := fmt.Sprintf("/apis/batch/v1/namespaces/%s/jobs", ns)
 	jobPath := jobsPath + "/" + name
-	// policyPath is the claim transport's network-none policy, the only
-	// per-Job object hive deletes by name.
-	var policyPath string
-	cleanup := func(c context.Context) {
-		l.deletePolicyOrWarn(c, policyPath)
-	}
-	if l.copyPlan != nil {
-		// The Job is created suspended, then its Secret and NetworkPolicy,
-		// which carry an ownerReference to it, then it is resumed. Both go
-		// with the Job, so cleanup has nothing to delete by name and hive
-		// needs no delete verb on Secrets or NetworkPolicies.
+	if l.ownsPerJobObjects() {
+		// The Job is created suspended, then its per-Job objects (the copy
+		// transport's Secret, and the NetworkPolicy of either transport),
+		// which carry an ownerReference to it, then it is resumed. They go
+		// with the Job, so hive deletes nothing by name and needs no delete
+		// verb on Secrets or NetworkPolicies (#19971).
 		if err := l.createPerJobObjects(ctx, ns, name, jobsPath, body); err != nil {
 			return res, err
 		}
-	} else {
-		policiesPath := fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies", ns)
-		if l.Options.network() == NetworkNone {
-			// The policy exists before any pod can: a Job created first could
-			// start its pod in the window before the policy lands.
-			policy, err := json.Marshal(denyAllPolicy(ns, name))
-			if err != nil {
-				return res, err
-			}
-			if _, err := l.do(ctx, http.MethodPost, policiesPath, policy); err != nil {
-				return res, fmt.Errorf("kubejob: creating the NetworkPolicy for %s: %w", name, err)
-			}
-			policyPath = policiesPath + "/" + name
-		}
-		if _, err := l.do(ctx, http.MethodPost, jobsPath, body); err != nil {
-			cleanup(ctx)
-			return res, fmt.Errorf("kubejob: creating job %s: %w", name, err)
-		}
+	} else if _, err := l.do(ctx, http.MethodPost, jobsPath, body); err != nil {
+		return res, fmt.Errorf("kubejob: creating job %s: %w", name, err)
 	}
 
 	waitCtx, abortWait := context.WithCancel(ctx)
@@ -176,7 +160,6 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 		// No node took the pod in time: there is no log to read and nothing
 		// to inspect, so the Job goes and the agent's slot is released.
 		_ = l.delete(live(), jobPath)
-		cleanup(live())
 		res.ExitCode = exitCodeUnknown
 		res.FailReason = done.failReason
 		res.Stderr = done.reason
@@ -204,14 +187,11 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 		// Context ended (kick timeout or cancel). The Job would otherwise
 		// keep running the workload on the accelerator node; stop it.
 		_ = l.delete(live(), jobPath)
-		cleanup(live())
 		return res, waitErr
 	}
 	if !done.succeeded {
-		// The Job stays for inspection; its pods are finished, so the
-		// claim transport's policy has nothing left to isolate and goes. A
-		// copy-transport Job's objects are owned by it and go with it.
-		cleanup(live())
+		// The Job stays for inspection; its pods are finished, and its
+		// per-Job objects are owned by it and go with it at its TTL.
 		res.Stderr = done.reason
 		if msg, bad := l.Options.preflightFailure(res); bad {
 			res.FailReason = sandbox.FailReasonNodeUnhealthy
@@ -230,7 +210,6 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 		// it); otherwise nothing ran, and it goes.
 		if !errors.As(copyErr, &kept) {
 			_ = l.delete(live(), jobPath)
-			cleanup(live())
 		}
 		return res, copyErr
 	}
@@ -242,17 +221,24 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 	// Collection may have expired the context even on success; the fresh
 	// context ensures the finished Job is still removed immediately.
 	_ = l.delete(live(), jobPath)
-	cleanup(live())
 	return res, nil
 }
 
-// createPerJobObjects creates a copy-transport Job suspended, then its token
-// Secret and its NetworkPolicy, each with an ownerReference to the Job so the
-// garbage collector removes them with it even after a hive restart or crash,
-// then resumes the Job. A failure deletes the Job, which takes whatever was
-// already created with it; a Job left suspended by a crash is an unfinished
-// Job the boot sweep deletes once it is old enough. Hive never deletes the
-// Secret or the policy by name, so the copy Role grants only create on them.
+// ownsPerJobObjects reports whether this run creates per-Job objects: the
+// copy transport always does (its token Secret and NetworkPolicy), the claim
+// transport only its deny-all NetworkPolicy on network: none.
+func (l *Launcher) ownsPerJobObjects() bool {
+	return l.copyPlan != nil || l.Options.network() == NetworkNone
+}
+
+// createPerJobObjects creates the Job suspended, then its per-Job objects
+// (the copy transport's token Secret, and the NetworkPolicy), each with an
+// ownerReference to the Job so the garbage collector removes them with it
+// even after a hive restart or crash, then resumes the Job. A failure deletes
+// the Job, which takes whatever was already created with it; a Job left
+// suspended by a crash is an unfinished Job the boot sweep deletes once it is
+// old enough. Hive never deletes the Secret or the policy by name, so it
+// needs only create on them (and patch on jobs, for the resume).
 func (l *Launcher) createPerJobObjects(ctx context.Context, ns, name, jobsPath string, jobBody []byte) error {
 	created, err := l.do(ctx, http.MethodPost, jobsPath, jobBody)
 	if err != nil {
@@ -273,24 +259,29 @@ func (l *Launcher) createPerJobObjects(ctx context.Context, ns, name, jobsPath s
 	}
 	uid := jobUID(created)
 	if uid == "" {
-		return fail(fmt.Errorf("kubejob: job %s: the API server returned no uid, so its Secret and NetworkPolicy cannot be owned by it", name))
+		return fail(fmt.Errorf("kubejob: job %s: the API server returned no uid, so its per-Job objects cannot be owned by it", name))
 	}
-	secretBody := l.copyPlan.tokenSecret(ns, name)
-	ownedBy(secretBody, name, uid)
-	secret, err := json.Marshal(secretBody)
-	if err != nil {
-		return fail(err)
-	}
-	secretsPath := fmt.Sprintf("/api/v1/namespaces/%s/secrets", ns)
-	if _, err := l.do(ctx, http.MethodPost, secretsPath, secret); err != nil {
-		return fail(fmt.Errorf("kubejob: creating the bridge token Secret for %s: %w", name, err))
+	if l.copyPlan != nil {
+		secretBody := l.copyPlan.tokenSecret(ns, name)
+		ownedBy(secretBody, name, uid)
+		secret, err := json.Marshal(secretBody)
+		if err != nil {
+			return fail(err)
+		}
+		secretsPath := fmt.Sprintf("/api/v1/namespaces/%s/secrets", ns)
+		if _, err := l.do(ctx, http.MethodPost, secretsPath, secret); err != nil {
+			return fail(fmt.Errorf("kubejob: creating the bridge token Secret for %s: %w", name, err))
+		}
 	}
 
 	var policyBody map[string]any
-	if l.Options.network() == NetworkNone {
+	switch {
+	case l.Options.network() == NetworkNone:
 		policyBody = denyAllPolicy(ns, name)
-		l.copyPlan.allowBridgeIngress(policyBody)
-	} else {
+		if l.copyPlan != nil {
+			l.copyPlan.allowBridgeIngress(policyBody)
+		}
+	default:
 		policyBody = l.copyPlan.ingressOnlyPolicy(ns, name)
 	}
 	ownedBy(policyBody, name, uid)
@@ -308,17 +299,4 @@ func (l *Launcher) createPerJobObjects(ctx context.Context, ns, name, jobsPath s
 		return fail(fmt.Errorf("kubejob: resuming job %s (needs the patch verb on jobs): %w", name, err))
 	}
 	return nil
-}
-
-// deletePolicyOrWarn deletes the claim transport's per-Job NetworkPolicy and
-// logs a failure other than not-found. That policy has no owner, so a failed
-// delete (for example a spoke whose only NetworkPolicy grant is the copy
-// Role's create) leaves it behind; the log says so instead of hiding it.
-func (l *Launcher) deletePolicyOrWarn(ctx context.Context, policyPath string) {
-	if policyPath == "" {
-		return
-	}
-	if err := l.delete(ctx, policyPath); err != nil && !strings.Contains(err.Error(), "HTTP 404") {
-		slog.Warn("kubejob: could not delete the per-Job NetworkPolicy; it stays until removed by hand (grant delete on networkpolicies for the claim transport with network: none)", "policy", policyPath, "err", err)
-	}
 }

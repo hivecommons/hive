@@ -138,12 +138,11 @@ func (l *Launcher) SweepOrphans(ctx context.Context, opts SweepOptions) ([]Swept
 			}
 			continue
 		}
-		// A network-none Job had a per-Job NetworkPolicy of the same name;
-		// best effort, as a Job on the default network has none.
-		// A workspace_transport: copy Job's token Secret and policy are
-		// owned by the Job and go with it, including for a Job that finished
-		// while hive was down: the sweep sends no Secret delete, and hive
-		// holds no delete verb on Secrets.
+		// Per-Job Secrets and NetworkPolicies are owned by the Job and go
+		// with it, including for a Job that finished while hive was down:
+		// the sweep sends no Secret delete, and hive holds no delete verb on
+		// Secrets. The policy delete is best effort, for a network-none Job
+		// an older hive created with an unowned policy of the same name.
 		l.deleteQuiet(ctx, fmt.Sprintf("/apis/networking.k8s.io/v1/namespaces/%s/networkpolicies/%s", ns, md.Name))
 		swept = append(swept, SweptJob{Name: md.Name, Agent: agent, Age: age, Reason: reason})
 	}

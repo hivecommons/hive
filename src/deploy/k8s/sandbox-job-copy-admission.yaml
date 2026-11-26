@@ -31,8 +31,12 @@
 #    pod template unchanged.
 #
 # If the namespace label or this policy is missing, nothing is enforced and
-# the copy Role's create and patch are unconstrained. Check it is live with a
-# server-side dry run as hive's service account, which must be DENIED:
+# the copy Role's create and patch are unconstrained. Hive checks this itself
+# (#19971): at boot and before copy kicks it sends a server-side dry run of a
+# Secret named hive-copy-admission-probe, and refuses copy mode (ERROR log)
+# unless this policy, by its name hive-sandbox-copy-objects, denies it. Keep
+# the name. To check by hand, dry-run as hive's service account; it must be
+# DENIED:
 #   kubectl auth can-i create networkpolicies -n <ns> --as system:serviceaccount:<ns>:<sa>
 #   kubectl create -n <ns> --dry-run=server --as system:serviceaccount:<ns>:<sa> -f - <<'Y'
 #   {"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"name":"probe"},"spec":{"podSelector":{}}}

@@ -2745,6 +2745,9 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 	// Reap sandbox Jobs the previous process lost track of, now that the
 	// audit log can record each one (hivecommons/hive#18525).
 	startSandboxJobBootSweep(b.ctx, b.cfg, b.agentMgr, b.dashSrv.AuditLog, b.logger)
+	// Refuse the copy transport loudly at boot when nothing enforces its
+	// admission policy (hivecommons/hive#19971).
+	startSandboxCopyAdmissionCheck(b.ctx, b.cfg, b.logger)
 
 	// Persist per-user dashboard sessions on the PVC (/data) so direct-route
 	// users aren't logged out by pod restarts. NOTE: use /data explicitly, NOT

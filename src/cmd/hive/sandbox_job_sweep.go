@@ -100,6 +100,51 @@ func startSandboxJobBootSweep(ctx context.Context, cfg *config.Config, agentMgr 
 	return true
 }
 
+// copyAdmissionVerifier is the part of kubejob.Launcher the boot admission
+// check uses.
+type copyAdmissionVerifier interface {
+	VerifyCopyAdmission(ctx context.Context) error
+}
+
+// newCopyAdmissionVerifier builds the boot admission check's verifier: the
+// in-cluster Job launcher. Tests replace it so a test run on a cluster-hosted
+// CI runner never sends a probe to a real API server.
+var newCopyAdmissionVerifier = func() copyAdmissionVerifier { return &kubejob.Launcher{} }
+
+// sandboxJobCopyConfigured reports whether any Job-runtime agent uses
+// workspace_transport: copy.
+func sandboxJobCopyConfigured(cfg *config.Config) bool {
+	for _, a := range cfg.Agents {
+		if a.SandboxRuntime(cfg.AgentSandbox) == cruxconfig.SandboxRuntimeJob && a.SandboxJob(cfg.AgentSandbox).CopiesWorkspace() {
+			return true
+		}
+	}
+	return false
+}
+
+// startSandboxCopyAdmissionCheck probes, in the background, that the copy
+// transport's admission policy is enforced in hive's namespace when any agent
+// uses workspace_transport: copy (hivecommons/hive#19971), and logs an ERROR
+// when it is not. Every copy kick runs the same check and is refused while it
+// fails, so this only surfaces the problem at boot instead of at the first
+// kick.
+func startSandboxCopyAdmissionCheck(ctx context.Context, cfg *config.Config, logger *slog.Logger) bool {
+	if cfg == nil || !sandboxJobCopyConfigured(cfg) {
+		return false
+	}
+	verifier := newCopyAdmissionVerifier()
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, sandboxJobSweepTimeout)
+		defer cancel()
+		if err := verifier.VerifyCopyAdmission(ctx); err != nil {
+			logger.Error("sandbox copy transport refused: its admission policy is not enforced; copy-transport kicks fail until it is", "error", err)
+			return
+		}
+		logger.Info("sandbox copy transport admission policy is enforced", "policy", kubejob.CopyAdmissionPolicyName)
+	}()
+	return true
+}
+
 // runSandboxJobBootSweep reaps sandbox Jobs the previous hive process lost
 // track of (hivecommons/hive#18525). A kick's timeout lives in memory, so a
 // restart mid-kick leaves its Job with no owner; one sat Pending for 11

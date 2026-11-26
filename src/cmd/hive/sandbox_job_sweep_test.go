@@ -148,3 +148,74 @@ func TestSandboxJobLiveChecksRunningAgents(t *testing.T) {
 		t.Fatal("a label matching no agent must not count as live")
 	}
 }
+
+type fakeCopyAdmissionVerifier struct {
+	err   error
+	calls chan struct{}
+}
+
+func (f *fakeCopyAdmissionVerifier) VerifyCopyAdmission(context.Context) error {
+	f.calls <- struct{}{}
+	return f.err
+}
+
+// lockedBuffer is a bytes.Buffer safe to write from the background check
+// while the test reads it.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// TestSandboxCopyAdmissionCheckRunsOnlyForTheCopyTransport (#19971): the
+// boot check probes only when a Job-runtime agent uses the copy transport,
+// and a refusal is logged at ERROR.
+func TestSandboxCopyAdmissionCheckRunsOnlyForTheCopyTransport(t *testing.T) {
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	v := &fakeCopyAdmissionVerifier{calls: make(chan struct{}, 1), err: errors.New("kubejob: workspace_transport: copy is refused: probe admitted")}
+	prev := newCopyAdmissionVerifier
+	newCopyAdmissionVerifier = func() copyAdmissionVerifier { return v }
+	t.Cleanup(func() { newCopyAdmissionVerifier = prev })
+
+	if startSandboxCopyAdmissionCheck(context.Background(), nil, quiet) {
+		t.Fatal("nil config must not probe")
+	}
+	if startSandboxCopyAdmissionCheck(context.Background(), jobSweepConfig(), quiet) {
+		t.Fatal("the claim transport must not probe")
+	}
+
+	cfg := jobSweepConfig()
+	reviewer := cfg.Agents["reviewer"]
+	override := *reviewer.Sandbox
+	override.Job = &config.SandboxJobConfig{WorkspaceTransport: "copy"}
+	reviewer.Sandbox = &override
+	cfg.Agents["reviewer"] = reviewer
+	var logBuf lockedBuffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	if !startSandboxCopyAdmissionCheck(context.Background(), cfg, logger) {
+		t.Fatal("the copy transport must probe at boot")
+	}
+	select {
+	case <-v.calls:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the boot admission check never ran")
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for !strings.Contains(logBuf.String(), "level=ERROR") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := logBuf.String(); !strings.Contains(got, "level=ERROR") || !strings.Contains(got, "probe admitted") {
+		t.Fatalf("refusal not logged at ERROR: %s", got)
+	}
+}

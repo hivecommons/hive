@@ -55,6 +55,11 @@ type fakeAPI struct {
 	selfPodGets           int
 	serviceAccounts       map[string]string // SA name -> JSON body; absent = 404
 	saForbidden           bool              // SA reads answer 403
+	probeAdmitted         bool              // the dry-run admission probe is admitted (no policy)
+	probeStatus           int               // with probeMessage: the probe's refusal status
+	probeMessage          string            // the probe's refusal message instead of the policy's denial
+	probes                int               // dry-run admission probes received
+	probeBody             string
 
 	// Scripted per-call behavior for the node preflight and scheduling tests
 	// (#18811). Each slice is indexed by how many such calls came before and
@@ -119,6 +124,23 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 			}
 			f.patches = append(f.patches, string(body))
 			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/secrets") && r.URL.Query().Get("dryRun") != "":
+			// The copy transport's admission probe (#19971). By default the
+			// policy is live and denies it.
+			f.probes++
+			body, _ := io.ReadAll(r.Body)
+			f.probeBody = string(body)
+			switch {
+			case f.probeAdmitted:
+				w.WriteHeader(http.StatusCreated)
+				_, _ = w.Write(body)
+			case f.probeMessage != "":
+				w.WriteHeader(f.probeStatus)
+				_, _ = w.Write([]byte(`{"kind":"Status","message":` + strconv.Quote(f.probeMessage) + `}`))
+			default:
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				_, _ = w.Write([]byte(`{"kind":"Status","message":"secrets \"hive-copy-admission-probe\" is forbidden: ValidatingAdmissionPolicy 'hive-sandbox-copy-objects' with binding 'hive-sandbox-copy-objects' denied request: hive's service account may only touch objects named hive-kick-*"}`))
+			}
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/secrets"):
 			if f.secretErr > 0 {
 				w.WriteHeader(f.secretErr)
@@ -260,6 +282,9 @@ func newLauncher(srv *httptest.Server, opts Options) *Launcher {
 	if opts.PollInterval == 0 {
 		opts.PollInterval = 5 * time.Millisecond
 	}
+	// A closed test server's port can be reused by the next one, so a pass
+	// cached for an earlier test must not answer a later test's probe.
+	copyAdmissionVerified.Clear()
 	return &Launcher{
 		Options:    opts,
 		APIServer:  srv.URL,
@@ -882,14 +907,28 @@ func TestNetworkNoneWrapsTheJobInADenyAllPolicy(t *testing.T) {
 	if _, err := l.Run(context.Background(), specFor("/data/agents/sandbox/deps-123")); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if strings.Join(api.order, ",") != "policy,job" {
-		t.Fatalf("creation order = %v, want the policy before the job", api.order)
+	// #19971: the Job is created suspended, its policy names it as owner,
+	// and only then is it resumed, so no pod runs before the policy exists.
+	if strings.Join(api.order, ",") != "job,policy" {
+		t.Fatalf("creation order = %v, want the suspended job, then its policy", api.order)
 	}
-	if !api.deleted || !api.policyDeleted {
-		t.Fatalf("after success job deleted=%v policy deleted=%v", api.deleted, api.policyDeleted)
+	if api.created["spec"].(map[string]any)["suspend"] != true {
+		t.Fatalf("the Job must be created suspended: %s", asJSON(api.created["spec"]))
+	}
+	if len(api.patches) != 1 || !strings.Contains(api.patches[0], `"suspend":false`) {
+		t.Fatalf("Job patches = %v, want one resume after the policy", api.patches)
+	}
+	// The policy goes with the Job through garbage collection: hive deletes
+	// it by name never, so it needs no delete verb on networkpolicies.
+	if !api.deleted || api.policyDeleted {
+		t.Fatalf("after success job deleted=%v policy deleted by name=%v, want only the job deleted", api.deleted, api.policyDeleted)
 	}
 	name := api.created["metadata"].(map[string]any)["name"].(string)
 	meta := api.policy["metadata"].(map[string]any)
+	wantOwner := `[{"apiVersion":"batch/v1","kind":"Job","name":"` + name + `","uid":"job-uid-1"}]`
+	if got := asJSON(meta["ownerReferences"]); got != wantOwner {
+		t.Fatalf("policy ownerReferences = %s, want %s", got, wantOwner)
+	}
 	spec := api.policy["spec"].(map[string]any)
 	if api.policy["kind"] != "NetworkPolicy" || meta["name"] != name || meta["namespace"] != "hive" {
 		t.Fatalf("policy = %+v", api.policy)
@@ -922,34 +961,56 @@ func TestNetworkNoneRefusesToRunWithoutItsPolicy(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "creating the NetworkPolicy") || !strings.Contains(err.Error(), "forbidden") {
 		t.Fatalf("Run = %v, want the policy refusal", err)
 	}
-	if api.created != nil {
-		t.Fatal("the Job was created without its policy")
+	// The Job existed only suspended: it is never resumed, and it is deleted
+	// so it cannot run later without its policy.
+	if api.created == nil || api.created["spec"].(map[string]any)["suspend"] != true {
+		t.Fatalf("the Job must be created suspended before its policy: %v", api.created)
+	}
+	if len(api.patches) != 0 {
+		t.Fatalf("the Job was resumed (%v) without its policy", api.patches)
+	}
+	if !api.deleted {
+		t.Fatal("the suspended Job must be deleted after its policy was refused")
 	}
 }
 
-func TestNetworkNonePolicyIsRemovedWhenTheJobCannotBeCreatedOrFails(t *testing.T) {
-	api := newFakeAPI()
-	api.createErr = http.StatusForbidden
-	srv := httptest.NewServer(api.handler(t))
-	defer srv.Close()
-	l := newLauncher(srv, Options{Network: NetworkNone})
-	if _, err := l.Run(context.Background(), specFor("/data/agents/sandbox/deps-123")); err == nil {
-		t.Fatal("Run succeeded without a Job")
+// TestNetworkNoneNeverDeletesItsPolicyByName (#19971): whether the Job
+// cannot be resumed, fails, or is cancelled, the claim transport's policy is
+// owned by the Job and goes with it, so hive sends no NetworkPolicy delete
+// and needs no delete verb on networkpolicies.
+func TestNetworkNoneNeverDeletesItsPolicyByName(t *testing.T) {
+	tests := []struct {
+		name       string
+		tweak      func(*fakeAPI)
+		wantJobDel bool
+	}{
+		{"resume refused", func(a *fakeAPI) { a.patchErr = http.StatusForbidden }, true},
+		{"job failed", func(a *fakeAPI) { a.statuses = []string{statusFailed} }, false},
+		{"job succeeded", func(a *fakeAPI) { a.statuses = []string{statusComplete} }, true},
 	}
-	if api.policy == nil || !api.policyDeleted {
-		t.Fatalf("policy created=%v deleted=%v after a failed job create", api.policy != nil, api.policyDeleted)
-	}
-
-	api = newFakeAPI()
-	api.statuses = []string{statusFailed}
-	srv2 := httptest.NewServer(api.handler(t))
-	defer srv2.Close()
-	l = newLauncher(srv2, Options{Network: NetworkNone})
-	if _, err := l.Run(context.Background(), specFor("/data/agents/sandbox/deps-123")); err == nil {
-		t.Fatal("failed Job reported success")
-	}
-	if api.deleted || !api.policyDeleted {
-		t.Fatalf("failed job deleted=%v (want kept) policy deleted=%v (want gone)", api.deleted, api.policyDeleted)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newFakeAPI()
+			tc.tweak(api)
+			srv := httptest.NewServer(api.handler(t))
+			defer srv.Close()
+			l := newLauncher(srv, Options{Network: NetworkNone})
+			_, _ = l.Run(context.Background(), specFor("/data/agents/sandbox/deps-123"))
+			if api.policy == nil {
+				t.Fatal("no policy was created")
+			}
+			for _, d := range api.deletes {
+				if !strings.Contains(d, "/jobs/") {
+					t.Errorf("delete %s: the claim transport must never delete its policy by name", d)
+				}
+			}
+			if api.deleted != tc.wantJobDel {
+				t.Errorf("job deleted = %v, want %v", api.deleted, tc.wantJobDel)
+			}
+			if api.probes != 0 {
+				t.Errorf("the claim transport ran %d copy admission probes, want none", api.probes)
+			}
+		})
 	}
 }
 

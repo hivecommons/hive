@@ -22,6 +22,9 @@
 # NetworkPolicy, and patch on jobs). That is NOT here: it is the separate Role
 # in sandbox-job-copy-rbac.yaml, which you bind on purpose, after applying the
 # enforcing admission policy in sandbox-job-copy-admission.yaml that limits it.
+# The claim transport with network: none needs create on networkpolicies and
+# patch on jobs too (its Job starts suspended and its deny-all policy is owned
+# by the Job, #19971); the copy Role grants both.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
