@@ -383,17 +383,17 @@ availability you expect from git.
 #### Host the key list
 
 Any https web server can serve the two files `hive forge key-list` writes.
-Forgejo is strict about how it fetches them. Apart from the private-address
-rule, which has its own `ALLOWED_DOMAINS` error, a broken rule shows up only
-as `invalid issuer` when you create the integration, or as
-`Authentication failed` on a clone:
+Forgejo is strict about how it fetches them. Apart from the issuer form,
+which Hive checks itself, and the private-address rule, which has its own
+`ALLOWED_DOMAINS` error, a broken rule shows up only as `invalid issuer` when
+you create the integration, or as `Authentication failed` on a clone:
 
 - Forgejo refuses any scheme but https, and the certificate must be one
   Forgejo trusts.
-- Hive accepts only an https origin with no path as the issuer, and refuses
-  any other `issuer` at config load and in `hive validate`. So the files sit
-  at the root of the host: `/.well-known/openid-configuration` and
-  `/jwks.json`.
+- Hive accepts only `https://host[:port]`, with no path, query or fragment,
+  as the issuer, and refuses any other `issuer` at config load and in
+  `hive validate`. So the files sit at the root of the host:
+  `/.well-known/openid-configuration` and `/jwks.json`.
 - Forgejo follows no redirects. Serve both paths directly, with no login
   page, no `http` to `https` redirect and no trailing-slash redirect in front
   of them.
