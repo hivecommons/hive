@@ -45,7 +45,8 @@ test('no caveat line when the payload carries none', () => {
 test('empty summary, error and loading states do not throw', () => {
   const empty = h.kbAdvisorCardHTML({ window: {}, settings: {}, counts: {}, arms: [], cost: {} }, '', false);
   assert.match(empty, /0 decisions/);
-  assert.match(empty, /No closed beads with a closed PR yet/);
+  assert.match(empty, /No closed work beads yet\./);
+  assert.doesNotMatch(empty, /Coverage:/);
   assert.match(empty, /mode off/);
   assert.match(h.kbAdvisorCardHTML(null, 'boom <x>', false), /boom &lt;x&gt;/);
   assert.match(h.kbAdvisorCardHTML(null, '', true), /Loading/);
@@ -67,4 +68,17 @@ test('no error section when the summary carries no reasons', () => {
   const out = h.kbAdvisorCardHTML(Object.assign({}, payload, { errors: { by_class: {}, top_reasons: [] } }), '', false);
   assert.doesNotMatch(out, /Top error reasons/);
   assert.doesNotMatch(out, /misconfigured/);
+});
+
+test('coverage line and copy follow the every-closed-bead classing rule (#20011)', () => {
+  const withCov = Object.assign({}, payload, { coverage: { closed_beads: 7, with_closed_pr: 4, no_ref: 1, no_decision: 2 } });
+  const out = h.kbAdvisorCardHTML(withCov, '', false);
+  assert.match(out, /Coverage: 7 closed work beads · 4 with a closed PR · 1 without an issue or PR ref · 2 without a matching advisor decision/);
+  assert.match(out, /Bead means cover every closed work bead \(advisory beads excluded\)/);
+  assert.doesNotMatch(out, /with a closed PR yet|every closed bead with a closed PR/);
+  const closedUnclassed = h.kbAdvisorCardHTML({ window: {}, settings: {}, counts: {}, arms: [], cost: {}, coverage: { closed_beads: 3, with_closed_pr: 0, no_ref: 3, no_decision: 0 } }, '', false);
+  assert.match(closedUnclassed, /3 closed work beads, none classed into an arm yet\./);
+  const noneClosed = h.kbAdvisorCardHTML({ window: {}, settings: {}, counts: {}, arms: [], cost: {}, coverage: { closed_beads: 0, with_closed_pr: 0, no_ref: 0, no_decision: 0 } }, '', false);
+  assert.match(noneClosed, /No closed work beads yet\./);
+  assert.match(noneClosed, /Coverage: 0 closed work beads/);
 });
