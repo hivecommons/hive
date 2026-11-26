@@ -21,23 +21,23 @@ var errBoom = errors.New("boom")
 type fakeAPI struct {
 	forge.SweepAPI
 
-	openErr   error
-	open      []forge.ChangeRequest
-	pulls     map[int]forge.PullFacts
-	pullErr   map[int]error
-	labeler   map[int]string
-	pushed    map[int]bool // a push followed the label
-	labelErr  error
-	perms     map[string]string
-	permErr   error
+	openErr  error
+	open     []forge.ChangeRequest
+	pulls    map[int]forge.PullFacts
+	pullErr  map[int]error
+	labeler  map[int]string
+	pushed   map[int]bool // a push followed the label
+	labelErr error
+	perms    map[string]string
+	permErr  error
 	// permErrFor fails Permission for one login only; permCalls counts
 	// Permission calls per login.
 	permErrFor map[string]error
 	permCalls  map[string]int
-	status    map[string][2]any // sha -> {state, total}
-	statusErr error
-	mergeErr  error
-	merges    []forge.MergeOptions
+	status     map[string][2]any // sha -> {state, total}
+	statusErr  error
+	mergeErr   error
+	merges     []forge.MergeOptions
 
 	self       string
 	selfErr    error
