@@ -200,8 +200,9 @@ per-user JSON.
   mirrored, so a value cleared meanwhile stays in it until the next `shadow`
   or `colony` boot reconciles it, or until the user is deleted.
 - **Consent records** are mirrored as colony Consent records. In `colony`
-  mode the match answer and the Profile sharing page read the grant (fields,
-  disclosure version, granted and withdrawn times) from colony; the delivery
+  mode the match answer and the Profile sharing page also read the grant
+  from colony, which can only narrow what the file grants (a field crosses
+  only when both grant it, and a withdrawal on either side holds); the delivery
   bookkeeping, which colony has no slot for, is still read from
   `/data/saas/consents`, and a person whose last sync failed is read from the
   file alone. Consent writes still go to the file first and are mirrored, so

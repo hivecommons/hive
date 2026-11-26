@@ -325,7 +325,12 @@ v0.3.0 (`src/pkg/customers/colony.go`). What it does beyond the steps above:
 
 - **Hub consent reads come from colony in `colony` mode.** The match index,
   the match answer and the person's own Profile sharing page read the grant
-  (fields, disclosure version, granted and withdrawn times) from colony. The
+  (fields, disclosure version, withdrawal) from colony as well as from the
+  consent file, and colony can only narrow what the file grants, never widen
+  it: a field crosses only when both grant it, a withdrawal on either side
+  holds, and an outdated disclosure version on either side stops delivery.
+  Writes go to the file first, so a colony copy that fell behind can only
+  send less. The
   delivery bookkeeping (first and last delivery, the delivered field sets and
   the rev) has no slot in colony's `Consent`, so it is still read from
   `/data/saas/consents`. Only hive ids the consent file lists are read, because

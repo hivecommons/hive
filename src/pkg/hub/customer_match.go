@@ -168,7 +168,9 @@ func (s *HubServer) customerMatchIndexFor(hiveID string, keys []string, now time
 		if err != nil {
 			continue
 		}
-		if _, ok := records[hiveID]; !ok {
+		// Colony can only narrow a record (crmOverlayConsents), so a record
+		// the file already excludes is skipped before the user is loaded.
+		if c, ok := records[hiveID]; !ok || c.discardable(now) || c.WithdrawnAt != nil && c.DeliveredFields == nil {
 			continue
 		}
 		user := loadSaaSUser(strings.TrimSuffix(entry.Name(), ".json"))

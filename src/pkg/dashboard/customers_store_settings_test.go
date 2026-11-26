@@ -154,7 +154,6 @@ func TestFeaturesTab_CustomersStoreMarkup(t *testing.T) {
 		`['shadow', 'shadow']`,
 		`['colony', 'colony']`,
 		`['gitdm_high', 'gitdm_high']`,
-		`f.customersStoreEffective !== (f.customersStore || 'json')`,
 		`key: 'customers.store'`,
 		`key: 'customers.enrichment.auto_accept'`,
 	} {

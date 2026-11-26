@@ -852,18 +852,21 @@ func crmOverlayUser(u *SaaSUser) {
 }
 
 // crmOverlayConsents is the colony-mode read hook for a person's consent
-// records (#19857): the grant itself (fields, disclosure version, granted and
-// withdrawn times) is read from colony, and the hub-only delivery bookkeeping
-// (first and last delivery, delivered fields, rev), which colony's Consent has
-// no slot for, stays from the consent file. It is called by the read paths:
-// the match index, the match answer and the person's own consent page. Writes
-// still read and write the JSON first and mirror it, so a write path never
-// calls it.
+// records (#19857): the grant is read from colony as well as from the
+// consent file, and colony can only narrow what the file grants, never
+// widen it. Writes go to the file first and are then mirrored, so when the
+// two differ colony is the copy that may be behind, and a mirror that did
+// not run (a user file that could not be read at that moment) must never
+// bring back a field the person turned off or undo a withdrawal. The
+// hub-only delivery bookkeeping (first and last delivery, delivered fields,
+// rev), which colony's Consent has no slot for, always comes from the file.
+// It is called by the read paths: the match index, the match answer and the
+// person's own consent page. Write paths never call it.
 //
 // Only hive ids the consent file still lists are considered: colony has no
 // delete, so a consent the hub pruned is an emptied record there, and the
 // file decides which records exist. A person whose last sync failed or was
-// skipped is read from the JSON alone, like crmOverlayUser.
+// skipped is read from the file alone, like crmOverlayUser.
 func crmOverlayConsents(u *SaaSUser, records map[string]customerConsent) {
 	st, mode := hubCRM.active()
 	if st == nil || mode != hubCustomerStoreColony || u == nil || len(records) == 0 {
@@ -889,32 +892,37 @@ func crmOverlayConsents(u *SaaSUser, records map[string]customerConsent) {
 	}
 }
 
-// crmOverlayConsent writes the colony grant onto one consent record. A time
-// colony holds equal to the JSON one keeps the JSON value, so an unchanged
-// record still serialises byte for byte.
+// crmOverlayConsent narrows one consent record by the colony grant:
+//   - a field is granted only when both the file and colony grant it;
+//   - the record is withdrawn when either side is withdrawn (the file's time
+//     wins when it has one);
+//   - a disclosure version that is not the current one, on either side, is
+//     kept, so a stale version on either side stops delivery.
+//
+// The granted time and the delivery bookkeeping stay from the file.
 func crmOverlayConsent(rec customerConsent, have store.Consent) customerConsent {
-	var fields customerConsentFields
+	var colony customerConsentFields
 	for _, f := range have.Fields {
 		switch f {
 		case store.FieldRealName:
-			fields.RealName = true
+			colony.RealName = true
 		case store.FieldOrganization:
-			fields.Organization = true
+			colony.Organization = true
 		case store.FieldCountry:
-			fields.Country = true
+			colony.Country = true
 		}
 	}
-	rec.Fields = fields
-	rec.TextVersion = have.TextVersion
-	if !rec.GrantedAt.Equal(have.GrantedAt) {
-		rec.GrantedAt = have.GrantedAt
+	rec.Fields = customerConsentFields{
+		RealName:     rec.Fields.RealName && colony.RealName,
+		Organization: rec.Fields.Organization && colony.Organization,
+		Country:      rec.Fields.Country && colony.Country,
 	}
-	switch {
-	case have.WithdrawnAt.IsZero():
-		rec.WithdrawnAt = nil
-	case rec.WithdrawnAt == nil || !rec.WithdrawnAt.Equal(have.WithdrawnAt):
+	if rec.WithdrawnAt == nil && !have.WithdrawnAt.IsZero() {
 		w := have.WithdrawnAt
 		rec.WithdrawnAt = &w
+	}
+	if rec.TextVersion == customerConsentTextVersion && have.TextVersion != customerConsentTextVersion {
+		rec.TextVersion = have.TextVersion
 	}
 	return rec
 }

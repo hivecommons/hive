@@ -4,6 +4,9 @@ package hub
 // synthetic.
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"testing"
 	"time"
@@ -69,15 +72,72 @@ func TestHubCustomerStoreColonyConsentReads(t *testing.T) {
 	hubCRM.markCRM(id, nil)
 	hubCRM.mu.Unlock()
 	m = matchOwn(h)
-	for _, e := range m {
-		if e.RealName != "" || e.Country != "" || e.Organization != "" {
-			t.Fatalf("withdrawn in colony still sent values: %+v", m)
-		}
+	if len(m) != 1 || m[0].RealName != "" || m[0].Country != "" || m[0].Organization != "" ||
+		!slices.Contains(m[0].Cleared, "real_name") || !slices.Contains(m[0].Cleared, "country") {
+		t.Fatalf("withdrawn in colony = %+v, want one entry with no values that clears real_name and country", m)
 	}
 }
 
-// The overlay takes the grant from colony and keeps the hub-only delivery
-// bookkeeping from the consent file; it changes nothing outside colony mode,
+// The Profile sharing page and the match index read through the overlay too.
+func TestHubCustomerStoreColonyConsentPageAndIndex(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	t.Setenv(customersShareEnv, "true")
+	t.Setenv("HIVE_HUB_PUBLIC_URL", "https://hub.example.com")
+	h := newMatchHarness(t)
+	t.Setenv(customersTrustedHivesEnv, "own")
+	users := fixtureUsers(t)
+	gus := saveMatchUser(t, &SaaSUser{GitHubUsername: "gus-example", Hives: map[string]string{"own": "viewer"},
+		FullName: "Gus Example", FullNameSource: countrySourceUser})
+	writeMatchConsent(t, gus, "own", func(c *customerConsent) { c.Fields = customerConsentFields{RealName: true} })
+	st := useHubCustomerStore(t, hubCustomerStoreColony)
+	granted := readMatchConsent(t, users[0], "own").GrantedAt
+
+	// The page shows the grant colony narrowed.
+	if err := st.SetConsent(crmPersonID(users[0]), store.Consent{Scope: "own", Fields: []string{store.FieldCountry},
+		TextVersion: customerConsentTextVersion, GrantedAt: granted}); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	h.s.mux.ServeHTTP(w, reqWithUser(http.MethodGet, consentTestAPI, "", "ada-example"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("consent page: %d %s", w.Code, w.Body)
+	}
+	var page struct {
+		Hives []customerConsentHive `json:"hives"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Hives) != 1 || page.Hives[0].Consent == nil ||
+		page.Hives[0].Consent.Fields != (customerConsentFields{Country: true}) {
+		t.Fatalf("consent page = %+v, want the narrowed grant (country only)", page.Hives)
+	}
+
+	// The index drops a never-delivered record withdrawn in colony.
+	index := func() map[string]string {
+		customerMatchStore.mu.Lock()
+		customerMatchStore.indexes = nil
+		customerMatchStore.mu.Unlock()
+		customerConsentMu.Lock()
+		defer customerConsentMu.Unlock()
+		return h.s.customerMatchIndexFor("own", h.s.customerMatchKeys("own"), time.Now().UTC())
+	}
+	gusHash := matchHash("own", "gus-example")
+	if _, ok := index()[gusHash]; !ok {
+		t.Fatal("index misses a granted record")
+	}
+	gusGrant := readMatchConsent(t, gus, "own").GrantedAt
+	if err := st.SetConsent(crmPersonID(gus), store.Consent{Scope: "own", Fields: []string{store.FieldRealName},
+		TextVersion: customerConsentTextVersion, GrantedAt: gusGrant, WithdrawnAt: gusGrant.Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := index()[gusHash]; ok {
+		t.Fatal("index kept a never-delivered record withdrawn in colony")
+	}
+}
+
+// The overlay lets colony narrow the grant, never widen it, and keeps the
+// hub-only delivery bookkeeping from the consent file; it changes nothing outside colony mode,
 // for a person colony does not hold, or for a hive id the file does not list.
 func TestCRMOverlayConsents(t *testing.T) {
 	defer helperSetupTempDirs(t)()
@@ -120,9 +180,12 @@ func TestCRMOverlayConsents(t *testing.T) {
 	recs["other"] = customerConsent{HiveID: "other", Fields: customerConsentFields{Country: true}, GrantedAt: granted}
 	crmOverlayConsents(users[0], recs)
 	got := recs["own"]
-	if got.Fields != (customerConsentFields{Organization: true}) || got.TextVersion != "text-example" ||
-		!got.GrantedAt.Equal(colonyGrant.GrantedAt) || got.WithdrawnAt == nil || !got.WithdrawnAt.Equal(colonyGrant.WithdrawnAt) {
-		t.Fatalf("grant not read from colony: %+v", got)
+	// The file grants real name and country, colony only organization: the
+	// intersection is nothing. Colony's withdrawal and stale disclosure
+	// version apply; the granted time stays the file's.
+	if got.Fields != (customerConsentFields{}) || got.TextVersion != "text-example" ||
+		!got.GrantedAt.Equal(granted) || got.WithdrawnAt == nil || !got.WithdrawnAt.Equal(colonyGrant.WithdrawnAt) {
+		t.Fatalf("colony did not narrow the grant: %+v", got)
 	}
 	if got.DeliveredRev != "rev-example" || got.LastDeliveredAt == nil || !got.LastDeliveredAt.Equal(delivered) ||
 		got.DeliveredFields == nil || *got.DeliveredFields != (customerConsentFields{RealName: true, Country: true}) {
@@ -132,17 +195,21 @@ func TestCRMOverlayConsents(t *testing.T) {
 		t.Fatalf("a hive colony does not hold changed: %+v", o)
 	}
 
-	// A re-grant in colony clears the withdrawal, and an equal time keeps the
-	// file's value.
+	// Colony never widens the file: a withdrawal in the file survives a
+	// colony grant, fields are the intersection, and a stale disclosure
+	// version on the file side is kept.
 	local := granted.In(time.FixedZone("example", 3600))
-	recs = map[string]customerConsent{"own": {HiveID: "own", GrantedAt: local, WithdrawnAt: &delivered}}
-	if err := st.SetConsent(crmPersonID(users[0]), store.Consent{Scope: "own", Fields: []string{store.FieldRealName},
+	recs = map[string]customerConsent{"own": {HiveID: "own", GrantedAt: local, WithdrawnAt: &delivered,
+		TextVersion: "0", Fields: customerConsentFields{RealName: true}}}
+	if err := st.SetConsent(crmPersonID(users[0]), store.Consent{Scope: "own",
+		Fields:      []string{store.FieldRealName, store.FieldOrganization, store.FieldCountry},
 		TextVersion: customerConsentTextVersion, GrantedAt: granted}); err != nil {
 		t.Fatal(err)
 	}
 	crmOverlayConsents(users[0], recs)
-	if g := recs["own"]; g.WithdrawnAt != nil || g.GrantedAt.Location() != local.Location() || !g.Fields.RealName {
-		t.Fatalf("re-grant overlay = %+v", g)
+	if g := recs["own"]; g.WithdrawnAt == nil || !g.WithdrawnAt.Equal(delivered) || g.TextVersion != "0" ||
+		g.Fields != (customerConsentFields{RealName: true}) || g.GrantedAt.Location() != local.Location() {
+		t.Fatalf("colony widened the file: %+v", g)
 	}
 
 	// A person colony does not hold keeps the file.
