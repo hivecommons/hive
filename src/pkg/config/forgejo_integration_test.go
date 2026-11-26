@@ -43,6 +43,7 @@ func TestForgejoIntegrationValidate(t *testing.T) {
 		"unknown tier":     func(c *ForgejoIntegrationConfig) { c.Audiences["admin"] = "aud" },
 		"blank audience":   func(c *ForgejoIntegrationConfig) { c.Audiences["advisor"] = " " },
 		"blank rest aud":   func(c *ForgejoIntegrationConfig) { c.RESTAudience = " " },
+		"rest aud = tier":  func(c *ForgejoIntegrationConfig) { c.RESTAudience = " " + c.Audiences["advisor"] + " " },
 	} {
 		c := validIntegration()
 		mutate(c)

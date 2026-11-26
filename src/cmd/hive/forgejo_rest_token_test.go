@@ -26,18 +26,8 @@ import (
 // integration whose rest_audience is aud, signing with a fresh key.
 func forgejoRESTTestConfig(t *testing.T, baseURL, aud string) *config.Config {
 	t.Helper()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	der, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		t.Fatal(err)
-	}
 	keyFile := filepath.Join(t.TempDir(), "forgejo-jwt.pem")
-	if err := os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeForgejoRESTTestKey(t, keyFile)
 	t.Setenv("HIVE_TEST_FORGEJO_REST_TOKEN", "env-token")
 	cfg := &config.Config{}
 	cfg.Project.Org = "acme"
@@ -51,6 +41,25 @@ func forgejoRESTTestConfig(t *testing.T, baseURL, aud string) *config.Config {
 		RESTAudience: aud,
 	}
 	return cfg
+}
+
+// forgejoRESTTestKeyBits is the RSA size of the throwaway test signing keys.
+const forgejoRESTTestKeyBits = 2048
+
+// writeForgejoRESTTestKey writes a fresh PKCS #8 RSA signing key to path.
+func writeForgejoRESTTestKey(t *testing.T, path string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, forgejoRESTTestKeyBits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // jwtClaims decodes the payload of a compact JWT without verifying it.
@@ -107,6 +116,50 @@ func TestForgejoRESTTokenMintsForTheRESTAudience(t *testing.T) {
 	}
 }
 
+// TestForgejoRESTTokenRemintsAfterKeyRotation: replacing the key file rotates
+// the key, so a token cached from the old file is not sent again.
+func TestForgejoRESTTokenRemintsAfterKeyRotation(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	prev := forgejoRESTNow
+	forgejoRESTNow = func() time.Time { return now }
+	t.Cleanup(func() { forgejoRESTNow = prev })
+
+	cfg := forgejoRESTTestConfig(t, "https://forgejo.example.com", "aud-rest")
+	first, _, err := forgejoRESTToken(cfg)
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	if same, _, err := forgejoRESTToken(cfg); err != nil || same != first {
+		t.Fatalf("unchanged key file: token changed (%v)", err)
+	}
+
+	keyFile := cfg.Forgejo.Integration.KeyFile
+	writeForgejoRESTTestKey(t, keyFile)
+	// Pin a distinct mtime so the check does not depend on filesystem timestamp granularity.
+	rotated := time.Unix(1_900_000_000, 0)
+	if err := os.Chtimes(keyFile, rotated, rotated); err != nil {
+		t.Fatal(err)
+	}
+	fresh, _, err := forgejoRESTToken(cfg)
+	if err != nil {
+		t.Fatalf("mint after rotation: %v", err)
+	}
+	if fresh == first {
+		t.Fatal("after the key file was replaced, the cached token from the old key was sent")
+	}
+	if strings.Split(fresh, ".")[2] == strings.Split(first, ".")[2] {
+		t.Fatal("rotated token carries the old signature")
+	}
+
+	// A key file that disappears is a mint error, not a cached token.
+	if err := os.Remove(keyFile); err != nil {
+		t.Fatal(err)
+	}
+	if tok, _, err := forgejoRESTToken(cfg); err == nil || tok != "" {
+		t.Fatalf("key file removed: token %q, err %v; want no token and an error", tok, err)
+	}
+}
+
 func TestForgejoRESTTokenFallsBackToTheAccessToken(t *testing.T) {
 	cfg := forgejoRESTTestConfig(t, "https://forgejo.example.com", "")
 	for name, mutate := range map[string]func(*config.Config){
@@ -128,8 +181,18 @@ func TestForgejoRESTTokenMintFailureBuildsNoClient(t *testing.T) {
 	prev := newForgejoSweepAPI
 	newForgejoSweepAPI = func(string, forge.Options) (forge.SweepAPI, error) { built++; return nil, nil }
 	t.Cleanup(func() { newForgejoSweepAPI = prev })
-	if _, err := forgejoSweepAPIForRepo(cfg, "acme/app"); err == nil || built != 0 {
-		t.Fatalf("err %v, %d clients built; want a mint error and no client", err, built)
+	if _, err := forgejoSweepAPIForRepo(cfg, "acme/app"); err == nil || built != 0 || !strings.Contains(err.Error(), "rest_audience") {
+		t.Fatalf("err %v, %d clients built; want a rest_audience mint error and no client", err, built)
+	}
+	if _, err := forgeMergerForRepo(cfg, "acme/app"); err == nil || !strings.Contains(err.Error(), "rest_audience") {
+		t.Fatalf("merger err = %v, want a rest_audience mint error", err)
+	}
+	if w := forgeForRepo(cfg, "acme/app", nil, discardLogger()); w != nil {
+		t.Fatalf("writer built after a mint failure; want none, and no fall back to the access token")
+	}
+	// A failed mint never falls back to the access token, which is still set.
+	if tok, _, err := forgejoRESTToken(cfg); err == nil || tok != "" {
+		t.Fatalf("forgejoRESTToken = %q, %v; want no token and an error", tok, err)
 	}
 	if _, err := forgeListerForRepo(cfg, "acme/app"); err == nil || !strings.Contains(err.Error(), "rest_audience") {
 		t.Fatalf("lister err = %v, want a rest_audience mint error", err)
@@ -158,10 +221,27 @@ func TestForgejoRESTAdaptersSendTheJWT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("lister: %v", err)
 	}
-	_, _ = l.ListOpenIssues(context.Background(), "acme/app")
+	if _, err := l.ListOpenIssues(context.Background(), "acme/app"); err != nil {
+		t.Fatalf("lister ListOpenIssues: %v", err)
+	}
 	mu.Lock()
 	if len(auths) == 0 || auths[0] != "token "+want {
 		t.Fatalf("lister sent %q, want the minted JWT", auths)
+	}
+	auths = nil
+	mu.Unlock()
+
+	// The writer (labels, comments, escalation) sends it too.
+	w, ok := forgeForRepo(cfg, "acme/app", nil, discardLogger()).(forge.Forge)
+	if !ok {
+		t.Fatal("writer is not a forge adapter")
+	}
+	if _, err := w.ListOpenIssues(context.Background(), "acme/app"); err != nil {
+		t.Fatalf("writer ListOpenIssues: %v", err)
+	}
+	mu.Lock()
+	if len(auths) == 0 || auths[0] != "token "+want {
+		t.Fatalf("writer sent %q, want the minted JWT", auths)
 	}
 	mu.Unlock()
 

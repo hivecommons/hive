@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -30,9 +31,18 @@ var forgejoRESTNow = time.Now
 
 type forgejoRESTKey struct{ issuer, keyFile, audience string }
 
+// forgejoRESTKeyStamp identifies one version of the signing key file by its
+// size and modification time, so a cached token is not reused after the key
+// file is replaced.
+type forgejoRESTKeyStamp struct {
+	size    int64
+	modTime int64
+}
+
 type forgejoRESTEntry struct {
 	token string
 	exp   time.Time
+	stamp forgejoRESTKeyStamp
 }
 
 var forgejoRESTCache = struct {
@@ -57,17 +67,32 @@ func forgejoRESTToken(cfg *config.Config) (token, source string, err error) {
 	key := forgejoRESTKey{issuer: in.IssuerOrigin(), keyFile: strings.TrimSpace(in.KeyFile), audience: aud}
 	now := forgejoRESTNow()
 
+	// The key file is read at every mint, so replacing it rotates the key. A
+	// cached token is reused only while the file is the one it was signed
+	// with; a file that cannot be stat'd skips the cache and the mint below
+	// reports the error.
+	var stamp forgejoRESTKeyStamp
+	fi, statErr := os.Stat(key.keyFile)
+	if statErr == nil {
+		stamp = forgejoRESTKeyStamp{size: fi.Size(), modTime: fi.ModTime().UnixNano()}
+	}
+
 	forgejoRESTCache.mu.Lock()
 	defer forgejoRESTCache.mu.Unlock()
-	if e, ok := forgejoRESTCache.m[key]; ok && now.Add(forgejoRESTRefreshMargin).Before(e.exp) {
+	if e, ok := forgejoRESTCache.m[key]; ok && statErr == nil && e.stamp == stamp && now.Add(forgejoRESTRefreshMargin).Before(e.exp) {
 		return e.token, forgejoRESTSource, nil
 	}
 	signer := forgejwt.Signer{Issuer: forgejwt.Issuer(key.issuer), KeyFile: key.keyFile, Now: func() time.Time { return now }}
 	tok, err := signer.Mint(forgejwt.Audience(aud), forgejoRESTSubject)
 	if err != nil {
+		delete(forgejoRESTCache.m, key)
 		return "", forgejoRESTSource, fmt.Errorf("%s: %w", forgejoRESTSource, err)
 	}
-	forgejoRESTCache.m[key] = forgejoRESTEntry{token: tok, exp: now.Add(forgejwt.Lifetime)}
+	if statErr != nil {
+		delete(forgejoRESTCache.m, key)
+		return tok, forgejoRESTSource, nil
+	}
+	forgejoRESTCache.m[key] = forgejoRESTEntry{token: tok, exp: now.Add(forgejwt.Lifetime), stamp: stamp}
 	return tok, forgejoRESTSource, nil
 }
 

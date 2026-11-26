@@ -290,14 +290,30 @@ forgejo:
 
 With `rest_audience` set, every REST client the hive builds sends a one-hour
 JWT with `sub` `hive:rest` for that integration, minted again 10 minutes
-before it expires, and the access token is no longer read. Without it, REST
-keeps using the access token, so existing configs are unchanged
-([#19920](https://github.com/hivecommons/hive/issues/19920)). The REST
-integration needs the same scopes as the access token above. The Forgejo
-automerge sweep also reads the collaborator permission endpoint, and the
-sweeps read the issue timeline; neither has been verified against an
-integration JWT yet
-([#19914](https://github.com/hivecommons/hive/issues/19914)).
+before it expires, and REST no longer reads the access token. Without it,
+REST keeps using the access token, so existing configs are unchanged
+([#19920](https://github.com/hivecommons/hive/issues/19920)). A failed mint,
+for example an unreadable key file, builds no REST client and names
+`rest_audience` in the error; it does not fall back to the access token.
+
+- The REST integration needs the same scopes as the access token above, and
+  it must cover every repository the hive works on, as each tier's
+  integration does.
+- Forgejo acts on a JWT as the user that owns the integration. The
+  close-on-merge sweep reads that user through `GET /user` and trusts closing
+  keywords from it, and the hive's issues, comments and merges are made as
+  it. Create the REST integration under the hive's own Forgejo user, the
+  same user the access token belonged to, and keep `read:user` in its scope.
+- `rest_audience` is set beside at least one tier audience, and it must
+  differ from every tier audience; `hive validate` refuses a repeated one.
+- The REST token is reused until shortly before it expires, but a change to
+  the key file's size or modification time drops it, so the rotation below
+  applies to REST as well.
+- The Forgejo automerge sweep reads the collaborator permission endpoint,
+  the sweeps read the issue timeline, and the close-on-merge sweep reads
+  `GET /user`. None of these has been verified against an integration JWT
+  yet ([#19914](https://github.com/hivecommons/hive/issues/19914)), so keep
+  the access token available until they are.
 
 #### Rotate the signing key
 
