@@ -27,7 +27,7 @@ func (c *Engine) gateChangesRequested(ctx context.Context, owner, repo string, n
 		return nil
 	}
 	full := owner + "/" + repo
-	blocks, err := reviewgate.CheckGitHub(hgithub.WithRESTCaller(ctx, "hive:automerge_changes_requested_gate"), c.gh, owner, repo, number)
+	blocks, err := changesRequestedCheck(hgithub.WithRESTCaller(ctx, "hive:automerge_changes_requested_gate"), c.gh, owner, repo, number)
 	var d reviewgate.Decision
 	if err == nil {
 		d = reviewgate.Decide(full, number, blocks)
@@ -49,6 +49,12 @@ func (c *Engine) gateChangesRequested(ctx context.Context, owner, repo string, n
 	}
 	return &reviewgate.BlockedError{Repo: full, Number: number, Blocks: d.Blocks}
 }
+
+// changesRequestedCheck reads the open change requests. It is a variable
+// only so this package's older tests, whose GitHub fakes predate the gate,
+// can run without serving the review listing; the gate's own tests restore
+// reviewgate.CheckGitHub.
+var changesRequestedCheck = reviewgate.CheckGitHub
 
 // changesRequestedSkipReason maps a gate refusal onto the sweep's skip
 // reason: an open change request is the human-changes-requested lane reason

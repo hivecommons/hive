@@ -9,10 +9,26 @@ import (
 	"strings"
 	"testing"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/reviewgate"
 )
+
+// The GitHub fakes of this package's older tests predate the open
+// change-request gate and do not all serve the review listing, so the
+// package's tests run with a gate that sees no change requests; the gate's
+// own tests below restore the real check.
+func init() {
+	changesRequestedCheck = func(context.Context, *gh.Client, string, string, int) ([]reviewgate.Block, error) { return nil, nil }
+}
+
+func realChangesRequestedGate(t *testing.T) {
+	t.Helper()
+	prev := changesRequestedCheck
+	changesRequestedCheck = reviewgate.CheckGitHub
+	t.Cleanup(func() { changesRequestedCheck = prev })
+}
 
 // TestSweepDoesNotMergeOverOpenChangeRequest pins hivecommons/hive#20067:
 // a green PR whose reviewer with write access has CHANGES_REQUESTED as their
@@ -21,6 +37,7 @@ import (
 // configured trusted merger: write access alone is what counts. The change
 // request sits on an older head, which GitHub still treats as open.
 func TestSweepDoesNotMergeOverOpenChangeRequest(t *testing.T) {
+	realChangesRequestedGate(t)
 	writer := map[string]string{"maint": "write"}
 	for _, tt := range []struct {
 		name        string
@@ -86,6 +103,7 @@ func TestSweepDoesNotMergeOverOpenChangeRequest(t *testing.T) {
 // engine's one merge primitive: the merge function never runs, and the
 // refusal maps onto the human-changes-requested skip reason.
 func TestExecuteMergeEffectRefusesOpenChangeRequest(t *testing.T) {
+	realChangesRequestedGate(t)
 	api := newSelfSweepGuardAPI(t, selfSweepFixture{
 		reviews:     []map[string]any{humanReview(42, "maint", "CHANGES_REQUESTED", "sha7", "")},
 		permissions: map[string]string{"maint": "admin"},
@@ -113,6 +131,7 @@ func TestExecuteMergeEffectRefusesOpenChangeRequest(t *testing.T) {
 // TestChangesRequestedOverrideReleasesEngineMerge pins the operator path: an
 // override recorded for exactly the open change request lets the merge run.
 func TestChangesRequestedOverrideReleasesEngineMerge(t *testing.T) {
+	realChangesRequestedGate(t)
 	api := newSelfSweepGuardAPI(t, selfSweepFixture{
 		reviews:     []map[string]any{humanReview(42, "maint", "CHANGES_REQUESTED", "sha7", "")},
 		permissions: map[string]string{"maint": "write"},
