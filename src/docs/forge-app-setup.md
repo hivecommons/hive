@@ -239,9 +239,41 @@ mounted at `/secrets` with `defaultMode: 0440` presents it. hive refuses a
 group-readable key under any other group, because agent UIDs share group
 `node` (GID 1000), and refuses any key that others can read. A key kept under
 `/data/secrets` is sealed in place by the keystore at boot and still loads
-afterwards. The key file is read at every mint, so
-replacing it rotates the key; list the old and new key in the key list while
-the change rolls out.
+afterwards. `hive validate` reports a `key_file` that does not exist or
+cannot be read.
+
+`forgejo.integration` covers git clone and push only. Work discovery, the
+issue and pull request relays, merges and both sweeps still call the Forgejo
+REST API with the `forgejo.token_env` access token, so keep that token set
+([#19920](https://github.com/hivecommons/hive/issues/19920) tracks moving
+REST to the JWTs too). The hive writes labels, comments and merges with it,
+so it needs `write:repository` and `write:issue`; the live end-to-end run in
+[#19909](https://github.com/hivecommons/hive/issues/19909) used
+`write:repository,write:issue,read:user,read:organization`. An unset token
+fails with an error that names the variable.
+
+#### Rotate the signing key
+
+The key file is read at every mint, so replacing it rotates the key. Forgejo
+caches the key list for about 10 minutes, and does not fetch it again when a
+token names a key ID it does not know. A token signed with a key that is not
+yet in Forgejo's cached copy is refused, and the clone or push fails with
+`Authentication failed`. Rotate in this order:
+
+1. Publish a key list with both the old and the new key:
+   `hive forge key-list --issuer https://keys.example.com --key old.pem --key new.pem --out DIR`.
+2. Wait more than 10 minutes, so Forgejo fetches the new list.
+3. Point `key_file` at the new key, or replace the file in place.
+4. One hour after step 3, when the last token signed with the old key has
+   expired, publish the key list with the new key only.
+
+#### The key host is a git dependency
+
+Forgejo keeps no stale copy of the key list. If the host that serves it at
+`issuer` is unreachable for longer than the cache window, about 10 minutes,
+Forgejo refuses every JWT, and every clone and push on a Forgejo repo fails
+until the host is back. Run the key host with the same availability you expect
+from git.
 
 ### Do not confuse `project.forge` with `github.forge`
 
