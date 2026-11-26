@@ -90,9 +90,27 @@ section (`src/pkg/scheduler/kick_priming.go`, `primeSkills`). Loading happens **
 kick, not once at startup**, so editing either source takes effect on the next
 kick — no hive restart required.
 
-The fallback needs a checkout root from `project.checkouts_dir` (or the guarded
-`policies.local_dir` fallback described in [agents-md.md](agents-md.md)). Without
-one, registry-backed skills continue to work exactly as before.
+The fallback reads a checkout root from `project.checkouts_dir` (or the guarded
+`policies.local_dir` fallback described in [agents-md.md](agents-md.md)). On a
+spoke with no checkout, Hive instead fetches `skills/<name>.md` from the primary
+repo's default branch for each declared name the registry does not have, and
+caches it under `/data/agentsmd-cache/<owner>/<repo>/skills/` (#20009):
+
+- Only declared names are fetched, one conditional request per skill per
+  15 minutes. A name that is not a plain file name is refused.
+- A file deleted upstream is removed from the cache on the next refresh, so it
+  leaves the prompt. A transient API failure keeps serving the cached copy.
+- A file larger than the 8 KiB skills injection cap is not cached, because it
+  could never be injected.
+- Repo skill text is trusted the same way as `AGENTS.md`, since it comes from
+  the same branch.
+
+Repo `skills/` files load whether or not the repo has an `AGENTS.md`. A leading
+YAML front-matter block in a skill file is stripped, as the registry strips it.
+Only regular files are read: a committed symlink in `skills/`, or a `skills/`
+directory that is itself a symlink, is refused so a repo cannot use `skills/`
+to make Hive read a host file into a prompt. Only the flat `skills/<name>.md` layout loads;
+`skills/<name>/SKILL.md` and `.claude/skills/` do not.
 
 Only declared skills are injected. A skill sitting in the directory that no
 agent names is never sent to anyone.
