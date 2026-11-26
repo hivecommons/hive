@@ -6,9 +6,9 @@ contributions to CNCF projects. Hive uses the
 [hivecommons/colony](https://github.com/hivecommons/colony) resolver for the
 lookups.
 
-**Everything here is off by default.** With every switch off a hive behaves
-exactly as it does without the feature: no file is downloaded, no lookup is
-made and nothing extra is stored or shown.
+**Enrichment is off by default.** When an owner turns it on, gitdm is on
+unless explicitly disabled; devstats and crowd.dev remain off. With enrichment
+off, no file is downloaded, no lookup is made and nothing extra is stored or shown.
 
 ## Sources
 
@@ -103,7 +103,7 @@ the one above it on, and the whole block needs Customers on.
 | hive.yaml key | Default | Environment override | Meaning |
 |---|---|---|---|
 | `customers.enrichment.enabled` | `false` | `HIVE_CUSTOMERS_ENRICHMENT_ENABLED` | Master switch |
-| `customers.enrichment.gitdm.enabled` | `false` | `HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED` | gitdm source |
+| `customers.enrichment.gitdm.enabled` | `true` | `HIVE_CUSTOMERS_ENRICHMENT_GITDM_ENABLED` | gitdm source (requires enrichment on) |
 | `customers.enrichment.gitdm.refresh_interval` | `24h` | `HIVE_CUSTOMERS_ENRICHMENT_GITDM_REFRESH_INTERVAL` | How often the public gitdm files are downloaded again (a Go duration, at least `1h`) |
 | `customers.enrichment.devstats.enabled` | `false` | `HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_ENABLED` | devstats source |
 | `customers.enrichment.devstats.hourly_limit` | `30` | `HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_HOURLY_LIMIT` | devstats lookups all people may make in one hour (at most `120`) |

@@ -354,9 +354,9 @@ func (c *Config) CustomersMentionSearchEnabled() bool {
 
 // Customers enrichment (`customers.enrichment:`) adds public affiliation and
 // activity facts about confirmed customers from CNCF-published sources, through
-// the hivecommons/colony resolver. Everything is OFF by default. The block and
-// each provider have their own switch, every switch also needs the one above it
-// on, and an environment variable overrides each one. See
+// the hivecommons/colony resolver. The master switch defaults off; gitdm
+// defaults on and the other providers default off. Each provider also needs
+// enrichment on, and an environment variable overrides each switch. See
 // src/docs/customers-enrichment.md.
 const (
 	// EnvCustomersEnrichmentEnabled overrides customers.enrichment.enabled.
@@ -477,7 +477,7 @@ func (c CustomersEnrichmentConfig) IsEnabled() bool {
 
 // CustomersEnrichmentGitdmConfig (`customers.enrichment.gitdm:`).
 type CustomersEnrichmentGitdmConfig struct {
-	// Enabled turns the gitdm provider on. nil = false.
+	// Enabled turns the gitdm provider on. nil = true.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// RefreshInterval is how often the public snapshot is downloaded again,
 	// as a Go duration ("24h"). Empty = DefaultCustomersEnrichmentGitdmRefresh;
@@ -485,9 +485,9 @@ type CustomersEnrichmentGitdmConfig struct {
 	RefreshInterval string `yaml:"refresh_interval,omitempty" json:"refresh_interval,omitempty"`
 }
 
-// IsEnabled reports whether gitdm is on (default off).
+// IsEnabled reports whether gitdm is on (default on).
 func (c CustomersEnrichmentGitdmConfig) IsEnabled() bool {
-	return c.Enabled != nil && *c.Enabled
+	return c.Enabled == nil || *c.Enabled
 }
 
 // CustomersEnrichmentDevstatsConfig (`customers.enrichment.devstats:`).
@@ -592,7 +592,7 @@ func (c *Config) customersEnrichmentProviderEnabled(env string, saved func(Custo
 		return v
 	}
 	if c == nil {
-		return false
+		return saved(CustomersEnrichmentConfig{})
 	}
 	return saved(c.Customers.Enrichment)
 }
