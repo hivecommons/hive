@@ -335,7 +335,13 @@ On Docker and LXC the entrypoint treats `/data` as the boot-time source of truth
 - `hive-id`;
 - `hive-state.json`;
 - `gh-app-key*.pem`, the GitHub App private keys;
-- `beads/`, the agent work ledger.
+- `beads/`, the agent work ledger;
+- `customers/`, the Customers people store: `people.json`, `enrichment.json`
+  and, with `customers.store` `shadow` or `colony`, `colony.db` with its
+  `colony-sync.json` marker and the `*.pre-colony` copies taken before the
+  first import. The downloadable spoke backup does not carry them; a backup of
+  the whole volume does. A person forgotten after a volume backup is still in
+  that backup.
 
 Hub deployments also keep `hub-registry.json` and `clusters.json` in `/data`. A standalone Compose spoke has neither.
 

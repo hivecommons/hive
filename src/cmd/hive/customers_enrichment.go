@@ -159,6 +159,9 @@ func wireCustomersEnrichment(svc *customers.Service, dataDir string, cfg func() 
 		}
 		return false
 	}
+	// In customers.store shadow or colony mode the enrichment results are
+	// mirrored into colony.db too (#19855).
+	e.SetColony(svc.Store().Colony())
 	svc.SetEnrichment(e, customersEnrichmentActive(cfg))
 	return true
 }

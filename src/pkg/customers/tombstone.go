@@ -24,6 +24,14 @@ func (s *Store) Forgotten(kind IdentityKind, value string) bool {
 	return s.tombs[s.tombstoneHash(IdentityKey(kind, value))]
 }
 
+// forgottenLocked is Forgotten with s.mu already held.
+func (s *Store) forgottenLocked(kind IdentityKind, value string) bool {
+	if kind == KindName {
+		return false
+	}
+	return s.tombs[s.tombstoneHash(IdentityKey(kind, value))]
+}
+
 // Tombstones is how many forgotten identities the store remembers.
 func (s *Store) Tombstones() int {
 	s.mu.Lock()
