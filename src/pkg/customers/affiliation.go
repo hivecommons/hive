@@ -29,7 +29,7 @@ const (
 	AffiliationFromCompany = "github_company"
 	AffiliationFromEmail   = "email_domain"
 	// AffiliationFromGitdm is a current affiliation in the public cncf/gitdm
-	// files (customers.enrichment.gitdm, off by default). It outranks the
+	// files (customers.enrichment.gitdm, on when enrichment is enabled). It outranks the
 	// two offline rules because gitdm is curated, and like them it is only
 	// ever a suggestion.
 	AffiliationFromGitdm = "gitdm"
