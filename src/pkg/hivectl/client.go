@@ -142,11 +142,10 @@ func NewClient(server, token string, timeout time.Duration) (*Client, error) {
 // including another host or an http downgrade; it drops auth headers on a
 // cross-host hop but still sends the body, which for `github token set` is
 // the PAT itself. The 3xx is returned as-is and surfaces as an APIError.
-func refuseBodyRedirects(req *http.Request, via []*http.Request) error {
-	if len(via) > 0 {
-		if m := via[0].Method; m != http.MethodGet && m != http.MethodHead {
-			return http.ErrUseLastResponse
-		}
+// net/http always passes at least the original request in via.
+func refuseBodyRedirects(_ *http.Request, via []*http.Request) error {
+	if m := via[0].Method; m != http.MethodGet && m != http.MethodHead {
+		return http.ErrUseLastResponse
 	}
 	if len(via) >= 10 {
 		return errors.New("stopped after 10 redirects")

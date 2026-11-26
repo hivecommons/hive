@@ -37,10 +37,6 @@ func newGitHubCommand(env *commandEnv) *cobra.Command {
 	return github
 }
 
-// githubTokenSetCommand reads the new token from stdin or a file, never from
-// argv (where it would show in the process list and shell history). The
-// server verifies it before saving; a refused token leaves the current one
-// in place and exits non-zero.
 // argsNoSecret rejects positional arguments without echoing them. cobra.NoArgs
 // (behind argsNone) embeds args[0] in its error, which would print a token
 // passed by mistake to stderr, CI logs and terminal recordings.
@@ -51,6 +47,10 @@ func argsNoSecret(_ *cobra.Command, args []string) error {
 	return nil
 }
 
+// githubTokenSetCommand reads the new token from stdin or a file, never from
+// argv (where it would show in the process list and shell history). The
+// server verifies it before saving; a refused token leaves the current one
+// in place and exits non-zero.
 func githubTokenSetCommand(env *commandEnv) *cobra.Command {
 	var file string
 	var stdin bool
