@@ -1,1 +1,0 @@
-- The GitHub App coverage check no longer reports a repository as not covered when it was renamed within the same account and the installation covers it under its new name; it logs the stale config entry instead.
