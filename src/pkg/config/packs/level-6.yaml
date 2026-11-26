@@ -106,8 +106,8 @@ agents:
 - name: supervisor
   display_name: Supervisor
   role: supervisor
-  description: 'Autonomous oversight. Reports stalled agents in advisory beads
-    and delegates rollbacks on deploy failures to specialist agents.
+  description: 'Autonomous oversight. Reports stalled agents and deploy failures
+    in advisory beads for specialist agents to act on.
 
     '
   emoji: 👑

@@ -76,7 +76,7 @@ The ACMM mode remains advisory for the supervisor at every level. `${GH_AUTH}` i
 
 ## How the supervisor interacts with other agents
 
-The supervisor checks each agent's health inputs, including recent bead activity, configured stale timeouts, and visible session state. When it finds a problem, it records it in an advisory bead and does nothing further for that agent. It does not kick, restart, or type into another agent's session.
+The supervisor checks each agent's health inputs, including recent bead activity and configured stale timeouts. When it finds a problem, it records it in an advisory bead and does nothing further for that agent. It does not kick, restart, or type into another agent's session.
 
 The supervisor never restarts agents, at any ACMM level. It stays no-GitHub and delegates code or repository actions; runtime restart behavior is controlled by agent configuration such as `restart_strategy`, not by GitHub access.
 
