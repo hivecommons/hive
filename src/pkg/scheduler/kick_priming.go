@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -42,20 +43,22 @@ const maxIssuesToPrime = 5
 //     without this they never injected anything.
 //
 // A local root is used as configured when no fetcher is wired, since there is
-// nothing to fall back to. With a fetcher wired, a local root that holds
-// neither AGENTS.md nor skills/ (a missing, empty or failed mount) is reported
-// once at warn and the forge is used instead, so a bad mount no longer turns
-// injection off silently (#20009). That costs two stats per kick.
+// nothing to fall back to. With a fetcher wired, a local root that is missing
+// or empty (a failed or unpopulated mount) is reported once at warn and the
+// forge is used instead, so a bad mount no longer turns injection off silently
+// (#20009). A populated checkout is always kept, even one with no AGENTS.md or
+// skills/, because other readers of the root (house style's HIVE_STYLE.md)
+// have no forge fallback. That costs one directory read per kick.
 func (s *Scheduler) agentsRepoRoot(repo string) string {
 	if s.cfg == nil {
 		return ""
 	}
 	if root := s.localAgentsRepoRoot(repo); root != "" {
-		if s.agentsMdFetcherOrNil() == nil || localRootHasAgentsContent(root) {
+		if s.agentsMdFetcherOrNil() == nil || !localRootMissingOrEmpty(root) {
 			return root
 		}
 		if _, warned := s.checkoutMissingWarned.LoadOrStore(root, struct{}{}); !warned {
-			s.logger.Warn("agentsmd: configured checkout root has no AGENTS.md or skills/, falling back to GitHub",
+			s.logger.Warn("agentsmd: configured checkout root is missing or empty, falling back to GitHub",
 				"repo", repo, "root", root)
 		}
 	}
@@ -75,16 +78,17 @@ func (s *Scheduler) localAgentsRepoRoot(repo string) string {
 	return ""
 }
 
-// localRootHasAgentsContent reports whether root holds an AGENTS.md file or a
-// skills/ directory, the two things the priming path reads from it.
-func localRootHasAgentsContent(root string) bool {
-	if info, err := os.Stat(filepath.Join(root, agentsmd.AgentsFileName)); err == nil && !info.IsDir() {
-		return true
+// localRootMissingOrEmpty reports whether root does not exist or has no
+// entries. Any other read error is treated as "present": the root is kept and
+// the readers report their own failures, as before.
+func localRootMissingOrEmpty(root string) bool {
+	f, err := os.Open(root)
+	if err != nil {
+		return os.IsNotExist(err)
 	}
-	if info, err := os.Stat(filepath.Join(root, agentsmd.SkillsDirName)); err == nil && info.IsDir() {
-		return true
-	}
-	return false
+	defer f.Close()
+	names, err := f.Readdirnames(1)
+	return len(names) == 0 && err == io.EOF
 }
 
 // sameRepo reports whether a git source's repo field names org/repo. The source

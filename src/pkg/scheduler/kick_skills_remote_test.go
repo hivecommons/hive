@@ -132,6 +132,13 @@ func TestPrimeSkillsForRepo_RefreshFailureKeepsCopyAnd404RemovesIt(t *testing.T)
 	if got := primeRemote(s); !strings.Contains(got, "Run the canary first.") {
 		t.Errorf("transient refresh failure dropped the cached skill; got %q", got)
 	}
+	// A failing refresh backs off for the TTL instead of retrying every kick.
+	before := f.calls["skills/deploy.md"]
+	primeRemote(s)
+	primeRemote(s)
+	if n := f.calls["skills/deploy.md"] - before; n != 0 {
+		t.Errorf("failed refresh retried %d times inside the TTL, want 0", n)
+	}
 
 	expire()
 	delete(f.errs, "skills/deploy.md")
@@ -161,13 +168,18 @@ func TestPrimeSkillsForRepo_OversizedRepoSkillIsNotCached(t *testing.T) {
 // never joined into a cache path.
 func TestPrimeSkillsForRepo_UnsafeSkillNameIsNotFetched(t *testing.T) {
 	f := newPathFetcher()
-	names := []string{"../escape", "a/b", `a\b`, "..", ".hidden"}
+	f.files["skills/safe.md"] = "SAFE BODY"
+	names := []string{"../escape", "a/b", `a\b`, "..", ".hidden", "safe"}
 	s := remoteSkillsScheduler(t, f, names...)
-	primeRemote(s)
+	got := primeRemote(s)
 	for path := range f.calls {
-		if strings.HasPrefix(path, "skills/") {
+		if strings.HasPrefix(path, "skills/") && path != "skills/safe.md" {
 			t.Errorf("unsafe skill name reached the API as %q", path)
 		}
+	}
+	// Positive control: the fetch path is live, so the refusals above are real.
+	if f.calls["skills/safe.md"] != 1 || !strings.Contains(got, "SAFE BODY") {
+		t.Errorf("safe skill not fetched and injected (calls=%d, got %q)", f.calls["skills/safe.md"], got)
 	}
 }
 
@@ -248,5 +260,32 @@ func writeFileForTest(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A populated checkout with no AGENTS.md or skills/ is still a real checkout:
+// other readers (house style's HIVE_STYLE.md) have no forge fallback, so the
+// root must be kept and nothing fetched. An empty directory falls back.
+func TestAgentsRepoRoot_PopulatedCheckoutWithoutAgentsContentIsKept(t *testing.T) {
+	f := newPathFetcher()
+	s := remoteSkillsScheduler(t, f)
+	checkouts := t.TempDir()
+	writeFileForTest(t, filepath.Join(checkouts, "hive", "HIVE_STYLE.md"), "house style")
+	if err := os.MkdirAll(filepath.Join(checkouts, "empty"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s.cfg.Project.CheckoutsDir = checkouts
+
+	if got, want := s.agentsRepoRoot("hive"), filepath.Join(checkouts, "hive"); got != want {
+		t.Errorf("agentsRepoRoot() = %q, want the populated checkout %q", got, want)
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("fetcher called %v for a populated checkout", f.calls)
+	}
+	if got := s.agentsRepoRoot("empty"); got == filepath.Join(checkouts, "empty") {
+		t.Errorf("agentsRepoRoot() kept an empty checkout dir %q, want the GitHub fallback", got)
+	}
+	if f.calls["AGENTS.md"] != 1 {
+		t.Errorf("AGENTS.md fetch calls = %d for an empty checkout, want 1", f.calls["AGENTS.md"])
 	}
 }

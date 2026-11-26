@@ -108,8 +108,8 @@ caches it under `/data/agentsmd-cache/<owner>/<repo>/skills/` (#20009):
 Repo `skills/` files load whether or not the repo has an `AGENTS.md`. A leading
 YAML front-matter block in a skill file is stripped, as the registry strips it.
 Only regular files are read: a committed symlink in `skills/`, or a `skills/`
-directory that is itself a symlink, is refused so a repo cannot make Hive read
-a host file into a prompt. Only the flat `skills/<name>.md` layout loads;
+directory that is itself a symlink, is refused so a repo cannot use `skills/`
+to make Hive read a host file into a prompt. Only the flat `skills/<name>.md` layout loads;
 `skills/<name>/SKILL.md` and `.claude/skills/` do not.
 
 Only declared skills are injected. A skill sitting in the directory that no

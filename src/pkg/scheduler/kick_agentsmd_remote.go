@@ -99,8 +99,15 @@ func (s *Scheduler) remoteAgentsRepoRoot(repo string) string {
 			// AGENTS.md stops reaching kicks, and so primeSkills, which may
 			// still parse this root for skills/ files, does not read stale
 			// inline skills from it (#20009).
+			//
+			// GitHub also answers 404 when it denies access (a revoked
+			// installation, a repo made private), so dropping a copy we held
+			// is logged at warn: injection stops until the TTL lapses.
+			if have && cached.root != "" {
+				s.logger.Warn("agentsmd: GitHub returned 404 for a cached AGENTS.md, removing the cached copy",
+					"repo", key, "root", root)
+			}
 			removeCachedFile(filepath.Join(root, agentsmd.AgentsFileName))
-			s.logger.Info("agentsmd: no AGENTS.md on GitHub", "repo", key)
 			s.remoteAgents[key] = remoteAgentsMd{fetched: now}
 			return ""
 		}
@@ -168,7 +175,9 @@ func (s *Scheduler) isRemoteRepoRoot(repo, root string) bool {
 // needed. Each file follows the AGENTS.md cache rules: one conditional GET per
 // skill per remoteAgentsMdTTL, a 404 deletes the cached copy (a skill removed
 // upstream must leave the prompt), and any other failure keeps serving the
-// last-known-good copy. A file larger than maxSkillsInjectionBytes is never
+// last-known-good copy until the next TTL (so a GitHub outage costs one
+// request per skill per TTL, not one per kick). A file larger than
+// maxSkillsInjectionBytes is never
 // written, because it could never be injected. Skill text comes from the same
 // branch as AGENTS.md and is trusted the same way.
 func (s *Scheduler) syncRemoteRepoSkills(repo string, names []string) string {
@@ -204,16 +213,22 @@ func (s *Scheduler) syncRemoteRepoSkills(repo string, names []string) string {
 		cancel()
 		switch {
 		case err != nil && github.IsNotFound(err):
+			if _, statErr := os.Lstat(path); statErr == nil {
+				// 404 is also GitHub's answer to denied access, so say so.
+				s.logger.Warn("skillreg: GitHub returned 404 for a cached repo skill, removing the cached copy",
+					"repo", key, "skill", skill)
+			}
 			removeCachedFile(path)
 			s.remoteSkills[cacheKey] = now
 		case err != nil:
+			// Last-known-good: keep serving any cached copy and retry after the
+			// TTL rather than on every kick.
 			if _, statErr := os.Lstat(path); statErr == nil {
-				// Last-known-good: retry on the next kick, keep serving.
 				s.logger.Warn("skillreg: refresh of repo skill from GitHub failed, serving cached copy",
 					"repo", key, "skill", skill, "error", err)
-				continue
+			} else {
+				s.logger.Info("skillreg: repo skill not fetched from GitHub", "repo", key, "skill", skill, "error", err)
 			}
-			s.logger.Info("skillreg: repo skill not fetched from GitHub", "repo", key, "skill", skill, "error", err)
 			s.remoteSkills[cacheKey] = now
 		case strings.TrimSpace(body) == "":
 			// An empty file, or a path the contents API did not resolve to a

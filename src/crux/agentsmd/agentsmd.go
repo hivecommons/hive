@@ -291,8 +291,9 @@ func extractSkillSections(body string) (string, map[string]string) {
 // dst. Unreadable files are skipped tolerantly.
 //
 // Only regular files are read. A committed symlink (to a file or to the whole
-// skills/ directory) is refused, so a repository cannot make Hive read a file
-// from the host into an agent prompt (hivecommons/hive#20009). Subdirectories
+// skills/ directory) is refused, so a repository cannot use skills/ to make
+// Hive read a file from the host into an agent prompt (hivecommons/hive#20009).
+// AGENTS.md itself is still read with os.ReadFile and follows a symlink. Subdirectories
 // are skipped. An optional YAML front-matter block is stripped the same way the
 // skill registry strips it, so the agent receives only the instruction body.
 func loadSkillFiles(baseDir string, dst map[string]string, lg *slog.Logger) {

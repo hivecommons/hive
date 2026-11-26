@@ -40,10 +40,14 @@ copy. The same fallback fetches `skills/<name>.md` for each skill an agent
 declares that the hive-wide registry does not have, so repo skills work on a
 spoke with no checkout too (#20009); see [skills.md](skills.md).
 
-A configured `checkouts_dir` (or `policies.local_dir`) root that holds neither
-`AGENTS.md` nor `skills/`, such as a missing or empty mount, no longer turns
-injection off silently. When a GitHub client is wired, Hive logs one warning
-for that root and uses the GitHub fallback instead.
+A configured `checkouts_dir` (or `policies.local_dir`) root that is missing
+or empty, such as a failed or unpopulated mount, no longer turns injection off
+silently. When a GitHub client is wired, Hive logs one warning for that root
+and uses the GitHub fallback instead. A populated root is always used as is.
+
+GitHub also answers 404 when it denies access (a revoked App installation, or
+a repo made private), so a cached copy that gets a 404 is removed and logged at
+warn; injection resumes once the file is readable again.
 
 One other source is used when it happens to be the same repo:
 `policies.local_dir`, the checkout of `policies.repo`, is a genuine checkout
