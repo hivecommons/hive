@@ -282,6 +282,16 @@ hivectl governor agent-remove ux-discovery --yes
 hivectl governor hotspots --repo hivecommons/hive   # merge hotspots: files concurrent PRs keep touching (GET /api/hotspots)
 ```
 
+### github token — rotate the personal access token
+
+Owner only, PAT-mode hives only (a GitHub App hive answers 409). The new token is read from stdin or a file, never from an argument, and is verified against the configured GitHub API before anything is saved; a refused token (422) leaves the current one working, and a second attempt within the cooldown is refused with 429. The token is never printed back.
+
+```bash
+hivectl github token status                                  # fingerprint, login, last verified
+pass show hive/github-pat | hivectl github token set --stdin
+hivectl github token set --file /run/secrets/github_pat
+```
+
 ### claim / unclaim / claims — issue claims
 
 ```bash
