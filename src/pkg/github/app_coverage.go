@@ -285,6 +285,92 @@ func (c InstallationCoverage) MovedTo(owner string, configured []string) []RepoM
 	return moves
 }
 
+// renameProbeLimit bounds how many uncovered repos ResolveRenames looks up in
+// one check. The recheck runs on a timer, and a hive pointed at many unticked
+// repos must not turn every pass into a burst of extra API calls; repos past
+// the limit simply keep their not-covered verdict.
+const renameProbeLimit = 20
+
+// repoNameResolver returns the "owner/name" GitHub currently reports for a
+// repository reference, following the redirect GitHub serves for a renamed one.
+type repoNameResolver func(ctx context.Context, owner, name string) (string, error)
+
+// ResolveRenames (#19915) drops repos from a Missing result that were RENAMED
+// within the configured account and are covered under their new name.
+//
+// WHY. Missing compares configured names against the installation listing by
+// string. When a repository is renamed (tuna-os/bootc-installer to
+// tuna-os/installer was the live case), the listing reports the new name, the
+// hive's config still holds the old one, and the check reports the repo as not
+// covered. Every call the hive makes still works, because GitHub redirects the
+// old name, so the hive is healthy, yet the banner tells an org owner to tick a
+// repo that no longer appears under that name on the settings page. That is the
+// same confident misdirection #4360 and #5774 exist to stop.
+//
+// THE RULE, every clause required for a repo to be dropped:
+//
+//  1. The listing is complete. A truncated listing proves nothing.
+//  2. GitHub resolves the configured name to a DIFFERENT name. A repo that
+//     resolves to itself is an ordinary unticked repo.
+//  3. The resolved name is under the SAME account. A change of account is a
+//     transfer, which MovedTo and AppStateRepoMoved report.
+//  4. The installation listing contains the resolved name. Being able to read
+//     a public repo proves nothing about coverage; the listing does.
+//
+// A lookup error keeps the repo missing, so a failed lookup can never hide a
+// real gap. Returns the repos still missing (sorted) and the renames found.
+func (a *AppAuth) ResolveRenames(ctx context.Context, cov InstallationCoverage, missing []string) (stillMissing []string, renamed []RepoMove) {
+	if a == nil || !a.HasKey() {
+		return missing, nil
+	}
+	return cov.withoutRenames(ctx, missing, func(ctx context.Context, owner, name string) (string, error) {
+		token, err := a.Token(ctx)
+		if err != nil {
+			return "", fmt.Errorf("minting installation token: %w", err)
+		}
+		repo, _, err := newTokenClient(token, a.apiURL).Repositories.Get(ctx, owner, name)
+		if err != nil {
+			return "", fmt.Errorf("resolving repository name: %w", err)
+		}
+		return repo.GetFullName(), nil
+	})
+}
+
+func (c InstallationCoverage) withoutRenames(ctx context.Context, missing []string, resolve repoNameResolver) ([]string, []RepoMove) {
+	if c.Truncated || len(missing) == 0 || resolve == nil {
+		return missing, nil
+	}
+	var still []string
+	var renamed []RepoMove
+	probes := 0
+	for _, full := range missing {
+		owner, name, ok := strings.Cut(full, "/")
+		if !ok || owner == "" || name == "" || probes >= renameProbeLimit {
+			still = append(still, full)
+			continue
+		}
+		probes++
+		got, err := resolve(ctx, owner, name)
+		if err != nil {
+			still = append(still, full)
+			continue
+		}
+		canonical := strings.ToLower(strings.TrimSpace(got))
+		newOwner, _, ok := strings.Cut(canonical, "/")
+		if !ok || canonical == full || newOwner != strings.ToLower(owner) {
+			still = append(still, full)
+			continue
+		}
+		if _, covered := c.Repos[canonical]; !covered {
+			still = append(still, full)
+			continue
+		}
+		renamed = append(renamed, RepoMove{Configured: full, CoveredAs: canonical})
+	}
+	sort.Strings(still)
+	return still, renamed
+}
+
 // MovedOwner returns the single account every move in the set points at, or ""
 // when the set is empty or the moves disagree. Copy that names one destination
 // org must never be composed from a set that names several.

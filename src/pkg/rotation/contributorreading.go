@@ -180,6 +180,10 @@ type ContributorReading struct {
 	// which is distinct from an explicit 0; consumers must not treat absence as
 	// evidence a reset exists.
 	ResetCreditsAvailable *int `json:"reset_credits_available,omitempty"`
+	// AuthMode is "api_key" for a metered API-key login with no subscription
+	// windows (hivecommons/hive#19932). The relay admits such a reading and
+	// says the work spends metered API credits. Absent for every other reading.
+	AuthMode string `json:"auth_mode,omitempty"`
 }
 
 // HeadroomToContributorReading normalizes a probed Headroom into the reading the
@@ -194,6 +198,15 @@ func HeadroomToContributorReading(h Headroom) ContributorReading {
 	capturedAt := time.Now().UTC().Format(time.RFC3339)
 	if !h.CapturedAt.IsZero() {
 		capturedAt = h.CapturedAt.UTC().Format(time.RFC3339)
+	}
+	if h.ProbeErr != nil && h.ProbeErrCause == ProbeCauseAPIKeyLogin {
+		// A metered API-key login has no windows to protect
+		// (hivecommons/hive#19932). Publishing `unknown` held it forever with
+		// a banner that read as exhausted quota. Publish an available reading
+		// with no windows, marked so the relay says the work spends metered
+		// API credits. Only this positively detected cause takes the path;
+		// every other failure still holds.
+		return ContributorReading{State: "available", CapturedAt: capturedAt, Cause: string(h.ProbeErrCause), AuthMode: AuthModeAPIKey, Limits: []ContributorLimitWindow{}}
 	}
 	if h.ProbeErr != nil {
 		// Carry WHY the measurement failed so a dead adapter stays visible as a

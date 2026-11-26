@@ -161,6 +161,9 @@ func loadSaaSUser(username string) *SaaSUser {
 	// wall clock. Read-time only, never written here; sweepExpiredAccess
 	// (access_expiry.go) persists the prune and stamps the timeline event.
 	pruneExpiredHiveGrants(&u, time.Now())
+	// HIVE_HUB_CUSTOMER_STORE=colony: the CRM fields read from the colony
+	// store, field by field, falling back to this JSON (customer_store.go).
+	crmOverlayUser(&u)
 	return &u
 }
 
@@ -209,6 +212,9 @@ func saveSaaSUser(u *SaaSUser) error {
 		cleanup()
 		return err
 	}
+	// Shadow and colony modes dual-write the CRM fields to the colony store.
+	// The JSON written above stays the rollback copy (customer_store.go).
+	crmMirrorUser(u)
 	return nil
 }
 
@@ -705,6 +711,13 @@ func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		s.logger.Warn("admin delete user: consent removal failed", "target", username, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "failed to delete user's consent records")
+		return
+	}
+	// Erase the person from the colony store too, in every mode, before the
+	// JSON goes, so a failure leaves the account in place for a retry.
+	if err := crmForgetUser(u); err != nil {
+		s.logger.Warn("admin delete user: customer store erase failed", "target", username, "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "failed to erase user's customer record")
 		return
 	}
 	// Delete both canonical and legacy representations; otherwise a leftover

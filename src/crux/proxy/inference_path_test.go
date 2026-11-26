@@ -87,6 +87,34 @@ var inferencePathCases = []struct {
 		status:    http.StatusOK,
 	},
 	{
+		name:      "model list is answered locally with an empty page",
+		method:    "GET",
+		target:    "/v1/models?limit=1000",
+		body:      "",
+		forwarded: false,
+		status:    http.StatusOK,
+		check: func(t *testing.T, body []byte) {
+			var ml struct {
+				Data    []json.RawMessage `json:"data"`
+				HasMore *bool             `json:"has_more"`
+			}
+			if err := json.Unmarshal(body, &ml); err != nil {
+				t.Fatalf("models body %s: %v", body, err)
+			}
+			if ml.Data == nil || len(ml.Data) != 0 || ml.HasMore == nil || *ml.HasMore {
+				t.Fatalf("unexpected model list envelope: %s", body)
+			}
+		},
+	},
+	{
+		name:      "POST on models is not a model list",
+		method:    "POST",
+		target:    "/v1/models",
+		body:      "",
+		forwarded: false,
+		status:    http.StatusNotFound,
+	},
+	{
 		name:      "unknown path is a local not_found_error",
 		method:    "GET",
 		target:    "/v1/organizations/me",

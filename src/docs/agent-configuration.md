@@ -649,6 +649,28 @@ Two rules of thumb:
 
   Only `POST /v1/messages` is translated into an OpenAI `/v1/chat/completions` call. The Claude CLI also talks to its Anthropic host for housekeeping — telemetry batches (`/api/event_logging/...`), error reports, `POST /v1/messages/count_tokens` — and none of that has a meaning to an OpenAI-compatible gateway; forwarding it used to cost a gateway `400 Missing required parameter: 'messages'` per call, charged against the provider's request rate limit (roughly two failures per real completion in practice). The translator and the MITM reroute now answer those locally: `count_tokens` returns a chars-based estimate, anything under `/api/` returns `{}`, and any other path is a 404 in Anthropic error shape with a `WARN` log line naming the method and path, so a new CLI endpoint shows up in the hive log rather than as gateway noise. Inference-routed `claude` sessions are additionally launched with `DISABLE_TELEMETRY=1`, `DISABLE_ERROR_REPORTING=1`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, and `CLAUDE_CODE_AUTO_MODE_SERVER=0`; subscription sessions are not. The last one matters for Claude Code's [auto-mode classifier](https://code.claude.com/docs/en/auto-mode-classifier-billing): the CLI otherwise asks the inference host for a server-side safety verdict (`safeguards` field in, `safeguard_results` out) that an OpenAI-compatible gateway can never return, then halts the session on an interactive "this session isn't eligible because your requests go through 127.0.0.1:18444 … Enter to continue" notice. With the variable set the CLI runs its own classifier requests through the translator like any other call. Should the notice still appear (for example from a settings file that re-enables the server check), the lifetime prompt watcher presses Enter for it.
 
+### Context window for inference-routed agents
+
+Claude Code sizes auto-compaction from the model ID. It does not know gateway or local IDs such as `vllm/Qwen3.8-27B`, and for those it assumes a 1M-token window (it shows `Model "..." isn't recognized · context assumed to be 1m tokens`). On a model server with a smaller context, a conversation can then grow past the server's limit before the CLI compacts, and the server refuses the turn (#19913).
+
+Hive tells the CLI the real window with `CLAUDE_CODE_MAX_CONTEXT_TOKENS` when it knows one. It uses, in order:
+
+1. The agent's `max_context_tokens` setting (tokens). Set it when the model server enforces a window that its `/v1/models` listing does not report, or reports wrongly:
+
+   ```yaml
+   agents:
+     quality:
+       backend: litellm
+       model: vllm/Qwen3.8-27B-Q8_K_XL
+       max_context_tokens: 262144
+   ```
+
+2. The window the inference translator discovered from the endpoint's `/v1/models`: `max_model_len` (vLLM), then `context_length` (gufo, OpenRouter), then `max_input_tokens` (used by some gateways; LiteLLM's own `/v1/models` does not report a window, so set `max_context_tokens` there). A listing entry is used only when its `id` matches the model, or when the listing has a single model. The discovery runs in the background when the route is set, so a window learned for a model applies from the next launch of an agent on that model. Learned windows are kept in memory only, so after a hive restart the first launch on each model gets no discovered window. Set `max_context_tokens` when the window must apply from the first launch. The `inference route max context length resolved` log line records a learned window.
+
+`max_context_tokens` describes the agent's configured `model`. It is not applied while a model override (a dashboard switch or pin) runs another model, and a review head on a different model does not inherit it; those fall back to discovery.
+
+Hive does not export the variable for model IDs that contain `claude` (for example `anthropic/claude-sonnet-5-5`), because the CLI already knows those windows. Set `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` to turn the export off for the whole hive. Sandbox Job kicks do not get the variable yet: the sandbox drops every variable whose name contains `TOKEN`.
+
 ### Per-agent homes: what is shared and what is private
 
 Each per-UID agent runs with its own durable `HOME` under `/data/home/agents/<name>`. "One login authenticates the fleet" is implemented by *bridging* — symlinks from the per-agent home back to the same path under the shared `/data/home` — and the bridge list is deliberately narrow:
@@ -766,6 +788,26 @@ Through a custom `ANTHROPIC_BASE_URL`, the Claude CLI aborts a stream that sends
 Because the `200` has already gone out, a gateway failure on a streamed request (unreachable, a non-2xx status, or a broken stream) reaches the CLI as an SSE `error` event, not as an HTTP status. The message is the same `inference backend returned <status>: ...` or `inference backend unreachable: ...` text, and the error type follows the status: `rate_limit_error` for `429`, `overloaded_error` for `503` and `529`, `authentication_error` for `401`, `api_error` for other `5xx`. Non-streaming requests are unchanged.
 
 If a turn is still cut, raise the CLI's own limits: `CLAUDE_STREAM_IDLE_TIMEOUT_MS` (5 to 30 minutes) lengthens the watchdogs, and `API_FORCE_IDLE_TIMEOUT=0` turns the body idle timeout off. Hive does not set either. An agent in a tmux pane inherits the hive process's environment, so setting them in the hive container's environment reaches the CLI; a sandbox Job runs in its own pod and does not inherit it.
+
+#### Headless turns (`headless_turns`): one `claude -p` per kick
+
+A translator-routed agent (`vllm`, `llm-d`, `litellm`, `watsonx` or a named gateway) normally runs the interactive Claude CLI resident in its pane. Anthropic counts that as interactive Claude Code even when the route ends at Anthropic with a Console API key, and the monthly API credits that come with Max, Ultra and Team plans do not pay for interactive Claude Code: the request fails with `Your credit balance is too low` while the credit sits unspent. Per Anthropic's [help article](https://support.claude.com/en/articles/17154008), `claude -p` run with an API key from the linked Console organization is billed as Agent SDK usage, which those credits do cover ([#19902](https://github.com/hivecommons/hive/issues/19902)).
+
+`headless_turns: true` on an agent switches it to that mode. It is off by default:
+
+```yaml
+agents:
+  ci-maintainer:
+    backend: litellm
+    model: anthropic/claude-sonnet-5-5
+    headless_turns: true
+```
+
+- **What changes.** The pane holds a shell instead of a resident CLI. Each kick runs `hive claude-turn`, which starts one `claude -p --input-format stream-json --output-format stream-json` with the agent's usual launch flags (model, `--bare --settings`, the GitHub-write and host-state deny rules, tool rules, MCP flags), feeds it the prompt on stdin, and renders its output as plain pane text. The pane shows `HIVE_CLAUDE_HEADLESS_RUNNING` while a turn runs and `HIVE_CLAUDE_HEADLESS_READY` at the prompt, which the kick, busy and turn-end gates read.
+- **What does not change.** The CLI still talks to Hive's translator, so the real gateway key stays out of the agent's environment, `/v1/models` discovery, metering, key rotation, the opt-in timeouts and retries, and spending-limit detection all work as before. Hive does not edit the CLI's requests or its system prompt.
+- **Continuity.** The first kick after a launch starts a new session; later kicks resume it by id (`--resume`). `clear_on_kick: true` (the default) starts a new session on every non-resume kick, which replaces the interactive `/clear`. If the recorded session can no longer be resumed, the turn starts a new one and says so in the pane.
+- **What is skipped.** There is no idle placeholder kick at launch (a headless turn is a full model call), no consent-screen watcher, and no post-kick "continue" or action nudges, because the pane is a shell between turns and each turn ends when `claude -p` exits. PR follow-up resume kicks are refused, as for headless agy.
+- **Scope.** The setting applies only to translator-routed agents; it is ignored on `claude` (subscription) and every other CLI backend, and when `launch_cmd` is set. Whether a given request is covered by subscriber credits is Anthropic's decision; Hive only changes how the CLI is started.
 
 ### Claude Managed Agents hosted execution
 

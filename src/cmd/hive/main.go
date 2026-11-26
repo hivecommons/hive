@@ -2458,10 +2458,12 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// (hivecommons/hive#19670), with the same manager authorizers. The relay
 	// idles on each scan unless every repo is off GitHub, so a reload either
 	// way hands the queues to the right relays. It stops with b.ctx, which
-	// is all shutdown needs, so its done channel is not joined.
+	// is all shutdown needs, so its done channel is not joined. It also
+	// serves push-branch requests with the manager's push authorizer, and
+	// answers review and merge requests with a reason (#19916).
 	if deps.startForgeRequestRelay != nil {
 		_ = deps.startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
-			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger))
+			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger).withPushRelay(b.agentMgr.AuthorizePushBranch).withPushAudit(b.recordWriteAudit))
 	}
 	// Forgejo repos (#19671): the GitHub sweeps above skip them (RepoOnGitHub),
 	// so they get their own sweeps, which need no GitHub client. A gitea config
@@ -4658,6 +4660,9 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 				deps.clearInferenceRoute(b.githubProxy, agentName)
 			},
 		)
+		if deps.installContextWindowLookup != nil {
+			deps.installContextWindowLookup(b.agentMgr, b.githubProxy)
+		}
 
 		deps.startProxy(b.githubProxy, b.logger)
 		b.wireSandboxGitHubReadRelay()
@@ -7572,6 +7577,10 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Run from inside a headless agy agent's pane, one per kick; see
 		// pkg/agent/agy_turn.go.
 		return true, cruxruntime.RunAgyTurn(args[1:], stdout, stderr)
+	case "claude-turn":
+		// Run from inside a headless_turns agent's pane, one per kick; see
+		// crux/agent/claude_turn.go.
+		return true, cruxruntime.RunClaudeTurn(args[1:], stdout, stderr)
 	case "cline-turn":
 		return true, cruxruntime.RunClineTurn(args[1:], stdout, stderr)
 	case jev.Subcommand:

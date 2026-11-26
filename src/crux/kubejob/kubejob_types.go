@@ -40,10 +40,11 @@ const (
 	NetworkHost = "host"
 )
 
-// deletePolicy removes the per-Job NetworkPolicy when one was created.
-func (l *Launcher) deletePolicy(ctx context.Context, policyPath string) {
-	if policyPath != "" {
-		_ = l.delete(ctx, policyPath)
+// deleteQuiet deletes the object at path (the claim transport's per-Job
+// NetworkPolicy), ignoring errors; an empty path means none was created.
+func (l *Launcher) deleteQuiet(ctx context.Context, path string) {
+	if path != "" {
+		_ = l.delete(ctx, path)
 	}
 }
 

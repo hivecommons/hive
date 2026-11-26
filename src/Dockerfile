@@ -349,9 +349,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     chmod +x /usr/local/bin/ttyd
 
 # --- Layer 2b: GitHub CLI (off-PATH — only snapshot publisher uses it) ---
-ARG GH_VERSION=2.105.0
-ARG GH_SHA256_AMD64=79e7ab5db738c48777b696e374f8b428f0647debfb424f44d2f426370407fe2f
-ARG GH_SHA256_ARM64=b1278c75107423d818f1937fd92cafc9e5e9b606631568f68d7fb816f5885a02
+ARG GH_VERSION=2.106.0
+ARG GH_SHA256_AMD64=a476449fa9625413c54a3734eded62e9e480e49f421ff08e7f3b3879c059a033
+ARG GH_SHA256_ARM64=5e8a0c51e1a8345f36bd0b8bb88604b6a5388df16f3ab3e3b9b6d794fa223a67
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     case "$ARCH" in \
       amd64) GH_ARCH=amd64; GH_SHA256="$GH_SHA256_AMD64" ;; \
@@ -576,9 +576,9 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # --- Layer 8.27: OMP CLI (Oh My Pi — backend: omp) ---
 # Mirrored from Dockerfile.contributor so hub agents can launch backend: omp.
 # Downloads are optional like Goose/agy, but checksum mismatches are fatal.
-ARG OMP_VERSION=19.1.0
-ARG OMP_SHA256_AMD64=be2b45c437b623e15c29b1f8c98aacb842f92118196454b5e9eed884359e9a01
-ARG OMP_SHA256_ARM64=785e8e519acb55852a85e5495271d768a221ca92c095c043cd3eb0d7f8d3eafc
+ARG OMP_VERSION=19.2.1
+ARG OMP_SHA256_AMD64=e8b937f9bf023baa147bdd300ad5421af0a6ef8b1f350c47a9a93d5fca94feca
+ARG OMP_SHA256_ARM64=92d4cce4b14814f6b838aa86dcec6359f0cb089cbcc300e8463cbb5326991fe0
 RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
   && case "$ARCH" in \
        amd64|x86_64) OMP_ASSET=omp-linux-x64; OMP_SHA256="$OMP_SHA256_AMD64" ;; \

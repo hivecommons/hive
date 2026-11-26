@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/pkg/advisory"
 	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
@@ -198,6 +198,18 @@ func (c *Client) refuseWrite(agent, op, repo string, target int) (string, bool) 
 func DirectWriteRefusedAuditRecord(agent, kind, method, path, repo string) AuditRecord {
 	return writeAuditRecord(AuditActionAgentWriteRefused, InvocationMeta{Agent: agent},
 		WriteTarget{Repo: repo}, "via", "proxy", "kind", kind, "method", method, "path", path, "outcome", "refused")
+}
+
+// AgentBranchPushedAuditRecord builds the agent_branch_pushed entry a push
+// relay records once it has published branch at sha to repo. The GitHub push
+// watcher and the forge push relay (hivecommons/hive#19960) both record it, so
+// a forge push is audited the same way as a GitHub one.
+func AgentBranchPushedAuditRecord(agent, repo, branch, sha string, forceWithLease bool) AuditRecord {
+	return writeAuditRecord(AuditActionAgentBranchPushed, InvocationMeta{Agent: agent},
+		WriteTarget{Repo: repo},
+		"branch", branch,
+		"sha", sha,
+		"force_with_lease", strconv.FormatBool(forceWithLease))
 }
 
 // WriteTarget names what one hive-mediated GitHub write touched. Write sites

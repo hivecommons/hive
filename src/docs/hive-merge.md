@@ -1227,6 +1227,21 @@ refuses tracking issues and honours the reporter-confirmation gate) and is
 counted by the direct-write ratchet, so no other code path can grow a close
 of its own.
 
+Only a closing keyword closes. A merged PR whose only reference to an issue
+is non-closing (`Refs #N`, `Part of #N`, `Addresses #N`, ...) never closes it
+through close-on-merge, even when the claim ledger, a covered-by-PR comment
+or a branch named after the issue links the two: the author's own `Refs` is
+the stronger signal, and the sweep records the verdict `refs_only` (logged
+at info) and settles the claim. An issue labelled `hive/partially-addressed`
+is likewise left open (`partially_addressed_no_closing_keyword`) unless the
+merged PR names it with `Fixes`/`Closes`/`Resolves`. The Forgejo sweep only
+ever acts on closing keywords, and the task-list sweep, which otherwise
+accepts a merged `Refs` PR once every box is ticked (#7071), does not close
+a `hive/partially-addressed` issue without a merged closing PR either
+([#19956](https://github.com/hivecommons/hive/issues/19956)). None of this
+touches decomposed-parent auto-close or the per-repo `parent_autoclose`
+setting.
+
 The tracker shows the consequence honestly. A follow-up or duplicate PR whose
 body names an issue an *earlier* PR already delivered — `Refs #15422` on
 #15425 after #15426 merged, `extending #15058` on #15431 after #15068 merged —

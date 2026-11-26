@@ -225,3 +225,25 @@ func TestReviewHeadsRejectMixedReviewerSet(t *testing.T) {
 		t.Fatalf("heads-only set by review token rejected: %v", err)
 	}
 }
+
+// max_context_tokens describes the base's model, so a head on another model
+// must not inherit it (hivecommons/hive#19913); a head on the same model keeps it.
+func TestExpandReviewHeadsDropsMaxContextTokensForOtherModels(t *testing.T) {
+	base := AgentConfig{
+		ID: "reviewer", Backend: "litellm", Model: "vllm/Qwen", MaxContextTokens: 262144,
+		ReviewHeads: []ReviewHead{
+			{Backend: "litellm", Model: "vllm/Qwen", Alias: "same"},
+			{Backend: "litellm", Model: "vllm/DeepSeek", Alias: "other"},
+		},
+	}
+	got := map[string]int{}
+	for _, d := range expandReviewHeads("reviewer", base) {
+		got[d.Model] = d.MaxContextTokens
+	}
+	if got["vllm/Qwen"] != 262144 {
+		t.Errorf("same-model head max_context_tokens = %d, want 262144", got["vllm/Qwen"])
+	}
+	if got["vllm/DeepSeek"] != 0 {
+		t.Errorf("other-model head max_context_tokens = %d, want 0", got["vllm/DeepSeek"])
+	}
+}

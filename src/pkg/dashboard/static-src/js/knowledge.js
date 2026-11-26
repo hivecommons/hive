@@ -1322,6 +1322,16 @@
         + '</ul>';
     }
 
+    // Retro coverage (#20011): how many closed work beads the arm comparison
+    // saw, so "no beads closed" reads differently from "closed but unmatched".
+    function kbAdvisorCoverageHTML(c) {
+      if (!c || typeof c !== 'object') return '';
+      const n = v => escapeHtml(String(Number(v) || 0));
+      return '<div class="kb-effective-meta">Coverage: ' + n(c.closed_beads) + ' closed work beads · '
+        + n(c.with_closed_pr) + ' with a closed PR · ' + n(c.no_ref) + ' without an issue or PR ref · '
+        + n(c.no_decision) + ' without a matching advisor decision</div>';
+    }
+
     function kbAdvisorArmRowHTML(a, note) {
       return '<tr><td>' + escapeHtml(a.arm) + (note ? ' <span class="kb-effective-meta">' + escapeHtml(note) + '</span>' : '') + '</td><td>' + escapeHtml(String(a.beads)) + '</td><td>'
         + kbAdvisorNum(a.mean_fix_attempts, 2) + '</td><td>' + kbAdvisorNum(a.mean_ci_failure_count, 2) + '</td><td>' + kbAdvisorNum(a.mean_kicks_received, 2) + '</td></tr>';
@@ -1354,15 +1364,19 @@
       html += kbAdvisorErrorsHTML(d.errors);
       const arms = d.arms || [];
       html += '<div class="section-label m-0" style="margin-top:var(--sp-4)">Closed beads by arm</div>';
+      html += kbAdvisorCoverageHTML(d.coverage);
       if (!arms.length && !d.mixed && !d.none) {
-        html += '<div class="kb-effective-meta">No closed beads with a closed PR yet.</div>';
+        const closed = (d.coverage && Number(d.coverage.closed_beads)) || 0;
+        html += '<div class="kb-effective-meta">' + (closed > 0
+          ? escapeHtml(String(closed)) + ' closed work beads, none classed into an arm yet.'
+          : 'No closed work beads yet.') + '</div>';
       } else {
         html += '<table class="kb-advisor-table"><thead><tr><th>Arm</th><th>Beads</th><th>Mean fix attempts</th><th>Mean CI failures</th><th>Mean kicks</th></tr></thead><tbody>';
         html += arms.map(a => kbAdvisorArmRowHTML(a, '')).join('');
         if (d.mixed) html += kbAdvisorArmRowHTML(d.mixed, 'in more than one arm; not comparable');
         if (d.none) html += kbAdvisorArmRowHTML(d.none, 'no advisor decision');
         html += '</tbody></table>';
-        html += '<div class="kb-effective-meta">Bead means cover every closed bead with a closed PR; the since window does not narrow them.</div>';
+        html += '<div class="kb-effective-meta">Bead means cover every closed work bead (advisory beads excluded); the since window does not narrow them.</div>';
       }
       html += '<div class="kb-effective-meta" style="margin-top:var(--sp-3)">Mean model latency ' + kbAdvisorNum(cost.mean_latency_ms, 0) + ' ms (' + escapeHtml(String(cost.latency_samples || 0)) + ' calls) · mean tokens '
         + kbAdvisorNum(cost.mean_prompt_tokens, 0) + ' prompt / ' + kbAdvisorNum(cost.mean_completion_tokens, 0) + ' completion (' + escapeHtml(String(cost.token_samples || 0)) + ' calls)</div>';

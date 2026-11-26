@@ -498,14 +498,38 @@ func closeOnMergePRClaimsIssue(pr *gh.PullRequest, prRepo, issueRepo string, iss
 	if pr == nil || issue <= 0 {
 		return false
 	}
-	text := pr.GetTitle() + "\n" + pr.GetBody()
-	if _, ok := FindClosingKeywordReference(text, prRepo, issueRepo, issue); ok {
+	if closeOnMergePRHasClosingKeyword(pr, prRepo, issueRepo, issue) {
 		return true
+	}
+	// A branch named after the issue is only a fallback: an explicit
+	// non-closing reference (`Refs #N`) in the title or body is the author
+	// declining to close it and overrules the branch, as it does for the
+	// claim ledger (hivecommons/hive#12144, #19956).
+	if closeOnMergePRRefsIssue(pr, prRepo, issueRepo, issue) {
+		return false
 	}
 	if n, ok := issueFromBranchName(headRef(pr)); ok && n == issue && strings.EqualFold(prRepo, issueRepo) {
 		return true
 	}
 	return false
+}
+
+// closeOnMergePRHasClosingKeyword reports whether the PR title or body names
+// the issue with an explicit closing keyword (Fixes/Closes/Resolves).
+func closeOnMergePRHasClosingKeyword(pr *gh.PullRequest, prRepo, issueRepo string, issue int) bool {
+	if pr == nil || issue <= 0 {
+		return false
+	}
+	_, ok := FindClosingKeywordReference(pr.GetTitle()+"\n"+pr.GetBody(), prRepo, issueRepo, issue)
+	return ok
+}
+
+// closeOnMergePRRefsOnly reports whether the PR's only textual reference to
+// the issue is non-closing (`Refs`, `Part of`, ...): such a PR never closes
+// the issue through close-on-merge, whatever the claim ledger or the branch
+// name say (hivecommons/hive#19956).
+func closeOnMergePRRefsOnly(pr *gh.PullRequest, prRepo, issueRepo string, issue int) bool {
+	return !closeOnMergePRHasClosingKeyword(pr, prRepo, issueRepo, issue) && closeOnMergePRRefsIssue(pr, prRepo, issueRepo, issue)
 }
 
 func closeOnMergePRRefsIssue(pr *gh.PullRequest, prRepo, issueRepo string, issue int) bool {
@@ -533,7 +557,12 @@ func (c *Client) closeIssueForMergedPRClaim(ctx context.Context, issueRepo strin
 }
 
 func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueRepo string, issueNumber int, pr *gh.PullRequest, claimMetadata bool, opts CloseOnMergeOptions, issue *gh.Issue) CloseOnMergeResult {
-	prRepo := issueRepo
+	// The backfill passes the configured repo name, which may omit the
+	// owner; references parsed from the PR text are always owner/name, so
+	// match them against the qualified form.
+	refOwner, refName := c.splitRepo(issueRepo)
+	issueRefRepo := refOwner + "/" + refName
+	prRepo := issueRefRepo
 	if pr != nil && pr.GetBase() != nil && pr.GetBase().GetRepo() != nil && pr.GetBase().GetRepo().GetFullName() != "" {
 		prRepo = pr.GetBase().GetRepo().GetFullName()
 	}
@@ -562,17 +591,24 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 			return res
 		}
 	}
-	if !claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, issueRepo, issueNumber) {
+	if !claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, issueRefRepo, issueNumber) {
 		res.Action, res.Reason = CloseOnMergeSkipped, "no_closing_or_claim_metadata"
 		return res
 	}
-	if claimMetadata && !closeOnMergePRClaimsIssue(pr, prRepo, issueRepo, issueNumber) && closeOnMergePRRefsIssue(pr, prRepo, issueRepo, issueNumber) {
+	// A claim (ledger row, covered-by-PR comment, branch name) is weaker than
+	// the author's own words: a PR that names the issue only with a
+	// non-closing keyword declared the work partial, so it never closes the
+	// issue (hivecommons/hive#19956). The verdict is applied once the issue
+	// is read, so a confirmation-gated issue can still be labelled partially
+	// addressed (#11931).
+	refsOnly := closeOnMergePRRefsOnly(pr, prRepo, issueRefRepo, issueNumber)
+	if refsOnly {
 		res.WrongRefs = true
 		if opts.Logger != nil {
 			// This is PR metadata, not a failed runtime operation. WARN would
 			// turn repeated sweeps into an unclassified fleet self-report.
-			opts.Logger.Info("close-on-merge: PR used non-closing Refs for its claimed issue",
-				"repo", issueRepo, "issue", issueNumber, "pr", pr.GetNumber(), "author", author)
+			opts.Logger.Info("close-on-merge: PR used non-closing Refs for its claimed issue; leaving it open",
+				"repo", issueRepo, "issue", issueNumber, "pr", pr.GetNumber(), "author", author, "reason", "refs_only")
 		}
 	}
 	owner, repoName := c.splitRepo(issueRepo)
@@ -622,6 +658,27 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		}
 		return res
 	}
+	// A confirmation-gated issue never closes here anyway; it goes on to the
+	// coverage check below, which labels a refs-only merge partially
+	// addressed (#11931). Every other issue is decided now, before any
+	// comment or timeline read.
+	gated := c.reporterConfirmationCloseGateReason(issue) != "" || closeOnMergeNeedsConfirmation(issue)
+	if !gated && refsOnly {
+		// Skipped settles the claim: the PR text cannot change after merge.
+		res.Action, res.Reason = CloseOnMergeSkipped, "refs_only"
+		return res
+	}
+	if !gated && labelPresent(issueLabelNames(issue.Labels), PartiallyAddressedLabel) && !closeOnMergePRHasClosingKeyword(pr, prRepo, issueRefRepo, issueNumber) {
+		// hive/partially-addressed says work remains. Only an explicit
+		// closing keyword for this issue overrides that; a claim or a branch
+		// name alone does not (hivecommons/hive#19956).
+		res.Action, res.Reason = CloseOnMergeSkipped, "partially_addressed_no_closing_keyword"
+		if opts.Logger != nil {
+			opts.Logger.Info("close-on-merge: issue is partially addressed and the PR has no closing keyword for it; leaving it open",
+				"repo", issueRepo, "issue", issueNumber, "pr", pr.GetNumber())
+		}
+		return res
+	}
 	closedMarker, reopenedMarker, stageNoted := c.closeOnMergeMarkers(ctx, owner, repoName, issueNumber, pr.GetNumber())
 	if closedMarker {
 		res.Action, res.Reason = CloseOnMergeAlreadyDone, "marker_present"
@@ -650,8 +707,8 @@ func (c *Client) closeIssueForMergedPRClaimWithIssue(ctx context.Context, issueR
 		}
 		return res
 	}
-	if c.reporterConfirmationCloseGateReason(issue) != "" || closeOnMergeNeedsConfirmation(issue) {
-		if cov := c.closeOnMergeCoverage(ctx, prRepo, issueRepo, issueNumber, pr, issue, opts); cov.partial() {
+	if gated {
+		if cov := c.closeOnMergeCoverage(ctx, prRepo, issueRefRepo, issueNumber, pr, issue, opts); cov.partial() {
 			c.markPartiallyAddressed(ctx, issueRepo, issueNumber, pr.GetNumber(), issue, cov, opts)
 			res.Action, res.Reason = CloseOnMergeSkipped, "partially_addressed"
 			return res

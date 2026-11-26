@@ -1,1 +1,0 @@
-- Forgejo and Gitea label requests now report an error when the repo lacks a requested label, so the PR relay flags a PR that opened without its ready-for-review hold.

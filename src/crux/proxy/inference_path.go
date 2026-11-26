@@ -26,6 +26,12 @@ const (
 	// inferencePathTelemetry is anything under /api/ — event-logging batches,
 	// error reports, feedback — answered locally with an empty object.
 	inferencePathTelemetry
+	// inferencePathModels is GET /v1/models — the CLI's model-list probe
+	// (sent on startup and by the model picker), answered locally with an
+	// empty Anthropic list envelope: the reroute maps whatever model the CLI
+	// names onto the configured backend, so there is no list to offer, and an
+	// empty page is a valid answer where a 404 is a warned error (#20045).
+	inferencePathModels
 	// inferencePathUnknown is any other method/path, answered locally 404.
 	inferencePathUnknown
 )
@@ -43,6 +49,9 @@ func classifyInferencePath(method, path string) inferencePathKind {
 		case "/v1/messages/count_tokens":
 			return inferencePathCountTokens
 		}
+	}
+	if method == http.MethodGet && path == "/v1/models" {
+		return inferencePathModels
 	}
 	if strings.HasPrefix(path, "/api/") {
 		return inferencePathTelemetry
@@ -90,6 +99,11 @@ func (p *GitHubProxy) localInferenceResponse(kind inferencePathKind, method, pat
 			p.logger.Debug("inference reroute: answering CLI telemetry locally", "agent", agentName, "method", method, "path", path)
 		}
 		return http.StatusOK, `{}`
+	case inferencePathModels:
+		if _, seen := p.localInferencePaths.LoadOrStore(path, struct{}{}); !seen {
+			p.logger.Debug("inference reroute: answering model list locally", "agent", agentName, "method", method, "path", path)
+		}
+		return http.StatusOK, `{"data":[],"has_more":false,"first_id":null,"last_id":null}`
 	default:
 		// A new CLI endpoint should surface here, in the hive log, rather
 		// than as an opaque 400 from the inference gateway.

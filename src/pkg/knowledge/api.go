@@ -1934,13 +1934,12 @@ func parseMarkdownFacts(content string) []ExtractedFact {
 				title = title[:idx]
 				current = &ExtractedFact{
 					Title:      title,
-					Body:       body,
 					Type:       FactPattern,
 					Confidence: 0.6,
 					SourcePR:   "import",
 					SourceDate: time.Now(),
 				}
-				bodyLines = nil
+				bodyLines = []string{body}
 			}
 			continue
 		}

@@ -23,6 +23,10 @@ import (
 // callers (the composition root ignores it; tests rely on it) a deterministic
 // join for that contract.
 func (s *HubServer) StartBackgroundPollers(ctx context.Context) <-chan struct{} {
+	// The colony customer store (HIVE_HUB_CUSTOMER_STORE) opens and runs its
+	// boot import before any poller can write a user record. A no-op in the
+	// default json mode when no colony.db exists.
+	s.startHubCustomerStore(ctx)
 	var wg sync.WaitGroup
 	start := func(poller func(context.Context)) {
 		wg.Add(1)

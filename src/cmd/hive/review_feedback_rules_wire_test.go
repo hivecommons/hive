@@ -299,10 +299,12 @@ func TestReviewFeedbackSweep_ManagedRepoRuleNeedsNoProposal(t *testing.T) {
 
 type flakyCommentSource struct {
 	*fakeFeedbackSource
-	fail bool
+	fail     bool
+	attempts []string
 }
 
 func (f *flakyCommentSource) CreateIssueComment(ctx context.Context, repo string, n int, body string) error {
+	f.attempts = append(f.attempts, body)
 	if f.fail {
 		return errors.New("secondary rate limit")
 	}

@@ -93,13 +93,24 @@ type StrandedCheck struct {
 	Retries int
 }
 
+// StrandedHandoff is the durable note for a kick that exhausted its retries.
+// Body is reused verbatim so the GitHub client can reconcile an ambiguous POST.
+type StrandedHandoff struct {
+	Body     string    `json:"body"`
+	IDs      []string  `json:"ids"`
+	KickedAt time.Time `json:"kicked_at"`
+	Kicks    int       `json:"kicks"`
+	// Ready sticks once a known head and the backoff allow the first POST.
+	Ready bool `json:"ready,omitempty"`
+}
+
 // CheckStranded judges the last kick on a PR. head is the PR head SHA now,
 // lastReply when the hive's identity last posted on it, and unanswered the
 // comments the PR still shows unanswered. When the head moved or the hive
 // replied after the kick, the agent acted and the kick is closed. When none of
 // the routed comments is still unanswered, likewise. Otherwise, once the
 // backoff has passed, a retry un-marks the still-unanswered ids so Plan routes
-// them again, and an exhausted cap returns them for a needs-human note.
+// them again, or an exhausted cap queues a needs-human note.
 //
 // A kick recorded before this check existed has no head; the current head is
 // taken as its baseline and the backoff restarts, so feedback stranded before
@@ -132,15 +143,38 @@ func (s *Store) CheckStranded(key, head string, lastReply time.Time, unanswered 
 		}
 	}
 	sort.Strings(still)
-	closeKick := func() (StrandedCheck, error) {
-		st.StrandedClosed, st.RetryPending, st.Retries = true, false, 0
-		return StrandedCheck{Verdict: StrandedNone}, s.saveLocked(now)
+	restoreHandled := func() {
+		if !st.RetryPending {
+			return
+		}
+		st = s.get(key) // A reopened store may omit an empty Handled map.
+		for _, id := range routed {
+			st.Handled[id] = st.LastKick
+		}
 	}
-	if len(still) == 0 || lastReply.After(st.LastKick) {
-		return closeKick()
+	closeKick := func(check StrandedCheck) (StrandedCheck, error) {
+		restoreHandled()
+		st.StrandedClosed, st.RetryPending, st.Retries = true, false, 0
+		return check, s.saveLocked(now)
+	}
+	if len(still) == 0 || lastReply.After(st.LastKick) || (head != "" && st.LastKickHead != "" && head != st.LastKickHead) {
+		return closeKick(StrandedCheck{Verdict: StrandedNone})
+	}
+	due := head != "" && now.Sub(st.LastKick) >= p.wait(st.Retries)
+	// A refused retry already passed a valid head check. If the cap is now
+	// spent, reserve its IDs while waiting for a head or a changed backoff.
+	if st.LastKickHead != "" && st.Retries >= p.MaxRetries && (due || st.RetryPending) {
+		if !st.NeedsHumanNoted {
+			kicks := st.Retries + 1
+			st.PendingHandoffs = append(st.PendingHandoffs, StrandedHandoff{
+				Body: NeedsHumanNote(StrandedReason(kicks), ItemsByID(unanswered, still), nil),
+				IDs:  still, KickedAt: st.LastKick, Kicks: kicks, Ready: due,
+			})
+		}
+		st.HandoffCheckedAt = now
+		return closeKick(StrandedCheck{Verdict: StrandedExhausted, IDs: still, Retries: st.Retries})
 	}
 	if head == "" {
-		// The read did not report a head: nothing can be judged this pass.
 		return StrandedCheck{Verdict: StrandedWaiting, IDs: still, Retries: st.Retries}, nil
 	}
 	if st.LastKickHead == "" {
@@ -151,22 +185,74 @@ func (s *Store) CheckStranded(key, head string, lastReply time.Time, unanswered 
 		st.LastKickHead, st.LastKick = head, now
 		return StrandedCheck{Verdict: StrandedWaiting, IDs: still, Retries: st.Retries}, s.saveLocked(now)
 	}
-	if head != st.LastKickHead {
-		return closeKick()
-	}
-	if now.Sub(st.LastKick) < p.wait(st.Retries) {
+	if !due {
 		return StrandedCheck{Verdict: StrandedWaiting, IDs: still, Retries: st.Retries}, nil
-	}
-	if st.Retries >= p.MaxRetries {
-		retries := st.Retries
-		st.StrandedClosed, st.RetryPending = true, false
-		return StrandedCheck{Verdict: StrandedExhausted, IDs: still, Retries: retries}, s.saveLocked(now)
 	}
 	for _, id := range still {
 		delete(st.Handled, id)
 	}
 	st.RetryPending = true
 	return StrandedCheck{Verdict: StrandedRetry, IDs: still, Retries: st.Retries}, s.saveLocked(now)
+}
+
+// NextStrandedHandoff returns the oldest pending note and whether it is now
+// obsolete. Save before returning a body so every POST has a durable record.
+func (s *Store) NextStrandedHandoff(key string, fb github.PRFeedback, now time.Time, p RetryPolicy) (*StrandedHandoff, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.PRs[key]
+	if st == nil || len(st.PendingHandoffs) == 0 {
+		return nil, false, nil
+	}
+	next := &st.PendingHandoffs[0]
+	obsolete := st.handoffComplete(*next, fb)
+	if !obsolete && !next.Ready && fb.HeadSHA != "" && now.Sub(next.KickedAt) >= p.Normalized().wait(next.Kicks-1) {
+		next.Ready = true
+	}
+	st.HandoffCheckedAt = now
+	if err := s.saveLocked(now); err != nil {
+		return nil, false, err
+	}
+	note := *next
+	return &note, obsolete, nil
+}
+
+// DiscardStrandedHandoff drops the oldest pending note after the caller checks
+// that it is obsolete and was not posted.
+func (s *Store) DiscardStrandedHandoff(key string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := s.PRs[key]
+	if st == nil || len(st.PendingHandoffs) == 0 {
+		return nil
+	}
+	st.PendingHandoffs[0] = StrandedHandoff{}
+	st.PendingHandoffs = st.PendingHandoffs[1:]
+	return s.saveLocked(now)
+}
+
+func (st *PRState) handoffComplete(note StrandedHandoff, fb github.PRFeedback) bool {
+	// Head and reply signals belong to the latest kick. A later kick for
+	// other feedback may have produced progress without addressing this note.
+	if note.KickedAt.Equal(st.LastKick) && (fb.LastHiveReplyAt.After(note.KickedAt) ||
+		(fb.HeadSHA != "" && fb.HeadSHA != st.LastKickHead)) {
+		return true
+	}
+	// RuleCandidates includes visible feedback even after it was answered.
+	// An ID outside both lists could be hidden by GitHub's bounded read.
+	resolved := make(map[string]bool, len(fb.RuleCandidates))
+	for _, item := range fb.RuleCandidates {
+		resolved[item.ID] = true
+	}
+	for _, item := range fb.Items {
+		delete(resolved, item.ID)
+	}
+	for _, id := range note.IDs {
+		if !resolved[id] {
+			return false
+		}
+	}
+	return true
 }
 
 // StrandedReason is the needs-human reason for feedback that stayed stranded

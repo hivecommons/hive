@@ -386,14 +386,14 @@ type AgentProcess struct {
 	LastPaneChange          time.Time
 	consentSeenAt           time.Time // watcher: when a consent screen was first seen in the pane
 	lastConsentDismiss      time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	claudeHeadlessTurnCmd   string    // headless_turns per-kick claude line, rebuilt on every launch pass (claude_headless.go)
 	lastInferKickAt         time.Time // stall watchdog: when the last kick was delivered to an inference agent
 	lastInferKickPane       string    // stall watchdog: hash of the visible pane just after kick delivery
 	lastInferKickVisible    string    // stall watchdog: visible pane text just after kick delivery
 	stallNudgeSent          bool      // stall watchdog: at most one nudge per kick
 	lastSessionStallRestart time.Time // session-liveness: last restart for a hung Copilot session
-	// SessionRSSMB is the last sampled RSS of the CLI process tree (MiB);
-	// SessionRecycles counts #14842 policy recycles; lastSessionRecycle
-	// enforces the per-agent backoff after one.
+	// SessionRSSMB is the last sampled CLI process-tree RSS (MiB); SessionRecycles
+	// counts #14842 policy recycles; lastSessionRecycle enforces the backoff after one.
 	SessionRSSMB       int
 	SessionRecycles    int
 	lastSessionRecycle time.Time
@@ -736,7 +736,8 @@ type Manager struct {
 	// — the process never reaches MarkReady, /api/health stays "starting", and
 	// the startup probe kills the pod (a cluster-wide crash-loop we hit live).
 	// An atomic read is lock-free and safe from any lock context.
-	isGatewayBackend atomic.Pointer[func(backend string) bool]
+	isGatewayBackend       atomic.Pointer[func(backend string) bool]
+	inferenceContextWindow atomic.Pointer[func(agentName string) (window int, model string)] // see SetInferenceContextWindowLookup
 
 	// persistPauseCallback, when set, persists an agent's paused state to
 	// the on-disk config so it survives restarts. Nil in tests / bare setups.

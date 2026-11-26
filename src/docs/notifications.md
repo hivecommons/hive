@@ -555,7 +555,7 @@ without a class. Review submissions and review requests are always counted as
 | `main.rfcCoverageForge.CreateComment` | `attention` |  |
 | `main.runEscalationSweep` | `attention` |  |
 | `main.reviewFeedbackSweep.checkRuleReply` | `attention` |  |
-| `main.reviewFeedbackSweep.needsHuman` | `attention` |  |
+| `main.reviewFeedbackSweep.postNeedsHuman` | `attention` |  |
 | `main.reviewFeedbackSweep.proposeRuleHome` | `attention` |  |
 | `prfollowup.postStaleHeadPushNotes` | `attention` |  |
 | `scheduler.(*Scheduler).judgePriorArt` | `attention` |  |

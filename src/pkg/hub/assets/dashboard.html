@@ -13772,18 +13772,37 @@
        for the visible text because the render path must not depend on the
        validator upstream of it staying correct. Color is the --muted theme
        token so the code recedes next to the name in both light and dark. */
+    // contactProvenanceTitle says who put a contact value on the record, the
+    // same provenance the colony customer store keeps as a fact rank
+    // (#19856): set by the person, set by an admin, guessed from the
+    // browser language, or recorded before the hub tracked it.
+    function contactProvenanceTitle(source) {
+      switch (String(source || '')) {
+        case 'user': return 'Set by the user';
+        case 'admin': return 'Set by an admin';
+        case 'inferred': return 'Guessed from the browser language';
+        default: return 'Source not recorded';
+      }
+    }
+
+    function countryProvenance(u) {
+      if (u && u.country_source) return u.country_source;
+      if (u && u.country_set_by_user) return 'user';
+      return (u && u.country) ? 'inferred' : '';
+    }
+
     function countryCell(u) {
       var code = normalizeCountryCode(u && u.country);
       if (!code) return '';
-      return '<span style="display:inline-flex;align-items:center;gap:var(--sp-2);font-size:0.7rem;color:var(--muted)">' +
+      return '<span title="' + escAttr('Country: ' + contactProvenanceTitle(countryProvenance(u))) + '" style="display:inline-flex;align-items:center;gap:var(--sp-2);font-size:0.7rem;color:var(--muted)">' +
         countryFlagHTML(code) + esc(code) + '</span>';
     }
 
     // renderContactCell is the collapsed summary shown in the main user row.
     function renderContactCell(u) {
       var bits = [];
-      if (u.full_name) bits.push('<span style="font-size:0.78rem">' + esc(u.full_name) + '</span>');
-      if (u.company) bits.push('<span style="font-size:0.7rem;color:var(--muted)">' + esc(u.company) + '</span>');
+      if (u.full_name) bits.push('<span title="' + escAttr('Name: ' + contactProvenanceTitle(u.full_name_source)) + '" style="font-size:0.78rem">' + esc(u.full_name) + '</span>');
+      if (u.company) bits.push('<span title="' + escAttr('Company: ' + contactProvenanceTitle(u.company_source)) + '" style="font-size:0.7rem;color:var(--muted)">' + esc(u.company) + '</span>');
       if (u.slack_id) bits.push('<span style="font-size:0.7rem;color:var(--muted)">slack: ' + esc(u.slack_id) + '</span>');
       if (u.notes) {
         var preview = u.notes.length > CONTACT_NOTES_PREVIEW_CHARS

@@ -155,7 +155,20 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	}
 	launchCmd = m.dropDanglingModelFlag(agent, backend, launchCmd)
 
-	if bootstrapPrompt == "" && isInference {
+	// headless_turns (#19902): the claude line built above becomes the
+	// per-kick command, and the pane gets the shell shim instead of a
+	// resident CLI. Computed before the surviving-pane return below so a hub
+	// restart that keeps the pane still has the command for the next kick.
+	headless := isInference && m.agentUsesClaudeHeadless(effectiveBackend(agent), agent)
+	agent.claudeHeadlessTurnCmd = ""
+	if headless {
+		agent.claudeHeadlessTurnCmd = launchCmd
+		launchCmd = claudeHeadlessLaunchCmd()
+	}
+
+	// A headless turn costs a full model call, so the idle placeholder kick
+	// that only parks an interactive CLI at its prompt is not sent.
+	if bootstrapPrompt == "" && isInference && !headless {
 		bootstrapPrompt = inferenceIdleBootstrapPrompt
 	}
 
@@ -208,7 +221,12 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		launchCmd += fmt.Sprintf(" --text \"$(cat %s)\"", minimalPrompt)
 	}
 
-	if !agent.forceRelaunch && m.tmuxPaneHasCLIForAgent(agent) {
+	// A surviving pane is reused only when its shape matches this launch:
+	// headless_turns toggled while the hub was down leaves a bash shim where an
+	// interactive CLI is now expected (or the reverse), and reusing it would
+	// route kicks for the wrong shape. A mismatch falls through to a real
+	// relaunch, which reaps any stale CLI first.
+	if !agent.forceRelaunch && m.tmuxPaneHasCLIForAgent(agent) && m.paneShapeMatchesHeadlessLocked(agent, headless) {
 		m.logger.Info("CLI already running in tmux pane, skipping launch", "name", agent.Name, "session", agent.tmuxSession)
 		now := time.Now()
 		agent.State = StateRunning
@@ -224,7 +242,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 		if backendHasBlockingPrompts(backend) {
 			go m.watchForTrustPromptForAgent(agent, agentCtx)
 		}
-		if isInference {
+		if isInference && !headless {
 			// The surviving pane may be parked on a consent screen (e.g.
 			// the hub restarted while the CLI awaited consent). The marker
 			// check above cannot tell the difference, so re-arm dismissal;
@@ -292,7 +310,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	envCmd := m.buildEnvPrefix(agent)
 	fullCmd := envCmd + launchCmd
-	if agentUsesAgyHeadless(backend, agent) || backend == "cline" {
+	if agentUsesAgyHeadless(backend, agent) || backend == "cline" || headless {
 		fullCmd = agyHeadlessFullLaunchCmd(envCmd, launchCmd)
 	}
 
@@ -310,7 +328,7 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 	time.Sleep(textToEnterDelay)
 	m.tmuxSendEntersForAgent(agent)
 
-	if isInference {
+	if isInference && !headless {
 		go m.dismissInferencePrompts(agent)
 	}
 

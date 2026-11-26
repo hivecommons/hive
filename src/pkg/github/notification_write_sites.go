@@ -109,7 +109,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"main.rfcCoverageForge.CreateComment":                 {Class: NotificationClassAttention},
 	"main.runEscalationSweep":                             {Class: NotificationClassAttention},
 	"main.reviewFeedbackSweep.checkRuleReply":             {Class: NotificationClassAttention},
-	"main.reviewFeedbackSweep.needsHuman":                 {Class: NotificationClassAttention},
+	"main.reviewFeedbackSweep.postNeedsHuman":             {Class: NotificationClassAttention},
 	"main.reviewFeedbackSweep.proposeRuleHome":            {Class: NotificationClassAttention},
 	"prfollowup.postStaleHeadPushNotes":                   {Class: NotificationClassAttention},
 	"scheduler.(*Scheduler).judgePriorArt":                {Class: NotificationClassAttention},
