@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.373.9)
+
+### Fixed
+
+- Retry failed needs-human handoffs for stranded PR feedback while continuing to route new review comments.
+
 ## 2026-11-26 (v5.373.8)
 
 ### Fixed
