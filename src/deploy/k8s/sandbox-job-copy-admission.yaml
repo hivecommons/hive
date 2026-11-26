@@ -5,11 +5,11 @@
 # Not in kustomization.yaml: it is cluster-scoped.
 #
 # Which service account is "hive's": the binding matches only namespaces that
-# carry the label hive.kubestellar.io/service-account, and its value names the
+# carry the label hivecommons.dev/service-account, and its value names the
 # service account hive runs as in that namespace. Nothing here names a
 # namespace or a service account, so one copy of this policy covers every
 # spoke namespace you label, whatever its spoke runs as:
-#   kubectl label namespace <ns> hive.kubestellar.io/service-account=<sa>
+#   kubectl label namespace <ns> hivecommons.dev/service-account=<sa>
 # (for example hive on the kustomize install, default or hive-sa on a
 # hub-provisioned spoke). Requests from any other user or service account,
 # Argo CD and the hub included, are not checked.
@@ -54,7 +54,7 @@ spec:
         resources: ["jobs"]
   variables:
     - name: hiveUser
-      expression: "'system:serviceaccount:' + namespaceObject.metadata.name + ':' + namespaceObject.metadata.labels['hive.kubestellar.io/service-account']"
+      expression: "'system:serviceaccount:' + namespaceObject.metadata.name + ':' + namespaceObject.metadata.labels['hivecommons.dev/service-account']"
     - name: fromHive
       expression: "request.userInfo.username == variables.hiveUser"
     - name: target
@@ -98,5 +98,5 @@ spec:
   matchResources:
     namespaceSelector:
       matchExpressions:
-        - key: hive.kubestellar.io/service-account
+        - key: hivecommons.dev/service-account
           operator: Exists

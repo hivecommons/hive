@@ -499,11 +499,11 @@ The rules match the read relay: when `enabled` is true, `listen_addr` is require
 
 There is no `delete`, `get`, `list`, `watch` or `update` on Secrets or NetworkPolicies: both objects are owned by their Job and garbage-collected with it. What remains is namespace-wide, because RBAC cannot scope `create` by name and the Job names are generated per run: a holder could create a Secret or a NetworkPolicy of its choosing (a `podSelector: {}` allow-all policy overrides default-deny) and patch any Job. Bind the Role only on a spoke that uses the copy transport, and only with the admission policy below in place.
 
-`sandbox-job-copy-admission.yaml` is a ValidatingAdmissionPolicy and binding (Kubernetes 1.30 and later) that **enforces** (`validationActions: [Deny]`) the rest. It names no namespace and no service account. The binding matches namespaces that carry the label `hive.kubestellar.io/service-account`, and the label's value names the service account hive runs as there, so one cluster-wide copy covers every spoke you label, whatever it runs as:
+`sandbox-job-copy-admission.yaml` is a ValidatingAdmissionPolicy and binding (Kubernetes 1.30 and later) that **enforces** (`validationActions: [Deny]`) the rest. It names no namespace and no service account. The binding matches namespaces that carry the label `hivecommons.dev/service-account`, and the label's value names the service account hive runs as there, so one cluster-wide copy covers every spoke you label, whatever it runs as:
 
 ```sh
 kubectl apply -f deploy/k8s/sandbox-job-copy-admission.yaml
-kubectl label namespace <ns> hive.kubestellar.io/service-account=<sa>   # hive, or default / hive-sa on a hub-provisioned spoke
+kubectl label namespace <ns> hivecommons.dev/service-account=<sa>   # hive, or default / hive-sa on a hub-provisioned spoke
 ```
 
 For requests from that service account in that namespace it allows only: a Secret CREATE named `hive-kick-*`, labelled `app.kubernetes.io/managed-by=hive-kubejob` and owned by the Job of the same name (every Secret DELETE is denied; Secret UPDATE and PATCH are not matched, so the `hive-secrets-writer` patch of `hive-secrets` keeps working); a NetworkPolicy CREATE or DELETE of a `hive-kick-*` policy with that label, where a created one selects only its own Job's pods, includes `Ingress`, has no egress rule and admits ingress only from labelled pods on TCP 8477 (NetworkPolicy UPDATE is denied); and a Job UPDATE of a `hive-kick-*` Job with that label that leaves the pod template unchanged. Other users and service accounts, Argo CD and the hub included, are not checked. A policy in `Deny` that does not fit your cluster blocks the kick, and the kick error carries the policy's message, so dry-run a copy kick in a test namespace first.

@@ -19,7 +19,7 @@ const (
 	copyRBACPath      = "../../deploy/k8s/sandbox-job-copy-rbac.yaml"
 	// hiveSALabel is the namespace label whose value names hive's service
 	// account; the admission policy matches by it instead of a fixed name.
-	hiveSALabel = "hive.kubestellar.io/service-account"
+	hiveSALabel = "hivecommons.dev/service-account"
 )
 
 // k8sDoc is the part of a manifest these tests read.
