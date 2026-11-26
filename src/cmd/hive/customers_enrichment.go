@@ -160,8 +160,14 @@ func wireCustomersEnrichment(svc *customers.Service, dataDir string, cfg func() 
 		return false
 	}
 	// In customers.store shadow or colony mode the enrichment results are
-	// mirrored into colony.db too (#19855).
-	e.SetColony(svc.Store().Colony())
+	// mirrored into colony.db too (#19855); in colony-only they are read
+	// from it (#19972).
+	if err := e.SetColony(svc.Store().Colony()); err != nil {
+		if logger != nil {
+			logger.Warn("[customers] enrichment could not be read from the colony store; enrichment is off", "error", err)
+		}
+		return false
+	}
 	svc.SetEnrichment(e, customersEnrichmentActive(cfg))
 	return true
 }

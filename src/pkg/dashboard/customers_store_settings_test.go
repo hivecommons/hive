@@ -136,7 +136,7 @@ func TestGovernorFeatures_CustomersStoreRejectsUnknownValues(t *testing.T) {
 	clearCustomersStoreEnv(t)
 	s := covApiServer(t)
 	for _, body := range []map[string]any{
-		{"customersEnrichmentEnabled": true, "customersStore": "colony-only"},
+		{"customersEnrichmentEnabled": true, "customersStore": "colony_only"},
 		{"customersEnrichmentEnabled": true, "customersStore": "sqlite"},
 		{"customersEnrichmentEnabled": true, "customersEnrichmentAutoAccept": "all"},
 		{"customersEnrichmentEnabled": true, "customersEnrichmentAutoAccept": "gitdm"},
@@ -170,7 +170,11 @@ func TestFeaturesTab_CustomersStoreMarkup(t *testing.T) {
 			t.Errorf("index.html missing %q", want)
 		}
 	}
-	if strings.Contains(html, `'colony-only'`) {
-		t.Error("the Settings select offers colony-only, which no release implements yet")
+	// colony-only (#19972) is offered, after the default and never as it.
+	if !strings.Contains(html, `['json', 'json'], ['colony-only', 'colony-only']]`) {
+		t.Error("the Settings select does not offer colony-only")
+	}
+	if strings.Contains(html, `['', 'default (colony-only)']`) {
+		t.Error("colony-only must never be the default")
 	}
 }

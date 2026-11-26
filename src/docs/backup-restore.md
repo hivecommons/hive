@@ -339,7 +339,10 @@ On Docker and LXC the entrypoint treats `/data` as the boot-time source of truth
 - `customers/`, the Customers people store: `people.json`, `enrichment.json`
   and, with `customers.store` `colony` (the default) or `shadow`, `colony.db` with its
   `colony-sync.json` marker and the `*.pre-colony` copies taken before the
-  first import. The downloadable spoke backup does not carry them; a backup of
+  first import. With `colony-only`, `colony.db` is the only live copy, and
+  `people.json.migrated` and `enrichment.json.migrated` are the files as they
+  stood when it took over: back up `colony.db`, or write the JSON out with
+  `hive colony export --format hive-people-json` while the hive is stopped. The downloadable spoke backup does not carry them; a backup of
   the whole volume does. A person forgotten after a volume backup is still in
   that backup.
 

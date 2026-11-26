@@ -63,7 +63,9 @@ func bootColony(t *testing.T, dir string, mode StoreMode, clk *clock) colonyBoot
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.SetColony(c)
+	if err := e.SetColony(c); err != nil {
+		t.Fatalf("SetColony: %v", err)
+	}
 	t.Cleanup(func() { _ = c.Close() })
 	return colonyBoot{store: s, colony: c, enrich: e}
 }

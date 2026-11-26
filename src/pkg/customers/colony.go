@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -45,6 +46,11 @@ import (
 //     enrichment is read from it. The JSON is still written, so switching
 //     back to json loses nothing. A hive upgrading from the json default runs
 //     the shadow import on that boot, with the .pre-colony backups.
+//   - colony-only (opt-in, never the default; colony_only.go): colony.db is
+//     the only store. The first colony-only boot writes everything into it,
+//     reads it all back and compares, and only then renames people.json and
+//     enrichment.json to *.migrated. Nothing writes the JSON after that;
+//     ExportColony writes it back out for a rollback.
 //
 // The JSON is always written first. A colony write that fails leaves the
 // sync marker stale, so the next boot imports again from the JSON, which is
@@ -58,6 +64,8 @@ const (
 	StoreJSON   StoreMode = "json"
 	StoreShadow StoreMode = "shadow"
 	StoreColony StoreMode = "colony"
+	// StoreColonyOnly stops the JSON writes (colony_only.go, #19972).
+	StoreColonyOnly StoreMode = "colony-only"
 )
 
 const (
@@ -94,6 +102,10 @@ const (
 	colonyMaxFieldBytes = 64
 	// colonyMaxSourceBytes is colony's limit on a source label.
 	colonyMaxSourceBytes = 128
+	// colonyMaxByBytes is colony's limit on who linked an identity.
+	colonyMaxByBytes = 256
+	// colonyMaxScore is the top of colony's identity score range.
+	colonyMaxScore = 1.0
 	// colonyCompactTxBytes bounds one compaction transaction.
 	colonyCompactTxBytes = 64 << 20
 )
@@ -130,6 +142,10 @@ type colonySyncMarker struct {
 	// for them. Ids are random and hold no personal data. Every boot and
 	// every later forget retries them.
 	PendingForget map[string][]string `json:"pending_forget,omitempty"`
+	// Migrated names the JSON files the colony-only migration renamed, and
+	// MigratedAt when (#19972).
+	Migrated   []string  `json:"migrated,omitempty"`
+	MigratedAt time.Time `json:"migrated_at,omitzero"`
 }
 
 // colonyFileMu serialises every forget, compaction and offline open of a
@@ -138,22 +154,27 @@ var colonyFileMu sync.Mutex
 
 // ColonyParity is the parity check: counts only, never values.
 type ColonyParity struct {
-	Mode            StoreMode `json:"mode"`
-	JSONPeople      int       `json:"json_people"`
-	ColonyPeople    int       `json:"colony_people"`
-	JSONIdentities  int       `json:"json_identities"`
-	ColonyIdent     int       `json:"colony_identities"`
-	FactsUser       int       `json:"facts_user"`
-	FactsHubShared  int       `json:"facts_hub_shared"`
-	FactsEnrichment int       `json:"facts_enrichment"`
-	Mismatches      int       `json:"mismatches"`
-	Failures        int       `json:"write_failures"`
+	Mode           StoreMode `json:"mode"`
+	JSONPeople     int       `json:"json_people"`
+	ColonyPeople   int       `json:"colony_people"`
+	JSONIdentities int       `json:"json_identities"`
+	ColonyIdent    int       `json:"colony_identities"`
+	// JSONHeld counts the identities colony gives to another person (one
+	// owner per identity), which it keeps as held identities; ColonyHeld
+	// counts what it holds.
+	JSONHeld        int `json:"json_held"`
+	ColonyHeld      int `json:"colony_held"`
+	FactsUser       int `json:"facts_user"`
+	FactsHubShared  int `json:"facts_hub_shared"`
+	FactsEnrichment int `json:"facts_enrichment"`
+	Mismatches      int `json:"mismatches"`
+	Failures        int `json:"write_failures"`
 }
 
 // ParseStoreMode reads a mode; anything unknown is json.
 func ParseStoreMode(raw string) StoreMode {
 	switch m := StoreMode(strings.ToLower(strings.TrimSpace(raw))); m {
-	case StoreShadow, StoreColony:
+	case StoreShadow, StoreColony, StoreColonyOnly:
 		return m
 	}
 	return StoreJSON
@@ -203,6 +224,9 @@ func (c *Colony) logInfo(msg string, args ...any) {
 func AttachColony(s *Store, mode StoreMode, logger *slog.Logger) (*Colony, error) {
 	if s == nil || mode == StoreJSON {
 		return nil, nil
+	}
+	if mode == StoreColonyOnly {
+		return attachColonyOnly(s, logger)
 	}
 	dir := filepath.Dir(s.path)
 	c := &Colony{mode: mode, dir: dir, now: s.now, logger: logger, dirty: map[string]bool{}}
@@ -299,7 +323,7 @@ func (c *Colony) boot(s *Store) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	prev, hadMarker := c.readMarker()
-	c.marker = colonySyncMarker{PendingForget: prev.PendingForget}
+	c.marker = colonySyncMarker{PendingForget: prev.PendingForget, Migrated: prev.Migrated, MigratedAt: prev.MigratedAt}
 	if !ran {
 		if err := c.writeBackups(peopleData, enrichData); err != nil {
 			return err
@@ -320,6 +344,11 @@ func (c *Colony) boot(s *Store) error {
 			return err
 		}
 		c.logInfo("[customers] colony store caught up from people.json", "people", len(people))
+	}
+	// people.json is the truth in this mode: a document an earlier
+	// colony-only run left behind is stale from here on.
+	if err := c.dropColonyOnlyDocLocked(); err != nil {
+		return err
 	}
 	// Forgets that did not finish (a failed colony write, or a json-mode
 	// forget that could not open colony.db) run now, and anyone colony.db or
@@ -581,6 +610,7 @@ func (src *colonyJSONSource) Records(ctx context.Context, fn func(cstore.Record)
 		rec := colonyRecord(p, owners, src.forgotten)
 		if pe, ok := src.enrich[p.ID]; ok {
 			rec.Facts = append(rec.Facts, colonyEnrichmentFacts(pe, rec.Person.Identities, src.now, rec.Dismissed...)...)
+			rec.Answers = colonyAnswers(pe)
 		}
 		if err := fn(rec); err != nil {
 			return err
@@ -686,8 +716,47 @@ func colonyIdentities(p Person, owners map[string]string, forgotten func(Identit
 		}
 		// colony forces every email on a domain that is not free-mail to
 		// local_only whatever is asked.
-		src := truncateRunes(i.Source, colonyMaxSourceBytes)
-		out = append(out, cstore.Identity{Kind: k, Value: v, Verified: !i.Claimed, Locality: loc, Source: src, At: i.At})
+		out = append(out, colonyIdentity(i, k, v, loc))
+	}
+	return out
+}
+
+// colonyIdentity maps one identity with its provenance: who linked it, by
+// hand or not, and the numeric confidence as colony's score.
+func colonyIdentity(i Identity, k cstore.Kind, v string, loc cstore.Locality) cstore.Identity {
+	score := i.Confidence
+	switch {
+	case score < 0 || math.IsNaN(score):
+		score = 0
+	case score > colonyMaxScore:
+		score = colonyMaxScore
+	}
+	return cstore.Identity{Kind: k, Value: v, Verified: !i.Claimed, Locality: loc,
+		Source: truncateRunes(i.Source, colonyMaxSourceBytes), At: i.At,
+		Manual: i.Manual, By: truncateRunes(i.By, colonyMaxByBytes), Score: score}
+}
+
+// colonyHeldIdentities maps the identities of p that owners gives to someone
+// else: colony keeps them as held identities on p instead of dropping them.
+func colonyHeldIdentities(p Person, owners map[string]string, forgotten func(IdentityKind, string) bool) []cstore.Identity {
+	if owners == nil {
+		return nil
+	}
+	var out []cstore.Identity
+	seen := map[string]bool{}
+	for _, i := range p.Identities {
+		k, ok := colonyKind(i.Kind)
+		if !ok {
+			continue
+		}
+		v := NormalizeIdentity(i.Kind, i.Value)
+		key := colonyClassKey(k, v)
+		owner, owned := owners[key]
+		if seen[key] || !owned || owner == p.ID || (forgotten != nil && forgotten(i.Kind, v)) {
+			continue
+		}
+		seen[key] = true
+		out = append(out, colonyIdentity(i, k, v, cstore.LocalityLocalOnly))
 	}
 	return out
 }
@@ -843,7 +912,8 @@ func colonyStatus(st Status) string {
 func colonyRecord(p Person, owners map[string]string, forgotten func(IdentityKind, string) bool) cstore.Record {
 	ids := colonyIdentities(p, owners, forgotten)
 	return cstore.Record{
-		Person:    cstore.PersonSpec{ID: p.ID, Status: colonyStatus(p.Status), Identities: ids},
+		Person: cstore.PersonSpec{ID: p.ID, Status: colonyStatus(p.Status), Identities: ids,
+			Held: colonyHeldIdentities(p, owners, forgotten)},
 		Facts:     colonyProfileFacts(p, ids),
 		Dismissed: colonyDismissals(p),
 		CreatedAt: p.CreatedAt,
@@ -974,12 +1044,14 @@ func (c *Colony) syncPeopleLocked(changed []Person, gone []string, forgotten fun
 	}
 	for _, p := range changed {
 		rec := desired[p.ID]
-		// An identity colony gives to someone else is left out: the
-		// parity check counts the difference.
+		// An identity colony gives to someone else is kept on this person
+		// as a held identity (colony v0.4.0), so nothing is dropped.
 		kept := rec.Person.Identities[:0:0]
 		for _, i := range rec.Person.Identities {
 			owner, err := c.db.FindByIdentity(i.Kind, i.Value)
 			if err == nil && owner.ID != p.ID {
+				i.Locality = cstore.LocalityLocalOnly
+				rec.Person.Held = append(rec.Person.Held, i)
 				continue
 			}
 			kept = append(kept, i)
@@ -1030,8 +1102,12 @@ func personIDs(ps []Person) []string {
 
 // importLocked merges one record through colony's precedence rules.
 func (c *Colony) importLocked(rec cstore.Record) error {
+	var held []cstore.HeldIdentity
+	for _, i := range rec.Person.Held {
+		held = append(held, cstore.HeldIdentity{Identity: i})
+	}
 	p := cstore.Person{ID: rec.Person.ID, Status: rec.Person.Status, Identities: rec.Person.Identities,
-		Facts: rec.Facts, Dismissed: rec.Dismissed, CreatedAt: rec.CreatedAt}
+		Facts: rec.Facts, Dismissed: rec.Dismissed, CreatedAt: rec.CreatedAt, Held: held, Answers: rec.Answers}
 	_, err := c.db.Import(context.Background(), cstore.Snapshot{SchemaVersion: cstore.SchemaVersion, People: []cstore.Person{p}})
 	return err
 }
@@ -1050,6 +1126,18 @@ func (c *Colony) pruneLocked(cp cstore.Person, rec cstore.Record, owns func(stri
 				continue
 			}
 			if err := c.db.RemoveIdentity(cp.ID, i.Ref()); err != nil && !errors.Is(err, cstore.ErrNotFound) {
+				return err
+			}
+		}
+		wantHeld := map[string]bool{}
+		for _, i := range rec.Person.Held {
+			wantHeld[colonyClassKey(i.Kind, i.Value)] = true
+		}
+		for _, h := range cp.Held {
+			if wantHeld[colonyClassKey(h.Kind, h.Value)] {
+				continue
+			}
+			if _, err := c.db.RemoveHeld(cp.ID, h.Ref()); err != nil && !errors.Is(err, cstore.ErrNotFound) {
 				return err
 			}
 		}
@@ -1087,6 +1175,16 @@ func (c *Colony) stripLocked(id string) error {
 			return err
 		}
 	}
+	for _, h := range cp.Held {
+		if _, err := c.db.RemoveHeld(id, h.Ref()); err != nil && !errors.Is(err, cstore.ErrNotFound) {
+			return err
+		}
+	}
+	for _, a := range cp.Answers {
+		if err := c.db.DeleteAnswer(id, a.Source); err != nil && !errors.Is(err, cstore.ErrNoAnswer) {
+			return err
+		}
+	}
 	_, err = c.db.Upsert(cstore.PersonSpec{ID: id, Status: colonyStatusRemoved})
 	return err
 }
@@ -1114,6 +1212,28 @@ func (c *Colony) syncEnrichmentLocked(id string, pe PersonEnrichment, held bool)
 	}
 	for _, f := range facts {
 		if _, err := c.db.SetFact(id, f); err != nil {
+			return err
+		}
+	}
+	// The full answers (every affiliation with its period, every project
+	// with its name, period and link, and when each source answered) go to
+	// colony's answer slots, so enrichment.json is no longer the only copy.
+	var answers []cstore.Answer
+	if held {
+		answers = colonyAnswers(pe)
+	}
+	want := map[string]bool{}
+	for _, a := range answers {
+		want[a.Source] = true
+		if _, err := c.db.SetAnswer(id, a); err != nil {
+			return err
+		}
+	}
+	for _, a := range cp.Answers {
+		if want[a.Source] {
+			continue
+		}
+		if err := c.db.DeleteAnswer(id, a.Source); err != nil && !errors.Is(err, cstore.ErrNoAnswer) {
 			return err
 		}
 	}
@@ -1282,8 +1402,37 @@ func compactBolt(path string) error {
 // forgetInBackups removes a person from people.json.pre-colony and
 // enrichment.json.pre-colony, drops the pins and hints that name them, and
 // adds their tombstones, so a restored backup does not bring them back.
+//
+// The *.migrated files a colony-only migration left (#19972) are backups
+// too, and are scrubbed the same way.
 func forgetInBackups(dir, id string, tombs []string) error {
-	pp := filepath.Join(dir, FileName+PreColonySuffix)
+	peopleFiles := []string{filepath.Join(dir, FileName+PreColonySuffix)}
+	enrichFiles := []string{filepath.Join(dir, EnrichmentFileName+PreColonySuffix)}
+	for _, pat := range []struct {
+		name string
+		into *[]string
+	}{{FileName, &peopleFiles}, {EnrichmentFileName, &enrichFiles}} {
+		matches, err := filepath.Glob(filepath.Join(dir, pat.name+MigratedSuffix+"*"))
+		if err != nil {
+			return err
+		}
+		*pat.into = append(*pat.into, matches...)
+	}
+	for _, pp := range peopleFiles {
+		if err := forgetInPeopleBackup(pp, id, tombs); err != nil {
+			return err
+		}
+	}
+	for _, ep := range enrichFiles {
+		if err := forgetInEnrichmentBackup(ep, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// forgetInPeopleBackup removes a person from one people.json backup.
+func forgetInPeopleBackup(pp, id string, tombs []string) error {
 	if data, err := os.ReadFile(pp); err == nil {
 		var f storeFile
 		if err := json.Unmarshal(data, &f); err != nil {
@@ -1328,7 +1477,11 @@ func forgetInBackups(dir, id string, tombs []string) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	ep := filepath.Join(dir, EnrichmentFileName+PreColonySuffix)
+	return nil
+}
+
+// forgetInEnrichmentBackup removes a person from one enrichment.json backup.
+func forgetInEnrichmentBackup(ep, id string) error {
 	if data, err := os.ReadFile(ep); err == nil {
 		var f enrichmentFile
 		if json.Unmarshal(data, &f) != nil {
@@ -1695,6 +1848,7 @@ func (s *Store) ColonyParity() (ColonyParity, error) {
 	out := ColonyParity{Mode: c.mode, JSONPeople: len(people)}
 	for _, r := range recs {
 		out.JSONIdentities += len(r.Person.Identities)
+		out.JSONHeld += len(r.Person.Held)
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -1709,6 +1863,7 @@ func (s *Store) ColonyParity() (ColonyParity, error) {
 		}
 		out.ColonyPeople++
 		out.ColonyIdent += len(cp.Identities)
+		out.ColonyHeld += len(cp.Held)
 		for _, f := range cp.Facts {
 			switch f.Rank {
 			case cstore.RankUser:
@@ -1735,20 +1890,34 @@ func (s *Store) ColonyParity() (ColonyParity, error) {
 }
 
 // colonyMatches reports whether colony's record agrees with the JSON's on
-// identities, profile facts and status.
+// identities (with their provenance), held identities, profile facts and
+// status.
 func colonyMatches(cp cstore.Person, rec cstore.Record) bool {
 	if cp.Status != rec.Person.Status {
 		return false
 	}
-	ids := map[string]bool{}
+	ids := map[string]cstore.Identity{}
 	for _, i := range cp.Identities {
-		ids[colonyClassKey(i.Kind, i.Value)] = true
+		ids[colonyClassKey(i.Kind, i.Value)] = i
 	}
 	if len(ids) != len(rec.Person.Identities) {
 		return false
 	}
 	for _, i := range rec.Person.Identities {
-		if !ids[colonyClassKey(i.Kind, i.Value)] {
+		have, ok := ids[colonyClassKey(i.Kind, i.Value)]
+		if !ok || have.Verified != i.Verified || have.Manual != i.Manual || have.By != i.By || have.Score != i.Score {
+			return false
+		}
+	}
+	held := map[string]bool{}
+	for _, h := range cp.Held {
+		held[colonyClassKey(h.Kind, h.Value)] = true
+	}
+	if len(held) != len(rec.Person.Held) {
+		return false
+	}
+	for _, i := range rec.Person.Held {
+		if !held[colonyClassKey(i.Kind, i.Value)] {
 			return false
 		}
 	}

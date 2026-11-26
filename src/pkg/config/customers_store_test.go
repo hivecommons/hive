@@ -43,9 +43,17 @@ func TestCustomersStoreMode(t *testing.T) {
 	if got := cfg.CustomersStoreMode(); got != CustomersStoreShadow {
 		t.Fatalf("saved mode = %q, want shadow", got)
 	}
-	cfg.Customers.Store = "colony-only"
+	cfg.Customers.Store = "colony_only"
 	if got := cfg.CustomersStoreMode(); got != CustomersStoreJSON {
 		t.Fatalf("unknown saved mode = %q, want json", got)
+	}
+	// colony-only is opt-in: valid when named, never the default (#19972).
+	cfg.Customers.Store = " Colony-Only "
+	if got := cfg.CustomersStoreMode(); got != CustomersStoreColonyOnly {
+		t.Fatalf("saved colony-only = %q, want colony-only", got)
+	}
+	if DefaultCustomersStore == CustomersStoreColonyOnly {
+		t.Fatal("colony-only must never be the default")
 	}
 	cfg.Customers.Store = CustomersStoreShadow
 	t.Setenv(EnvCustomersStore, "colony")

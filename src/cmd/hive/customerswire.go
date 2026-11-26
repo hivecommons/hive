@@ -67,6 +67,17 @@ func wireCustomersAt(dataDir, graphDir string, resolvers customers.Resolvers, lo
 // /data/customers/colony.db beside people.json; a colony store that cannot be
 // opened or imported leaves the section on json, people.json untouched.
 func wireCustomersAtMode(dataDir, graphDir string, mode customers.StoreMode, resolvers customers.Resolvers, logger *slog.Logger) (*customersDashboard, func()) {
+	if mode != customers.StoreColonyOnly {
+		// A hive set back from colony-only finds no people.json: it is
+		// written back from colony.db first (#19972).
+		if _, err := customers.RestoreFromColony(dataDir, logger); err != nil {
+			if logger != nil {
+				logger.Error("[customers] people.json could not be restored from the colony-only store; the Customers section is off",
+					"error", err)
+			}
+			return nil, nil
+		}
+	}
 	store, err := customers.Open(dataDir, nil)
 	if err != nil {
 		if logger != nil {
@@ -75,6 +86,16 @@ func wireCustomersAtMode(dataDir, graphDir string, mode customers.StoreMode, res
 		return nil, nil
 	}
 	colony, err := customers.AttachColony(store, mode, logger)
+	if err != nil && mode == customers.StoreColonyOnly {
+		// In colony-only there may be no people.json: running on json now
+		// would start an empty one, which the next colony-only boot would
+		// then take as the truth. The section stays off instead.
+		if logger != nil {
+			logger.Error("[customers] colony-only store unavailable; the Customers section is off until it opens",
+				"error", err)
+		}
+		return nil, nil
+	}
 	if err != nil {
 		colony = nil
 		if logger != nil {

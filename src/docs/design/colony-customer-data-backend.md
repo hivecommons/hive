@@ -178,7 +178,11 @@ All records carry `schema_version` in a `meta` bucket.
 | `Person` | `id`, `status`, `created_at`, `updated_at` | The caller may supply the id, so the spoke person ids in `people.json` and the edge index survive migration unchanged. |
 | `Identity` | `kind` (`github`, `ghe`, `email`, `git_email`, `slack`, `oidc`), `value`, `verified`, `locality`, `source`, `at` | Every email on a domain that is not free-mail is `local_only`. |
 | `Fact` | `field` (`real_name`, `organization`, `affiliation`, `country`, `location`, `notes`, `slack_id`, ...), `value` (empty means an explicit clear), `rank` (`user`, `admin`, `hub_shared`, `enrichment`), `source` (for example `colony:gitdm`, `github_profile`, `hub:person`, `browser_language`), `confidence` (`high`/`medium`/`low` or empty), `locality`, `from`, `until`, `at`, `by`, `suggested` | One record per field per rank. The effective value is the highest rank present. |
-| `Consent` | `scope` (a hive id), `fields`, `text_version`, `granted_at`, `withdrawn_at`, `delivered` | Replaces `customer_consent_store.go` on the hub (P4). |
+| `Identity` provenance (v0.4.0) | `manual`, `by`, `score` (the numeric confidence) | `by` never leaves the deployment. |
+| `HeldIdentity` (v0.4.0) | an identity a person claims that another person owns, with the owner's id | One owner per identity: a second claimant is held, not refused. Never resolves, never exported. `Contested` names every claimant. |
+| `Answer` (v0.4.0) | `source`, `fetched_at`, every affiliation (period, confidence, matched by), every activity (project name, count, period, link) | One per source: the detail and history behind the effective enrichment fact. Never exported. |
+| `Consent` | `scope` (a hive id), `fields`, `text_version`, `granted_at`, `withdrawn_at`, `updated_at`; delivery: `delivered_at`, `first_delivered_at`, `delivered_fields`, `last_delivered_fields`, `delivered_rev` (v0.4.0) | Replaces `customer_consent_store.go` on the hub (P4). |
+| Attachments (v0.4.0) | consumer JSON by namespace, per person and per store | Data colony does not model (hive's CRM fields). Local only, erased with the person. |
 | `Tombstone` | Salted hash of a forgotten identity | It is never re-added. |
 
 `store.SetFact` enforces precedence:
@@ -251,16 +255,23 @@ The same steps apply on the spoke (P3, `customers.store` /
    first boot, with the same backups (`*.pre-colony` on the spoke,
    `colony.db.bak-*` on the hub, whose JSON files the import never
    rewrites), and falls back to `json` when the import fails.
-4. **`colony-only` (P5).**
-   - JSON writes stop, and the JSON file is renamed `*.migrated` and kept for a
-     documented retention.
-   - `colony export --format hive-people-json` (and the hub equivalent) writes
-     the old shape for a manual rollback.
+4. **`colony-only` (P5, opt-in, never the default).**
+   - JSON writes stop, and the JSON file is renamed `*.migrated`, only after a
+     verified full write, and kept (never deleted; a forget scrubs the person
+     from it). See [colony-only](#colony-only-p5).
+   - `hive colony export --format hive-people-json` (and the hub equivalent)
+     writes the old shape for a manual rollback.
 
 **Rollback:**
 
 - From `shadow` or `colony`, set the mode back to `json`.
-- From `colony-only`, export, put the file back and set `json`.
+- From `colony-only`, set the mode to `colony`, `shadow` or `json`: the next
+  boot finds no `people.json` beside a colony-only `colony.db` and writes it
+  (and `enrichment.json`) back from `colony.db` first. By hand: stop the hive,
+  `hive colony export --format hive-people-json`, set the mode, start.
+- Before running an older hive binary on a colony-only store, export first:
+  an older binary has no `colony-only`, reads it as `json`, and colony v0.4.0
+  files (schema 2) fail closed in colony v0.3.0.
 - A schema-version mismatch on open (an older binary reading a newer file)
   fails closed to `json` mode and logs it. It never rewrites the file.
 
@@ -367,24 +378,65 @@ v0.3.0 (`src/pkg/customers/colony.go`). What it does beyond the steps above:
   `TestHubCustomerStoreDefaultUpgradeFromJSON` and
   `TestHubCustomerStoreUnreadableFileFailsClosed` (hub).
 
-Not yet, tracked in
-[#19972](https://github.com/hivecommons/hive/issues/19972):
+### colony-only (P5)
 
-- `colony-only`, the `*.migrated` rename and `colony export`. colony v0.3.0
-  has no slot for part of what the JSON holds, so stopping the JSON writes
-  as designed would lose data:
-  - spoke: the identity metadata hive keeps (`manual`, `by`, the numeric
-    confidence), identities colony refuses (one owner per identity), and
-    the enrichment display detail (project name, period, link, history,
-    when each source answered) live only in `people.json` and
-    `enrichment.json`;
-  - hub: the delivery bookkeeping lives only in `/data/saas/consents`, and a
-    value colony refuses (a long note) is JSON-only.
-  Either colony grows those slots, or `colony-only` keeps a hive-local file
-  for what colony cannot hold. The duplicated enrichment types in
-  `src/pkg/customers/enrichment.go` and the hub's top-repo affiliation cache
-  fields stay until then, because `json`, `shadow` and `colony` mode all
-  still read them.
+[#19972](https://github.com/hivecommons/hive/issues/19972), on colony v0.4.0
+(hivecommons/colony#9), which added the slots v0.3.0 lacked: identity
+provenance, held identities for a second claimant, provider answers, consent
+delivery bookkeeping, a 64 KiB limit for notes, attachments, and exact
+(`Replace`) and atomic (`Batch`) writes.
+
+**shadow and colony** now also write the new slots: identity `manual`, `by`
+and `score`; an identity colony gives to another person is a held identity on
+the second claimant instead of being dropped; and every enrichment source's
+full answer. Parity counts held identities (`json_held`, `colony_held`) and
+compares identity provenance.
+
+**Spoke (`customers.store: colony-only`, `src/pkg/customers/colony_only.go`):**
+
+- Everything `people.json` and `enrichment.json` hold is in `colony.db`: in
+  colony's typed slots where it has one, and as the person's `hive.person`
+  attachment (tags, goals, satisfaction, notes, merge records, identities in
+  hive's order with the kinds colony has no kind for) and the store's
+  `hive.people` attachment (salt, suggestions, pins, hints, tombstones). A
+  profile field colony's facts give back exactly is left out of the
+  attachment and read from colony; one that does not round-trip stays in it.
+  Enrichment is read from the answers, or from a `hive.enrichment` attachment
+  when they do not give it back exactly.
+- **The first colony-only boot** runs the colony-mode boot (import or
+  catch-up, forgets, count check), writes every person, every enrichment
+  entry and the document in one transaction, reads everything back and
+  compares it with the JSON byte for byte. Only then are `people.json` and
+  `enrichment.json` renamed to `*.migrated` (a name already taken gets a
+  `-<time>` suffix; nothing is overwritten or deleted). Any mismatch logs
+  `colony-only migration not verified` and the hive runs in `colony` mode
+  with the JSON untouched. Enrichment for an id that is not a person (an
+  orphan the next prune would drop) stays only in the `.migrated` file.
+- **After that** every change is one colony transaction and nothing writes
+  the JSON. A failed write is returned to the caller and changes nothing.
+  A restart reads everything from `colony.db`. A `colony.db` that cannot be
+  opened in colony-only keeps the Customers section off rather than starting
+  an empty `people.json`.
+- **Forget** erases the person inside that transaction, compacts the file,
+  and scrubs them from the `.pre-colony` and `.migrated` files too.
+- **Rollback** is a mode change: a boot in `colony`, `shadow` or `json` that
+  finds no `people.json` beside a colony-only `colony.db` writes both files
+  back from it first, and a `colony` or `shadow` boot drops the colony-only
+  document so a later restore can never go back in time. By hand: stop the
+  hive and run `hive colony export --format hive-people-json [--dir
+  /data/customers] [--out DIR] [--force]`; it refuses to overwrite a file
+  without `--force`.
+
+**Retention of `*.migrated`:** kept until an operator removes them. They are
+the JSON as it stood when colony-only took over, so they are a backup like
+`*.pre-colony`: a forget scrubs them, and once the hive has run on
+colony-only for a release with clean parity they can be removed.
+
+**Cleanup:** the duplicated enrichment types in
+`src/pkg/customers/enrichment.go` and the hub's top-repo affiliation cache
+fields stay: `json`, `shadow` and `colony` mode still read and write them,
+and colony-only uses the same types for its read-back, so no path is dead
+yet. They go when `json` and `shadow` are retired.
 
 ## Providers
 
