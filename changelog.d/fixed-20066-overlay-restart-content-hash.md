@@ -1,1 +1,0 @@
-- Dashboard overlay blocks are no longer dropped at every Kubernetes boot. Whether the overlay or the config file holds the latest edit is now decided by a content hash, recorded in the overlay's first line on every save, instead of by file mtime, which the boot chain resets on every restart. A block removed from a hand-edited config file still stays removed (#20066).
