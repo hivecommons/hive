@@ -247,6 +247,12 @@ type Server struct {
 	gatewayHealthOnce sync.Once
 	gatewayHealth     *serverGatewayHealthStore
 
+	// agentConfigMu serialises the agent config section writers. Each holds it
+	// from its first read of the current values through mutation and save,
+	// so two writes cannot interleave. Lock order: agentConfigMu, then the
+	// config's saveMu (#19788).
+	agentConfigMu sync.Mutex
+
 	acmmEvalMu       sync.RWMutex
 	acmmEvalCache    *ACMMEvaluation
 	acmmEvalCachedAt time.Time
