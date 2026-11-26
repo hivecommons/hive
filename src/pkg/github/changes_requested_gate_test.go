@@ -13,8 +13,25 @@ import (
 	"sync"
 	"testing"
 
+	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/reviewgate"
 )
+
+// The GitHub fakes of this package's older tests predate the open
+// change-request gate (hivecommons/hive#20067) and do not serve the review
+// listing, so the package's tests run with a gate that sees no change
+// requests; every test below restores the real check.
+func init() {
+	openChangeRequestsCheck = func(context.Context, *gh.Client, string, string, int) ([]reviewgate.Block, error) { return nil, nil }
+}
+
+// realChangesRequestedGate restores the real check for one test.
+func realChangesRequestedGate(t *testing.T) {
+	t.Helper()
+	prev := openChangeRequestsCheck
+	openChangeRequestsCheck = reviewgate.CheckGitHub
+	t.Cleanup(func() { openChangeRequestsCheck = prev })
+}
 
 // crFake is a GitHub fake for the open change-request gate
 // (hivecommons/hive#20067): PR o/r#7 with configurable reviews and
@@ -118,6 +135,7 @@ func (a *auditSink) find(action, needle string) bool {
 
 func crClient(t *testing.T, f *crFake) (*Client, *auditSink) {
 	t.Helper()
+	realChangesRequestedGate(t)
 	srv := f.serve(t)
 	c := NewClientForTest(srv.URL, "o", []string{"r"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	sink := &auditSink{}
@@ -186,6 +204,7 @@ func TestChangesRequestedBlocksEveryGitHubPath(t *testing.T) {
 // The review swarm's approval becomes a suppressed verdict: no APPROVE
 // review reaches GitHub, and the gate is audited.
 func TestChangesRequestedSuppressesReviewSwarmApproval(t *testing.T) {
+	realChangesRequestedGate(t)
 	f := openChangeRequest()
 	srv := f.serve(t)
 	c := reviewTestClient(t, srv.URL)
@@ -270,6 +289,7 @@ func TestChangesRequestedOperatorOverride(t *testing.T) {
 }
 
 func TestChangesRequestedUnreadableFailsClosed(t *testing.T) {
+	realChangesRequestedGate(t)
 	var mu sync.Mutex
 	merges := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

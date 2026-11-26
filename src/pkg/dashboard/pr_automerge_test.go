@@ -42,6 +42,9 @@ func TestQueuePRAutoMergeRoleAndSelfGate(t *testing.T) {
 						"user":   map[string]string{"login": tt.author},
 						"head":   map[string]string{"sha": "head7"},
 					})
+				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
+					// No reviews: the open change-request gate (#20067) passes.
+					json.NewEncoder(w).Encode([]any{})
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/labels/"+ghpkg.AutoMergeQueuedLabel:
 					http.NotFound(w, r)
 				case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/labels":

@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hivecommons/hive/pkg/reviewgate"
+	ghpkg "github.com/hivecommons/hive/pkg/github"
 )
 
 // Open change requests on a dashboard decision (hivecommons/hive#20067).
@@ -82,10 +82,10 @@ func (s *Server) clearChangeRequestsForDecision(ctx context.Context, w http.Resp
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		s.audit.LogRecord(user, auditRepoItemDecisionChangesRequestedBlocked, auditDetail("repo", repoFull, "number", numStr, "decision", decision,
-			"reviewers", reviewgate.Reviewers(blocks), "review_ids", reviewgate.ReviewIDs(blocks)), "", repoFull, number)
+			"reviewers", ghpkg.ChangeRequestReviewers(blocks), "review_ids", ghpkg.ChangeRequestReviewIDs(blocks)), "", repoFull, number)
 		out := repoItemChangesRequestedResponse{
 			Status: repoItemStatusChangesRequested,
-			Error: "This pull request has an open change request from " + reviewgate.Describe(blocks) +
+			Error: "This pull request has an open change request from " + ghpkg.DescribeChangeRequests(blocks) +
 				". The hive will not approve or merge it until that reviewer approves or the review is dismissed. To proceed anyway, give a reason; it is recorded in the audit log.",
 			NeedsOverrideReason: true,
 		}
@@ -99,15 +99,15 @@ func (s *Server) clearChangeRequestsForDecision(ctx context.Context, w http.Resp
 		jsonError(w, "override_reason exceeds "+strconv.Itoa(repoItemMaxOverrideReason)+" characters", http.StatusBadRequest)
 		return false
 	}
-	if _, err := reviewgate.RecordOverride(repoFull, number, user, reason, blocks); err != nil {
+	if err := ghpkg.RecordChangesRequestedOverride(repoFull, number, user, reason, blocks); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return false
 	}
 	s.audit.LogRecord(user, auditRepoItemDecisionChangesRequestedOverride, auditDetail("repo", repoFull, "number", numStr, "decision", decision,
-		"reviewers", reviewgate.Reviewers(blocks), "review_ids", reviewgate.ReviewIDs(blocks), "reason", reason), "", repoFull, number)
+		"reviewers", ghpkg.ChangeRequestReviewers(blocks), "review_ids", ghpkg.ChangeRequestReviewIDs(blocks), "reason", reason), "", repoFull, number)
 	if s.logger != nil {
 		s.logger.Warn("operator overrode open change request", "repo", repoFull, "pr", number, "actor", user, "decision", decision,
-			"reviewers", reviewgate.Reviewers(blocks), "review_ids", reviewgate.ReviewIDs(blocks), "reason", reason)
+			"reviewers", ghpkg.ChangeRequestReviewers(blocks), "review_ids", ghpkg.ChangeRequestReviewIDs(blocks), "reason", reason)
 	}
 	return true
 }

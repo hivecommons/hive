@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hivecommons/hive/pkg/reviewgate"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // openChangeRequestReviews is PR #8's review list with a standing change
@@ -48,7 +48,7 @@ func TestRepoItemDecisionStatesOpenChangeRequestFirst(t *testing.T) {
 // TestRepoItemDecisionOverrideWithReason: the same Merge now resent with an
 // override reason merges, and the override is audited with the reason.
 func TestRepoItemDecisionOverrideWithReason(t *testing.T) {
-	t.Cleanup(func() { reviewgate.ClearOverride("testorg/testrepo", 8) })
+	t.Cleanup(func() { github.ClearChangesRequestedOverride("testorg/testrepo", 8) })
 	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/090-ready-for-human-merge"}, prReviews: openChangeRequestReviews}
 	srv := newRepoItemDecisionServer(t, mock)
 	w := postRepoItemDecisionAs(t, srv, 8, "writer", "merger", `{"decision":"merge-now","type":"pr","override_reason":"reviewer agreed on the call; follow-up filed"}`)

@@ -36,8 +36,14 @@ func (c *Client) OpenChangeRequests(ctx context.Context, repo string, number int
 		return nil, ErrNoGitHubClient
 	}
 	owner, name := c.splitRepo(repo)
-	return reviewgate.CheckGitHub(WithRESTCaller(ctx, "hive:changes_requested_gate"), c.client, owner, name, number)
+	return openChangeRequestsCheck(WithRESTCaller(ctx, "hive:changes_requested_gate"), c.client, owner, name, number)
 }
+
+// openChangeRequestsCheck reads the open change requests. It is a variable
+// only so this package's older tests, whose GitHub fakes predate the gate,
+// can run without serving the review listing; the gate's own tests restore
+// reviewgate.CheckGitHub.
+var openChangeRequestsCheck = reviewgate.CheckGitHub
 
 // GateChangesRequested returns nil when repo#number has no open change
 // request from a writer, or when an operator's recorded override covers every
@@ -133,3 +139,28 @@ func (c *Client) GateApprovalLabels(ctx context.Context, repo string, number int
 	}
 	return c.GateChangesRequested(ctx, repo, number, ChangesRequestedGateActionLabel, PRAuditPathRelay)
 }
+
+// The dashboard reaches the gate through pkg/github only (its import
+// ratchet), so the pieces its operator-override path needs are re-exported.
+
+// ChangeRequestBlock is one open change request (reviewgate.Block).
+type ChangeRequestBlock = reviewgate.Block
+
+// DescribeChangeRequests renders blocks as "alice (review 12), ...".
+func DescribeChangeRequests(blocks []ChangeRequestBlock) string { return reviewgate.Describe(blocks) }
+
+// ChangeRequestReviewers lists the blocks' reviewers for audit detail.
+func ChangeRequestReviewers(blocks []ChangeRequestBlock) string { return reviewgate.Reviewers(blocks) }
+
+// ChangeRequestReviewIDs lists the blocks' review IDs for audit detail.
+func ChangeRequestReviewIDs(blocks []ChangeRequestBlock) string { return reviewgate.ReviewIDs(blocks) }
+
+// RecordChangesRequestedOverride records an operator's audited override of
+// exactly these open change requests (reviewgate.RecordOverride).
+func RecordChangesRequestedOverride(repo string, number int, actor, reason string, blocks []ChangeRequestBlock) error {
+	_, err := reviewgate.RecordOverride(repo, number, actor, reason, blocks)
+	return err
+}
+
+// ClearChangesRequestedOverride drops any override for repo#number.
+func ClearChangesRequestedOverride(repo string, number int) { reviewgate.ClearOverride(repo, number) }
