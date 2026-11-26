@@ -106,7 +106,11 @@ func removeCustomerConsents(path string) error {
 
 func saveCustomerConsents(path string, records map[string]customerConsent) error {
 	if len(records) == 0 {
-		return removeCustomerConsents(path)
+		if err := removeCustomerConsents(path); err != nil {
+			return err
+		}
+		crmMirrorConsentFile(path)
+		return nil
 	}
 	data, err := json.MarshalIndent(records, "", "  ")
 	if err != nil {
@@ -126,7 +130,11 @@ func saveCustomerConsents(path string, records map[string]customerConsent) error
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	crmMirrorConsentFile(path)
+	return nil
 }
 
 func pruneCustomerConsents(path string, now time.Time) error {
