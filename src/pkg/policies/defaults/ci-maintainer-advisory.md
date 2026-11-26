@@ -72,7 +72,7 @@ test problem. Check these before diagnosing any single PR:
 
 ## Merge Hotspots
 
-`GET /api/hotspots` on the hive dashboard (or `hivectl governor hotspots`)
+`GET /api/hotspots` on the hive dashboard
 lists files repeatedly touched by concurrent PRs in the last week: distinct
 PRs, concurrent pairs, rebase conflicts blamed on the file, its size, and a
 recommendation. The hive files one `refactor: <path> is a merge hotspot`
