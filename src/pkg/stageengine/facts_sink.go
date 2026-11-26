@@ -53,6 +53,11 @@ type PRDecisionFact struct {
 	// SelfAuthored says the hive opened the PR (the self lane owns it and
 	// fixing is 070); a PR it did not open is handed back to its author.
 	SelfAuthored bool
+	// AdoptedInPlace says the hive adopted the PR in place and owns its
+	// branch at Head: the hive's own fixer carries an instruction, so the
+	// PR stays at 074 adopted-by-hive (the stage sweep's adoption pin)
+	// instead of going back to its author at 072. A bare approval ignores it.
+	AdoptedInPlace bool
 }
 
 // NeedsHumanLabel is the non-stage park label an agent may request; a
@@ -246,13 +251,20 @@ func (s *factSink) Unparked(ctx context.Context, ref Ref, by string) error {
 // the standing change requester, so ClassifyStage derives fixing over the
 // reviewer's decision-requested verdict on the same head. A bare approval
 // only lifts the park direction: the lanes release requires_human from the
-// recorded approval on their next pass, and the deriver abstains here.
+// recorded approval on their next pass, and the deriver abstains here. An
+// instruction on a PR the hive adopted in place speaks for no lane: the
+// fact reports the live adoption at Head, so the deriver writes 074
+// (adoptedPRDecision), the stage the sweep pins an owned adoption to, and
+// the review fix gate still reads the branch as the hive's when it hands
+// the fixer the instruction.
 func (s *factSink) PRDecided(ctx context.Context, ref Ref, d PRDecisionFact) (Transition, error) {
 	ref.Kind = stagelabels.PRItem
 	f := Facts{Ref: ref, ObservedAt: s.opts.Now(), Open: true, Park: ParkFacts{ApprovedDirection: true}}
 	head := strings.TrimSpace(d.Head)
 	pr := &PRFacts{HeadSHA: head}
-	if d.Instruction && head != "" && strings.TrimSpace(d.By) != "" {
+	if d.Instruction && d.AdoptedInPlace && head != "" && strings.TrimSpace(d.By) != "" {
+		f.Adoption = AdoptionFacts{Adopted: true, Live: true, Head: head, InPlace: true}
+	} else if d.Instruction && head != "" && strings.TrimSpace(d.By) != "" {
 		lane := stageLaneSelf
 		if !d.SelfAuthored {
 			lane = stageLaneTrusted

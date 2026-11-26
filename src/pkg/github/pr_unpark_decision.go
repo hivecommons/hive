@@ -27,6 +27,10 @@ import (
 //   - other `/hive decision <text>` on a hive-authored PR is a changes_requested
 //     review in comment form: the decision is recorded against the head and
 //     the review planner kicks the author agent with <text> verbatim;
+//   - the same holds for a contributor's (author/clanker) PR the hive
+//     adopted in place and still owns (hiveOwnsAdoptedBranch): the hive
+//     pushes that branch, so its own fixer takes the instruction and the
+//     PR stays at 074 adopted-by-hive;
 //   - a bare `/hive decision approve` on a PR the hive did not open is
 //     recorded for the head the same way: an approval routes nothing to
 //     the author, and on an owner's own PR GitHub refuses the Approve
@@ -78,6 +82,7 @@ func (c *Client) tryUnparkPullRequest(ctx context.Context, displayRepo, owner, r
 		head = strings.TrimSpace(pr.GetHead().GetSHA())
 	}
 	selfAuthored := c.isHiveAccount(pr.GetUser()) || labelPresent(issueLabelNames(pr.Labels), authorkind.Hive.Label())
+	adopted := !selfAuthored && c.commentDecisionAdopted(owner, repo, number, head, pr)
 
 	reply := ""
 	if closer, closeRequested := supersessionCloseDecision(command); closeRequested {
@@ -93,7 +98,7 @@ func (c *Client) tryUnparkPullRequest(ctx context.Context, displayRepo, owner, r
 			return true, nil
 		}
 	}
-	recordsDecision := command.Kind == unparkCommandDecision && head != "" && (selfAuthored || prDecisionModeFor(command) == prDecisionApprove)
+	recordsDecision := command.Kind == unparkCommandDecision && head != "" && (selfAuthored || adopted || prDecisionModeFor(command) == prDecisionApprove)
 	switch {
 	case recordsDecision:
 		mode := prDecisionModeFor(command)
@@ -116,14 +121,17 @@ func (c *Client) tryUnparkPullRequest(ctx context.Context, displayRepo, owner, r
 		if err := opts.HumanChangeRequests.Record(req); err != nil {
 			return false, fmt.Errorf("recording `/hive decision` on %s/%s#%d: %w", owner, repo, number, err)
 		}
-		event := PullRequestDecisionEvent{Repo: displayRepo, Number: number, HeadSHA: head, Actor: actor, Decision: req.Body, Mode: string(mode), CommentURL: candidate.GetHTMLURL()}
+		event := PullRequestDecisionEvent{Repo: displayRepo, Number: number, HeadSHA: head, Actor: actor, Decision: req.Body, Mode: string(mode), CommentURL: candidate.GetHTMLURL(), AdoptedInPlace: adopted}
 		result.PRDecisions = append(result.PRDecisions, event)
 		if opts.PRAudit != nil {
 			opts.PRAudit(event)
 		}
-		stage := c.applyPRDecisionStage(ctx, owner, repo, number, head, actor, mode, selfAuthored)
+		stage := c.applyPRDecisionStage(ctx, owner, repo, number, head, actor, mode, selfAuthored, adopted)
 		c.logPRDecision(displayRepo, number, head, actor, mode, stage, false)
 		reply = renderPRDecisionReply(actor, head, mode)
+		if adopted && mode == prDecisionChangesRequested {
+			reply = renderPRDecisionAdoptedReply(actor, head, req.Body)
+		}
 	case command.Kind == unparkCommandDecision && selfAuthored:
 		reply = renderPRDecisionNoHeadReply()
 	case command.Kind == unparkCommandDecision:
@@ -137,7 +145,7 @@ func (c *Client) tryUnparkPullRequest(ctx context.Context, displayRepo, owner, r
 	case command.Kind == unparkCommandApprove:
 		reply = renderPRApproveReply(head, prNeedsHumanRelease{present: c.hasNeedsHumanLabel(issueLabelNames(pr.Labels)), notHiveAuthored: true})
 	default:
-		reply = renderPRHelpReply(selfAuthored, head)
+		reply = renderPRHelpReplyFor(selfAuthored, adopted, head)
 	}
 	if err := c.postUnparkReply(ctx, owner, repo, number, candidate.GetID(), reply); err != nil {
 		return false, err
@@ -368,7 +376,8 @@ func (c *Client) reconcileAnsweredPRDecision(ctx context.Context, displayRepo, o
 		return false, nil
 	}
 	selfAuthored := c.isHiveAccount(pr.GetUser()) || labelPresent(issueLabelNames(pr.Labels), authorkind.Hive.Label())
-	if !selfAuthored {
+	adopted := !selfAuthored && c.commentDecisionAdopted(owner, repo, number, head, pr)
+	if !selfAuthored && !adopted {
 		return false, nil
 	}
 	actor := safeGetLogin(decision.GetUser())
@@ -387,9 +396,21 @@ func (c *Client) reconcileAnsweredPRDecision(ctx context.Context, displayRepo, o
 	if err := opts.HumanChangeRequests.Record(req); err != nil {
 		return false, fmt.Errorf("re-recording `/hive decision` on %s/%s#%d: %w", owner, repo, number, err)
 	}
-	stage := c.applyPRDecisionStage(ctx, owner, repo, number, head, actor, mode, selfAuthored)
+	stage := c.applyPRDecisionStage(ctx, owner, repo, number, head, actor, mode, selfAuthored, adopted)
 	c.logPRDecision(displayRepo, number, head, actor, mode, stage, true)
 	return true, nil
+}
+
+// commentDecisionAdopted is hiveOwnsAdoptedBranch for a `/hive decision`
+// comment on a PR the hive did not open: a contributor's (author/clanker)
+// PR the hive adopted in place and owns. The comment path never lifts park
+// labels itself (the stage engine reads the decision), and while
+// `needs-human` is on the PR the engine keeps the park instead of the
+// adoption, so promising the hive's fixer would promise what nothing
+// moves: such a PR keeps the review-side reply until a person lifts it.
+func (c *Client) commentDecisionAdopted(owner, repo string, number int, head string, pr *gh.PullRequest) bool {
+	labels := issueLabelNames(pr.Labels)
+	return c.prAuthorKind(labels) == authorkind.Clanker && !c.hasNeedsHumanLabel(labels) && c.hiveOwnsAdoptedBranch(owner, repo, number, head, pr)
 }
 
 // unparkRepliesByCommentID maps each answered command's comment ID to the
@@ -422,16 +443,19 @@ func (c *Client) unparkRepliesByCommentID(comments []*gh.IssueComment) map[int64
 // lifts now rather than on the next sweep. A failed write is not fatal: the
 // record stands in the store, and the lanes derive the same stage from it
 // on their next pass. It returns the stage written, or "" when none was.
-func (c *Client) applyPRDecisionStage(ctx context.Context, owner, repo string, number int, head, actor string, mode prDecisionMode, selfAuthored bool) string {
+// adoptedInPlace (hiveOwnsAdoptedBranch) keeps an instruction on a PR the
+// hive adopted in place at 074, its fixer's, instead of the author's 072.
+func (c *Client) applyPRDecisionStage(ctx context.Context, owner, repo string, number int, head, actor string, mode prDecisionMode, selfAuthored, adoptedInPlace bool) string {
 	sink := c.StageFacts()
 	if sink == nil {
 		return ""
 	}
 	tr, err := sink.PRDecided(ctx, c.PRStageRef(owner+"/"+repo, number), stageengine.PRDecisionFact{
-		Head:         head,
-		By:           actor,
-		Instruction:  mode == prDecisionChangesRequested,
-		SelfAuthored: selfAuthored,
+		Head:           head,
+		By:             actor,
+		Instruction:    mode == prDecisionChangesRequested,
+		SelfAuthored:   selfAuthored,
+		AdoptedInPlace: adoptedInPlace,
 	})
 	if err != nil {
 		if c.logger != nil {
@@ -498,6 +522,20 @@ func renderPRDecisionToContributorHiveReply(actor, head, author, decision string
 	}
 	body := fmt.Sprintf("%s\nDirection recorded by @%s for %s. This PR was opened by %s, so the hive treats it as a *changes requested* review on that head: the PR is returned to the contributor and %s is nudged with the instruction below verbatim. When a new head is pushed the review swarm re-reviews it; if it approves, the PR comes back for your merge approval.",
 		prDecisionHeadMarkerLine(head, prDecisionChangesRequested), actor, prHeadRef(head), who, who)
+	if d := strings.TrimSpace(decision); d != "" {
+		body += "\n\n> " + strings.ReplaceAll(d, "\n", "\n> ")
+	}
+	return body
+}
+
+// renderPRDecisionAdoptedReply is the reply for a direction recorded on a
+// contributor's PR the hive adopted in place and still owns
+// (hiveOwnsAdoptedBranch): the hive pushes that branch now, so its own
+// fixer takes the instruction and the contributor is neither named nor
+// asked (projectbluefin/utah-packages#1309).
+func renderPRDecisionAdoptedReply(actor, head, decision string) string {
+	body := fmt.Sprintf("%s\nDirection recorded by @%s for %s. The hive adopted this PR in place and pushes its branch, so it treats your direction as a *changes requested* review on that head: the PR stays adopted by the hive and the hive's own fixer pushes a new head following the instruction below verbatim. Nothing is asked of the PR's author. The review swarm then re-reviews that head; if it approves, the PR comes back for your merge approval.",
+		prDecisionHeadMarkerLine(head, prDecisionChangesRequested), actor, prHeadRef(head))
 	if d := strings.TrimSpace(decision); d != "" {
 		body += "\n\n> " + strings.ReplaceAll(d, "\n", "\n> ")
 	}
@@ -620,12 +658,22 @@ func renderPRApproveReleaseTail(release prNeedsHumanRelease) string {
 }
 
 func renderPRHelpReply(selfAuthored bool, head string) string {
+	return renderPRHelpReplyFor(selfAuthored, false, head)
+}
+
+// renderPRHelpReplyFor is renderPRHelpReply that also knows whether the hive
+// adopted this contributor's PR in place and still owns its branch
+// (hiveOwnsAdoptedBranch): then its fixer takes a `/hive decision`
+// direction, and "the hive does not push to it" would be false.
+func renderPRHelpReplyFor(selfAuthored, adoptedInPlace bool, head string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "On a pull request parked at `%s`:\n\n", PRNeedsDecisionStageLabel)
 	fmt.Fprintf(&b, "- **Approve** %s (GitHub review), or reply `/hive approve` after the swarm's `requires_human` verdict, to merge it as-is; a trusted merger's release only, and never past CI, `hold`-class labels or a `changes_requested` verdict.\n", prHeadRef(head))
 	if selfAuthored {
 		fmt.Fprintf(&b, "- On this hive-authored PR, `/hive approve` from a trusted merger also lifts a `%s` the hive added (a person's stays), adding `%s` and removing `%s`.\n", issueNeedsHumanLabel, escalation.ReviewerPassedLabel, prReviewerHandoffLabel)
 		b.WriteString("- Leave a **changes requested** review, or reply `/hive decision <what to change>`, and the hive pushes the fix to this PR.\n")
+	} else if adoptedInPlace {
+		b.WriteString("- The hive adopted this PR in place and pushes its branch: reply `/hive decision <what to change>` and the hive's own fixer pushes the change to this PR; nothing is asked of its author.\n")
 	} else {
 		b.WriteString("- Leave a **changes requested** review and the author is nudged with your text; the hive does not push to a PR it did not open.\n")
 	}

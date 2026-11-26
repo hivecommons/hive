@@ -256,6 +256,10 @@ type repoItemApproveFacts struct {
 	// to (a clanker-authored PR, hivecommons/hive#15159); "" when the
 	// hive's own author agent takes it.
 	ToContributor string
+	// HiveFixer says the relay confirmed the hive adopted the contributor's
+	// PR in place and owns its branch, so the hive's own fixer takes the
+	// direction (PullRequestDecisionEvent.AdoptedInPlace).
+	HiveFixer bool
 }
 
 // repoItemDecisionResult reads a recorded human decision into the shared
@@ -284,6 +288,8 @@ func repoItemDecisionResultWith(repoFull string, number int, itemType, decision,
 		out.Outcome = "Direction recorded as `/hive decision`: " + strings.TrimSuffix(strings.TrimSpace(comment), ".") + "."
 		if itemType == "pr" && strings.TrimSpace(facts.ToContributor) != "" {
 			out.Next = "Returned to @" + strings.TrimPrefix(strings.TrimSpace(facts.ToContributor), "@") + "'s hive with your direction; the row moves when it pushes a new head."
+		} else if itemType == "pr" && facts.HiveFixer {
+			out.Next = "The hive adopted this PR, so its own fixer pushes the change; the row moves when the new head lands."
 		} else if itemType == "pr" {
 			out.Next = "The author agent pushes a new head; the row moves when it lands."
 		} else {
@@ -792,6 +798,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	stage, commandsSkipped, reportingError := "", "", ""
 	sentinelOpen, prow, prowRejected := false, false, false
 	toContributor := ""
+	hiveFixer := false
 	if decision == repoItemDecisionApprove {
 		var event ghpkg.PullRequestApprovalEvent
 		event, err = gh.RecordOperatorPullRequestApprovalWith(ctx, repoFull, number, user, ghpkg.PullRequestApprovalOptions{
@@ -806,7 +813,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	} else {
 		var event ghpkg.PullRequestDecisionEvent
 		event, err = gh.RecordOperatorPullRequestDecision(ctx, repoFull, number, user, comment, repoItemDecisionChangeRequests())
-		head, toContributor = event.HeadSHA, event.ToContributor
+		head, toContributor, hiveFixer = event.HeadSHA, event.ToContributor, event.AdoptedInPlace
 	}
 	switch {
 	case errors.Is(err, ghpkg.ErrPullRequestNotFound):
@@ -842,7 +849,7 @@ func (s *Server) handlePullRequestDecision(ctx context.Context, w http.ResponseW
 	}
 	s.audit.LogRecord(user, action, auditDetail("repo", repoFull, "number", numStr, "type", "pr", "head", head, "decision", comment, "released", strings.Join(released, ","), "stage", stage, "admitted_by", admitted, "commands_skipped", commandsSkipped, "to_contributor", toContributor), "", repoFull, number)
 	result := repoItemDecisionResultWith(repoFull, number, "pr", decision, comment, "", "", repoItemApproveFacts{
-		User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow, CommandsSkipped: commandsSkipped != "", ProwRejected: prowRejected, ToContributor: toContributor,
+		User: user, Released: released, Stage: stage, SentinelOpen: sentinelOpen, SentinelLabel: s.sentinelLabel(), SoakMinutes: s.approveSoakMinutes(admitted != ""), Prow: prow, CommandsSkipped: commandsSkipped != "", ProwRejected: prowRejected, ToContributor: toContributor, HiveFixer: hiveFixer,
 	})
 	if reportingError != "" {
 		s.audit.LogRecord(user, auditRepoItemDecisionApprove+"_reporting_failed", auditDetail("repo", repoFull, "number", numStr, "head", head, "error", reportingError), "", repoFull, number)

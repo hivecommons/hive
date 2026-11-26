@@ -341,3 +341,21 @@ func TestPRReplyOptionsNothingToSayIsCheckedOnce(t *testing.T) {
 		t.Fatalf("state = written %v known %v, want known and empty", written, known)
 	}
 }
+
+// On a contributor's PR the hive adopted in place and owns, "Your move"
+// matches `/hive help`: `/hive decision <what to change>` reaches the
+// hive's own fixer, and the section does not say the hive will not push.
+func TestRenderPRReplyOptionsAdoptedInPlace(t *testing.T) {
+	got := renderPRReplyOptions(prWait{Parked: true, AdoptedInPlace: true})
+	if !strings.Contains(got, "- `/hive decision <what to change>`: the hive adopted this PR in place and pushes its branch, so the hive's own fixer pushes the change") {
+		t.Fatalf("adopted PR section:\n%s", got)
+	}
+	for _, bad := range []string{"does not push to a PR it did not open", "\u2014", "\u2013"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("adopted PR section carries %q:\n%s", bad, got)
+		}
+	}
+	if plain := renderPRReplyOptions(prWait{Parked: true}); !strings.Contains(plain, "The hive does not push to a PR it did not open.") || strings.Contains(plain, "adopted this PR") {
+		t.Fatalf("un-adopted contributor PR section changed:\n%s", plain)
+	}
+}

@@ -150,6 +150,33 @@ func TestFactSinkPRDecidedDerivesFixingForInstruction(t *testing.T) {
 	}
 }
 
+// projectbluefin/utah-packages#1309: an instruction on a contributor's PR
+// the hive adopted in place is its own fixer's to carry, so PRDecided
+// derives 074 adopted-by-hive (the stage the sweep pins an owned adoption
+// to) rather than handing the PR back to its author. Without the adoption
+// flag the same fact still returns it to its author, and a bare approval
+// with the flag still abstains.
+func TestFactSinkPRDecidedKeepsInPlaceAdoption(t *testing.T) {
+	ref := Ref{Owner: "o", Repo: "r", Number: 1309, Kind: stagelabels.PRItem}
+	derive := func(fact PRDecisionFact) Decision {
+		var got Facts
+		sink := NewFactSink(deriveOnlyReconciler{on: func(f Facts) { got = f }}, FactSinkOptions{})
+		if _, err := sink.PRDecided(context.Background(), ref, fact); err != nil {
+			t.Fatal(err)
+		}
+		return derivePR(got)
+	}
+	if d := derive(PRDecisionFact{Head: goldenHead, By: "maintainer", Instruction: true, AdoptedInPlace: true}); d.Abstain || d.Stage != stagelabels.AdoptedByHive {
+		t.Fatalf("adopted in place: derived %+v, want 074", d)
+	}
+	if d := derive(PRDecisionFact{Head: goldenHead, By: "maintainer", Instruction: true}); d.Abstain || d.Stage != FixingStage(stageObservation{Lane: stageLaneTrusted}) {
+		t.Fatalf("not adopted: derived %+v, want the author's fixing stage", d)
+	}
+	if d := derive(PRDecisionFact{Head: goldenHead, By: "maintainer", AdoptedInPlace: true}); !d.Abstain {
+		t.Fatalf("bare approval on an adopted PR: derived %+v, want abstain", d)
+	}
+}
+
 // deriveOnlyReconciler hands the Facts a sink built to the test instead of
 // writing anything.
 type deriveOnlyReconciler struct{ on func(Facts) }

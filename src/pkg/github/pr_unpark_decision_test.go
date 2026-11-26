@@ -10,6 +10,7 @@ import (
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/stageenginetest"
+	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
 // Reproduces hivecommons/hive#12968, the live case behind #13041: a
@@ -814,4 +815,132 @@ func (s reviewOnlyStore) For(repo string, n int, head string) (review.HumanChang
 }
 func (s reviewOnlyStore) Forget(repo string, n int, source string, sourceID int64) error {
 	return s.inner.Forget(repo, n, source, sourceID)
+}
+
+// projectbluefin/utah-packages#1309, comment path: `/hive decision <text>`
+// on a clanker's PR the hive adopted in place is recorded and routed like
+// one on the hive's own PR (the hive pushes that branch), with the
+// adopted-fixer reply and the adoption kept in the stage fact. The review
+// planner then kicks the hive's fixer with the text only while the PR
+// wears 074: at 072 the fix gate reads a person-login author's branch and
+// withholds the push, which is why the decision must not hand it back. A
+// clanker PR the hive did not adopt still gets the review-side pointer.
+func TestSweepIssueUnparkCommandsDecisionOnAdoptedPRRoutesHiveFixer(t *testing.T) {
+	const number = 1309
+	adoptInPlace(t, number, liveDecisionHead)
+	issues := []unparkWireIssue{adoptedClankerPR(number, humanComment(4343, "maintainer", "/hive decision make CI green"))}
+	c, rec := newUnparkPRClient(t, issues, map[string]string{"maintainer": "admin"})
+	store := review.NewHumanChangeRequests("")
+
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store, TrustedMerger: trustedMergerSet("maintainer")})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.PRDecisions) != 1 || result.PRDecisions[0].Decision != "make CI green" {
+		t.Fatalf("result = %+v, want one PR decision", result)
+	}
+	req, ok := store.For("org/repo", number, liveDecisionHead)
+	if !ok || req.Body != "make CI green" || req.SourceID != 4343 || req.IsApproval() {
+		t.Fatalf("recorded request = %+v, %v", req, ok)
+	}
+	reply := strings.Join(rec.posted[number], "\n")
+	for _, want := range []string{unparkReplyMarkerPrefix + "4343 -->", "Direction recorded by @maintainer", "hive's own fixer", "> make CI green"} {
+		if !strings.Contains(reply, want) {
+			t.Fatalf("reply missing %q:\n%s", want, reply)
+		}
+	}
+	if strings.Contains(reply, "@clankerdev") || strings.Contains(reply, "did not open this PR") {
+		t.Fatalf("reply names the contributor or refuses:\n%s", reply)
+	}
+	facts := prDecisionFacts(t, c)
+	if len(facts) != 1 || facts[0] != (stageengine.PRDecisionFact{Head: liveDecisionHead, By: "maintainer", Instruction: true, AdoptedInPlace: true}) {
+		t.Fatalf("stage facts = %+v, want one in-place-adopted PRDecided", facts)
+	}
+
+	plan := func(stage string) review.DispatchPlan {
+		pr := review.PullRequest{Repo: "org/repo", Number: number, Author: "clankerdev", HeadSHA: liveDecisionHead, Labels: []string{stage, "author/clanker"}}
+		pr.HumanChangeRequest = review.HumanChangeRequestFor(store, pr.Repo, pr.Number, pr.HeadSHA)
+		return review.PlanDispatch([]review.PullRequest{pr}, review.Artifact{}, review.DispatchState{}, review.DispatchOptions{
+			RequireApproval: true, FanOut: true, ProjectOrg: "org",
+			Agents: []review.AgentCapability{{Name: review.DefaultFixerAgent, Enabled: true, UsesKick: true, Role: "reviewer"}},
+		})
+	}
+	if p := plan(stagelabels.AdoptedByHive.Label()); len(p.FixKicks) != 1 || !strings.Contains(p.FixKicks[0].Message, "> make CI green") {
+		t.Fatalf("at 074: fix kicks = %+v, want one kick quoting the decision", p.FixKicks)
+	}
+	if p := plan(stagelabels.ReturnedToContributor.Label()); len(p.FixKicks) != 0 {
+		t.Fatalf("at 072: fix kicks = %+v, want the push withheld", p.FixKicks)
+	}
+
+	// The same comment on a clanker PR the hive did not adopt: no record,
+	// the review-side pointer as before.
+	stagelabels.Shared().Forget(stagelabels.Key("org/repo", number))
+	c2, rec2 := newUnparkPRClient(t, issues, map[string]string{"maintainer": "admin"})
+	store2 := review.NewHumanChangeRequests("")
+	result2, err := c2.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store2, TrustedMerger: trustedMergerSet("maintainer")})
+	if err != nil {
+		t.Fatalf("un-adopted sweep: %v", err)
+	}
+	if len(result2.PRDecisions) != 0 || store2.Len() != 0 || len(prDecisionFacts(t, c2)) != 0 || !strings.Contains(strings.Join(rec2.posted[number], "\n"), "did not open this PR") {
+		t.Fatalf("un-adopted clanker PR: result = %+v posted = %v", result2, rec2.posted[number])
+	}
+}
+
+// The help reply on a contributor's PR the hive adopted in place and owns
+// says the hive's fixer takes `/hive decision`, instead of "the hive does
+// not push to a PR it did not open". Once the hive no longer owns the
+// branch (here: the record is gone), the reply is today's again.
+func TestSweepIssueUnparkCommandsHelpOnAdoptedPR(t *testing.T) {
+	const number = 1309
+	adoptInPlace(t, number, liveDecisionHead)
+	issues := []unparkWireIssue{adoptedClankerPR(number, humanComment(4444, "maintainer", "/hive help"))}
+	sweep := func() string {
+		t.Helper()
+		c, rec := newUnparkPRClient(t, issues, map[string]string{"maintainer": "admin"})
+		if _, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: review.NewHumanChangeRequests(""), TrustedMerger: trustedMergerSet("maintainer")}); err != nil {
+			t.Fatalf("sweep: %v", err)
+		}
+		return strings.Join(rec.posted[number], "\n")
+	}
+	reply := sweep()
+	if !strings.Contains(reply, "The hive adopted this PR in place and pushes its branch") || !strings.Contains(reply, "hive's own fixer pushes the change") {
+		t.Fatalf("adopted help reply:\n%s", reply)
+	}
+	for _, bad := range []string{"does not push to a PR it did not open", "@clankerdev", "\u2014", "\u2013"} {
+		if strings.Contains(reply, bad) {
+			t.Fatalf("adopted help reply carries %q:\n%s", bad, reply)
+		}
+	}
+	if got := renderPRHelpReplyFor(false, false, liveDecisionHead); got != renderPRHelpReply(false, liveDecisionHead) || !strings.Contains(got, "does not push to a PR it did not open") {
+		t.Fatalf("un-adopted help reply changed:\n%s", got)
+	}
+
+	stagelabels.Shared().Forget(stagelabels.Key("org/repo", number))
+	if reply := sweep(); !strings.Contains(reply, "does not push to a PR it did not open") || strings.Contains(reply, "adopted this PR") {
+		t.Fatalf("un-owned help reply:\n%s", reply)
+	}
+}
+
+// The comment path lifts no park labels (the stage engine reads the
+// decision), and with `needs-human` still on an adopted PR the engine keeps
+// the park instead of the adoption. Such a PR is not read as the hive's:
+// no record, no fixer promise, the review-side reply as before.
+func TestSweepIssueUnparkCommandsDecisionOnAdoptedPRWithNeedsHumanKeepsReviewReply(t *testing.T) {
+	const number = 1309
+	adoptInPlace(t, number, liveDecisionHead)
+	pr := adoptedClankerPR(number, humanComment(4545, "maintainer", "/hive decision make CI green"))
+	pr.Labels = append(pr.Labels, wireLabel{Name: issueNeedsHumanLabel})
+	c, rec := newUnparkPRClient(t, []unparkWireIssue{pr}, map[string]string{"maintainer": "admin"})
+	store := review.NewHumanChangeRequests("")
+	result, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{HumanChangeRequests: store, TrustedMerger: trustedMergerSet("maintainer")})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	reply := strings.Join(rec.posted[number], "\n")
+	if len(result.PRDecisions) != 0 || store.Len() != 0 || len(prDecisionFacts(t, c)) != 0 || !strings.Contains(reply, "did not open this PR") || strings.Contains(reply, "hive's own fixer") {
+		t.Fatalf("needs-human adopted PR: result = %+v reply = %q", result, reply)
+	}
+	if len(rec.removed[number]) != 0 {
+		t.Fatalf("the comment path lifted labels: %v", rec.removed[number])
+	}
 }
