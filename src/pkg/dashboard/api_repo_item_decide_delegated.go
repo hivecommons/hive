@@ -812,11 +812,12 @@ func (s *Server) gatherDelegatedInput(ctx context.Context, repoFull string, numb
 		if err != nil {
 			return in, fmt.Errorf("reading checks for %s#%d: %w", repoFull, number, err)
 		}
-		in.CIGreen, in.CIPending = ci.green, ci.pending
+		in.CIGreen, in.CIPending, in.RedChecks = ci.green, ci.pending, ci.red
 		if in.ChangesRequestedBy, err = s.delegatedChangesRequestedBy(ctx, api, owner, repoName, number); err != nil {
 			return in, fmt.Errorf("reading reviews for %s#%d: %w", repoFull, number, err)
 		}
 		s.gatherDelegatedRecordedPark(repoFull, number, pr.GetHead().GetSHA(), &in)
+		in.ForkGuardChecks = s.delegatedForkGuard(repoFull, number, in.HeadSHA, push.Fork, ci.red)
 		in.SentinelReason = s.delegatedSentinelReason(repoFull, number, pr.GetHead().GetSHA(), req.SentinelReason)
 		var questionFiles []review.DecisionQuestionFile
 		opt := &gh.ListOptions{PerPage: delegatedDecisionGatherLimit}
@@ -982,9 +983,11 @@ func delegatedIssueComments(ctx context.Context, api *gh.Client, owner, repoName
 
 // delegatedHeadCIState is what the head's checks say: green (every
 // gating check passed), pending (some still running, none failed), or
-// neither (a check failed, or none ever reported).
+// neither (a check failed, or none ever reported). red names the failed
+// checks, read only when mergeable_state did not already say green.
 type delegatedHeadCIState struct {
 	green, pending bool
+	red            []string
 }
 
 // delegatedHeadCI decides Input.CIGreen / CIPending for the PR under
@@ -1013,7 +1016,7 @@ func delegatedHeadCI(ctx context.Context, api *gh.Client, owner, repoName string
 		return delegatedHeadCIState{}, err
 	}
 	if len(summary.Red) > 0 {
-		return delegatedHeadCIState{}, nil
+		return delegatedHeadCIState{red: append([]string(nil), summary.Red...)}, nil
 	}
 	return delegatedHeadCIState{green: summary.Pending == 0 && summary.Green > 0, pending: summary.Pending > 0}, nil
 }

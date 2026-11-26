@@ -618,7 +618,9 @@ func delegatedPlanInstruction(in delegatedecision.Input, d delegatedecision.Deci
 	if in.DCOMissing {
 		fix = append(fix, "add the sign-off")
 	}
-	if in.CIRed() {
+	// A fork-guarded check is a maintainer's step, never the author's
+	// (hivecommons/hive#14273).
+	if in.CIRedOwed() {
 		fix = append(fix, "make CI green")
 	}
 	if len(fix) == 0 || strings.TrimSpace(in.Question) != "" {

@@ -224,7 +224,7 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 		if in.ReworkPickedUp {
 			why = who + " has picked the rework up"
 		}
-		text := why + ": " + strings.Join(fix, ", ") + " on " + ref + "; then it merges"
+		text := why + ": " + strings.Join(fix, ", ") + " on " + ref + "; " + in.thenMerges()
 		d := Decision{
 			Verdict: VerdictDirection, Rule: RuleReturnToContributor, Text: text,
 			Rationale: why + ", so the PR goes back to them with the fix list instead of being adopted (hivecommons/hive#15289)",
@@ -249,6 +249,17 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 	// they will not get to do: the contributor nudge is withheld under the
 	// same condition (AdoptsImmediately), so the author's one notification
 	// is the adoption note (hivecommons/hive#18872).
+	//
+	// A head red only on a fork guard is not adopted automatically, as in
+	// the adoption engine (adoptionForkGuardOnly): the guard asks a
+	// maintainer to publish the branch, so decidePR recommends that step
+	// (decideForkGuard). Stopping here keeps AdoptsImmediately in step with
+	// it. A guard beside a review ask is still adopted below, as the engine
+	// adopts it (hivecommons/hive#14273).
+	if forkGuardOnly(in) {
+		skip(RuleContributorOffline, "only the fork-guarded "+checkNames(in.ForkGuarded())+" is red, a maintainer's step that adoption does not take on its own")
+		return Decision{}, false
+	}
 	if in.AdoptionGraceElapsed {
 		text := "adopt now: the offline grace on " + ref + " has already elapsed; adopt in supersede mode at once, preserving the author's commits and sign-off"
 		d := Decision{
@@ -271,7 +282,7 @@ func decideLadder(in Input, ref string) (Decision, bool) {
 	// direction names it, and the record says why rung 2 did not approve.
 	if cr := in.ChangeRequest(); cr != "" {
 		skip(RuleContributorOffline, "nothing but "+cr+" holds the head back")
-		return out(fixThenMerge(fixList(in)), cr+" still stand; the direction names them")
+		return out(fixThenMerge(in, fixList(in)), cr+" still stand; the direction names them")
 	}
 	return Decision{}, false
 }
@@ -416,8 +427,15 @@ func fixList(in Input) []string {
 	if in.DCOMissing {
 		fix = append(fix, "add the DCO sign-off")
 	}
-	if in.CIRed() {
-		fix = append(fix, "make CI green without widening scope")
+	// A fork-guarded check is a maintainer's step, not the author's or a
+	// fixer's: it never makes the list, and with other checks red beside
+	// it the item names only those (hivecommons/hive#14273).
+	if in.CIRedOwed() {
+		item := "make CI green without widening scope"
+		if guarded, others := in.forkGuard(); len(guarded) > 0 {
+			item += " (" + checkNames(others) + ")"
+		}
+		fix = append(fix, item)
 	}
 	// A standing change request is work, not a question: the decision
 	// names it rather than releasing the head over it.

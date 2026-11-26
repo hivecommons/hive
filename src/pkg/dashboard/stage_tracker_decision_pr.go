@@ -161,7 +161,14 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		// approval sweep honours when workflow auto-approval is on.
 		d.Question = "GitHub is holding " + decisionHeldRunsWords(heldRuns) + at + " for a maintainer's approval, and the hive does not approve them on its own. Review the change, then Approve here (this admits the head, and the hive approves its runs) or click Approve and run on GitHub, or close it?"
 	case forkGuarded:
-		d.Question = "CI will not run for this fork PR (" + strings.ReplaceAll(forkGuard, ",", ", ") + "). A maintainer must push the branch to this repo — or close it?"
+		// The guard's own message says what a maintainer does: some repos
+		// run or admit the check for the head, others want the branch in
+		// the repo (hivecommons/hive#14273).
+		check, them, its := "check", "it", "its own message asks"
+		if strings.Contains(forkGuard, ",") {
+			check, them, its = "checks", "them", "their own messages ask"
+		}
+		d.Question = "CI will not run for this fork PR (" + strings.ReplaceAll(forkGuard, ",", ", ") + "). A maintainer must act on the fork-guarded " + check + " as " + its + " (run or admit " + them + " for this head, or push the branch to this repo), or close it?"
 	case reReview:
 		d.AskedBy = decisionAskedByReviewer
 		d.Question = decisionReReviewQuestion(reReviewers, it.Author, sha)
