@@ -83,6 +83,7 @@ agents.<key>.emoji # TODO #11854
 agents.<key>.enabled # TODO #11854
 agents.<key>.explain_mode # TODO #11854
 agents.<key>.github_api_hourly_cap # TODO #11854
+agents.<key>.headless_turns # TODO #19902
 agents.<key>.id # TODO #11854
 agents.<key>.include_repos # TODO #11854
 agents.<key>.jev_mode # TODO #11854
@@ -267,6 +268,9 @@ evidence.complexity.static_analysis # TODO #11854
 forgejo.integration.audiences.<key> # Forgejo JWT signer setup is yaml-only for now; see docs/forge-app-setup.md (#19679)
 forgejo.integration.issuer # Forgejo JWT signer setup is yaml-only for now; see docs/forge-app-setup.md (#19679)
 forgejo.integration.key_file # Forgejo JWT signer setup is yaml-only for now; see docs/forge-app-setup.md (#19679)
+forgejo.integration.previous_key_files[] # Forgejo JWT signer setup is yaml-only for now; see docs/forge-app-setup.md (#19996)
+forgejo.integration.rest_audience # Forgejo JWT signer setup is yaml-only for now; see docs/forge-app-setup.md (#19920)
+forgejo.login # hive's own Forgejo username for repo-limited tokens that cannot read GET /user; yaml-only for now, Settings control pending; see docs/integrations/forgejo.md (#19994)
 github.additional_bot_logins[] # TODO #11854
 github.attention.admitter.<key> # single-admitter ownership and flap window are YAML-only rollout controls; see src/docs/attention-episodes.md
 github.attention.digest_recipients[] # opt-in attention digest recipients; yaml-only, see docs/notifications.md (#16271)

@@ -277,6 +277,11 @@ type Options struct {
 	BaseURL string
 	// Org is the default owner/namespace used when a repo slug has no "/" prefix.
 	Org string
+	// Login is the hive's own forge username. It is optional and not a secret.
+	// On Forgejo it lets the sweeps recognize the hive's own pull requests and
+	// issues without the GET /user lookup, which a repository-limited token
+	// cannot perform (#19994). Empty keeps the lookup against the API.
+	Login string
 }
 
 // NewForge constructs a Forge of the given kind.

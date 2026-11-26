@@ -287,6 +287,13 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	if agentUsesAgyHeadless(backend, agent) {
 		return m.deliverAgyHeadlessKickLocked(agent, message, trigger)
 	}
+	// Route on the pane's launch-time shape, not the live config: a live toggle-off
+	// must not type into the bash shim. A live toggle-on (or a kick racing the
+	// first launch) has no per-kick command yet and is refused by the
+	// headless path rather than guessed at; the next relaunch applies it.
+	if paneIsClaudeHeadless(agent) || m.agentUsesClaudeHeadless(backend, agent) {
+		return m.deliverClaudeHeadlessKickLocked(agent, message, trigger, skipClear)
+	}
 	if backend != "goose" {
 		// codex and opencode quit on Ctrl+C at an empty prompt, so a kick
 		// clears the input line with Ctrl+U alone for them.
@@ -439,7 +446,10 @@ func (m *Manager) recordDeliveredKickLocked(agent *AgentProcess, message, trigge
 	// Arm the post-kick watchdog for inference agents: the watcher loop
 	// sends a "continue" nudge if the pane freezes at an idle prompt, and
 	// an action nudge if the model responds with prose but runs no tools.
-	if IsInferenceBackend(effectiveBackend(agent)) {
+	// A headless_turns pane is a shell between turns: the watchdog's
+	// "continue" and action nudges would be typed into bash, and each turn
+	// already ends on its own when claude -p exits.
+	if backend := effectiveBackend(agent); IsInferenceBackend(backend) && !paneIsClaudeHeadless(agent) {
 		m.recordInferenceKick(agent, now)
 	}
 	// #4697: a new kick is a new incident, so the transient-API-error budget
@@ -565,8 +575,12 @@ func (m *Manager) deliverStartupKick(agent *AgentProcess, prompt string, gen int
 // Weak OSS models tend to answer a kick conversationally — describing steps
 // for someone else to follow — instead of acting; this block demands
 // immediate tool execution. Commercial CLI backends don't receive it.
+//
+// It names no GitHub tool: the suffix reaches every agent on these backends,
+// including the supervisor, whose policy forbids all GitHub use. An agent that
+// may use gh learns that from its policy (hivecommons/hive#20038).
 const inferenceKickActionSuffix = "IMPORTANT — EXECUTE, DO NOT NARRATE: " +
-	"You have real tools (Bash, file edit, gh). Perform the work NOW in " +
+	"You have real tools (a shell and file edit). Perform the work NOW in " +
 	"this session. Do not describe steps for someone else, do not summarize " +
 	"a plan and stop. Begin immediately by running your first command. " +
 	"Every response that contains no tool execution is a failure."

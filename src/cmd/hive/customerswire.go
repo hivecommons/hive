@@ -63,9 +63,9 @@ func wireCustomersAt(dataDir, graphDir string, resolvers customers.Resolvers, lo
 }
 
 // wireCustomersAtMode is wireCustomersAt with a customers.store mode
-// (#19855). shadow and colony open /data/customers/colony.db beside
-// people.json; a colony store that cannot be opened or imported leaves the
-// section on json, which is today's behaviour.
+// (#19855). shadow and colony (the default, #19972) open
+// /data/customers/colony.db beside people.json; a colony store that cannot be
+// opened or imported leaves the section on json, people.json untouched.
 func wireCustomersAtMode(dataDir, graphDir string, mode customers.StoreMode, resolvers customers.Resolvers, logger *slog.Logger) (*customersDashboard, func()) {
 	store, err := customers.Open(dataDir, nil)
 	if err != nil {

@@ -41,6 +41,7 @@ type giteaForge struct {
 	baseURL string // instance root, no trailing slash, no /api/v1
 	token   string
 	org     string
+	login   string // configured hive username; empty asks the API
 	http    *http.Client
 }
 
@@ -76,6 +77,7 @@ func newGiteaFamilyForge(kind Kind, token string, opts Options) (*giteaForge, er
 		baseURL: base,
 		token:   token,
 		org:     opts.Org,
+		login:   strings.TrimSpace(opts.Login),
 		http:    &http.Client{Timeout: giteaHTTPTimeout},
 	}, nil
 }

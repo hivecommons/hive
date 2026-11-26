@@ -447,3 +447,18 @@ func TestKickMessageWithSuffixes_IdleBootstrapGetsNoSuffix(t *testing.T) {
 		t.Error("a real inference kick lost the action suffix")
 	}
 }
+
+// hivecommons/hive#20038: the execute suffix reaches every agent on a
+// self-hosted inference backend, the no-GitHub supervisor included, so it must
+// not advertise gh as one of the agent's tools.
+func TestInferenceKickActionSuffixNamesNoGitHubTool(t *testing.T) {
+	got := kickMessageWithSuffixes("Do the thing.", true, config.ExplainModeOff)
+	for _, banned := range []string{"Bash, file edit, gh", " gh)", " gh,", "`gh`"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("inference suffix names a GitHub tool (%q):\n%s", banned, got)
+		}
+	}
+	if !strings.Contains(got, "EXECUTE, DO NOT NARRATE") {
+		t.Errorf("inference suffix lost its action demand:\n%s", got)
+	}
+}

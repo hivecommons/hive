@@ -146,33 +146,21 @@ ACTIONABLE PRs:
 ${PR_LIST}
 
 ⛔ NEVER run `gh issue list`, `gh pr list`, or `gh search issues` — the work list above is your ONLY source.
-⛔ NEVER attempt out-of-tier writes: no `gh run rerun` / `POST ./actions/runs/{id}/rerun-failed-jobs` (for a suspected flake, file an issue or leave one PR comment naming it and DEFER); no repo label creation (`gh label create`, `POST /repos/…/labels`); no hive-controlled labels (`needs-human`, the retired `needs-decision` / `needs-direction`, anything else the hive sets) — park on a maintainer ruling with `hive-open-issue --needs-decision` for new issues or the relay's `label` command with `stage/045-needs-decision` for existing ones. For existing issues, only apply `stage/045-needs-decision` for the risk categories above and include `Risk: <category>` in the body or parking comment; no PR review comments (`POST /pulls/{n}/comments`) — use `gh pr comment`.
+⛔ NEVER attempt out-of-tier writes: no `gh run rerun` / `POST ./actions/runs/{id}/rerun-failed-jobs` (for a suspected flake, file an issue or leave one PR comment naming it and DEFER); no repo label creation (`gh label create`, `POST /repos/…/labels`); no hive-controlled labels (the retired `needs-decision` / `needs-direction`, anything else the hive sets; the two exceptions are `stage/045-needs-decision` for a park and `needs-human` for a hand-off to people, both added only through the relay's `label` command and never removed) — park on a maintainer ruling with `hive-open-issue --needs-decision` for new issues or the relay's `label` command with `stage/045-needs-decision` for existing ones. For existing issues, only apply `stage/045-needs-decision` for the risk categories above and include `Risk: <category>` in the body or parking comment; no PR review comments (`POST /pulls/{n}/comments`) — use `gh pr comment`.
 
-## After You Push: Do Not Wait for CI (MANDATORY)
+## Do Not Wait for CI (MANDATORY)
 
-Opening or updating a PR ends your work on that item for this kick. **Never
-watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
-"checking again in 10 minutes". CI on a saturated runner pool can take an hour;
-a turn spent waiting is a turn the rest of the work list did not get. A PR that
-is NOT held merges automatically once its checks are green. A PR carrying
-`hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>`, or `do-not-merge`
-does NOT auto-merge on green CI — it merges only after a human removes that
-label. Waiting buys nothing either way, and it hides as "Working" on the
-dashboard while nothing happens.
+Your mode cannot push or open PRs, so no CI run is yours to wait for.
+Reading a PR's checks once to triage it is fine. **Never watch, poll, or sleep
+on CI** — no `gh run watch`, no `gh run view` loops, no "checking again in 10
+minutes". CI on a saturated runner pool can take an hour; a turn spent waiting
+is a turn the rest of the work list did not get.
 
-- Pushed the branch and opened/updated the PR → leave a `hive/awaiting-ci`
-  note on the PR itself. If it is NOT held: `gh pr comment <number> --body
-  "hive/awaiting-ci: CI pending — sweep will merge when green."` If it IS held
-  (carries `hold` or another hold label): `gh pr comment <number> --body
-  "hive/awaiting-ci: held for human review. Green CI will not merge this on
-  its own; it merges after a maintainer reviews it and removes hold."` Either
-  way this is so anyone reading the PR, not just the dashboard, can see it was
-  deliberately deferred, then **move to the next item**.
-- A check on your PR is red → run the Shared CI Baseline Triage once. If the
-  cause is your diff, fix it and push once. If it is infrastructure (runner
+- A check on a PR is red → triage it once. If it is infrastructure (runner
   lost, "No space left on device", shards still `queued`, job failed with no
-  log), do **not** retry or wait: leave one comment naming the infra cause and
-  **DEFER — move to the next item**.
+  log), do **not** wait: leave one comment naming the infra cause and
+  **DEFER — move to the next item**. If the PR's own diff is at fault, say so
+  in one note; the PR's author repairs it.
 - Never spend more than **two** status checks on the same run in one kick.
 - One scanner note per PR. Your CI-triage and rebase notes on a PR are
   edited into one `<!-- hive:scanner-note -->` comment by the relay, and a
@@ -180,9 +168,6 @@ dashboard while nothing happens.
   note is dropped (`already_existed`). Do not re-triage such a PR: if nothing
   changed, there is nothing new to say. Keep shared-CI incident references
   (`<!-- hive-shared-ci-<n> -->`) as their own comment.
-- Summarize with "PR #N opened/updated; CI pending — sweep will merge when
-  green" (or "...; merges after human review" if the PR is held), then
-  continue.
 
 ## Before Saying a PR Does Not Reference an Issue (MANDATORY)
 

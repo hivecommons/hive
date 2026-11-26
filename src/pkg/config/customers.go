@@ -53,9 +53,9 @@ type CustomersConfig struct {
 	// GitHub, GitHub Enterprise, GitLab, Gitea/Forgejo or Linear
 	// (#19302). Default OFF: it is a periodic network lookup about people.
 	ProfileFill CustomersProfileFillConfig `yaml:"profile_fill,omitempty" json:"profile_fill,omitempty"`
-	// Store picks where person records and enrichment results live during
-	// the move to the hivecommons/colony store (#19855): "json" (the
-	// default), "shadow" or "colony". See CustomersStoreMode and
+	// Store picks where person records and enrichment results live on the
+	// hivecommons/colony store (#19855, #19972): "colony" (the default),
+	// "shadow" or "json". See CustomersStoreMode and
 	// src/docs/design/colony-customer-data-backend.md.
 	Store string `yaml:"store,omitempty" json:"store,omitempty"`
 }
@@ -65,20 +65,27 @@ const EnvCustomersStore = "HIVE_CUSTOMERS_STORE"
 
 // Customers store modes (customers.store / HIVE_CUSTOMERS_STORE).
 const (
-	// CustomersStoreJSON is today's behaviour: people.json and
-	// enrichment.json only, and no colony.db is created. The default.
+	// CustomersStoreJSON is the behaviour before the colony store:
+	// people.json and enrichment.json only, and no colony.db is created.
+	// It is the rollback, and what an unknown value means.
 	CustomersStoreJSON = "json"
 	// CustomersStoreShadow imports the JSON into colony.db on first boot,
 	// writes every change to both, and keeps reading the JSON.
 	CustomersStoreShadow = "shadow"
 	// CustomersStoreColony reads person records and enrichment from
 	// colony.db and still writes the JSON, so switching back to json loses
-	// nothing.
+	// nothing. The default since #19972: a hive upgrading from the json
+	// default imports on its next boot (with .pre-colony backups) and falls
+	// back to json when the import fails.
 	CustomersStoreColony = "colony"
 )
 
+// DefaultCustomersStore is the store mode when neither HIVE_CUSTOMERS_STORE
+// nor customers.store names one.
+const DefaultCustomersStore = CustomersStoreColony
+
 // ParseCustomersStoreMode reads a store mode. An empty or unknown value is
-// not ok; the caller then falls back, so a typo can only mean json.
+// not ok; the caller then falls back.
 func ParseCustomersStoreMode(raw string) (string, bool) {
 	switch v := strings.ToLower(strings.TrimSpace(raw)); v {
 	case CustomersStoreJSON, CustomersStoreShadow, CustomersStoreColony:
@@ -88,18 +95,26 @@ func ParseCustomersStoreMode(raw string) (string, bool) {
 }
 
 // CustomersStoreMode is the customers store mode: HIVE_CUSTOMERS_STORE when
-// it names a known mode, then customers.store, then json. An unknown value
-// anywhere fails closed to json.
+// it names a known mode, then customers.store, then DefaultCustomersStore
+// (colony). A value that is set but unknown (a typo, or a mode from a newer
+// release) fails closed to json rather than to the default, so a mistyped
+// rollback can never move a hive onto colony.
 func (c *Config) CustomersStoreMode() string {
-	if v, ok := ParseCustomersStoreMode(os.Getenv(EnvCustomersStore)); ok {
+	env := os.Getenv(EnvCustomersStore)
+	if v, ok := ParseCustomersStoreMode(env); ok {
 		return v
 	}
+	saved := ""
 	if c != nil {
-		if v, ok := ParseCustomersStoreMode(c.Customers.Store); ok {
+		saved = c.Customers.Store
+		if v, ok := ParseCustomersStoreMode(saved); ok {
 			return v
 		}
 	}
-	return CustomersStoreJSON
+	if strings.TrimSpace(env) != "" || strings.TrimSpace(saved) != "" {
+		return CustomersStoreJSON
+	}
+	return DefaultCustomersStore
 }
 
 // EnvCustomersProfileFillEnabled overrides customers.profile_fill.enabled

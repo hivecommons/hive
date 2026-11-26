@@ -210,8 +210,16 @@ func (s *Scheduler) redPRFixSection(agentName string) string {
 	if err != nil {
 		data = nil
 	}
-	return formatRedPRFixDataWithTopics(data, base, github.CIFailureSignals().ForAgent(base), s.busyBranchChecker(base), s.topicClaimsFor(agentName))
+	section := formatRedPRFixDataWithTopics(data, base, github.CIFailureSignals().ForAgent(base), s.busyBranchChecker(base), s.topicClaimsFor(agentName))
+	// The formatter has no config; the level decides whether green CI merges
+	// the repaired PR or a maintainer does (hivecommons/hive#20044).
+	return strings.Replace(section, redPRFixMergeAfterGreenDefault, s.mergeAfterGreenSentence(agentName), 1)
 }
+
+// redPRFixMergeAfterGreenDefault is the fix-before-new section's "what happens
+// once it is green" clause at a level where the sweep merges agent PRs.
+// redPRFixSection swaps it for the hold-gated text at L3-L5.
+const redPRFixMergeAfterGreenDefault = "the sweep merges green PRs"
 
 // CIFailureKickMessage is the targeted kick a webhook CI-failure signal
 // sends to the owning agent: the same fix-before-new section a regular kick
@@ -470,7 +478,7 @@ func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CI
 	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR. Do NOT leave these\n")
 	b.WriteString("for a later cycle — every kick will re-list them until they are green.\n")
 	b.WriteString("After each push move on: do NOT watch, poll, or sleep on CI (no gh run watch/view loops) —\n")
-	b.WriteString("the sweep merges green PRs; infrastructure failures get one comment and a DEFER.\n\n")
+	b.WriteString(redPRFixMergeAfterGreenDefault + "; infrastructure failures get one comment and a DEFER.\n\n")
 	for i, pr := range mine {
 		if i >= redPRFixMaxDetailed {
 			b.WriteString(fmt.Sprintf("  … and %d more (full list: %s)\n", len(mine)-i, ciFailingPath))

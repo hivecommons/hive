@@ -1,0 +1,1 @@
+- Hive Chat config assist, phase 1: a new `chat.config_assist.enabled` flag (default off), an owner-only audited `PUT /api/config/chat/config-assist` toggle (`config_chat_assist`), and a one-line hint to owners who ask chat for a config change while it is off. No proposals yet (#19979, RFC #19788).

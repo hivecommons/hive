@@ -721,3 +721,44 @@ func TestColonyForgottenHiveUserCanReturn(t *testing.T) {
 		t.Fatalf("colony mode lost the dashboard user's profile: %+v, %v", p, ok)
 	}
 }
+
+// A hive upgraded from the json default boots straight into colony mode
+// (#19972), with no shadow release in between: the first boot imports both
+// files, keeps the .pre-colony copies as they stood, reads the same records
+// (hive-only data included), and a second boot imports nothing again.
+func TestColonyUpgradeFromJSONDefaultStraightToColony(t *testing.T) {
+	dir := fixtureDir(t)
+	clk := newClock()
+	b := bootColony(t, dir, StoreColony, clk)
+	for _, name := range []string{FileName, EnrichmentFileName} {
+		want, _ := os.ReadFile(filepath.Join("testdata", "colony", name))
+		got, err := os.ReadFile(filepath.Join(dir, name+PreColonySuffix))
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("%s backup = %v, want the file as it was before the import", name, err)
+		}
+	}
+	par, err := b.store.ColonyParity()
+	if err != nil || par.Mode != StoreColony || par.JSONPeople != 3 || par.ColonyPeople != 3 || par.Mismatches != 0 || par.Failures != 0 {
+		t.Fatalf("parity = %+v, %v", par, err)
+	}
+	p, err := b.store.Get(fixAda)
+	if err != nil || !p.HasTag(TagContributor) || p.Identity(KindDiscord) == "" || p.Profile.Organization.Value != "Initech" {
+		t.Fatalf("record after the upgrade boot = %+v, %v", p, err)
+	}
+	b.colony.mu.Lock()
+	first, _, _ := b.colony.db.Migration(colonyMigrationName)
+	b.colony.mu.Unlock()
+	if err := b.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+	again := bootColony(t, dir, StoreColony, clk)
+	again.colony.mu.Lock()
+	second, _, _ := again.colony.db.Migration(colonyMigrationName)
+	again.colony.mu.Unlock()
+	if !second.At.Equal(first.At) || second.Fingerprint != first.Fingerprint {
+		t.Fatalf("the import ran again: %+v then %+v", first, second)
+	}
+	if par, err := again.store.ColonyParity(); err != nil || par.ColonyPeople != 3 || par.Mismatches != 0 {
+		t.Fatalf("parity after the second boot = %+v, %v", par, err)
+	}
+}

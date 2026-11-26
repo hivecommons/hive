@@ -342,7 +342,7 @@ func (s *Sweeper) CloseOnMerge(ctx context.Context) []CloseOutcome {
 		}
 		self, err := api.Self(ctx)
 		if err != nil {
-			s.log().Warn("forgejo close-on-merge: token user unknown", "repo", repo, "error", err)
+			s.log().Warn("forgejo close-on-merge: token user unknown (if the token is limited to specific repositories, set forgejo.login to the token's own user)", "repo", repo, "error", err)
 			continue
 		}
 		pulls, err := api.RecentlyMergedPulls(ctx, repo, DefaultMergedPullsScanned)
@@ -350,6 +350,16 @@ func (s *Sweeper) CloseOnMerge(ctx context.Context) []CloseOutcome {
 			s.log().Warn("forgejo close-on-merge: listing merged pull requests failed", "repo", repo, "error", err)
 			continue
 		}
+		// self skips the permission check for its own pull requests and marks
+		// its own issues hive-authored, so it must hold write on the repo
+		// before it is trusted. Forgejo answers the permission API about
+		// another user only for an admin, so for a write-but-not-admin token
+		// a forgejo.login that names someone else fails here (#19994). For a
+		// repo or site admin token this only proves the login is a writer,
+		// which is why the docs say forgejo.login must be the token's own
+		// user. It is checked once per repo, at the first pull request that
+		// would close something.
+		selfChecked, selfTrusted := false, false
 		for _, pr := range pulls {
 			age := now.Sub(pr.MergedAt)
 			if age < DefaultCloseGrace || age > DefaultCloseMaxAge {
@@ -361,6 +371,17 @@ func (s *Sweeper) CloseOnMerge(ctx context.Context) []CloseOutcome {
 			refs := ClosingRefs(pr.Title + "\n" + pr.Body)
 			if len(refs) == 0 {
 				continue
+			}
+			if !selfChecked {
+				selfChecked = true
+				perm, err := api.Permission(ctx, repo, self)
+				selfTrusted = err == nil && writeAccess[perm]
+				if !selfTrusted {
+					s.log().Warn("forgejo close-on-merge: the hive's own user lacks write on the repo; check forgejo.login", "repo", repo, "login", self, "permission", perm, "error", err)
+				}
+			}
+			if !selfTrusted {
+				break
 			}
 			if !s.trustedAuthor(ctx, api, repo, self, pr.Author) {
 				continue

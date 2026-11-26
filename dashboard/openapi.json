@@ -31421,6 +31421,95 @@
         }
       }
     },
+    "/api/config/chat/config-assist": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get chat config assist toggle",
+        "description": "Returns chat.config_assist.enabled (default off, RFC #19788 phase 1) and whether a grounded-answers runner is attached.",
+        "responses": {
+          "200": {
+            "description": "Chat config assist state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "runner_attached": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set chat config assist toggle",
+        "description": "Sets chat.config_assist.enabled. An absent enabled key changes nothing. Persisted and audited as config_chat_assist with before/after values. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated (or unchanged) toggle state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "changed": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "409": {
+            "description": "No config source path: the change could not be persisted"
+          },
+          "500": {
+            "description": "Failed to persist the setting"
+          },
+          "503": {
+            "description": "Config unavailable"
+          }
+        }
+      }
+    },
     "/api/config/convergence": {
       "get": {
         "tags": [

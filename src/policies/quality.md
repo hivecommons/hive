@@ -26,8 +26,9 @@ merge it and re-check before diagnosing anything), `FIX_DIFF` (the PR's own
 diff is at fault), `NOT_REACHABLE_FORK` (the head is in a fork — you cannot
 push; comment with the finding, never push a branch of that name), or
 `RERUN_BASELINE` (the default branch's green is stale and every red sibling
-is behind it — re-run the check on the default branch, or diagnose by hand;
-do not repair PRs against it).
+is behind it — diagnose by hand, or ask a maintainer once, on the
+`[shared-ci]` incident or the PR, for a fresh default-branch run (you cannot
+re-run CI); do not repair PRs against it).
 
 A shared result is **one repository incident, not one failure per PR**. Stop
 PR-specific retries. Create or reuse the single open issue with the stable title

@@ -675,6 +675,14 @@ func (p *GitHubProxy) forwardPlainDirect(conn net.Conn, r *http.Request) {
 	// which is logged as such rather than guessed at.
 	agentName := p.identifyAgentFromConn(conn, r)
 
+	// Origin-form requests (for example a health probe sent to the proxy
+	// listener) do not name a proxy destination. Do not infer one from Host:
+	// this listener is a forward proxy, not an origin server.
+	if !r.URL.IsAbs() || r.URL.Host == "" {
+		_, _ = fmt.Fprint(conn, "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nproxy requests must use an absolute URL\n")
+		return
+	}
+
 	stripRelayRequestHeaders(r)
 
 	resp, err := p.plainForwardTransport().RoundTrip(r)

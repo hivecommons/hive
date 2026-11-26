@@ -1,0 +1,1 @@
+- Refresh headless contributor model detection during and after each task, record terminal model reports, and count attributed PRs whose trailers are followed by recognized footer lines.

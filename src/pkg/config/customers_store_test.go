@@ -6,15 +6,39 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The store mode defaults to json, an unknown value fails closed to json,
-// and the env wins over the saved value only when it names a known mode.
+// The store mode defaults to colony (#19972), an unknown value fails closed
+// to json, and the env wins over the saved value only when it names a known
+// mode.
 func TestCustomersStoreMode(t *testing.T) {
 	t.Setenv(EnvCustomersStore, "")
 	for _, cfg := range []*Config{nil, {}} {
-		if got := cfg.CustomersStoreMode(); got != CustomersStoreJSON {
-			t.Fatalf("default mode = %q, want json", got)
+		if got := cfg.CustomersStoreMode(); got != CustomersStoreColony {
+			t.Fatalf("default mode = %q, want colony", got)
 		}
 	}
+	if DefaultCustomersStore != CustomersStoreColony {
+		t.Fatalf("DefaultCustomersStore = %q, want colony", DefaultCustomersStore)
+	}
+	// An explicit json keeps working after the flip, from the file and from
+	// the env.
+	if got := (&Config{Customers: CustomersConfig{Store: "json"}}).CustomersStoreMode(); got != CustomersStoreJSON {
+		t.Fatalf("saved json = %q, want json", got)
+	}
+	t.Setenv(EnvCustomersStore, "JSON")
+	if got := (&Config{}).CustomersStoreMode(); got != CustomersStoreJSON {
+		t.Fatalf("env json = %q, want json", got)
+	}
+	// A set but unknown env with nothing saved fails closed to json, not to
+	// the colony default.
+	t.Setenv(EnvCustomersStore, "colony_only_typo")
+	if got := (&Config{}).CustomersStoreMode(); got != CustomersStoreJSON {
+		t.Fatalf("unknown env with nothing saved = %q, want json", got)
+	}
+	t.Setenv(EnvCustomersStore, "   ")
+	if got := (&Config{}).CustomersStoreMode(); got != CustomersStoreColony {
+		t.Fatalf("blank env = %q, want the colony default", got)
+	}
+	t.Setenv(EnvCustomersStore, "")
 	cfg := &Config{Customers: CustomersConfig{Store: "Shadow"}}
 	if got := cfg.CustomersStoreMode(); got != CustomersStoreShadow {
 		t.Fatalf("saved mode = %q, want shadow", got)

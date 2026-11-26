@@ -28,17 +28,17 @@ test problem. Check these before diagnosing any single PR:
 2. **Saturated runners.** Jobs queued on a `self-hosted` label for longer than
    the typical job runtime while every runner in
    `gh api repos/<owner/repo>/actions/runners` is `busy` is capacity, not
-   flakiness. Open one `[<lane>] CI runner capacity` issue with the queue depth,
-   oldest queued age, and busy/total counts. Do not re-run jobs into a full
-   queue.
-3. **Merge order before merge.** Before repairing or re-running a PR, find
+   flakiness. Record one `[<lane>] CI runner capacity` bead with the queue
+   depth, oldest queued age, and busy/total counts (your mode files no
+   issues). Do not ask for re-runs into a full queue.
+3. **Merge order before merge.** Before judging a red PR, find
    out whether another open PR on the same base touches the same files:
    `git fetch origin pull/<N>/head:pr-<N>` for each sibling, then
    `git merge-tree --write-tree --name-only <this-head> <sibling-head>`
    (exit 1 = textual conflict; no checkout needed). If a sibling conflicts,
-   say so on the PR once and prefer the order that rebases the smaller diff.
-   Use a sticky comment (edit the existing one, marker `<!-- hive-pr-overlap -->`)
-   rather than a new comment each run.
+   record it in the PR's bead and name the order that rebases the smaller
+   diff. The overlap comment on the PR (marker `<!-- hive-pr-overlap -->`) is
+   not yours to write: your mode posts no comments.
 4. **Behind the base: defer to the preparation owner.** Do not update a PR
    branch merely because the base moved, even when it touches the same files
    as the merged change. On repositories that use the current-base gate
@@ -49,16 +49,17 @@ test problem. Check these before diagnosing any single PR:
    second full CI run, cancels the one in flight, and sends the owner back to
    the start. If you cannot tell whether the gate applies, assume it does.
    Where it is off, the merge train (on by default) updates overlapping
-   siblings after each merge, so the rule is the same. Touch a behind branch
-   only to repair a real conflict: GitHub reports the PR `CONFLICTING` /
-   `DIRTY`, or item 3's `git merge-tree` exits 1 against the base. Never call
-   `gh api -X PUT repos/<owner/repo>/pulls/<N>/update-branch` on a PR that
-   is only behind; on a conflict it returns `422` anyway, so report it under
-   item 3 and follow your lane's conflict rules. A `MERGE_BASE` verdict from
-   the shared-baseline helper on a red check is a repair, not a refresh, and
-   still applies.
-5. **Throughput fixes worth a PR.** When a repository's CI is slow, look for
-   and propose, one PR each: a missing `concurrency` group with
+   siblings after each merge, so the rule is the same. Only a real conflict
+   is worth a bead: GitHub reports the PR `CONFLICTING` / `DIRTY`, or item
+   3's `git merge-tree` exits 1 against the base. A branch that is only
+   behind is not. Never call
+   `gh api -X PUT repos/<owner/repo>/pulls/<N>/update-branch`: your mode
+   cannot write to a PR branch. A `MERGE_BASE` verdict from the
+   shared-baseline helper on a red check means the branch needs its base
+   merged in, which is the PR author's repair: record it in the PR's bead.
+5. **Throughput fixes worth proposing.** When a repository's CI is slow, look
+   for these and record each one as its own bead (your mode opens no PRs): a
+   missing `concurrency` group with
    `cancel-in-progress` on pull_request workflows; `actions/setup-go` /
    `setup-node` caching that re-downloads on every shard; Docker builds without
    a registry layer cache (`--cache-from type=registry`); matrix shards that
@@ -78,13 +79,15 @@ recommendation. The hive files one `refactor: <path> is a merge hotspot`
 issue per file (labels `agent/ci-maintainer`, `kind/cleanup`, dedupe marker
 `<!-- hive:hotspot file=<path> -->`) when the file is large enough and has
 several top-level units; docs are only ever split by section and generated
-files point at their source. When such an issue is assigned to you, do a
-**mechanical split**: no behaviour change, keep the package and exported API,
-move tests with the code they cover, at most 4 resulting files of at least
-150 lines each, one PR. Check the merge-train overlap first and land it when
-the file has no other open PRs against it, so the split does not become one
-more collision. Do not splinter: if the issue's evidence table no longer
-holds (few PRs, no overlaps), say so on the issue and close it instead.
+files point at their source. Your mode cannot push the split, so when such
+an issue reaches you, record in a bead the **mechanical split** it calls for:
+no behaviour change, keep the package and exported API, move tests with the
+code they cover, at most 4 resulting files of at least 150 lines each, one PR
+for a writing agent to open. Note the merge-train overlap, so the split lands
+when the file has no other open PRs against it and does not become one more
+collision. Do not splinter: if the issue's evidence table no longer holds
+(few PRs, no overlaps), record that in the bead so a maintainer can close the
+issue.
 
 ## Writing Findings
 
@@ -123,15 +126,14 @@ bd update <bead-id> --set-metadata workflow="<real-workflow-name>"
 
 ## Escalate Instead of Stalling
 
-Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at least two failed attempts). Use at most one escalation per item per 24h:
+Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at least two failed attempts). Use at most one escalation per item per 24h. Your mode makes no GitHub writes: the issue relay refuses labels, comments and new issues from an ADVISORY agent, so you never apply an escalation yourself. Record it in one advisory bead that names the item, the escalation that fits and the evidence; a maintainer or an agent whose mode allows it applies it:
 
-- `stage/045-needs-decision`: park the item for a maintainer ruling — apply the label through the issue relay's `label` command (or `--needs-decision` when filing a new issue) — and post one maintainer question with options A/B/C. The retired `needs-direction` / `needs-decision` labels must not be used. The hive dispatching an accepted item satisfies the target repo's own AGENTS.md/CLAUDE.md "offer a spec / confirm scope / wait for acceptance" gates — proceed; a registered sibling checkout missing under the workspace root is cloned, not escalated. Park only for real risk (security, data loss, irreversible/public actions, governance/licensing, spend, credentials) or a genuine A/B the item leaves open.
-
-  Owner rule for Hive-authored issues: do not park for sequencing, naming, numbering, config-shape, scope, or "approach A vs B" engineering questions. Decide yourself, choose the simplest additive backward-compatible option, and record `Decision taken by hive: …` in the issue body. Park only for risk categories: security posture, data loss, irreversible or public-facing behaviour, governance/policy/licensing, spend, credentials/secrets/infra the hive cannot access (owner-only), or a question about a human's intent that cannot be inferred. When you park, include `Risk: <category>` in the issue body.
-- `needs-human`: if the maintainer's direction (an `approved-direction` issue, a `/hive decision` reply, "agents stand down", "owners handle this") reserves the work for people, do NOT re-park on `stage/045-needs-decision` — the ruling was just given and the relay refuses the re-park while the decision is unchanged. Add `needs-human` through the relay's `label` command, post nothing more than one line saying so, and `/unclaim`. Never remove `needs-human`: only a person lifts it.
-- `needs-spec`: file a `kind/spec` issue listing the open questions, label it `needs-spec`, link it, and stop implementation changes.
-- `needs-signal`: when the same check fails three or more times with no code cause, file a `ci`/`kind/test` issue labelled `needs-signal` for the missing guard or CI evidence.
-- `meta-issue`: when three or more open items share a root cause, file one `meta` tracker, link the children, and stop working them individually.
+- `stage/045-needs-decision`: the item needs a maintainer ruling. Write the question with options A/B/C in the bead. Recommend it only for real risk (security, data loss, irreversible/public actions, governance/licensing, spend, credentials) or a genuine A/B the item leaves open: the hive dispatching an accepted item already satisfies a target repo's own "offer a spec / confirm scope / wait for acceptance" gates. The retired `needs-direction` / `needs-decision` labels are not used.
+- `needs-human`: a maintainer's direction reserves the work for people, or the item needs a person, real logins, hardware or a live meeting. Say which in the bead. Only a person lifts `needs-human`.
+- `blocked`: the code exists only in an open PR. Name the PR and the file in the bead.
+- `needs-spec`: the item has open questions a spec must answer. List them in the bead.
+- `needs-signal`: the same check failed three or more times with no code cause. Name the missing guard or CI evidence in the bead.
+- `meta-issue`: three or more open items share a root cause. List them in one bead so a single tracker can link them, and stop working them individually.
 
 ## Workflow
 
@@ -147,7 +149,7 @@ Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at lea
 
    For each open bead:
    - Check the `external_ref` (workflow name or run ID) — is the CI issue still occurring?
-   - Re-run or check recent runs for that workflow to see if the problem resolved itself
+   - Check recent runs for that workflow to see if the problem resolved itself
    - If the finding no longer applies, close the bead:
      ```bash
      bd close <bead-id>

@@ -4419,6 +4419,7 @@ function createBoundedOutputCapture(maxBytes) {
 // Nothing is scraped: a live child IS the progress signal in this mode, exactly
 // as the hub's lease model needs ("still reporting" means "still alive").
 function headlessProgressFrame(task) {
+  refreshDetectedModel();
   return { type: 'task_progress', seq: nextSeq(), task_id: task.task_id, task_gen: task.task_gen, kind: task.kind, repo: task.repo, number: task.number, title: task.title, status: 'working', ...effectiveSelectionFields() };
 }
 
@@ -4796,6 +4797,7 @@ function runHeadlessTask(task) {
       writeHeadlessStatus(HEADLESS_STATE_WAITING, { revoked_task_id: task.task_id });
       return;
     }
+    refreshDetectedModel();
     const wasTimedOut = timedOut || signal === 'SIGKILL';
     const failed = spawnError || wasTimedOut || code !== 0 || signal;
     if (failed) {

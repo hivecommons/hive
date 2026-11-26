@@ -35,7 +35,8 @@ func TestSupervisorPolicyDoesNotInstructKicks(t *testing.T) {
 		"the `hive` binary",
 		"`pluk-send`",
 		"tmux",
-		"record it in one advisory bead with the agent name and the evidence, and stop",
+		"record it in one advisory bead with the agent name and the evidence, and do nothing further for that agent",
+		"beads are the only channel you use to do it",
 	}
 
 	for _, name := range supervisorPolicyTemplates {
