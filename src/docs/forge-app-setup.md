@@ -249,13 +249,14 @@ cannot be read.
 
 `forgejo.integration` covers git clone and push only. Work discovery, the
 issue and pull request relays, merges and both sweeps still call the Forgejo
-REST API with the `forgejo.token_env` access token, so keep that token set
+REST API with the access token from `forgejo.token_env` or
+`forgejo.token_file`, so keep that token set
 ([#19920](https://github.com/hivecommons/hive/issues/19920) tracks moving
 REST to the JWTs too). The hive writes labels, comments and merges with it,
 so it needs `write:repository` and `write:issue`; the live end-to-end run in
 [#19909](https://github.com/hivecommons/hive/issues/19909) used
-`write:repository,write:issue,read:user,read:organization`. An unset token
-fails with an error that names the variable.
+`write:repository,write:issue,read:user,read:organization`. An unset
+`token_env` variable fails with an error that names it.
 
 #### Rotate the signing key
 
