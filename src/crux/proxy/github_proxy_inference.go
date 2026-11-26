@@ -480,13 +480,13 @@ func (p *GitHubProxy) inferenceTranslatorHandlerFor(identify func(*http.Request)
 			p.recordInferenceResponseError(route, agentName, upstreamURL, resp, errBody)
 			backendMsg := inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server"))
 			p.recordAgentInferenceError(agentName, backendMsg, resp.StatusCode)
-			if failStream(resp.StatusCode, backendMsg) {
+			status, errorType := inferenceAnthropicErrorStatus(resp.StatusCode, errBody)
+			if failStream(status, backendMsg) {
 				return
 			}
-			anthropicErr := fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`,
-				jsonEscape(backendMsg))
+			anthropicErr := fmt.Sprintf(`{"type":"error","error":{"type":"%s","message":"%s"}}`, errorType, jsonEscape(backendMsg))
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(resp.StatusCode)
+			w.WriteHeader(status)
 			_, _ = w.Write([]byte(anthropicErr))
 			return
 		}
@@ -700,24 +700,24 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	}
 	applyInferenceIdleTimeout(p.logger, resp, agentName, route)
 	defer func() { _ = resp.Body.Close() }()
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		errBody, _ := io.ReadAll(resp.Body)
 		p.recordInferenceResponseError(route, agentName, upstreamURL, resp, errBody)
 		backendMsg := inferenceBackendErrorMessage(resp.StatusCode, errBody, upstreamURL, resp.Header.Get("Server"))
 		p.recordAgentInferenceError(agentName, backendMsg, resp.StatusCode)
+		status, errorType := inferenceAnthropicErrorStatus(resp.StatusCode, errBody)
 		if stream != nil {
-			stream.fail(resp.StatusCode, backendMsg)
+			stream.fail(status, backendMsg)
 			return
 		}
 		anthropicErr := &http.Response{
-			StatusCode: resp.StatusCode,
+			StatusCode: status,
 			ProtoMajor: 1,
 			ProtoMinor: 1,
 			Header:     http.Header{"Content-Type": []string{"application/json"}},
 			Body: io.NopCloser(strings.NewReader(fmt.Sprintf(
-				`{"type":"error","error":{"type":"api_error","message":"%s"}}`,
-				jsonEscape(backendMsg)))),
+				`{"type":"error","error":{"type":"%s","message":"%s"}}`,
+				errorType, jsonEscape(backendMsg)))),
 		}
 		_ = anthropicErr.Write(conn)
 		return
