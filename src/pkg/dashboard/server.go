@@ -136,6 +136,9 @@ type Server struct {
 	// (api_chat_grounded.go); created lazily by chatGroundedSlots.
 	chatGroundedOnce     sync.Once
 	chatGroundedInflight chan struct{}
+	// chatConfigProposals holds pending chat config proposals (#19978).
+	// In memory only: a restart drops them.
+	chatConfigProposals chatConfigProposalStore
 
 	// matrix is the dashboard.matrix line source (matrix_source.go); nil
 	// until MatrixObserver is called with an active config.
