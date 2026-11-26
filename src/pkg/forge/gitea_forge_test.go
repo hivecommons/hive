@@ -519,7 +519,7 @@ func TestGiteaAddLabels(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[]`))
+		_, _ = w.Write([]byte(`[{"name":"kind/bug"},{"name":"hold"}]`))
 	}))
 	defer srv.Close()
 
@@ -551,6 +551,19 @@ func TestGiteaAddLabels(t *testing.T) {
 	}
 	if len(payload.Labels) != 2 || payload.Labels[0] != "kind/bug" {
 		t.Errorf("labels = %v", payload.Labels)
+	}
+}
+
+func TestGiteaAddLabelsReportsDroppedNames(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`[{"name":"kind/bug"}]`))
+	}))
+	defer srv.Close()
+	f := newTestGitea(t, srv.URL, "hivecommons")
+
+	err := f.AddLabels(context.Background(), "hive", 7, []string{"kind/bug", "no-such-label"})
+	if err == nil || !strings.Contains(err.Error(), "no-such-label") {
+		t.Fatalf("err = %v, want it to name no-such-label", err)
 	}
 }
 
@@ -596,7 +609,7 @@ func TestGiteaSetHold(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		lastBody = string(b)
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[]`))
+		_, _ = w.Write([]byte(`[{"name":"hold"}]`))
 	}))
 	defer srv.Close()
 
