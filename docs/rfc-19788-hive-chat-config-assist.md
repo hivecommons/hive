@@ -275,7 +275,8 @@ click and the same endpoint. It fails with `409` if the section changed since.
 | `chat_config_declined` | owner dismissed the card | proposal id |
 | `config_agent_<section>` (existing) | the dialog save (3a) or Apply (3b) | existing detail plus `via=chat`, `proposal=<id>`, and before/after values for the changed field |
 | `chat_config_apply_failed` | Apply got non-2xx (3b) | proposal id, status, reason |
-| `chat_config_undo` | owner applied an Undo | proposal id of the undo, id of the proposal it reverses |
+| `chat_config_applied` | Apply got a 2xx (3b) | proposal id, section, field, `before_fp` and `after_fp` value fingerprints (truncated SHA-256, never the values) |
+| `chat_config_undo` | owner applied an Undo | proposal id of the undo, id of the proposal it reverses, section, field, `before_fp` and `after_fp` |
 | `config_chat_assist` | Settings toggle saved | before and after `enabled` |
 
 Phase 2 also adds before/after values to the plain `config_agent_general` and

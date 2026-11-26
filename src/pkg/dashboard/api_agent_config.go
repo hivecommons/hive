@@ -939,6 +939,10 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
 		if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
 			s.logger.Error("failed to persist agent overlay after update", "agent", name, "error", err)
+			s.AddSystemAlert("agent-field-save-failed", "error",
+				"Could not save the settings for "+name+" to its agent overlay; they will revert on the next config load: "+err.Error())
+		} else {
+			s.ClearSystemAlert("agent-field-save-failed")
 		}
 	}
 	// Apply model/backend live so the change takes effect immediately and isn't

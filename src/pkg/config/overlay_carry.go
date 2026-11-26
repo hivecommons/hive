@@ -74,6 +74,14 @@ var overlaySeedOwnedKeys = map[string]string{
 	"hive_id":    "the hive id is assigned at provisioning",
 }
 
+// IsSeedOwnedKey reports whether key is a top-level config key owned by the
+// config file, the hub or provisioning (overlaySeedOwnedKeys), which no
+// dashboard write path may change. The chat config Apply refuses it (#19985).
+func IsSeedOwnedKey(key string) bool {
+	_, owned := overlaySeedOwnedKeys[key]
+	return owned
+}
+
 // preservedOverlayBlock is one top-level overlay entry the in-memory config
 // cannot represent (unknown key, or a value that does not decode). value is
 // the pre-expansion node, so no expanded secret is ever written back.
