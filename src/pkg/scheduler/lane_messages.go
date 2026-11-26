@@ -137,7 +137,7 @@ func (s *Scheduler) buildSupervisorMessage(actionable *github.ActionableResult) 
 	b.WriteString("⛔ NEVER launch background fix agents — that is scanner's job.\n\n")
 
 	b.WriteString("YOUR RESPONSIBILITIES:\n")
-	b.WriteString("  1. Check all agent tmux panes — are they working or stuck at a prompt?\n")
+	b.WriteString("  1. Check agent health from beads and recent activity — are they working or stuck?\n")
 	b.WriteString("  2. Check if agents are idle when they should be working (queue > 0 but agent idle)\n")
 	b.WriteString("  3. Report agent health: running/stuck/crashed/idle/rate-limited\n")
 	b.WriteString("  4. Flag stale agents that haven't produced output in > 1 cadence cycle\n")
