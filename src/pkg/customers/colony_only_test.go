@@ -392,3 +392,167 @@ func TestRenameMigratedNeverOverwrites(t *testing.T) {
 		t.Errorf("migrated files = %v, want two kept", matches)
 	}
 }
+
+// Merge and unmerge in colony-only: the merged person's record is emptied,
+// the identity moves, and both survive a restart exactly.
+func TestColonyOnlyMergeAndUnmerge(t *testing.T) {
+	dir := fixtureDir(t)
+	clk := newClock()
+	b := bootColony(t, dir, StoreColonyOnly, clk)
+	if _, err := b.store.Merge(fixAda, fixBea, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	b.colony.mu.Lock()
+	owner, err := b.colony.db.FindByIdentity(cstore.KindGitHub, "bea-sample")
+	stripped, _ := b.colony.db.Get(fixBea)
+	b.colony.mu.Unlock()
+	if err != nil || owner.ID != fixAda {
+		t.Fatalf("after merge the login belongs to %q (%v), want %s", owner.ID, err, fixAda)
+	}
+	if stripped.Status != colonyStatusRemoved || len(stripped.Identities) != 0 || len(stripped.Attachments) != 0 {
+		t.Errorf("merged-away record = %+v, want emptied", stripped)
+	}
+	if err := b.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+	again := bootColony(t, dir, StoreColonyOnly, clk)
+	if len(again.store.People()) != 2 {
+		t.Fatalf("people after restart = %d, want 2 (bea merged into ada)", len(again.store.People()))
+	}
+	if _, _, err := again.store.Unmerge(fixAda, fixBea); err != nil {
+		t.Fatal(err)
+	}
+	again.colony.mu.Lock()
+	owner, err = again.colony.db.FindByIdentity(cstore.KindGitHub, "bea-sample")
+	again.colony.mu.Unlock()
+	if err != nil || owner.ID != fixBea {
+		t.Fatalf("after unmerge the login belongs to %q (%v), want %s", owner.ID, err, fixBea)
+	}
+}
+
+// A colony write that fails is returned and changes nothing, in memory or
+// on disk: colony-only never loses a change silently.
+func TestColonyOnlyFailedWriteChangesNothing(t *testing.T) {
+	dir := fixtureDir(t)
+	clk := newClock()
+	b := bootColony(t, dir, StoreColonyOnly, clk)
+	if err := b.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.store.SetNotes(fixBea, "lost?"); err == nil {
+		t.Fatal("a write with colony.db closed succeeded")
+	}
+	if bea, _ := b.store.Get(fixBea); bea.Notes == "lost?" {
+		t.Error("a failed write changed the store in memory")
+	}
+	if err := b.enrich.SetSource(fixBea, EnrichSourceGitdm, nil, nil, clk.now()); err == nil {
+		t.Error("an enrichment write with colony.db closed succeeded")
+	}
+	mustNotExist(t, filepath.Join(dir, FileName))
+	mustNotExist(t, filepath.Join(dir, EnrichmentFileName))
+}
+
+// Enrichment removed in colony-only leaves colony.db, and an answer that
+// does not round-trip is kept exactly in the fallback attachment.
+func TestColonyOnlyEnrichmentRemoveAndFallback(t *testing.T) {
+	dir := fixtureDir(t)
+	clk := newClock()
+	b := bootColony(t, dir, StoreColonyOnly, clk)
+	if err := b.enrich.Delete(fixAda); err != nil {
+		t.Fatal(err)
+	}
+	ada := colonyPerson(t, b.colony, fixAda)
+	if len(ada.Answers) != 0 {
+		t.Errorf("answers after delete = %+v", ada.Answers)
+	}
+	for _, f := range ada.Facts {
+		if isEnrichmentField(f.Field) {
+			t.Errorf("enrichment fact after delete: %s", f.Field)
+		}
+	}
+
+	// A confidence colony has no value for does not round-trip.
+	odd := PersonEnrichment{Affiliations: []EnrichedAffiliation{{Org: "Odd Org", Source: EnrichSourceGitdm, Confidence: "certain"}},
+		FetchedAt: map[string]time.Time{EnrichSourceGitdm: clk.now()}}
+	b.colony.mu.Lock()
+	err := b.colony.db.Batch(func(bt *cstore.Batch) error {
+		return colonyWriteEnrichment(bt, fixBea, odd, true, clk.now())
+	})
+	bea, _ := b.colony.db.Get(fixBea)
+	b.colony.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := bea.Attachments[colonyAttachEnrichment]; !ok {
+		t.Fatal("an enrichment entry that does not round-trip has no fallback attachment")
+	}
+	if got, ok, err := enrichmentFromColonyPerson(bea); err != nil || !ok || !sameJSON(got, odd) {
+		t.Errorf("fallback read = %+v, %v, %v; want the entry exactly", got, ok, err)
+	}
+}
+
+func TestColonyOnlyDecodeErrors(t *testing.T) {
+	if _, _, err := personFromColony(cstore.Person{Attachments: map[string]json.RawMessage{colonyAttachPerson: json.RawMessage(`[]`)}}); err == nil {
+		t.Error("a damaged hive.person attachment decoded")
+	}
+	newer, _ := json.Marshal(colonyPersonExt{Version: colonyOnlyVersion + 1})
+	if _, _, err := personFromColony(cstore.Person{Attachments: map[string]json.RawMessage{colonyAttachPerson: newer}}); err == nil {
+		t.Error("a hive.person attachment from a newer release decoded")
+	}
+	if _, ok, err := personFromColony(cstore.Person{ID: "p_x"}); ok || err != nil {
+		t.Errorf("a record with no attachment: ok=%v err=%v", ok, err)
+	}
+	if _, _, err := enrichmentFromColonyPerson(cstore.Person{Attachments: map[string]json.RawMessage{colonyAttachEnrichment: json.RawMessage(`"x"`)}}); err == nil {
+		t.Error("a damaged hive.enrichment attachment decoded")
+	}
+	if _, ok, _ := enrichmentFromColonyPerson(cstore.Person{}); ok {
+		t.Error("a record with no answers holds enrichment")
+	}
+	// Entries colony would refuse are left out of the answers.
+	pe := PersonEnrichment{
+		Affiliations: []EnrichedAffiliation{{Org: " ", Source: EnrichSourceGitdm}, {Org: "x", Source: ""},
+			{Org: "Back", From: "2024-01-01", Until: "2020-01-01", Source: EnrichSourceGitdm}},
+		Activity: []EnrichedActivity{{Project: "", Source: EnrichSourceDevstats}, {Project: "p", Contributions: -1, Source: EnrichSourceDevstats},
+			{Project: "p", Contributions: 1, URL: "ftp://x", Source: EnrichSourceDevstats}},
+	}
+	answers := colonyAnswers(pe)
+	if len(answers) != 2 || len(answers[0].Affiliations) != 0 || len(answers[1].Activity) != 1 || answers[1].Activity[0].URL != "" {
+		t.Errorf("answers = %+v", answers)
+	}
+}
+
+func TestColonyExportAndRestoreEdges(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := ExportColony(dir, "", false); err == nil {
+		t.Error("export with no colony.db succeeded")
+	}
+	if ok, err := RestoreFromColony(dir, nil); ok || err != nil {
+		t.Errorf("restore with no colony.db = %v, %v", ok, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(`{"version":1}`), storeFileMode); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := RestoreFromColony(dir, nil); ok || err != nil {
+		t.Errorf("restore with people.json present = %v, %v", ok, err)
+	}
+}
+
+// shadow writes the full answers too, and drops one when its source goes.
+func TestColonyShadowWritesAndDropsAnswers(t *testing.T) {
+	dir := fixtureDir(t)
+	b := bootColony(t, dir, StoreShadow, newClock())
+	ada := colonyPerson(t, b.colony, fixAda)
+	if _, ok := ada.Answer(colonyAnswerSource(EnrichSourceDevstats)); !ok {
+		t.Fatal("the shadow import wrote no devstats answer")
+	}
+	if _, err := b.enrich.DropSource(EnrichSourceDevstats); err != nil {
+		t.Fatal(err)
+	}
+	ada = colonyPerson(t, b.colony, fixAda)
+	if _, ok := ada.Answer(colonyAnswerSource(EnrichSourceDevstats)); ok {
+		t.Error("a dropped source's answer is still in colony.db")
+	}
+	if _, ok := ada.Answer(colonyAnswerSource(EnrichSourceGitdm)); !ok {
+		t.Error("dropping one source removed another's answer")
+	}
+}
