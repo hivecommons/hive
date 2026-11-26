@@ -32,7 +32,8 @@ type Boundary struct {
 	Mode     func() string
 	// OnStuck, when set, is called each time Execute refuses an effect because
 	// its journaled operation has been unresolved for at least StuckAfter
-	// (DefaultStuckAfter when zero). The caller keeps retrying the same
+	// (DefaultStuckAfter when zero), or for at least its kind's UnresolvedTTL
+	// when that is longer, since such an op expires on its own. The caller keeps retrying the same
 	// logical ID forever otherwise (observed on a live hive: one Unknown op,
 	// 175 refused retries over six hours), so this is the queue-health hook.
 	OnStuck func(op Operation, age time.Duration)
@@ -207,7 +208,8 @@ func (b *Boundary) Execute(ctx context.Context, claim effects.Claim, effect func
 }
 
 // noteStuck reports the unresolved operation behind a refused retry through
-// OnStuck once it has been unresolved for StuckAfter.
+// OnStuck once it has been unresolved for StuckAfter, or for its kind's
+// unresolved TTL when that is longer.
 func (b *Boundary) noteStuck(executor Executor, logicalID string) {
 	if b.OnStuck == nil || executor.Journal == nil {
 		return
@@ -219,6 +221,15 @@ func (b *Boundary) noteStuck(executor Executor, logicalID string) {
 	after := b.StuckAfter
 	if after <= 0 {
 		after = DefaultStuckAfter
+	}
+	// A kind with an unresolved TTL is not stuck while it is inside that TTL:
+	// the first refused retry past it expires the op (expireRefused runs
+	// before this), so only an op still refused after its TTL - the expiry
+	// itself failed - needs an operator. Reporting it earlier filed a fleet
+	// issue for every issue create whose caller retried between StuckAfter
+	// and the TTL, a condition the boundary clears on its own.
+	if ttl := b.unresolvedTTL(op.Effect.Kind); ttl > after {
+		after = ttl
 	}
 	age := executor.now().Sub(op.UpdatedAt)
 	if age < after {
