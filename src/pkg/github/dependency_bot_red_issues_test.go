@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
@@ -71,7 +73,7 @@ func TestRenderDependencyBotRedIssueBody(t *testing.T) {
 		"The Renovate pull request #42 fails `build`, `test`",
 		"`Update module example.com/lib to v2`",
 		"https://github.com/o/r/actions/runs/1/job/2",
-		"`main` at `fedcba987654`, where the newest run of each of these checks passed, finishing after this head's failing run started.",
+		"`main` at `fedcba987654`, where the newest run of each of these checks passed after this head's failing run started.",
 		"The head already contains that base commit",
 		"```text\nbuild: missing target \u2039gen code\u203a\ntest: '''break'''\n```",
 		"Fix the repository so this bump passes; do not edit the bot's branch. Once the fix is on `main`, tick the box.",
@@ -236,7 +238,7 @@ func TestDependencyBotRedRunFacts(t *testing.T) {
 		// reproduced.
 		"lint": `[
 			{"id":3,"name":"lint","head_sha":"h1","status":"completed","conclusion":"failure","started_at":"2026-11-25T10:00:00Z","completed_at":"2026-11-25T10:30:00Z","check_suite":{"id":20}},
-			{"id":4,"name":"lint","head_sha":"h1","status":"completed","conclusion":"failure","started_at":"2026-11-25T11:00:00Z","completed_at":"2026-11-25T11:30:00Z","check_suite":{"id":21}}]`,
+			{"id":4,"name":"lint","head_sha":"h1","status":"completed","conclusion":"failure","started_at":"2026-11-25T11:00:00Z","completed_at":"2026-11-25T11:30:00Z","check_suite":{"id":21},"app":{"slug":"other-ci"}}]`,
 		// Two same-named failing runs in one suite that overlap in time (a
 		// matrix, or duplicate names in one attempt): not reproduced.
 		"matrix": `[
@@ -258,6 +260,7 @@ func TestDependencyBotRedRunFacts(t *testing.T) {
 		case r.URL.Path == "/repos/acme/widgets/check-runs/2/annotations":
 			_, _ = io.WriteString(w, `[
 				{"annotation_level":"failure","message":"undefined: lib.OldName\nmore detail"},
+				{"annotation_level":"failure","message":"`+strings.Repeat("x", 290)+` ghp_supersecrettokenvalue000000000000 tail"},
 				{"annotation_level":"warning","message":"Node 16 is deprecated"},
 				{"annotation_level":"failure","message":"Process completed with exit code 1."}]`)
 		case strings.HasPrefix(r.URL.Path, "/repos/acme/widgets/check-runs/"):
@@ -274,11 +277,21 @@ func TestDependencyBotRedRunFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if b := got["build"]; !b.Reproduced || b.Passed || !b.FailureStartedAt.Equal(time.Date(2026, 11, 25, 11, 0, 0, 0, time.UTC)) ||
-		len(b.Errors) != 1 || b.Errors[0] != "undefined: lib.OldName" {
-		t.Fatalf("build = %+v, want reproduced in one suite, the newest start, and only the real error", b)
+		len(b.Errors) != 2 || b.Errors[0] != "undefined: lib.OldName" {
+		t.Fatalf("build = %+v, want reproduced in one suite, the newest start, and only the real errors", b)
+	}
+	// Masked before the 300-byte cut: no prefix of the token survives the
+	// cut.
+	if e := got["build"].Errors[1]; strings.Contains(e, "ghp_") || len(e) > 300 {
+		t.Fatalf("annotation not masked before the cut: %q", e)
 	}
 	if l := got["lint"]; l.Reproduced || l.Passed {
 		t.Fatalf("lint = %+v, want failures in different suites not to count", l)
+	}
+	// The newest failing run's id is its Actions job's, unless another CI
+	// app ran it.
+	if b, l := got["build"], got["lint"]; b.JobID != 2 || l.JobID != 0 {
+		t.Fatalf("job ids: build=%d lint=%d, want 2 and none", b.JobID, l.JobID)
 	}
 	if m := got["matrix"]; m.Reproduced {
 		t.Fatalf("matrix = %+v, want overlapping failures in one suite not to count", m)
@@ -298,7 +311,7 @@ func TestStaleRedBaseStateForSucceededAt(t *testing.T) {
 			_, _ = io.WriteString(w, `{"ref":"refs/heads/main","object":{"sha":"base1","type":"commit"}}`)
 		case "/repos/acme/widgets/commits/base1/check-runs":
 			_, _ = io.WriteString(w, `{"total_count":3,"check_runs":[
-				{"id":1,"name":"build","head_sha":"base1","status":"completed","conclusion":"success","completed_at":"2026-11-25T12:00:00Z","app":{"id":15368}},
+				{"id":1,"name":"build","head_sha":"base1","status":"completed","conclusion":"success","started_at":"2026-11-25T11:40:00Z","completed_at":"2026-11-25T12:00:00Z","app":{"id":15368}},
 				{"id":2,"name":"lint","head_sha":"base1","status":"completed","conclusion":"skipped","completed_at":"2026-11-25T13:00:00Z","app":{"id":15368}},
 				{"id":3,"name":"docs","head_sha":"base1","status":"completed","conclusion":"neutral","completed_at":"2026-11-25T13:00:00Z","app":{"id":15368}}]}`)
 		default:
@@ -313,6 +326,9 @@ func TestStaleRedBaseStateForSucceededAt(t *testing.T) {
 	}
 	if want := time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC); !st.SucceededAt["build"].Equal(want) {
 		t.Fatalf("SucceededAt = %v, want %v", st.SucceededAt["build"], want)
+	}
+	if want := time.Date(2026, 11, 25, 11, 40, 0, 0, time.UTC); !st.SucceededStartedAt["build"].Equal(want) {
+		t.Fatalf("SucceededStartedAt = %v, want %v", st.SucceededStartedAt["build"], want)
 	}
 	for _, name := range []string{"lint", "docs"} {
 		if _, ok := st.SucceededAt[name]; ok {
@@ -423,5 +439,376 @@ func TestDependencyBotRedNotFound(t *testing.T) {
 	}
 	if DependencyBotRedNotFound(&gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusBadGateway}}) || DependencyBotRedNotFound(nil) {
 		t.Fatal("a 502 or no error must not read as gone")
+	}
+}
+
+// Without any line to quote the body still reads cleanly: no fence, a
+// sentence pointing at the job's own log, the failed steps named
+// (neutralized), the missing-secret sentence only for a PR whose runs lack
+// the repository's secrets, and the template guard admits it.
+func TestRenderDependencyBotRedIssueBodyWithoutExcerpt(t *testing.T) {
+	f := DependencyBotRedIssueFacts{
+		PRNumber:   1471,
+		Bot:        "mergeraptor",
+		ForgeHost:  "github.com",
+		HeadSHA:    "0123456789abcdef0123",
+		BaseRef:    "main",
+		BaseSHA:    "fedcba9876543210fedc",
+		Checks:     []string{"contract"},
+		Runs:       []DependencyBotRedRun{{Check: "contract", URL: "https://github.com/o/r/actions/runs/45432660330/job/1"}},
+		FailedJobs: []DependencyBotRedFailedJob{{Check: "contract", Job: "contract", Steps: []string{"Run `pytest` <all>"}}, {Check: "lint", Job: "Lint"}},
+		Reproduced: "each failing check failed again within one check suite of this head.",
+	}
+	body := RenderDependencyBotRedIssueBody(f)
+	for _, want := range []string{
+		"- Failed steps:\n  - `contract`: `Run 'pytest' \u2039all\u203a`\n",
+		"The failing runs left no annotation beyond the exit code; the failing job's own log, linked above, has the details.\n",
+		"https://github.com/o/r/actions/runs/45432660330/job/1",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body has no %q:\n%s", want, body)
+		}
+	}
+	for _, bad := range []string{"```", "Lint", "Actions secrets", "\u2014", "\u2013", "@"} {
+		if strings.Contains(body, bad) {
+			t.Errorf("body contains %q:\n%s", bad, body)
+		}
+	}
+	if err := validateIssueTemplateFilled(DependencyBotRedIssueTitle(1471, []string{"contract"}), body); err != nil {
+		t.Fatalf("the issue template guard refuses the body: %v", err)
+	}
+	f.WithoutSecrets = true
+	if body := RenderDependencyBotRedIssueBody(f); !strings.Contains(body, "so a secret the workflow needs is a possible cause.") {
+		t.Fatalf("no missing-secret sentence for a PR without the repository's secrets:\n%s", body)
+	}
+	// With annotations to quote, neither sentence.
+	f.ErrorLines = []string{"contract: boom"}
+	if body := RenderDependencyBotRedIssueBody(f); strings.Contains(body, "own log") || strings.Contains(body, "possible cause") {
+		t.Fatalf("no-quote sentences with a quote:\n%s", body)
+	}
+}
+
+// The job log filter: GitHub's timestamps and color codes go, the step's
+// echoed script inside its "Run" group never counts, log commands other
+// than ##[error] do not count, and the bare exit code never counts. The
+// lines are for comparing only, so they are not masked here.
+func TestDependencyBotRedLogErrorLines(t *testing.T) {
+	log := strings.Join([]string{
+		"\ufeff2026-11-25T18:20:00.0000000Z ##[group]Run pytest -q || echo \"tests failed\"",
+		"2026-11-25T18:20:00.0000001Z pytest -q || echo \"tests failed\"",
+		"2026-11-25T18:20:00.0000002Z shell: /usr/bin/bash -e {0}",
+		"2026-11-25T18:20:00.0000003Z ##[endgroup]",
+		"2026-11-25T18:20:01.0000000Z collected 300 items",
+		"2026-11-25T18:20:02.0000000Z \x1b[31mFAILED\x1b[0m tests/test_release_trigger.py::test_pin - AssertionError: '9eccc77' != '3ab43283'",
+		"2026-11-25T18:20:02.5000000Z E   AssertionError: '9eccc77' != '3ab43283'",
+		"2026-11-25T18:20:02.6000000Z E   AssertionError: '9eccc77' != '3ab43283'",
+		"2026-11-25T18:20:03.0000000Z ##[warning]Node.js 16 actions are deprecated, error: none",
+		"2026-11-25T18:20:03.5000000Z [command]/usr/bin/git fetch error: none",
+		"2026-11-25T18:20:04.0000000Z curl: (22) The requested URL returned error: 404\r",
+		"2026-11-25T18:20:04.5000000Z ##[error]Bad credentials",
+		"2026-11-25T18:20:05.0000000Z ##[error]Process completed with exit code 1.",
+	}, "\n")
+	got, err := dependencyBotRedLogErrorLines(strings.NewReader(log), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"FAILED tests/test_release_trigger.py::test_pin - AssertionError: '9eccc77' != '3ab43283'",
+		"E   AssertionError: '9eccc77' != '3ab43283'",
+		"curl: (22) The requested URL returned error: 404",
+		"Bad credentials",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("lines = %q, want %q", got, want)
+	}
+
+	// Only the last lines are kept, an overlong line is cut without losing
+	// the lines after it, and each kept line is at most 300 bytes.
+	var b strings.Builder
+	for i := 0; i < dependencyBotRedJobLogMaxLines+3; i++ {
+		fmt.Fprintf(&b, "FAILED test_%d\n", i)
+	}
+	b.WriteString("FAILED " + strings.Repeat("x", 3*dependencyBotRedJobLogMaxLineBytes) + "\n")
+	b.WriteString("FAILED test_last\n")
+	got, _ = dependencyBotRedLogErrorLines(strings.NewReader(b.String()), false)
+	if len(got) != dependencyBotRedJobLogMaxLines || got[len(got)-1] != "FAILED test_last" || len(got[len(got)-2]) > 300 || got[0] != "FAILED test_5" {
+		t.Fatalf("tail = %q", got)
+	}
+	if got, _ := dependencyBotRedLogErrorLines(strings.NewReader("all good\n##[error]Process completed with exit code 2.\n"), false); len(got) != 0 {
+		t.Fatalf("lines = %q, want none", got)
+	}
+	// A ranged read drops its first line, which may start mid-line.
+	if got, _ := dependencyBotRedLogErrorLines(strings.NewReader("ror: half a line FAILED\nFAILED test_real\n"), true); len(got) != 1 || got[0] != "FAILED test_real" {
+		t.Fatalf("ranged lines = %q", got)
+	}
+	// A log that breaks off (a reset, a timeout) is an error, never a
+	// complete read with its tail cut; the byte cap's EOF is a clean end.
+	broken := io.MultiReader(strings.NewReader("FAILED test_a\n"), iotest.ErrReader(errors.New("connection reset by peer")))
+	if got, err := dependencyBotRedLogErrorLines(broken, false); err == nil || got != nil {
+		t.Fatalf("broken log = %q, %v, want an error and no lines", got, err)
+	}
+	longBroken := io.MultiReader(strings.NewReader("FAILED "+strings.Repeat("x", 2*dependencyBotRedJobLogMaxLineBytes)), iotest.ErrReader(errors.New("reset")))
+	if _, err := dependencyBotRedLogErrorLines(longBroken, false); err == nil {
+		t.Fatal("a log that broke off inside an overlong line read as whole")
+	}
+	if got, err := dependencyBotRedLogErrorLines(io.LimitReader(strings.NewReader("FAILED test_a\nFAILED test_b\n"), 14), false); err != nil || len(got) != 1 {
+		t.Fatalf("capped log = %q, %v, want the first line and no error", got, err)
+	}
+	res := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(io.MultiReader(strings.NewReader("FAILED x\n"), iotest.ErrReader(errors.New("unexpected EOF"))))}
+	if _, done, read, err := dependencyBotRedReadLog(res, false); err == nil || read || !done {
+		t.Fatalf("broken download: done=%v read=%v err=%v, want a finished attempt with an error", done, read, err)
+	}
+	// Normalized for comparing; generic lines never count.
+	if n := DependencyBotRedNormalizeLine("E   AssertionError: at line 12,  took 3.5s"); n != "e assertionerror: at line 0, took 0.0s" {
+		t.Fatalf("normalized = %q", n)
+	}
+	// PR-specific ids fold: a digest, a commit, a UUID.
+	a := DependencyBotRedNormalizeLine("secret missing for run 3f2a9c1d-0b4e-4c8a-9e7f-12ab34cd56ef at 9eccc77aB0")
+	b2 := DependencyBotRedNormalizeLine("secret missing for run 0d1e2f3a-4b5c-4d6e-8f9a-abcdefabcdef at deadbee1234")
+	if a != b2 || a != "secret missing for run 0 at 0" {
+		t.Fatalf("ids not folded: %q vs %q", a, b2)
+	}
+	for _, g := range []string{"exit status 1", "The operation was canceled.", "Error: Process completed with exit code 22.", "make: *** [Makefile:12: test] Error 2", "Error: The process '/usr/bin/git' failed with exit code 128"} {
+		if !DependencyBotRedGenericLine(DependencyBotRedNormalizeLine(g)) {
+			t.Errorf("%q is not generic", g)
+		}
+	}
+	if DependencyBotRedGenericLine(DependencyBotRedNormalizeLine("curl: (22) The requested URL returned error: 404")) {
+		t.Error("a real error reads as generic")
+	}
+}
+
+// The job log read, for comparing only: the tail is asked for with a
+// suffix Range (its first, cut line dropped), storage refusing the Range
+// is asked again without it, a job with no log (404) is no error, a 5xx on
+// the link or the download is temporary, and no error ever carries the
+// signed link. The download gets no GitHub token. DependencyBotRedJobSteps
+// names the failed steps and leaves them out on any error.
+func TestDependencyBotRedJobErrorLines(t *testing.T) {
+	const sig = "sig=SIGNED-SECRET"
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/widgets/actions/jobs/11/logs", "/repos/acme/widgets/actions/jobs/12/logs",
+			"/repos/acme/widgets/actions/jobs/15/logs", "/repos/acme/widgets/actions/jobs/16/logs":
+			id := strings.Split(r.URL.Path, "/")[6]
+			w.Header().Set("Location", srv.URL+"/download/"+id+"?"+sig)
+			w.WriteHeader(http.StatusFound)
+		case "/download/11":
+			if r.Header.Get("Authorization") != "" {
+				t.Errorf("the download got an Authorization header")
+			}
+			if got := r.Header.Get("Range"); got != fmt.Sprintf("bytes=-%d", dependencyBotRedJobLogMaxBytes) {
+				t.Errorf("Range = %q, want the last %d bytes", got, dependencyBotRedJobLogMaxBytes)
+			}
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = io.WriteString(w, "half a line FAILED x\n2026-11-25T18:20:02.0000000Z E   AssertionError: 'a' != 'b' at line 12\n"+
+				"2026-11-25T18:20:03.0000000Z make: *** [Makefile:12: test] Error 2\n2026-11-25T18:20:05.0000000Z ##[error]Process completed with exit code 1.\n")
+		case "/download/12":
+			if r.Header.Get("Range") != "" {
+				w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+				return
+			}
+			_, _ = io.WriteString(w, "FAILED test_one\n")
+		case "/download/15":
+			w.WriteHeader(http.StatusServiceUnavailable)
+		case "/download/16":
+			// The connection drops: a network error naming the link.
+			if hj, ok := w.(http.Hijacker); ok {
+				if conn, _, err := hj.Hijack(); err == nil {
+					_ = conn.Close()
+				}
+			}
+		case "/repos/acme/widgets/actions/jobs/14/logs":
+			w.WriteHeader(http.StatusInternalServerError)
+		case "/repos/acme/widgets/actions/jobs/17/logs":
+			// A Location go-github's own url.Parse rejects.
+			w.Header().Set("Location", ":bad-link/download/17?"+sig)
+			w.WriteHeader(http.StatusFound)
+		case "/repos/acme/widgets/actions/jobs/12":
+			_, _ = io.WriteString(w, `{"id":12,"name":"contract","steps":[{"name":"Set up job","conclusion":"success"},{"name":"Run contract tests","conclusion":"failure"},{"name":"Post","conclusion":"skipped"}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv, "acme", []string{"widgets"})
+	ctx := context.Background()
+
+	got, err := c.DependencyBotRedJobErrorLines(ctx, "acme/widgets", 11)
+	if err != nil || !got.Read || len(got.Lines) != 1 || got.Lines[0] != "e assertionerror: 'a' != 'b' at line 0" {
+		t.Fatalf("job 11 = %+v, %v, want the tail's one real error line, normalized", got, err)
+	}
+	got, err = c.DependencyBotRedJobErrorLines(ctx, "acme/widgets", 12)
+	if err != nil || !got.Read || len(got.Lines) != 1 || got.Lines[0] != "failed test_one" {
+		t.Fatalf("job 12 = %+v, %v, want the whole log read after the 416", got, err)
+	}
+	got, err = c.DependencyBotRedJobErrorLines(ctx, "acme/widgets", 13)
+	if err != nil || got.Read || len(got.Lines) != 0 {
+		t.Fatalf("job 13 (no log) = %+v, %v, want nothing read and no error", got, err)
+	}
+	for _, id := range []int64{14, 15, 16, 17} {
+		_, err := c.DependencyBotRedJobErrorLines(ctx, "acme/widgets", id)
+		if err == nil || DependencyBotRedFinalError(err) {
+			t.Fatalf("job %d: err = %v, want a temporary error", id, err)
+		}
+		if strings.Contains(err.Error(), "SIGNED-SECRET") || strings.Contains(err.Error(), "/download/") {
+			t.Fatalf("job %d: the error carries the signed link: %v", id, err)
+		}
+	}
+
+	if fj := c.DependencyBotRedJobSteps(ctx, "acme/widgets", 12); fj.Job != "contract" || len(fj.Steps) != 1 || fj.Steps[0] != "Run contract tests" {
+		t.Fatalf("job 12 steps = %+v, want the failed step", fj)
+	}
+	if fj := c.DependencyBotRedJobSteps(ctx, "acme/widgets", 13); fj.Job != "" || len(fj.Steps) != 0 {
+		t.Fatalf("job 13 steps = %+v, want nothing on a failed read", fj)
+	}
+}
+
+// dependencyBotRedSafeErr keeps only the host of any *url.Error, wrapped or
+// nested, so a signed link never reaches an error string.
+func TestDependencyBotRedSafeErr(t *testing.T) {
+	inner := &url.Error{Op: "Get", URL: "https://blob.example/log?sig=SIGNED-SECRET", Err: errors.New("EOF")}
+	nested := &url.Error{Op: "Get", URL: "https://other.example/x?sig=SIGNED-SECRET", Err: inner}
+	for _, err := range []error{inner, fmt.Errorf("wrapped %s: %w", inner.URL, inner), nested} {
+		got := dependencyBotRedSafeErr(err)
+		if got == nil || strings.Contains(got.Error(), "SIGNED-SECRET") || strings.Contains(got.Error(), "/log") {
+			t.Fatalf("safe err = %v", got)
+		}
+	}
+	if got := dependencyBotRedSafeErr(inner).Error(); got != "Get blob.example: EOF" {
+		t.Fatalf("safe err = %q, want the operation, host and cause", got)
+	}
+	plain := errors.New("HTTP 503")
+	if dependencyBotRedSafeErr(plain) != plain || dependencyBotRedSafeErr(nil) != nil {
+		t.Fatal("an error with no link changed")
+	}
+}
+
+// Which text names the PR: #N on its own, owner/repo#N with a clean left
+// edge, and links to the same number as a pull request or an issue, with or
+// without the scheme or www.
+func TestDependencyBotRedNamesPR(t *testing.T) {
+	re := dependencyBotRedNamesPR("acme/app", DependencyBotRedPersonIssueQuery{Number: 12, URL: "https://github.com/acme/app/pull/12"})
+	for text, want := range map[string]bool{
+		"#12":                                 true,
+		"see (#12).":                          true,
+		"acme/app#12":                         true,
+		"Acme/App#12 again":                   true,
+		"notacme/app#12":                      false,
+		"other/acme/app#12":                   false,
+		"other/app#12":                        false,
+		"#123":                                false,
+		"word#12":                             false,
+		"https://github.com/acme/app/pull/12": true,
+		"http://www.github.com/acme/app/pull/12.":   true,
+		"github.com/acme/app/issues/12":             true,
+		"https://github.com/acme/app/pull/123":      false,
+		"https://notgithub.com/acme/app/pull/12":    false,
+		"https://github.com/other/acme/app/pull/12": false,
+	} {
+		if got := re.MatchString(text); got != want {
+			t.Errorf("%q names the PR = %v, want %v", text, got, want)
+		}
+	}
+}
+
+// The person-filed issue counts only when a member (owner, member,
+// collaborator) who is not the PR's author, not a bot and not the hive
+// opened it, open, in the same repository, since the PR opened, naming the
+// PR (#N, owner/repo#N or its URL). The newest such issue wins.
+func TestDependencyBotRedPersonIssue(t *testing.T) {
+	ev := func(number int, state, login, kind, assoc, created, title, body, repoField string) string {
+		return fmt.Sprintf(`{"event":"cross-referenced","source":{"type":"issue","issue":{"number":%d,"state":%q,"html_url":"https://github.com/acme/widgets/issues/%d",`+
+			`"user":{"login":%q,"type":%q},"author_association":%q,"created_at":%q,"title":%q,"body":%q,%s}}}`,
+			number, state, number, login, kind, assoc, created, title, body, repoField)
+	}
+	same := `"repository":{"full_name":"acme/widgets"}`
+	events := []string{
+		`{"event":"labeled"}`,
+		ev(12, "open", "alice", "User", "MEMBER", "2026-11-24T10:00:00Z", "Bump #42 fails contract", "", same),
+		ev(15, "open", "bob", "User", "COLLABORATOR", "2026-11-25T10:00:00Z", "contract red", "on https://github.com/acme/widgets/pull/42.", `"repository_url":"https://api.github.com/repos/acme/widgets"`),
+		ev(20, "open", "frank", "User", "OWNER", "2026-11-25T09:00:00Z", "tracking", "acme/widgets#42 needs a pin", same),
+		ev(16, "open", "carol", "User", "NONE", "2026-11-26T10:00:00Z", "#42", "", same),
+		ev(17, "open", "zed", "User", "OWNER", "2026-11-26T10:00:00Z", "#42", "", same),
+		ev(18, "open", "dave", "User", "MEMBER", "2026-11-19T10:00:00Z", "#42", "", same),
+		ev(19, "open", "erin", "User", "MEMBER", "2026-11-26T10:00:00Z", "see #421", "and other/repo#42, #4200", same),
+		ev(3, "open", "renovate[bot]", "Bot", "NONE", "2026-11-26T10:00:00Z", "Dependency Dashboard", "#42", same),
+		ev(2, "closed", "gina", "User", "MEMBER", "2026-11-26T10:00:00Z", "#42", "", same),
+		ev(4, "open", "hal", "User", "MEMBER", "2026-11-26T10:00:00Z", "#42", "", `"repository":{"full_name":"other/repo"}`),
+		ev(5, "open", "hive-runner", "User", "MEMBER", "2026-11-26T10:00:00Z", "#42", "", same),
+		`{"event":"cross-referenced","source":{"type":"issue","issue":{"number":1,"state":"open","user":{"login":"ivy","type":"User"},"author_association":"MEMBER","created_at":"2026-11-26T10:00:00Z","title":"#42","repository":{"full_name":"acme/widgets"},"pull_request":{"url":"https://api.github.com/repos/acme/widgets/pulls/1"}}}}`,
+	}
+	body := "[" + strings.Join(events, ",") + "]"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/acme/widgets/issues/42/timeline":
+			if body == "" {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			_, _ = io.WriteString(w, body)
+		case "/repos/acme/widgets/issues/7":
+			_, _ = io.WriteString(w, `{"number":7,"state":"open"}`)
+		case "/repos/acme/widgets/issues/8":
+			_, _ = io.WriteString(w, `{"number":8,"state":"closed"}`)
+		case "/repos/acme/widgets/issues/10":
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv, "acme", []string{"widgets"})
+	c.additionalBotLogins = []string{"hive-runner"}
+	ctx := context.Background()
+	q := DependencyBotRedPersonIssueQuery{Number: 42, Author: "zed", URL: "https://github.com/acme/widgets/pull/42", Since: time.Date(2026, 11, 20, 0, 0, 0, 0, time.UTC)}
+	got, err := c.DependencyBotRedPersonIssue(ctx, "acme/widgets", q)
+	if err != nil || got.Number != 15 {
+		t.Fatalf("person issue = %+v, %v, want the newest member's #15", got, err)
+	}
+	if got, err := c.DependencyBotRedPersonIssue(ctx, "acme/widgets", DependencyBotRedPersonIssueQuery{Number: 42, Author: "zed"}); err != nil || got.Number != 0 {
+		t.Fatalf("no PR creation time = %+v, %v, want none", got, err)
+	}
+	body = "[" + strings.Join(events[4:], ",") + "]"
+	if got, err := c.DependencyBotRedPersonIssue(ctx, "acme/widgets", q); err != nil || got.Number != 0 {
+		t.Fatalf("only ignored issues = %+v, %v, want none", got, err)
+	}
+	body = ""
+	if _, err := c.DependencyBotRedPersonIssue(ctx, "acme/widgets", q); err == nil {
+		t.Fatal("an unreadable timeline gave no error")
+	}
+
+	for n, want := range map[int]bool{7: true, 8: false, 9: false} {
+		if open, err := c.DependencyBotRedIssueOpen(ctx, "acme/widgets", n); err != nil || open != want {
+			t.Fatalf("issue %d open = %v, %v, want %v", n, open, err, want)
+		}
+	}
+	if _, err := c.DependencyBotRedIssueOpen(ctx, "acme/widgets", 10); err == nil {
+		t.Fatal("a 500 reading the issue gave no error")
+	}
+}
+
+// The snapshot's failure-level excerpt keeps failure annotations only: no
+// warning, no bare exit code, each check its own messages.
+func TestFetchFailureExcerptsFailureLevel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/o/r/check-runs/1/annotations":
+			_, _ = io.WriteString(w, `[{"annotation_level":"warning","message":"Node.js 20 actions are deprecated"},{"annotation_level":"failure","message":"Process completed with exit code 1."},{"annotation_level":"failure","message":"secret TOKEN is empty"}]`)
+		case "/repos/o/r/check-runs/2/annotations":
+			_, _ = io.WriteString(w, `[{"annotation_level":"warning","message":"Node.js 20 actions are deprecated"},{"annotation_level":"failure","message":"secret TOKEN is empty"}]`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"r"})
+	all, failures := c.fetchFailureExcerpts(context.Background(), "o", "r", []int64{1, 2}, []string{"build", "test"})
+	if !strings.Contains(all, "Node.js 20 actions are deprecated") {
+		t.Fatalf("excerpt lost the warning: %q", all)
+	}
+	if failures != "build: secret TOKEN is empty\ntest: secret TOKEN is empty" {
+		t.Fatalf("failure-level excerpt = %q", failures)
 	}
 }

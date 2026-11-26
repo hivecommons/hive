@@ -1,12 +1,16 @@
 package github
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -190,6 +194,15 @@ type DependencyBotRedRun struct {
 	URL   string
 }
 
+// DependencyBotRedFailedJob is where one failing check's job failed, for a
+// check with no line to quote: the job's name (said only when it differs
+// from the check's) and the steps that concluded failure.
+type DependencyBotRedFailedJob struct {
+	Check string
+	Job   string
+	Steps []string
+}
+
 // DependencyBotRedIssueFacts is what the issue body says.
 type DependencyBotRedIssueFacts struct {
 	PRNumber int
@@ -210,6 +223,15 @@ type DependencyBotRedIssueFacts struct {
 	// ErrorLines are "<check>: <message>" failure-level annotation lines
 	// from the newest failing run of each check (DependencyBotRedRunFacts).
 	ErrorLines []string
+	// FailedJobs are the job and failed step names of checks whose
+	// annotations held only the bare exit code (DependencyBotRedJobSteps).
+	// The issue never quotes a job's log: it is public, and the log is not.
+	// With no ErrorLines it says the job's own log has the details.
+	FailedJobs []DependencyBotRedFailedJob
+	// WithoutSecrets: the PR's runs cannot see the repository's Actions
+	// secrets (a Dependabot PR, a PR from a fork). With no ErrorLines the
+	// issue names a missing secret as a possible cause.
+	WithoutSecrets bool
 	// Regenerated: the bot already rebased the branch once after the
 	// hive's stale-red rebase request, and the new head fails the same
 	// checks. Otherwise the head already contains BaseSHA.
@@ -308,6 +330,12 @@ func RenderDependencyBotRedIssueBody(f DependencyBotRedIssueFacts) string {
 	case DependencyBotRedSafeURL(f.ChecksURL, f.ForgeHost) != "":
 		fmt.Fprintf(&b, "- Failing runs: see %s\n", DependencyBotRedSafeURL(f.ChecksURL, f.ForgeHost))
 	}
+	if steps := dependencyBotRedFailedSteps(f.FailedJobs); len(steps) > 0 {
+		b.WriteString("- Failed steps:\n")
+		for _, s := range steps {
+			b.WriteString(s)
+		}
+	}
 	if r := strings.TrimSpace(f.Reproduced); r != "" {
 		fmt.Fprintf(&b, "- Reproduced: %s\n", r)
 	}
@@ -315,7 +343,7 @@ func RenderDependencyBotRedIssueBody(f DependencyBotRedIssueFacts) string {
 	if f.BaseSHA != "" {
 		fmt.Fprintf(&b, " at `%s`", DependencyBotRedSafeText(shortSHA(f.BaseSHA)))
 	}
-	b.WriteString(", where the newest run of each of these checks passed, finishing after this head's failing run started.\n")
+	b.WriteString(", where the newest run of each of these checks passed after this head's failing run started.\n")
 	switch {
 	case strings.TrimSpace(f.PreviousHeadSHA) != "":
 		built := "a base commit"
@@ -329,15 +357,17 @@ func RenderDependencyBotRedIssueBody(f DependencyBotRedIssueFacts) string {
 	default:
 		b.WriteString("- The head already contains that base commit, so updating the branch alone would not change the result.\n")
 	}
-	if lines := f.ErrorLines; len(lines) > 0 {
-		if len(lines) > dependencyBotRedIssueMaxExcerptLines {
-			lines = lines[:dependencyBotRedIssueMaxExcerptLines]
+	dependencyBotRedExcerptBlock(&b, "Errors from the newest failing runs (failure annotations):", f.ErrorLines)
+	if len(f.ErrorLines) == 0 {
+		if len(runs) > 0 {
+			b.WriteString("\nThe failing runs left no annotation beyond the exit code; the failing job's own log, linked above, has the details.")
+		} else {
+			b.WriteString("\nThe failing runs left no annotation beyond the exit code; the check's details page has the full output.")
 		}
-		b.WriteString("\nErrors from the newest failing runs (failure annotations):\n\n```text\n")
-		for _, line := range lines {
-			b.WriteString(sharedCIIssueExcerptLine(line) + "\n")
+		if f.WithoutSecrets {
+			b.WriteString(" This pull request's runs cannot see the repository's Actions secrets (Dependabot runs get only the Dependabot secrets, and runs from a fork get none), so a secret the workflow needs is a possible cause.")
 		}
-		b.WriteString("```\n")
+		b.WriteString("\n")
 	}
 	b.WriteString("\n### Next step\n\n")
 	b.WriteString("Fix the repository so this bump passes; do not edit the bot's branch.")
@@ -346,6 +376,47 @@ func RenderDependencyBotRedIssueBody(f DependencyBotRedIssueFacts) string {
 	}
 	b.WriteString("\n\n_Hive files one issue per pull request and set of failing checks. It does not close this issue; it may add one note when the pull request merges, closes or goes green._\n")
 	return b.String()
+}
+
+// dependencyBotRedExcerptBlock writes lines (at most
+// dependencyBotRedIssueMaxExcerptLines) under heading in a text fence, and
+// nothing when there are none.
+func dependencyBotRedExcerptBlock(b *strings.Builder, heading string, lines []string) {
+	if len(lines) == 0 {
+		return
+	}
+	if len(lines) > dependencyBotRedIssueMaxExcerptLines {
+		lines = lines[:dependencyBotRedIssueMaxExcerptLines]
+	}
+	b.WriteString("\n" + heading + "\n\n```text\n")
+	for _, line := range lines {
+		b.WriteString(sharedCIIssueExcerptLine(line) + "\n")
+	}
+	b.WriteString("```\n")
+}
+
+// dependencyBotRedFailedSteps renders one "Failed steps" sub-bullet per job
+// with at least one failed step, every name neutralized.
+func dependencyBotRedFailedSteps(jobs []DependencyBotRedFailedJob) []string {
+	var out []string
+	for _, j := range jobs {
+		var steps []string
+		for _, st := range j.Steps {
+			if t := DependencyBotRedSafeText(st); t != "" {
+				steps = append(steps, "`"+t+"`")
+			}
+		}
+		check := DependencyBotRedSafeText(j.Check)
+		if len(steps) == 0 || check == "" {
+			continue
+		}
+		name := "`" + check + "`"
+		if job := DependencyBotRedSafeText(j.Job); job != "" && !strings.EqualFold(job, check) {
+			name += " (job `" + job + "`)"
+		}
+		out = append(out, fmt.Sprintf("  - %s: %s\n", name, strings.Join(steps, ", ")))
+	}
+	return out
 }
 
 // DependencyBotRedIssueLookup is what one open-issue listing (plus, when
@@ -409,9 +480,17 @@ type DependencyBotRedCheckRuns struct {
 	// GitHub gave no time).
 	FailureStartedAt time.Time
 	// Errors are the newest failing run's failure-level annotation
-	// messages, first line only, without exit-code-only lines or
-	// warnings.
+	// messages, credential-shaped text masked, first line only, without
+	// exit-code-only lines or warnings.
 	Errors []string
+	// JobID is the newest failing run's id when GitHub Actions ran it (or
+	// GitHub named no app): an Actions check run is its workflow job, with
+	// the same id. 0 for a run from other CI. A failed shell step leaves
+	// only the bare exit-code annotation; when Errors is empty, the filer
+	// names this job's failed steps (DependencyBotRedJobSteps) and compares
+	// its log with another PR's failing the same check
+	// (DependencyBotRedJobErrorLines), never quoting it.
+	JobID int64
 }
 
 // dependencyBotRedSequentialFailures reports whether one failing run started
@@ -594,6 +673,9 @@ func (c *Client) DependencyBotRedRunFacts(ctx context.Context, repo, headSHA str
 		}
 		if newest != nil {
 			facts.FailureStartedAt = newest.GetStartedAt().Time
+			if slug := newest.GetApp().GetSlug(); slug == "" || slug == "github-actions" {
+				facts.JobID = newest.GetID()
+			}
 			anns, _, err := c.client.Checks.ListCheckRunAnnotations(ctx, owner, name, newest.GetID(), &gh.ListOptions{PerPage: 50})
 			if err != nil {
 				return nil, fmt.Errorf("listing annotations of %q on %s/%s: %w", check, owner, name, err)
@@ -603,7 +685,10 @@ func (c *Client) DependencyBotRedRunFacts(ctx context.Context, repo, headSHA str
 				if a.GetAnnotationLevel() != "failure" {
 					continue
 				}
-				msg := strings.TrimSpace(a.GetMessage())
+				// Masked before it is cut to its first line and 300 bytes,
+				// so neither cut leaves part of a secret (a private-key
+				// block spans lines) the scrubber no longer recognises.
+				msg := strings.TrimSpace(redactAuditText(a.GetMessage()))
 				if nl := strings.IndexByte(msg, '\n'); nl > 0 {
 					msg = strings.TrimSpace(msg[:nl])
 				}
@@ -620,6 +705,340 @@ func (c *Client) DependencyBotRedRunFacts(ctx context.Context, repo, headSHA str
 		out[check] = facts
 	}
 	return out, nil
+}
+
+// Bounds for DependencyBotRedJobErrorLines. The log is streamed, never
+// held: at most dependencyBotRedJobLogMaxBytes are read, lines past
+// dependencyBotRedJobLogMaxLineBytes are cut there, and only the last
+// dependencyBotRedJobLogMaxLines distinct error lines are kept (a job fails
+// at its end). At most dependencyBotRedJobMaxSteps failed step names are
+// kept.
+const (
+	dependencyBotRedJobLogMaxBytes     = 4 << 20
+	dependencyBotRedJobLogMaxLineBytes = 64 << 10
+	dependencyBotRedJobLogMaxLines     = dependencyBotRedIssueMaxExcerptLines
+	dependencyBotRedJobMaxSteps        = 3
+	dependencyBotRedJobLogTimeout      = 30 * time.Second
+)
+
+var (
+	// dependencyBotRedLogTimestamp is the time GitHub puts before every job
+	// log line ("2026-11-25T18:25:31.1234567Z ").
+	dependencyBotRedLogTimestamp = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?`)
+	// dependencyBotRedLogANSI is a terminal color or cursor code.
+	dependencyBotRedLogANSI = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
+	// dependencyBotRedLogErrorLine is a job log line worth comparing: an
+	// error, an assertion, a failed test or a panic, in the spellings test
+	// runners and compilers print.
+	dependencyBotRedLogErrorLine = regexp.MustCompile(`Error|ERROR|error:|FAILED|failed|::error|panic:|fatal:`)
+	// dependencyBotRedDigits is a run of digits, which DependencyBotRedNormalizeLine
+	// makes one "0": durations, counts, ids and line numbers vary between
+	// runs of the same failure. dependencyBotRedUUID and dependencyBotRedHex
+	// (a run of at least 7 hex characters: a commit, a digest, a token) are
+	// folded the same way first, so a PR-specific id never makes the same
+	// failure read as two.
+	dependencyBotRedDigits = regexp.MustCompile(`[0-9]+`)
+	dependencyBotRedUUID   = regexp.MustCompile(`\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+	dependencyBotRedHex    = regexp.MustCompile(`\b[0-9a-f]{7,}\b`)
+	// dependencyBotRedGenericLine is a normalized line every failure of a
+	// step prints whatever its cause: it says nothing about the cause, so it
+	// never makes two failures one.
+	dependencyBotRedGenericLine = regexp.MustCompile(`^(?:` +
+		`exit status 0|` +
+		`(?:error: )?process completed with exit code 0\.?|` +
+		`the operation was canceled\.?|` +
+		`error: the process '[^']*' failed with exit code 0\.?|` +
+		`error: command failed with exit code 0\.?|` +
+		`make(?:\[0\])?: \*\*\* .*error 0` +
+		`)$`)
+)
+
+// DependencyBotRedNormalizeLine is how two PRs' failure messages or log
+// lines are compared: spaces collapsed, lower case, every UUID, every run of
+// at least 7 hex characters and every run of digits one "0".
+func DependencyBotRedNormalizeLine(s string) string {
+	s = strings.ToLower(strings.Join(strings.Fields(s), " "))
+	s = dependencyBotRedUUID.ReplaceAllString(s, "0")
+	s = dependencyBotRedHex.ReplaceAllString(s, "0")
+	return dependencyBotRedDigits.ReplaceAllString(s, "0")
+}
+
+// DependencyBotRedGenericLine reports whether a normalized line
+// (DependencyBotRedNormalizeLine) is one every failing step prints ("exit
+// status 1", "The operation was canceled.", a make "Error 2"), which never
+// counts as a shared cause.
+func DependencyBotRedGenericLine(normalized string) bool {
+	return normalized == "" || dependencyBotRedGenericLine.MatchString(normalized)
+}
+
+// DependencyBotRedJobLines is what one failed GitHub Actions job's log says,
+// for comparing two PRs' failures only. The lines are never logged, stored
+// or posted: an Actions log may carry secrets no scrubber recognises, and
+// it is the CI's text, not the hive's.
+type DependencyBotRedJobLines struct {
+	// Read: a log was read. False when there is no log to read (not an
+	// Actions job, the log expired or deleted, no Actions read access).
+	Read bool
+	// Lines are the last distinct error lines (dependencyBotRedLogLine),
+	// normalized (DependencyBotRedNormalizeLine), without the generic ones
+	// (DependencyBotRedGenericLine).
+	Lines []string
+}
+
+// DependencyBotRedJobErrorLines reads the log of GitHub Actions job jobID in
+// repo (one call, GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs,
+// which answers with a short-lived storage link; the download itself is not
+// a GitHub API call). A job with no log to read (a lasting 4xx on the link,
+// or the storage refusing the link) is no error: Read is false. A temporary
+// failure (5xx, 429, a rate limit, the network) returns the error, without
+// the signed link, so the caller tries again on a later pass.
+func (c *Client) DependencyBotRedJobErrorLines(ctx context.Context, repo string, jobID int64) (DependencyBotRedJobLines, error) {
+	if c == nil || c.client == nil {
+		return DependencyBotRedJobLines{}, ErrNoGitHubClient
+	}
+	ctx = WithRESTCaller(ctx, "hive:dependency_bot_red_issue")
+	owner, name := c.splitRepo(repo)
+	loc, resp, err := c.client.Actions.GetWorkflowJobLogs(ctx, owner, name, jobID, 1)
+	if err != nil {
+		if dependencyBotRedNoLog(resp, err) {
+			return DependencyBotRedJobLines{}, nil
+		}
+		// go-github parses the signed Location itself; its parse error
+		// names the link, so only the host is kept.
+		return DependencyBotRedJobLines{}, fmt.Errorf("reading the log link of job %d on %s/%s: %w", jobID, owner, name, dependencyBotRedSafeErr(err))
+	}
+	base := c.client.BaseURL
+	if loc == nil || (loc.Scheme != "https" && !(base != nil && base.Scheme == "http" && loc.Scheme == "http" && loc.Host == base.Host)) {
+		// Not a link the log could be fetched from safely; it will not
+		// become one on a later pass.
+		return DependencyBotRedJobLines{}, nil
+	}
+	raw, read, err := dependencyBotRedDownloadLog(ctx, loc)
+	if err != nil {
+		return DependencyBotRedJobLines{}, fmt.Errorf("downloading the log of job %d on %s/%s: %w", jobID, owner, name, dependencyBotRedSafeErr(err))
+	}
+	if !read {
+		return DependencyBotRedJobLines{}, nil
+	}
+	out := DependencyBotRedJobLines{Read: true}
+	for _, line := range raw {
+		if n := DependencyBotRedNormalizeLine(line); !DependencyBotRedGenericLine(n) {
+			out.Lines = append(out.Lines, n)
+		}
+	}
+	return out, nil
+}
+
+// dependencyBotRedDownloadLog fetches the signed log link loc and returns
+// its last error lines (dependencyBotRedLogErrorLines), and whether a log
+// was read at all. It asks for the last dependencyBotRedJobLogMaxBytes only
+// (a suffix Range): a job fails at its end. Storage that ignores the Range
+// answers with the whole log, and then only its first
+// dependencyBotRedJobLogMaxBytes are read, so the tail of a larger log is
+// not seen; one that refuses it (416) is asked once more without it. The
+// client is the hive's shared proxy-trusting transport, so a proxied
+// deployment reaches the storage and its egress policy applies, with no
+// GitHub token (the link needs none), no redirects and a timeout. An error
+// never carries the link: it is signed.
+func dependencyBotRedDownloadLog(ctx context.Context, loc *url.URL) ([]string, bool, error) {
+	hc := &http.Client{
+		Transport:     sharedProxyTrust.sharedTransport(),
+		Timeout:       dependencyBotRedJobLogTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	for _, tail := range []bool{true, false} {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, loc.String(), nil)
+		if err != nil {
+			return nil, false, nil
+		}
+		if tail {
+			req.Header.Set("Range", fmt.Sprintf("bytes=-%d", dependencyBotRedJobLogMaxBytes))
+		}
+		res, err := hc.Do(req)
+		if err != nil {
+			return nil, false, dependencyBotRedSafeErr(err)
+		}
+		lines, done, read, err := dependencyBotRedReadLog(res, tail)
+		if done {
+			return lines, read, err
+		}
+	}
+	return nil, false, nil
+}
+
+// dependencyBotRedReadLog reads one log download response and closes it.
+// done is false only for a 416 to the tail request, which is retried
+// without the Range. A body that breaks off (a timeout, a cancelled
+// context, a reset) is an error, never a complete read: the cut tail is
+// where a job's errors are.
+func dependencyBotRedReadLog(res *http.Response, tail bool) (lines []string, done, read bool, err error) {
+	defer res.Body.Close()
+	switch {
+	case res.StatusCode == http.StatusPartialContent || res.StatusCode == http.StatusOK:
+		// A ranged read's first line may start mid-line.
+		lines, err := dependencyBotRedLogErrorLines(io.LimitReader(res.Body, dependencyBotRedJobLogMaxBytes), res.StatusCode == http.StatusPartialContent)
+		if err != nil {
+			return nil, true, false, dependencyBotRedSafeErr(err)
+		}
+		return lines, true, true, nil
+	case res.StatusCode == http.StatusRequestedRangeNotSatisfiable && tail:
+		return nil, false, false, nil
+	case res.StatusCode == http.StatusTooManyRequests || res.StatusCode >= 500:
+		return nil, true, false, fmt.Errorf("HTTP %d", res.StatusCode)
+	}
+	// The link expired or was refused: no log.
+	return nil, true, false, nil
+}
+
+// dependencyBotRedSafeErr keeps a signed link out of an error: when err is
+// or wraps a *url.Error, the whole error becomes its operation, the link's
+// host and its cause (stripped the same way). Anything else is unchanged.
+func dependencyBotRedSafeErr(err error) error {
+	var ue *url.Error
+	if err == nil || !errors.As(err, &ue) {
+		return err
+	}
+	host := "the log link"
+	if u, perr := url.Parse(ue.URL); perr == nil && u.Host != "" {
+		host = u.Host
+	}
+	return fmt.Errorf("%s %s: %w", ue.Op, host, dependencyBotRedSafeErr(ue.Err))
+}
+
+// dependencyBotRedNoLog reports whether a failed log-link read is GitHub
+// saying for good that there is no log to read: a 4xx other than 429 and
+// other than a rate limit. go-github returns the log link's answer as a
+// plain error with the response, not an *ErrorResponse, so the status is
+// read from resp as well.
+func dependencyBotRedNoLog(resp *gh.Response, err error) bool {
+	if DependencyBotRedFinalError(err) {
+		return true
+	}
+	if resp == nil || resp.Response == nil || isRateLimitErr(err) {
+		return false
+	}
+	code := resp.StatusCode
+	if code == http.StatusTooManyRequests || resp.Header.Get("Retry-After") != "" || resp.Header.Get("X-RateLimit-Remaining") == "0" {
+		return false
+	}
+	return code >= 400 && code < 500
+}
+
+// dependencyBotRedLogErrorLines reads a GitHub Actions job log and returns
+// its last dependencyBotRedJobLogMaxLines distinct error lines
+// (dependencyBotRedLogLine), oldest first. skipFirst drops the first line,
+// which a ranged read may have cut. Only io.EOF ends the read cleanly (the
+// caller's byte cap ends it the same way); any other read error is
+// returned, so a log that broke off is never taken for a whole one.
+func dependencyBotRedLogErrorLines(r io.Reader, skipFirst bool) ([]string, error) {
+	br := bufio.NewReaderSize(r, dependencyBotRedJobLogMaxLineBytes)
+	var keep []string
+	seen := map[string]bool{}
+	inRun := false
+	for first := true; ; first = false {
+		raw, more, err := br.ReadLine()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		line := string(raw)
+		// An overlong line is cut at the buffer; the rest is dropped.
+		for more {
+			if _, more, err = br.ReadLine(); err == io.EOF {
+				break
+			} else if err != nil {
+				return nil, err
+			}
+		}
+		if first && skipFirst {
+			continue
+		}
+		msg, ok := dependencyBotRedLogLine(line, &inRun)
+		if !ok || seen[msg] {
+			continue
+		}
+		seen[msg] = true
+		keep = append(keep, msg)
+		if len(keep) > dependencyBotRedJobLogMaxLines {
+			keep = keep[1:]
+		}
+	}
+	return keep, nil
+}
+
+// dependencyBotRedLogLine cleans one job log line and reports whether it is
+// an error line to compare. GitHub's timestamp and color codes are
+// stripped. The "Run" group GitHub opens for every step echoes the step's
+// script and environment, not its output, so nothing inside it counts (a
+// script line such as `|| echo failed` is no failure). Other log commands
+// ("##[group]", "##[warning]", "[command]...") do not count; "##[error]"
+// lines do, without that prefix. The bare "Process completed with exit code
+// N" never counts. The line is cut to 300 bytes.
+func dependencyBotRedLogLine(line string, inRun *bool) (string, bool) {
+	line = strings.TrimPrefix(line, "\ufeff")
+	line = dependencyBotRedLogTimestamp.ReplaceAllString(line, "")
+	line = dependencyBotRedLogANSI.ReplaceAllString(line, "")
+	line = strings.TrimSpace(line)
+	switch {
+	case strings.HasPrefix(line, "##[group]Run "):
+		*inRun = true
+		return "", false
+	case strings.HasPrefix(line, "##[endgroup]"):
+		*inRun = false
+		return "", false
+	case *inRun:
+		return "", false
+	case strings.HasPrefix(line, "##[error]"):
+		line = strings.TrimSpace(strings.TrimPrefix(line, "##[error]"))
+	case strings.HasPrefix(line, "##["), strings.HasPrefix(line, "[command]"):
+		return "", false
+	case !dependencyBotRedLogErrorLine.MatchString(line):
+		return "", false
+	}
+	line = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, line)
+	line = strings.TrimSpace(line)
+	if len(line) > 300 {
+		line = strings.TrimSpace(strings.ToValidUTF8(line[:300], ""))
+	}
+	if !dependencyBotRedUsefulMessage(line) {
+		return "", false
+	}
+	return line, true
+}
+
+// DependencyBotRedJobSteps reads GitHub Actions job jobID in repo (one call)
+// for its name and the names of up to dependencyBotRedJobMaxSteps steps
+// that concluded failure, credential-shaped text masked (the issue body
+// neutralizes them further). These come from the workflow file, not the
+// job's output. Any failure to read leaves them out: they only help a
+// person find the failure.
+func (c *Client) DependencyBotRedJobSteps(ctx context.Context, repo string, jobID int64) DependencyBotRedFailedJob {
+	if c == nil || c.client == nil {
+		return DependencyBotRedFailedJob{}
+	}
+	owner, name := c.splitRepo(repo)
+	job, _, err := c.client.Actions.GetWorkflowJobByID(WithRESTCaller(ctx, "hive:dependency_bot_red_issue"), owner, name, jobID)
+	if err != nil || job == nil {
+		return DependencyBotRedFailedJob{}
+	}
+	out := DependencyBotRedFailedJob{Job: redactAuditText(strings.TrimSpace(job.GetName()))}
+	for _, st := range job.Steps {
+		if st == nil || st.GetConclusion() != "failure" || strings.TrimSpace(st.GetName()) == "" {
+			continue
+		}
+		out.Steps = append(out.Steps, redactAuditText(strings.TrimSpace(st.GetName())))
+		if len(out.Steps) >= dependencyBotRedJobMaxSteps {
+			break
+		}
+	}
+	return out
 }
 
 // LookupDependencyBotRedIssue reads the open issues of repo once (newest
@@ -702,6 +1121,155 @@ func (c *Client) LookupDependencyBotRedIssue(ctx context.Context, repo, marker s
 		closed.ListOptions.Page = resp.NextPage
 	}
 	return out, nil
+}
+
+// dependencyBotRedTimelinePage is the timeline page size
+// DependencyBotRedPersonIssue reads (at most two pages).
+const dependencyBotRedTimelinePage = 100
+
+// DependencyBotRedPersonIssue is an open issue a person with write access
+// filed in the PR's own repository about the PR (0: none).
+type DependencyBotRedPersonIssue struct {
+	Number int
+	URL    string
+}
+
+// DependencyBotRedPersonIssueQuery is the PR DependencyBotRedPersonIssue
+// looks for issues about.
+type DependencyBotRedPersonIssueQuery struct {
+	Number int
+	// Author is the PR's author; URL its web URL; Since when it was
+	// opened. An issue older than Since is not about it.
+	Author string
+	URL    string
+	Since  time.Time
+}
+
+// dependencyBotRedTrustedAssociations are the author associations whose
+// issue counts as a person's report of the PR's failure: anyone can open an
+// issue on a public repository.
+var dependencyBotRedTrustedAssociations = map[string]bool{"OWNER": true, "MEMBER": true, "COLLABORATOR": true}
+
+// DependencyBotRedPersonIssue reads the newest events of PR q.Number's
+// timeline in repo (dependencyBotRedTimelineNewest: at most two calls) for
+// an issue a person already filed about it: a
+// `cross-referenced` event whose source is an issue (not a pull request)
+// that is open, in the same repository, opened by an OWNER, MEMBER or
+// COLLABORATOR who is not the PR's author, not a bot and not the hive,
+// created at or after q.Since, and whose title or body names the PR (`#N`,
+// alone or as `owner/repo#N`, or the PR's URL). A tracker that only
+// mentions the PR in passing from elsewhere, or an issue anyone may open,
+// does not count. The newest such issue is returned. A zero q.Since admits
+// none. A failed read returns the error and the caller files nothing.
+func (c *Client) DependencyBotRedPersonIssue(ctx context.Context, repo string, q DependencyBotRedPersonIssueQuery) (DependencyBotRedPersonIssue, error) {
+	if c == nil || c.client == nil {
+		return DependencyBotRedPersonIssue{}, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	full := strings.ToLower(owner + "/" + name)
+	events, err := c.dependencyBotRedTimelineNewest(WithRESTCaller(ctx, "hive:dependency_bot_red_issue"), owner, name, q.Number)
+	if err != nil {
+		return DependencyBotRedPersonIssue{}, err
+	}
+	if q.Since.IsZero() || q.Number <= 0 {
+		return DependencyBotRedPersonIssue{}, nil
+	}
+	names := dependencyBotRedNamesPR(full, q)
+	var out DependencyBotRedPersonIssue
+	var newest time.Time
+	for _, event := range events {
+		if event == nil || !strings.EqualFold(event.GetEvent(), "cross-referenced") {
+			continue
+		}
+		src := event.GetSource()
+		if src == nil || src.Issue == nil || src.Issue.IsPullRequest() || !strings.EqualFold(src.Issue.GetState(), "open") {
+			continue
+		}
+		is := src.Issue
+		if r := strings.ToLower(is.GetRepository().GetFullName()); r != full && (r != "" || !strings.HasSuffix(strings.ToLower(is.GetRepositoryURL()), "/repos/"+full)) {
+			continue
+		}
+		u := is.GetUser()
+		login := strings.TrimSpace(u.GetLogin())
+		if u == nil || login == "" || strings.EqualFold(u.GetType(), "Bot") || strings.HasSuffix(strings.ToLower(login), "[bot]") ||
+			strings.EqualFold(login, strings.TrimSpace(q.Author)) || (c.knowsOwnAccounts() && c.isHiveAccount(u)) {
+			continue
+		}
+		if !dependencyBotRedTrustedAssociations[strings.ToUpper(is.GetAuthorAssociation())] {
+			continue
+		}
+		created := is.GetCreatedAt().Time
+		if created.IsZero() || created.Before(q.Since) || !names.MatchString(is.GetTitle()+"\n"+is.GetBody()) {
+			continue
+		}
+		if out.Number == 0 || created.After(newest) || (created.Equal(newest) && is.GetNumber() > out.Number) {
+			out, newest = DependencyBotRedPersonIssue{Number: is.GetNumber(), URL: is.GetHTMLURL()}, created
+		}
+	}
+	return out, nil
+}
+
+// dependencyBotRedTimelineNewest returns the newest events of a PR's
+// timeline in at most two calls. GitHub lists the timeline oldest first, so
+// a busy PR's first page holds only its oldest events. The first call reads
+// page 1 and learns the last page from the Link header; with more pages, the
+// second reads the last one. With exactly two pages that covers them all;
+// with more, a short last page is read together with page 1, not with the
+// page before it, so the bound stays at two calls.
+func (c *Client) dependencyBotRedTimelineNewest(ctx context.Context, owner, name string, number int) ([]*gh.Timeline, error) {
+	events, resp, err := c.client.Issues.ListIssueTimeline(ctx, owner, name, number, &gh.ListOptions{PerPage: dependencyBotRedTimelinePage})
+	if err != nil {
+		return nil, fmt.Errorf("listing the timeline of %s/%s#%d: %w", owner, name, number, err)
+	}
+	if resp == nil || resp.LastPage <= 1 {
+		return events, nil
+	}
+	last, _, err := c.client.Issues.ListIssueTimeline(ctx, owner, name, number, &gh.ListOptions{PerPage: dependencyBotRedTimelinePage, Page: resp.LastPage})
+	if err != nil {
+		return nil, fmt.Errorf("listing the newest timeline events of %s/%s#%d: %w", owner, name, number, err)
+	}
+	if resp.LastPage == 2 || len(last) < dependencyBotRedTimelinePage {
+		return append(events, last...), nil
+	}
+	return last, nil
+}
+
+// dependencyBotRedNamesPR matches text naming PR q in repository full, not
+// followed by another digit: `#N` on its own (not after a word, a path or
+// another repository's name), `owner/repo#N` with nothing of a longer name
+// before it (so `notacme/app#12` and `other/acme/app#12` do not count), or
+// a link to the same number on the PR's host, as a pull request or an
+// issue, with or without the scheme or `www.`.
+func dependencyBotRedNamesPR(full string, q DependencyBotRedPersonIssueQuery) *regexp.Regexp {
+	n := fmt.Sprint(q.Number)
+	alts := []string{
+		`(?:^|[^\w/.#-])#` + n,
+		`(?:^|[^A-Za-z0-9_./-])` + regexp.QuoteMeta(full) + `#` + n,
+	}
+	if u, err := url.Parse(strings.TrimSpace(q.URL)); err == nil && u.Host != "" {
+		host := strings.TrimPrefix(strings.ToLower(u.Host), "www.")
+		alts = append(alts, `(?:^|[^A-Za-z0-9_.-])(?:https?://)?(?:www\.)?`+regexp.QuoteMeta(host)+`/`+regexp.QuoteMeta(full)+`/(?:pull|issues)/`+n)
+	}
+	return regexp.MustCompile(`(?i)(?:` + strings.Join(alts, "|") + `)(?:[^0-9]|$)`)
+}
+
+// DependencyBotRedIssueOpen reports whether issue number in repo is open
+// (one call). The filer re-checks a person's issue it named this way: once
+// that issue closes with the PR still red, the PR is judged again. An issue
+// that is gone (404, 410) is not open.
+func (c *Client) DependencyBotRedIssueOpen(ctx context.Context, repo string, number int) (bool, error) {
+	if c == nil || c.client == nil {
+		return false, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	issue, _, err := c.client.Issues.Get(WithRESTCaller(ctx, "hive:dependency_bot_red_issue"), owner, name, number)
+	if err != nil {
+		if DependencyBotRedNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("reading %s/%s#%d: %w", owner, name, number, err)
+	}
+	return strings.EqualFold(issue.GetState(), "open"), nil
 }
 
 // FileDependencyBotRedIssue files the issue in repo through the write-back
