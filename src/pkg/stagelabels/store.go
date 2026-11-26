@@ -326,6 +326,15 @@ type Record struct {
 	// reasons were kept; AdoptionEscalationNoted reads it as noted for any.
 	AdoptEscalationNotedHead    string   `json:"adopt_escalation_noted_head,omitempty"`
 	AdoptEscalationNotedReasons []string `json:"adopt_escalation_noted_reasons,omitempty"`
+	// AdoptDecisionLapseHead / AdoptDecisionLapseAt are the head and the
+	// time of the person's decision whose lapse was last noted on it: a
+	// return of an escalated adopted head that had its full dwell with
+	// nothing pushed, so the same stall parked the PR again. Written only
+	// once GitHub accepted the note, so it posts once per (head, decision)
+	// and a failed post is retried; a new head or a newer decision notes
+	// again.
+	AdoptDecisionLapseHead string    `json:"adopt_decision_lapse_head,omitempty"`
+	AdoptDecisionLapseAt   time.Time `json:"adopt_decision_lapse_at,omitzero"`
 	// Hold is who set the `hold` label the item wears and why, read by the
 	// stage-label pass from the label event and the hive's notice comment
 	// (hivecommons/hive#15020); nil when the item is not held or nothing
@@ -2226,6 +2235,7 @@ func (s *Store) MarkYielded(key, head string) {
 	r.AdoptMode, r.AdoptReason, r.AdoptDiffFence = "", "", ""
 	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
 	r.AdoptEscalationNotedReasons = nil
+	r.AdoptDecisionLapseHead, r.AdoptDecisionLapseAt = "", time.Time{}
 	r.AdoptRecoveryAttempt, r.AdoptRecoveryCount = "", 0
 	r.YieldedHead = head
 	s.items[key] = r
@@ -2591,6 +2601,26 @@ func (s *Store) MarkAdoptionEscalationNoted(key, head, reason string) {
 	s.dirty = true
 }
 
+// AdoptionDecisionLapseNoted reports whether the lapse of the decision made
+// at decidedAt was already noted on head.
+func (r Record) AdoptionDecisionLapseNoted(head string, decidedAt time.Time) bool {
+	return head != "" && r.AdoptDecisionLapseHead == head && r.AdoptDecisionLapseAt.Equal(decidedAt)
+}
+
+// MarkAdoptionDecisionLapseNoted records that the lapse of the decision made
+// at decidedAt was noted on head.
+func (s *Store) MarkAdoptionDecisionLapseNoted(key, head string, decidedAt time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || head == "" || decidedAt.IsZero() || r.AdoptionDecisionLapseNoted(head, decidedAt) {
+		return
+	}
+	r.AdoptDecisionLapseHead, r.AdoptDecisionLapseAt = head, decidedAt
+	s.items[key] = r
+	s.dirty = true
+}
+
 // MarkDCORepair records one in-place sign-off rewrite attempt for head.
 // Recorded before the API call, as every adoption path does, so a refused
 // rewrite is not retried each sweep.
@@ -2681,6 +2711,7 @@ func (s *Store) ClearAdoption(key string) {
 	r.AdoptMode, r.AdoptReason, r.AdoptDiffFence = "", "", ""
 	r.AdoptedHeadAt, r.AdoptEscalatedHead, r.AdoptEscalatedReason, r.AdoptEscalationNotedHead = time.Time{}, "", "", ""
 	r.AdoptEscalationNotedReasons = nil
+	r.AdoptDecisionLapseHead, r.AdoptDecisionLapseAt = "", time.Time{}
 	r.AdoptRecoveryAttempt, r.AdoptRecoveryCount = "", 0
 	r.AdoptOrphanedBy, r.AdoptOrphanedAt, r.AdoptOrphanCount = 0, time.Time{}, 0
 	r.SupersededBy, r.SupersededAt, r.SupersededOpen, r.SupersederMergedNotedHead = 0, time.Time{}, false, ""
