@@ -1724,7 +1724,7 @@ func AgentSandboxGateReport(cfg *Config) SandboxGateReport {
 		switch rt := a.SandboxRuntime(cfg.AgentSandbox); {
 		case !ValidSandboxRuntimes[rt]:
 			badRuntime = append(badRuntime, name+"="+rt)
-		case rt == SandboxRuntimeJob && strings.TrimSpace(a.SandboxJob(cfg.AgentSandbox).WorkspaceClaim) == "":
+		case rt == SandboxRuntimeJob && !a.SandboxJob(cfg.AgentSandbox).CopiesWorkspace() && strings.TrimSpace(a.SandboxJob(cfg.AgentSandbox).WorkspaceClaim) == "":
 			noClaim = append(noClaim, name)
 		case rt == SandboxRuntimeOpenShell:
 			os := a.SandboxOpenShell(cfg.AgentSandbox)

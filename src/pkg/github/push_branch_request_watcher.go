@@ -90,7 +90,14 @@ type pushBranchExecFunc func(ctx context.Context, dir string, env []string, name
 
 var pushBranchExec pushBranchExecFunc = runPushBranchCommand
 
+// pushBranchExecTimeout bounds one git command of the push watcher, so a
+// checkout that makes git block (a FIFO behind include.path, a stalled
+// remote) cannot stall every later request.
+const pushBranchExecTimeout = 5 * time.Minute
+
 func runPushBranchCommand(ctx context.Context, dir string, env []string, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, pushBranchExecTimeout)
+	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), env...)
@@ -212,13 +219,41 @@ func pushBranchRemoteURL(owner, repo string) string {
 // directory and would otherwise run as the hive's UID with this environment —
 // including the App token header — visible to them. GIT_CONFIG_* pairs have
 // command-line precedence, so they override anything set in the checkout.
+//
+// The same holds for the keys that decide where the credentialed request goes
+// (hivecommons/hive#19959): system and global config are turned off, askpass
+// programs are unset in the environment and in config, TLS verification and
+// git's default redirect policy are pinned, signing (which runs gpg.program)
+// is off for push and log, submodules are never pushed, and git may only
+// speak the remote's own scheme. Keys no command-scope value can neutralise
+// (url.*.insteadOf, http.<url>.*, http.proxy and the TLS trust settings) are
+// refused before the push by pushBranchConfigRefusal.
 func pushBranchGitEnv(dir, remote, header string) []string {
-	env := []string{"GIT_TERMINAL_PROMPT=0"}
+	env := []string{
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_SYSTEM=" + os.DevNull,
+		"GIT_CONFIG_GLOBAL=" + os.DevNull,
+		"GIT_ASKPASS=",
+		"SSH_ASKPASS=",
+		// A missing object in a partial clone would otherwise start a
+		// fetch from the checkout's promisor remote, with its proxy.
+		"GIT_NO_LAZY_FETCH=1",
+	}
+	if scheme := pushBranchRemoteScheme(remote); scheme != "" {
+		env = append(env, "GIT_ALLOW_PROTOCOL="+scheme)
+	}
 	pairs := [][2]string{
 		{"safe.directory", dir},
 		{"core.hooksPath", os.DevNull},
 		{"core.fsmonitor", "false"},
 		{"credential.helper", ""},
+		{"core.askPass", ""},
+		{"http.sslVerify", "true"},
+		{"http.followRedirects", "initial"},
+		{"push.recurseSubmodules", "no"},
+		{"push.gpgSign", "false"},
+		{"log.showSignature", "false"},
 	}
 	if header != "" {
 		pairs = append(pairs, [2]string{"http." + strings.TrimRight(remote, "/") + ".extraHeader", header})
@@ -230,6 +265,20 @@ func pushBranchGitEnv(dir, remote, header string) []string {
 			fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, p[1]))
 	}
 	return env
+}
+
+// pushBranchRemoteScheme is the lowercased scheme of an http(s) remote URL,
+// or "" for anything else (then GIT_ALLOW_PROTOCOL is left to git's default).
+func pushBranchRemoteScheme(remote string) string {
+	scheme, _, ok := strings.Cut(remote, "://")
+	if !ok {
+		return ""
+	}
+	switch scheme = strings.ToLower(scheme); scheme {
+	case "https", "http":
+		return scheme
+	}
+	return ""
 }
 
 // StartPushBranchRequestWatcher runs a loop that pushes branches for request
@@ -392,8 +441,9 @@ func (c *Client) handleOnePushBranchRequest(ctx context.Context, path string, no
 	}
 
 	remote := pushBranchRemoteURL(owner, repoName)
-	header, _ := c.gitAuthHeader(ctx)
-	env := pushBranchGitEnv(req.Dir, remote, header)
+	// Commands that read the agent's checkout run without the auth header:
+	// only the push, from a hive-owned GIT_DIR, carries it (#19959).
+	env := pushBranchGitEnv(req.Dir, remote, "")
 
 	// Resolve the local head being pushed so the audit entry and result name
 	// the exact commit. A branch that does not exist locally can never push.
@@ -417,12 +467,41 @@ func (c *Client) handleOnePushBranchRequest(ctx context.Context, path string, no
 		}
 	}
 
+	// Refuse a checkout whose own config could redirect the push
+	// (hivecommons/hive#19959). The push below never reads that config; the
+	// refusal tells the agent its checkout is set up to redirect pushes.
+	listing, err := pushBranchExec(ctx, req.Dir, env, "git", pushBranchConfigListArgs...)
+	if err != nil {
+		c.recordPushBranchFailure(path, req, attempts,
+			fmt.Sprintf("reading the git config of %s: %s", req.Dir, firstOutputLines(listing, 3)), nowFn)
+		return
+	}
+	if reason := pushBranchConfigRefusal(listing); reason != "" {
+		c.denyPushBranchRequest(path, req, reason, nowFn)
+		return
+	}
+
+	repoInfo, err := pushBranchExec(ctx, req.Dir, env, "git", pushBranchRepoInfoArgs...)
+	if err != nil {
+		c.recordPushBranchFailure(path, req, attempts,
+			fmt.Sprintf("locating the git dir of %s: %s", req.Dir, firstOutputLines(repoInfo, 3)), nowFn)
+		return
+	}
+	gitDir, isolation, cleanup, err := pushBranchIsolatedGitDir(repoInfo, branch, sha, fileUID)
+	if err != nil {
+		c.denyPushBranchRequest(path, req, err.Error(), nowFn)
+		return
+	}
+	defer cleanup()
+	header, _ := c.gitAuthHeader(ctx)
+	pushEnv := append(pushBranchGitEnv(gitDir, remote, header), isolation...)
+
 	args := []string{"push"}
 	if req.ForceWithLease {
 		args = append(args, "--force-with-lease")
 	}
 	args = append(args, remote, "refs/heads/"+branch+":refs/heads/"+branch)
-	if out, err := pushBranchExec(ctx, req.Dir, env, "git", args...); err != nil {
+	if out, err := pushBranchExec(ctx, gitDir, pushEnv, "git", args...); err != nil {
 		c.recordPushBranchFailure(path, req, attempts,
 			fmt.Sprintf("git push failed: %s", firstOutputLines(out, 3)), nowFn)
 		return

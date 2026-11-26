@@ -1,0 +1,115 @@
+# A ValidatingAdmissionPolicy (GA in Kubernetes 1.30; it reads namespaceObject,
+# so 1.30 or later) that ENFORCES (validationActions: [Deny]) what hive's
+# service account may do with the grants in sandbox-job-copy-rbac.yaml and the
+# claim transport's network-none policy. Apply it BEFORE you bind the copy Role.
+# Not in kustomization.yaml: it is cluster-scoped.
+#
+# Which service account is "hive's": the binding matches only namespaces that
+# carry the label hivecommons.dev/service-account, and its value names the
+# service account hive runs as in that namespace. Nothing here names a
+# namespace or a service account, so one copy of this policy covers every
+# spoke namespace you label, whatever its spoke runs as:
+#   kubectl label namespace <ns> hivecommons.dev/service-account=<sa>
+# (for example hive on the kustomize install, default or hive-sa on a
+# hub-provisioned spoke). Requests from any other user or service account,
+# Argo CD and the hub included, are not checked.
+#
+# What it enforces on requests from that service account in that namespace:
+#  - Secrets: only CREATE of an Opaque Secret named hive-kick-*, labelled
+#    app.kubernetes.io/managed-by=hive-kubejob, with an ownerReference to the
+#    Job of the same name. Every Secret DELETE is denied: hive never deletes a
+#    Secret, the token Secret goes with its Job. Secret UPDATE and PATCH are
+#    not matched, so the hive-secrets-writer patch of hive-secrets still works.
+#  - NetworkPolicies: CREATE and DELETE only of policies named hive-kick-* with
+#    that label, and a created one must select only the Job's own pods (the
+#    hive.kubestellar.io/job label equal to its name), include Ingress in
+#    policyTypes, carry no egress rule, and admit ingress only from labelled
+#    pods (no podSelector: {}, namespaceSelector or ipBlock) on TCP 8477 with
+#    no endPort. UPDATE is denied.
+#  - Jobs: an UPDATE (the resume patch) only of a suspended Job named
+#    hive-kick-* with that label, that sets suspend to false and leaves the
+#    pod template unchanged.
+#
+# If the namespace label or this policy is missing, nothing is enforced and
+# the copy Role's create and patch are unconstrained. Check it is live with a
+# server-side dry run as hive's service account, which must be DENIED:
+#   kubectl auth can-i create networkpolicies -n <ns> --as system:serviceaccount:<ns>:<sa>
+#   kubectl create -n <ns> --dry-run=server --as system:serviceaccount:<ns>:<sa> -f - <<'Y'
+#   {"apiVersion":"networking.k8s.io/v1","kind":"NetworkPolicy","metadata":{"name":"probe"},"spec":{"podSelector":{}}}
+#   Y
+#
+# Read the audit annotations or dry-run a copy kick in a test namespace first:
+# a policy in Deny that does not fit your cluster blocks hive's kicks, which
+# then fail with the policy's message in the kick error.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: hive-sandbox-copy-objects
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "DELETE"]
+        resources: ["secrets"]
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["networkpolicies"]
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["jobs"]
+  variables:
+    - name: hiveUser
+      expression: "'system:serviceaccount:' + namespaceObject.metadata.name + ':' + namespaceObject.metadata.labels['hivecommons.dev/service-account']"
+    - name: fromHive
+      expression: "request.userInfo.username == variables.hiveUser"
+    - name: target
+      expression: "request.operation == 'DELETE' ? oldObject : object"
+    - name: ownedName
+      expression: "variables.target.metadata.name.startsWith('hive-kick-') && has(variables.target.metadata.labels) && 'app.kubernetes.io/managed-by' in variables.target.metadata.labels && variables.target.metadata.labels['app.kubernetes.io/managed-by'] == 'hive-kubejob'"
+  validations:
+    - expression: "!variables.fromHive || variables.ownedName"
+      message: "hive's service account may only touch objects named hive-kick-* and labelled app.kubernetes.io/managed-by=hive-kubejob"
+    - expression: "!variables.fromHive || request.resource.resource != 'secrets' || request.operation == 'CREATE'"
+      message: "hive's service account never deletes a Secret; a copy-transport token Secret is removed with its Job"
+    - expression: "!variables.fromHive || request.resource.resource != 'secrets' || request.operation != 'CREATE' || (has(object.type) && object.type == 'Opaque' && has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(o, o.kind == 'Job' && o.name == object.metadata.name))"
+      message: "a Secret from hive's service account must be Opaque and owned by the Job of the same name"
+    - expression: "!variables.fromHive || request.resource.resource != 'networkpolicies' || request.operation != 'UPDATE'"
+      message: "hive's service account never updates a NetworkPolicy"
+    - expression: >-
+        !variables.fromHive || request.resource.resource != 'networkpolicies' || request.operation != 'CREATE' ||
+        (has(object.spec.podSelector.matchLabels) && size(object.spec.podSelector.matchLabels) == 1 &&
+         'hive.kubestellar.io/job' in object.spec.podSelector.matchLabels &&
+         object.spec.podSelector.matchLabels['hive.kubestellar.io/job'] == object.metadata.name)
+      message: "a NetworkPolicy from hive's service account must select only its own Job's pods (hive.kubestellar.io/job equal to its name)"
+    - expression: >-
+        !variables.fromHive || request.resource.resource != 'networkpolicies' || request.operation != 'CREATE' ||
+        (has(object.spec.policyTypes) && 'Ingress' in object.spec.policyTypes &&
+         (!has(object.spec.egress) || size(object.spec.egress) == 0) &&
+         (!has(object.spec.ingress) || object.spec.ingress.all(r,
+           has(r.from) && size(r.from) > 0 &&
+           r.from.all(f, has(f.podSelector) && has(f.podSelector.matchLabels) && size(f.podSelector.matchLabels) > 0 && !has(f.namespaceSelector) && !has(f.ipBlock)) &&
+           has(r.ports) && size(r.ports) > 0 && r.ports.all(p, has(p.port) && p.port == 8477 && !has(p.endPort) && (!has(p.protocol) || p.protocol == 'TCP')))))
+      message: "a NetworkPolicy from hive's service account must deny ingress except from labelled pods on TCP 8477 and carry no egress rule"
+    - expression: >-
+        !variables.fromHive || request.resource.resource != 'jobs' ||
+        (has(oldObject.spec.suspend) && oldObject.spec.suspend == true &&
+         has(object.spec.suspend) && object.spec.suspend == false &&
+         object.spec.template == oldObject.spec.template)
+      message: "hive's service account may only resume a suspended Job, not change its pod template"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: hive-sandbox-copy-objects
+spec:
+  policyName: hive-sandbox-copy-objects
+  validationActions: ["Deny"]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: hivecommons.dev/service-account
+          operator: Exists

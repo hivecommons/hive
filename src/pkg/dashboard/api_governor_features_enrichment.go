@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,10 +12,12 @@ import (
 
 // featuresEnrichmentBody is the part of the Features PUT that covers
 // customers.enrichment.*: the master switch, one switch per provider, the
-// gitdm snapshot refresh interval and the devstats hourly lookup limit. Every
-// field is a pointer so an absent key leaves the config untouched. The
-// crowd.dev API token is a secret and never travels here; it is written
-// through POST /api/customers/enrichment/settings.
+// gitdm snapshot refresh interval, the devstats hourly lookup limit and the
+// auto-accept policy. It also carries customers.store, the person-record
+// store mode of the move to the colony store (#19851). Every field is a
+// pointer so an absent key leaves the config untouched. The crowd.dev API
+// token is a secret and never travels here; it is written through POST
+// /api/customers/enrichment/settings.
 type featuresEnrichmentBody struct {
 	CustomersEnrichmentEnabled         *bool `json:"customersEnrichmentEnabled"`
 	CustomersEnrichmentGitdmEnabled    *bool `json:"customersEnrichmentGitdmEnabled"`
@@ -27,6 +30,28 @@ type featuresEnrichmentBody struct {
 	// CustomersEnrichmentDevstatsHourlyLimit is lookups per hour; 0 means
 	// the default.
 	CustomersEnrichmentDevstatsHourlyLimit *int `json:"customersEnrichmentDevstatsHourlyLimit"`
+	// CustomersEnrichmentAutoAccept is customers.enrichment.auto_accept:
+	// empty (the default, off), "off" or "gitdm_high". Any other value is
+	// rejected, so a typo is never saved and silently read as off.
+	CustomersEnrichmentAutoAccept *string `json:"customersEnrichmentAutoAccept"`
+	// CustomersStore is customers.store: empty (the default, json), "json",
+	// "shadow" or "colony". Any other value is rejected. It is read once at
+	// startup, so a change applies on the next restart.
+	CustomersStore *string `json:"customersStore"`
+}
+
+// featuresChoice validates an optional enumerated setting: empty means the
+// default, anything else must parse. It returns the value to save.
+func featuresChoice(raw *string, parse func(string) (string, bool), errMsg string) (string, error) {
+	v := strings.TrimSpace(*raw)
+	if v == "" {
+		return "", nil
+	}
+	norm, ok := parse(v)
+	if !ok {
+		return "", errors.New(errMsg)
+	}
+	return norm, nil
 }
 
 // prepare validates every field the request carried and returns the
@@ -67,6 +92,24 @@ func (b featuresEnrichmentBody) prepare() (func(*config.Config), error) {
 		}
 		steps = append(steps, func(c *config.Config) { c.Customers.Enrichment.Devstats.HourlyLimit = n })
 	}
+	if b.CustomersEnrichmentAutoAccept != nil {
+		v, err := featuresChoice(b.CustomersEnrichmentAutoAccept, config.ParseCustomersAutoAccept, fmt.Sprintf(
+			"customers enrichment auto_accept must be empty (default %s), %s or %s",
+			config.CustomersAutoAcceptOff, config.CustomersAutoAcceptOff, config.CustomersAutoAcceptGitdmHigh))
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, func(c *config.Config) { c.Customers.Enrichment.AutoAccept = v })
+	}
+	if b.CustomersStore != nil {
+		v, err := featuresChoice(b.CustomersStore, config.ParseCustomersStoreMode, fmt.Sprintf(
+			"customers store must be empty (default %s), %s, %s or %s",
+			config.CustomersStoreJSON, config.CustomersStoreJSON, config.CustomersStoreShadow, config.CustomersStoreColony))
+		if err != nil {
+			return nil, err
+		}
+		steps = append(steps, func(c *config.Config) { c.Customers.Store = v })
+	}
 	return func(c *config.Config) {
 		for _, step := range steps {
 			step(c)
@@ -93,9 +136,15 @@ func featuresEnrichmentResponse(cfg *config.Config) map[string]interface{} {
 		"customersEnrichmentCrowdDevTokenSet":    tokErr == nil && tok != "",
 		"customersEnrichmentGitdmRefresh":        e.Gitdm.RefreshInterval,
 		"customersEnrichmentDevstatsHourlyLimit": e.Devstats.HourlyLimit,
+		"customersEnrichmentAutoAccept":          e.AutoAccept,
+		"customersEnrichmentAutoAcceptEffective": cfg.CustomersEnrichmentAutoAccept(),
+		"customersStore":                         cfg.Customers.Store,
+		"customersStoreEffective":                cfg.CustomersStoreMode(),
 		"customersEnrichmentDefaults": map[string]interface{}{
 			"customersEnrichmentGitdmRefresh":        config.DefaultCustomersEnrichmentGitdmRefresh.String(),
 			"customersEnrichmentDevstatsHourlyLimit": config.DefaultCustomersEnrichmentDevstatsHourlyLimit,
+			"customersEnrichmentAutoAccept":          config.CustomersAutoAcceptOff,
+			"customersStore":                         config.CustomersStoreJSON,
 		},
 	}
 }

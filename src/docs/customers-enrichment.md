@@ -108,8 +108,9 @@ the one above it on, and the whole block needs Customers on.
 | `customers.enrichment.devstats.enabled` | `false` | `HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_ENABLED` | devstats source |
 | `customers.enrichment.devstats.hourly_limit` | `30` | `HIVE_CUSTOMERS_ENRICHMENT_DEVSTATS_HOURLY_LIMIT` | devstats lookups all people may make in one hour (at most `120`) |
 | `customers.enrichment.crowddev.enabled` | `false` | `HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_ENABLED` | crowd.dev source |
-| `customers.enrichment.auto_accept` | `off` | `HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT` | Auto-accept policy: `off` or `gitdm_high`. Off whenever gitdm is off; an unknown value means `off`. Set in hive.yaml or the environment; Settings does not show it yet |
+| `customers.enrichment.auto_accept` | `off` | `HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT` | Auto-accept policy: `off` or `gitdm_high`. Off whenever gitdm is off; an unknown value means `off` (Settings refuses one). Settings shows it as **Auto-accept gitdm affiliations** under Enrichment sources |
 | `customers.enrichment.crowddev.token_file` | `/data/secrets/customers_crowddev_token` | `HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN_FILE` | Keystore-sealed crowd.dev API token. `HIVE_CUSTOMERS_ENRICHMENT_CROWDDEV_TOKEN` supplies the token directly and wins over the file |
+| `customers.store` | `json` | `HIVE_CUSTOMERS_STORE` | Where person records and enrichment results live: `json`, `shadow` or `colony` (see [the colony store](design/colony-customer-data-backend.md#migration)). Read at startup. Settings shows it as **Customer record store**, below Enrichment sources, and refuses an unknown value |
 
 The crowd.dev token is never stored in hive.yaml. Settings saves it through the
 owner-only `POST /api/customers/enrichment/settings`, which seals it into the

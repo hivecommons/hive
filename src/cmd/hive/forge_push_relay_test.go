@@ -36,6 +36,10 @@ type pushHarness struct {
 	log    string
 	logErr error
 	audits []github.AuditRecord
+	// configListing and configErr answer the checkout config listing
+	// (github.PushBranchConfigListArgs), hivecommons/hive#19959.
+	configListing string
+	configErr     error
 }
 
 func newPushHarness(t *testing.T) *pushHarness {
@@ -51,15 +55,26 @@ func newPushHarness(t *testing.T) *pushHarness {
 		return nil
 	}).withPushAudit(func(rec github.AuditRecord) { h.audits = append(h.audits, rec) })
 
+	// The checkout's common git dir the stub rev-parse reports, with the
+	// object store the isolated push points at (#19959).
+	commonDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(commonDir, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	prevExec, prevDef := forgePushExec, forgeRepoDefaultBranch
 	t.Cleanup(func() { forgePushExec, forgeRepoDefaultBranch = prevExec, prevDef })
 	forgePushExec = func(_ context.Context, dir string, env []string, args ...string) (string, error) {
 		h.calls = append(h.calls, gitCall{dir: dir, env: env, args: args})
 		switch args[0] {
 		case "rev-parse":
+			if strings.Contains(strings.Join(args, " "), "--git-common-dir") {
+				return commonDir + "\nsha1\n", nil
+			}
 			return "0123456789abcdef0123456789abcdef01234567\n", nil
 		case "log":
 			return h.log, h.logErr
+		case "config":
+			return h.configListing, h.configErr
 		case "push":
 			if h.pushErr != nil {
 				return "! [rejected] fix-1 -> fix-1 (non-fast-forward)\n", h.pushErr
@@ -107,8 +122,8 @@ func TestForgeRelayPushesBranchToForgeRemote(t *testing.T) {
 	if strings.Join(pushes[0].args, " ") != strings.Join(want, " ") {
 		t.Errorf("push args = %v, want %v", pushes[0].args, want)
 	}
-	if pushes[0].dir != h.checkout {
-		t.Errorf("push ran in %q, want the agent's checkout %q", pushes[0].dir, h.checkout)
+	if pushes[0].dir == h.checkout || !strings.Contains(strings.Join(pushes[0].env, "\n"), "GIT_DIR="+pushes[0].dir) {
+		t.Errorf("push ran in %q, want a hive-owned GIT_DIR, never the agent's checkout %q", pushes[0].dir, h.checkout)
 	}
 	env := strings.Join(pushes[0].env, "\n")
 	header := "Authorization: Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+forgePushTestToken))

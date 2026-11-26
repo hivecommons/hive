@@ -851,6 +851,82 @@ func crmOverlayUser(u *SaaSUser) {
 	crmOverlay(u, p)
 }
 
+// crmOverlayConsents is the colony-mode read hook for a person's consent
+// records (#19857): the grant is read from colony as well as from the
+// consent file, and colony can only narrow what the file grants, never
+// widen it. Writes go to the file first and are then mirrored, so when the
+// two differ colony is the copy that may be behind, and a mirror that did
+// not run (a user file that could not be read at that moment) must never
+// bring back a field the person turned off or undo a withdrawal. The
+// hub-only delivery bookkeeping (first and last delivery, delivered fields,
+// rev), which colony's Consent has no slot for, always comes from the file.
+// It is called by the read paths: the match index, the match answer and the
+// person's own consent page. Write paths never call it.
+//
+// Only hive ids the consent file still lists are considered: colony has no
+// delete, so a consent the hub pruned is an emptied record there, and the
+// file decides which records exist. A person whose last sync failed or was
+// skipped is read from the file alone, like crmOverlayUser.
+func crmOverlayConsents(u *SaaSUser, records map[string]customerConsent) {
+	st, mode := hubCRM.active()
+	if st == nil || mode != hubCustomerStoreColony || u == nil || len(records) == 0 {
+		return
+	}
+	id := crmPersonID(u)
+	if hubCRM.isDirty(id) {
+		return
+	}
+	p, err := st.Get(id)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			slog.Warn("hub customer store: consent read failed; using json", "error", crmErrClass(err))
+		}
+		return
+	}
+	for hiveID, rec := range records {
+		have, ok := p.Consent(hiveID)
+		if !ok {
+			continue // colony does not hold it: dual-read from the JSON
+		}
+		records[hiveID] = crmOverlayConsent(rec, have)
+	}
+}
+
+// crmOverlayConsent narrows one consent record by the colony grant:
+//   - a field is granted only when both the file and colony grant it;
+//   - the record is withdrawn when either side is withdrawn (the file's time
+//     wins when it has one);
+//   - a disclosure version that is not the current one, on either side, is
+//     kept, so a stale version on either side stops delivery.
+//
+// The granted time and the delivery bookkeeping stay from the file.
+func crmOverlayConsent(rec customerConsent, have store.Consent) customerConsent {
+	var colony customerConsentFields
+	for _, f := range have.Fields {
+		switch f {
+		case store.FieldRealName:
+			colony.RealName = true
+		case store.FieldOrganization:
+			colony.Organization = true
+		case store.FieldCountry:
+			colony.Country = true
+		}
+	}
+	rec.Fields = customerConsentFields{
+		RealName:     rec.Fields.RealName && colony.RealName,
+		Organization: rec.Fields.Organization && colony.Organization,
+		Country:      rec.Fields.Country && colony.Country,
+	}
+	if rec.WithdrawnAt == nil && !have.WithdrawnAt.IsZero() {
+		w := have.WithdrawnAt
+		rec.WithdrawnAt = &w
+	}
+	if rec.TextVersion == customerConsentTextVersion && have.TextVersion != customerConsentTextVersion {
+		rec.TextVersion = have.TextVersion
+	}
+	return rec
+}
+
 // crmForgetUser erases a deleted user from colony in every mode, before the
 // JSON record is removed, so a failure leaves the user in place to retry.
 func crmForgetUser(u *SaaSUser) error {
