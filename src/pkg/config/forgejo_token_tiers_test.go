@@ -61,6 +61,14 @@ func TestForgejoSharedWriteTokenWarning(t *testing.T) {
 		t.Errorf("warning %q does not name the default token env %q", w, DefaultForgejoTokenEnv)
 	}
 
+	file := &Config{}
+	file.Project.Forge = ForgeForgejo
+	file.Forgejo.TokenEnv = "MY_FJ_TOKEN"
+	file.Forgejo.TokenFile = "/secrets/forgejo-token"
+	if w := file.ForgejoSharedWriteTokenWarning(); !strings.Contains(w, "token_file /secrets/forgejo-token") || strings.Contains(w, "MY_FJ_TOKEN") {
+		t.Errorf("warning %q does not name token_file, which wins over token_env", w)
+	}
+
 	cfg.Forgejo.Integration = &ForgejoIntegrationConfig{}
 	if w := cfg.ForgejoSharedWriteTokenWarning(); w != "" {
 		t.Errorf("config with forgejo.integration warns: %q", w)

@@ -1,6 +1,9 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // UsesForgejo reports whether any repo of the hive resolves to Forgejo:
 // project.forge is forgejo, or a repo_policies entry moves a repo there.
@@ -39,6 +42,17 @@ func (c *Config) ForgejoSharedWriteTokenWarning() string {
 	if c == nil || c.Forgejo.Integration != nil || !c.UsesForgejo() {
 		return ""
 	}
-	return fmt.Sprintf("forgejo.integration is not set, so git on every Forgejo repo uses the %s token for every token tier, the read-only tiers (advisor, shared-uid-read) included: those agents' clones can push with a write token. Set forgejo.integration to give each tier its own short-lived token (docs/forge-app-setup.md, \"Forgejo git credentials\").",
-		c.Forgejo.Credentials().Governor().TokenEnv)
+	return fmt.Sprintf("forgejo.integration is not set, so git on every Forgejo repo uses %s for every token tier, the read-only tiers (advisor, shared-uid-read) included: those agents' clones can push with a write token. Set forgejo.integration to give each tier its own short-lived token (docs/forge-app-setup.md, \"Forgejo git credentials\").",
+		forgejoTokenDescription(c.Forgejo))
+}
+
+// forgejoTokenDescription names where the forgejo block's access token is
+// read from, without reading it: token_file when set (it wins over
+// token_env), else the env var.
+func forgejoTokenDescription(f ForgejoConfig) string {
+	src := f.Credentials().Governor()
+	if file := strings.TrimSpace(src.TokenFile); file != "" {
+		return "the token in token_file " + file
+	}
+	return "the " + src.TokenEnv + " token"
 }
