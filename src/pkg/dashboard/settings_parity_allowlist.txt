@@ -769,5 +769,3 @@ inbox.recording.max_seconds # see inbox.recording.enabled
 inbox.recording.max_bytes # see inbox.recording.enabled
 inbox.recording.quota_bytes # see inbox.recording.enabled
 inbox.recording.idle_finalize_minutes # see inbox.recording.enabled
-customers.enrichment.auto_accept # TODO #19857
-customers.store # TODO #19857
