@@ -84,7 +84,9 @@ func blockedIssueOwnership(in issueOwnershipInput, env ownershipEnv) (Ownership,
 
 // decidePROwnershipGated is decidePROwnership with the rules for a pull
 // request that waits on a person although nothing earlier says so: a gate
-// label, a person's review decision, or a merge no Hive lane will make. Held
+// label, a person's review decision, a merge no Hive lane will make, or a
+// required check GitHub still reports unfinished after its job finished (a
+// confirmed CI reporting stall). Held
 // PRs keep their hold-source decision.
 func decidePROwnershipGated(pr github.PullRequest, verdict *github.MergeVerdict, held bool, cfg config.DashboardIssueBandsConfig, env ownershipEnv) Ownership {
 	out := decidePROwnership(pr, held, env)
@@ -105,6 +107,13 @@ func decidePROwnershipGated(pr github.PullRequest, verdict *github.MergeVerdict,
 	}
 	if prNeedsHandMerge(pr, verdict, env) {
 		return yourTurn(OwnershipReasonHandMerge, "Hive will not merge this PR; merge it by hand")
+	}
+	// Last, and only where nothing made it your turn (the safety net
+	// included), so no existing decision changes: a confirmed CI reporting
+	// stall, GitHub still showing a required check unfinished after its job
+	// finished, which a person re-runs (ownership_ci_reporting.go).
+	if stalled, ok := prCIReportingStalledOwnership(pr, verdict); ok && !out.YourTurn {
+		return stalled
 	}
 	return out
 }

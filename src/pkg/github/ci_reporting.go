@@ -406,7 +406,7 @@ func ciReportingAPIError(err error) string {
 func ciReportingReason(observations []CIReportingObservation) string {
 	for _, observation := range observations {
 		if observation.State == "stalled" {
-			return fmt.Sprintf("ci-reporting-stalled:check=%q check-id=%d run=%d attempt=%d job=%d check-state=%s job-state=%s job-result=%q workflow=%s owner-action-required",
+			return fmt.Sprintf(CIReportingStalledPrefix+"check=%q check-id=%d run=%d attempt=%d job=%d check-state=%s job-state=%s job-result=%q workflow=%s owner-action-required",
 				observation.Check, observation.CheckRunID, observation.RunID, observation.Attempt,
 				observation.JobID, observation.CheckStatus, observation.JobStatus, observation.JobConclusion, observation.RunConclusion)
 		}
@@ -417,4 +417,91 @@ func ciReportingReason(observations []CIReportingObservation) string {
 		}
 	}
 	return ""
+}
+
+// CIReportingStalledPrefix opens the reason ciReportingReason writes for a
+// confirmed stall: a "stalled" observation, so past the propagation grace and
+// on the head the observation verified. A "propagation-grace" observation
+// writes no reason, and an API refusal writes ci-reporting-unverified.
+const CIReportingStalledPrefix = "ci-reporting-stalled:"
+
+// ciReportingStallMaxEntries bounds the confirmed-stall registry the way
+// ciReportingMaxEntries bounds the observation cache.
+const ciReportingStallMaxEntries = ciReportingMaxEntries
+
+type ciReportingStallEntry struct {
+	observation CIReportingObservation
+	at          time.Time
+}
+
+// ciReportingStalls holds, per repo#PR@head, the stalled observation behind
+// the last ci-reporting-stalled reason EvaluateCommitCI wrote for it. It is
+// the structured record a merge verdict carries (MergeVerdict.CIReportingStall)
+// so the dashboard never reads a stall out of reason text, which can embed
+// contributor-chosen check names. An evaluation of that PR and head that
+// writes any other reason removes it.
+type ciReportingStallRegistry struct {
+	mu      sync.Mutex
+	entries map[string]ciReportingStallEntry
+}
+
+var sharedCIReportingStalls = &ciReportingStallRegistry{entries: make(map[string]ciReportingStallEntry)}
+
+func ciReportingStallKey(repo string, number int, sha string) string {
+	return strings.ToLower(strings.TrimSpace(repo)) + "#" + strconv.Itoa(number) + "@" + strings.ToLower(strings.TrimSpace(sha))
+}
+
+// record keeps the stalled observation behind reason when reason is the
+// confirmed-stall reason this evaluation wrote, and forgets the PR's head
+// otherwise.
+func (r *ciReportingStallRegistry) record(owner, repo string, number int, sha, reason string, observations []CIReportingObservation, now time.Time) {
+	if number <= 0 || strings.TrimSpace(sha) == "" {
+		return
+	}
+	key := ciReportingStallKey(owner+"/"+repo, number, sha)
+	var stalled *CIReportingObservation
+	if strings.HasPrefix(reason, CIReportingStalledPrefix) && reason == ciReportingReason(observations) {
+		for i := range observations {
+			if observations[i].State == "stalled" {
+				stalled = &observations[i]
+				break
+			}
+		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if stalled == nil {
+		delete(r.entries, key)
+		return
+	}
+	if _, ok := r.entries[key]; !ok && len(r.entries) >= ciReportingStallMaxEntries {
+		var oldestKey string
+		var oldest time.Time
+		for candidate, entry := range r.entries {
+			if oldestKey == "" || entry.at.Before(oldest) {
+				oldestKey, oldest = candidate, entry.at
+			}
+		}
+		delete(r.entries, oldestKey)
+	}
+	r.entries[key] = ciReportingStallEntry{observation: *stalled, at: now}
+}
+
+func (r *ciReportingStallRegistry) lookup(repo string, number int, sha string) (CIReportingObservation, bool) {
+	if number <= 0 || strings.TrimSpace(sha) == "" {
+		return CIReportingObservation{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.entries[ciReportingStallKey(repo, number, sha)]
+	return entry.observation, ok
+}
+
+// CIReportingStallFor returns the stalled observation behind the last
+// ci-reporting-stalled reason this process wrote for repo (owner/name)
+// #number at sha, if the last evaluation of that head wrote one. The merge
+// classifier attaches it to the verdict only when the verdict's own reason
+// is that stall; display only, nothing that gates or merges reads it.
+func CIReportingStallFor(repo string, number int, sha string) (CIReportingObservation, bool) {
+	return sharedCIReportingStalls.lookup(repo, number, sha)
 }

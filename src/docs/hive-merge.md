@@ -119,6 +119,16 @@ else happens. On any other repo it also raises the
 PR on GitHub or merging it by hand. A new head SHA starts fresh like any other
 exhausted request.
 
+**A PR already in GitHub's merge queue is a satisfied request, not a failure.**
+When the merge call answers `405 Pull Request is in the merge queue.`, the PR
+already has a merge queue entry and GitHub merges it when the queue's checks
+pass. The watcher writes `"ok": true, "queued": true` with a `note` saying so
+(no `sha`, because nothing has merged yet), removes the request file and its
+per-PR wait state as after a merge, and logs it once at INFO. No attempt is
+counted, nothing is set aside as `.exhausted`, the fix loop is not re-engaged
+and no operator alert is raised. If the PR later leaves the queue unmerged, a
+new `hive-merge` request is handled like any other.
+
 **Wait state survives restarts and re-requests.** The attempt count, `ci_waits`,
 the pending-poll backoff and an "exhausted" record are kept per PR and head SHA
 in `/data/merge-request-state.json` (the PVC), not only in the tmpfs result
@@ -1403,7 +1413,16 @@ requires fresh consistency observations again.
 
 **Automatic recovery is not implemented or enabled.** A confirmed stall exposes
 owner action: inspect the exact workflow's current attempt and logs before one
-affected-workflow rerun. Do not rerun all CI or rebase to hide reporting failure.
+affected-workflow rerun. When the contributor lane refuses the merge relay on
+a confirmed stall, the merge classifier attaches the stalled observation the CI
+evaluation recorded for that exact head to the verdict (`ci_reporting_stall`),
+and the dashboard puts the ask in the your-turn inbox (`ci_reporting_stalled`),
+on the Overview card's Other reason row and in the Activity monitor's Waiting
+on you list, naming the check, run and attempt and the `gh run rerun` command
+for the job. It reads only that observation, never reason text. Hive-authored,
+trusted-bot and trusted-author PRs do not take this path. That is display only:
+the stage, the gates and the verdict's bucket, state and reason are unchanged,
+and the hive still re-runs nothing. Do not rerun all CI or rebase to hide reporting failure.
 The existing filesystem mutation ledger only serializes users sharing that
 filesystem; shared-CI post-effect comment markers are not atomic cross-hive
 claims. Future recovery must prove a pre-mutation episode claim and enforced

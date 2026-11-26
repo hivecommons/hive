@@ -1982,3 +1982,50 @@ func TestStoreMarkNudgedCIFailure(t *testing.T) {
 		t.Fatalf("after fold: %+v", r)
 	}
 }
+
+// A decision's lapse is noted once per (head, decision): a newer decision or
+// a new head notes again, nothing is recorded for an empty head or time or a
+// missing key, and the fields survive the store file's JSON round trip.
+func TestAdoptionDecisionLapseNoted(t *testing.T) {
+	s := &Store{items: map[string]Record{}}
+	const key = "o/r#1308"
+	at := time.Date(2026, 11, 25, 20, 13, 0, 0, time.UTC)
+	s.items[key] = Record{AdoptEscalatedHead: "aaa", AdoptEscalatedReason: "adoption-stalled:fork-rehome-refused"}
+	if r, _ := s.Get(key); r.AdoptionDecisionLapseNoted("aaa", at) {
+		t.Fatalf("fresh record reads as noted: %+v", r)
+	}
+	s.MarkAdoptionDecisionLapseNoted(key, "aaa", at)
+	r, _ := s.Get(key)
+	if !r.AdoptionDecisionLapseNoted("aaa", at) || r.AdoptionDecisionLapseNoted("aaa", at.Add(time.Hour)) || r.AdoptionDecisionLapseNoted("bbb", at) || r.AdoptionDecisionLapseNoted("", at) {
+		t.Fatalf("lapse not keyed by (head, decision): %+v", r)
+	}
+	s.dirty = false
+	s.MarkAdoptionDecisionLapseNoted(key, "aaa", at)
+	if s.dirty {
+		t.Fatal("re-marking the same lapse dirtied the store")
+	}
+	s.MarkAdoptionDecisionLapseNoted(key, "", at)
+	s.MarkAdoptionDecisionLapseNoted(key, "aaa", time.Time{})
+	s.MarkAdoptionDecisionLapseNoted("missing", "aaa", at)
+	if r, _ = s.Get(key); !r.AdoptionDecisionLapseNoted("aaa", at) {
+		t.Fatalf("empty head/time overwrote the lapse: %+v", r)
+	}
+	if _, ok := s.Get("missing"); ok {
+		t.Fatal("MarkAdoptionDecisionLapseNoted created a record")
+	}
+	s.MarkAdoptionDecisionLapseNoted(key, "aaa", at.Add(time.Hour))
+	if r, _ = s.Get(key); !r.AdoptionDecisionLapseNoted("aaa", at.Add(time.Hour)) || r.AdoptionDecisionLapseNoted("aaa", at) {
+		t.Fatalf("a newer decision did not replace the noted one: %+v", r)
+	}
+	b, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Record
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !back.AdoptionDecisionLapseNoted("aaa", at.Add(time.Hour)) {
+		t.Fatalf("lapse lost in the JSON round trip: %s", b)
+	}
+}

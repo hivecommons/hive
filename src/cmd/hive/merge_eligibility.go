@@ -615,6 +615,33 @@ func relayRefusalReason(refusal string) (string, bool) {
 	return strings.TrimSpace(reason), true
 }
 
+// ciReportingStallFor reads the CI evaluation's recorded stall; a test
+// replaces it.
+var ciReportingStallFor = github.CIReportingStallFor
+
+// relayRefusalCIReportingStall is the structured stall behind a relay
+// refusal whose lane reason is the hive's own ci-reporting-stalled reason
+// (anchored at the start of the lane reason relayRefusalReason splits
+// off the refusal), read from the observation the CI evaluation recorded for this
+// PR's exact head (github.CIReportingStallFor). The reason text is only the
+// trigger, never the data: a lane reason such as "check-failing:<name>"
+// carries a contributor-chosen check name and is not the stall. Display only
+// (MergeVerdict.CIReportingStall).
+func relayRefusalCIReportingStall(refusal, fullRepo string, pr github.PullRequest) *github.CIReportingObservation {
+	if strings.TrimSpace(pr.HeadSHA) == "" {
+		return nil
+	}
+	reason, ok := relayRefusalReason(refusal)
+	if !ok || !strings.HasPrefix(reason, github.CIReportingStalledPrefix) {
+		return nil
+	}
+	observation, ok := ciReportingStallFor(fullRepo, pr.Number, pr.HeadSHA)
+	if !ok || observation.State != "stalled" || !strings.EqualFold(observation.HeadSHA, pr.HeadSHA) {
+		return nil
+	}
+	return &observation
+}
+
 // relayRefusalNoLaneMerges reports a relay refusal no Hive lane will ever
 // clear on its own: one that needs a maintainer (relayRefusalNeedsMaintainer),
 // the lane switched off (automerge.RelayLaneReasonDisabled) or scoped to
@@ -1583,6 +1610,7 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			if refusal := relayLaneRefusal(pr, fullRepo, logger); refusal != "" {
 				bucket = mergeBucketSkip
 				verdict = relayRefusalVerdict(refusal, prGates.repoAutoMergeOff)
+				verdict.CIReportingStall = relayRefusalCIReportingStall(refusal, fullRepo, pr)
 				if relayRefusalNeedsMaintainer(refusal) {
 					needsMaintainer = append(needsMaintainer, maintainerMergePR{
 						Number: pr.Number, Repo: fullRepo, Title: pr.Title, HeadSHA: pr.HeadSHA, Reason: refusal,
@@ -1651,9 +1679,12 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			trustedRebase := !hiveAuthoredPR(pr) && !adopted && trustedAuthorRebasePR(cfg, fullRepo, pr)
 			// An operator's approve / merge-now from the dashboard on a
 			// conflicting PR asks for the rebase outright (the episode
-			// carries RequestedBy); that admits any PR the hive can push.
+			// carries RequestedBy); that admits any PR the hive can push,
+			// except a dependency bot's branch, as in trustedAuthorRebasePR:
+			// the bot rebases it itself. An operator who wants the hive to
+			// rebase one anyway arms rebase-then-merge, which adopts it above.
 			requested := false
-			if prior, ok := rebaseAttempts().Get(fullRepo, pr.Number); ok && prior.RequestedBy != "" && github.ReachableAction(pr) == github.ReachableActionPush {
+			if prior, ok := rebaseAttempts().Get(fullRepo, pr.Number); ok && prior.RequestedBy != "" && github.ReachableAction(pr) == github.ReachableActionPush && !github.DependencyBotBranch(pr.HeadRef, pr.Author) {
 				requested = !hiveAuthoredPR(pr) && !adopted && !trustedRebase
 			}
 			if !hiveAuthoredPR(pr) && !adopted && !trustedRebase && !requested {

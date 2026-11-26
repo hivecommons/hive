@@ -68,6 +68,7 @@ var gateReasons = map[string]gateReason{
 	"open_for_discussion":           {"design proposals from reporters the hive does not trust yet, open for discussion", "decide or close the open design proposals in %s"},
 	"pr_gate_label":                 {"held by a gate label", "act on the gate labels or remove them"},
 	"hand_merge_required":           {"that only a person can merge", "merge the reviewed PRs by hand in %s"},
+	"ci_reporting_stalled":          {"with a required check GitHub still shows unfinished though its job finished", "look at the stuck check runs and re-run their jobs in %s"},
 	"review_decision_required":      {"waiting for an approving review that branch protection requires", "approve PRs in %s"},
 	"run_checkpoint":                {"runs waiting at a checkpoint", "answer the run checkpoints"},
 	"run_stale_plan":                {"runs with a stale plan", "re-plan, approve or abandon the stale runs"},

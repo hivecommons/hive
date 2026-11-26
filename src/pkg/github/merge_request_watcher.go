@@ -80,7 +80,12 @@ type MergeResponse struct {
 	// consecutive waits turn into a failed attempt.
 	CIWaits int    `json:"ci_waits,omitempty"`
 	Error   string `json:"error,omitempty"`
-	At      string `json:"at"`
+	// Queued marks an OK result for a PR that GitHub reports is already in
+	// its merge queue: the queue merges it, so the request is satisfied but
+	// nothing has merged yet and SHA is empty. Note says so in words.
+	Queued bool   `json:"queued,omitempty"`
+	Note   string `json:"note,omitempty"`
+	At     string `json:"at"`
 }
 
 // MergeRequestAuthorizer decides whether a merge request may proceed. Like
@@ -320,6 +325,20 @@ const mergeQueueRequiredReason = "repo requires merge queue; direct merge not po
 // a skip reason (hivecommons/hive#14018).
 func isMergeQueueRequiredMergeBlocker(errMsg string) bool {
 	return strings.Contains(strings.ToLower(errMsg), "must be made through the merge queue")
+}
+
+// mergeRequestAlreadyQueuedNote is the result note for a request whose PR is
+// already in GitHub's merge queue.
+const mergeRequestAlreadyQueuedNote = "already queued: the pull request is in GitHub's merge queue, which merges it when the queue's checks pass; no direct merge was made"
+
+// isAlreadyInMergeQueue reports the 405 GitHub returns for a direct REST
+// merge of a PR that already has a merge queue entry ("Pull Request is in
+// the merge queue."). The merge is already on its way, so the request is
+// satisfied, not failed. Unlike isMergeQueueRequiredMergeBlocker (the
+// ruleset refusal, "Changes must be made through the merge queue"), nobody
+// has to enqueue anything.
+func isAlreadyInMergeQueue(errMsg string) bool {
+	return strings.Contains(strings.ToLower(errMsg), "pull request is in the merge queue")
 }
 
 func isConflictMergeBlocker(errMsg string) bool {
@@ -657,6 +676,10 @@ func (c *Client) handleOneMergeRequest(ctx context.Context, path string, nowFn f
 
 	res, err := c.MergePR(ctx, req.Repo, req.Number, req.Method, req.ExpectSHA)
 	if err != nil {
+		if isAlreadyInMergeQueue(err.Error()) {
+			c.settleAlreadyQueuedMergeRequest(path, req, attempts, err.Error(), nowFn)
+			return
+		}
 		if isMergeQueueRequiredMergeBlocker(err.Error()) {
 			c.quarantineMergeQueueRequired(path, req, destination.GetBase().GetRef(), attempts, err.Error(), nowFn)
 			return
@@ -809,6 +832,22 @@ func (c *Client) quarantineMergeQueueRequired(path string, req MergeRequest, bas
 		slog.String("repo", req.Repo), slog.Int("number", req.Number),
 		slog.String("sha", req.ExpectSHA), slog.Int("attempts", attempts),
 		slog.String("base", base), slog.Bool("native_queue_opted_in", optedIn),
+		slog.String("error", errMsg))
+}
+
+// settleAlreadyQueuedMergeRequest closes out a request whose PR GitHub
+// reports is already in its merge queue. The queue merges it, so this is the
+// success path without the merge: an OK result with Queued set, the request
+// file and the per-PR state removed as after a merge, no attempt counted, no
+// operator alert, one INFO line. If the PR later leaves the queue unmerged,
+// a new request for it starts fresh.
+func (c *Client) settleAlreadyQueuedMergeRequest(path string, req MergeRequest, attempts int, errMsg string, nowFn func() time.Time) {
+	c.writeMergeResult(path, MergeResponse{OK: true, Queued: true, Number: req.Number, Attempts: attempts - 1, Note: mergeRequestAlreadyQueuedNote, At: nowFn().UTC().Format(time.RFC3339)})
+	_ = os.Remove(path)
+	c.clearMergeRequestState(req.Repo, req.Number)
+	c.logger.Info("merge-request watcher: PR is already in the merge queue, request satisfied without a direct merge",
+		slog.String("repo", req.Repo), slog.Int("number", req.Number),
+		slog.String("sha", req.ExpectSHA), slog.String("agent", req.Agent),
 		slog.String("error", errMsg))
 }
 
