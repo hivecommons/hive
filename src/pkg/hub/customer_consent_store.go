@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -80,6 +79,9 @@ func customerConsentPath(u *SaaSUser) (string, error) {
 }
 
 func readCustomerConsents(path string) (map[string]customerConsent, error) {
+	if st, ok := crmColonyOnly(); ok {
+		return crmOnlyReadConsents(st, path)
+	}
 	records := make(map[string]customerConsent)
 	data, err := os.ReadFile(path) // #nosec G703 -- callers pass customerConsentPath (customerConsentDir plus the base name of a validated user file) or a directory entry of customerConsentDir
 	if errors.Is(err, os.ErrNotExist) {
@@ -98,6 +100,12 @@ func readCustomerConsents(path string) (map[string]customerConsent, error) {
 }
 
 func removeCustomerConsents(path string) error {
+	if st, ok := crmColonyOnly(); ok {
+		if _, found := consentPathPersonID(path); !found {
+			return nil
+		}
+		return crmOnlySaveConsents(st, path, nil)
+	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -105,6 +113,9 @@ func removeCustomerConsents(path string) error {
 }
 
 func saveCustomerConsents(path string, records map[string]customerConsent) error {
+	if st, ok := crmColonyOnly(); ok {
+		return crmOnlySaveConsents(st, path, records)
+	}
 	if len(records) == 0 {
 		if err := removeCustomerConsents(path); err != nil {
 			return err
@@ -159,22 +170,16 @@ func pruneCustomerConsents(path string, now time.Time) error {
 // Retention still applies when the sharing switch is turned off.
 func (s *HubServer) startCustomerConsentSweep(ctx context.Context) {
 	sweep := func(now time.Time) {
-		dir := customerConsentDir()
-		entries, err := os.ReadDir(dir)
+		paths, err := customerConsentPaths()
 		if err != nil {
-			if !errors.Is(err, os.ErrNotExist) {
-				s.logger.Warn("customer consent sweep: list failed", "error", err)
-			}
+			s.logger.Warn("customer consent sweep: list failed", "error", err)
 			return
 		}
-		for _, entry := range entries {
+		for _, path := range paths {
 			if ctx.Err() != nil {
 				return
 			}
-			if !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".json") {
-				continue
-			}
-			if err := pruneCustomerConsents(filepath.Join(dir, entry.Name()), now); err != nil {
+			if err := pruneCustomerConsents(path, now); err != nil {
 				s.logger.Warn("customer consent sweep: prune failed", "error", err)
 			}
 		}

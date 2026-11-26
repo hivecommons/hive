@@ -245,18 +245,64 @@ on the JSON. Check the first boot's `hub customer store: boot sync` line for
   mode the match answer and the Profile sharing page also read the grant
   from colony, which can only narrow what the file grants (a field crosses
   only when both grant it, and a withdrawal on either side holds); the delivery
-  bookkeeping, which colony has no slot for, is still read from
-  `/data/saas/consents`, and a person whose last sync failed is read from the
-  file alone. Consent writes still go to the file first and are mirrored, so
-  `json` stays the rollback. When the hub prunes a consent, colony
-  has no delete, so its record is emptied (no fields, text version or times)
-  and only the hive id stays, until the user is deleted.
+  bookkeeping is still read from `/data/saas/consents` in this mode (colony
+  holds a copy since colony v0.4.0), and a person whose last sync failed is
+  read from the file alone. Consent writes still go to the file first and are
+  mirrored, so `json` stays the rollback. A consent the hub prunes is deleted
+  from colony too.
+- **Long notes** (up to colony's 64 KiB `notes` limit, carriage returns
+  included) are stored in colony since v0.4.0, and a linked login or email
+  another user owns is kept as a held identity instead of being skipped.
 - **Affiliation in the answer** is not a delivered field: it is not stamped on
   a consent record and carries no `cleared` signal, so when it stops crossing
   the hive drops it at its 72-hour refresh expiry. A person who cleared their
   organization on the hub gets no derived affiliation either.
 - **Single writer.** bbolt takes a file lock, so the hub stays one replica on
   its PVC. A lock held for more than 5 seconds at boot leaves the hub in `json`.
+
+#### colony-only (opt-in)
+
+`HIVE_HUB_CUSTOMER_STORE=colony-only` makes `colony.db` the only copy of the
+CRM fields and the consent records ([#19972](https://github.com/hivecommons/hive/issues/19972)).
+It is never the default. Account data (hives, expiry, quota, tokens) stays in
+the user JSON.
+
+**Moving the hub to colony-only:**
+
+1. Run a release in `colony` with clean boot logs: `hub customer store: boot
+   sync` with `parity=true`, `failed=0`, `skipped=0`, `orphans_held=0`.
+2. Take a volume backup of `/data/saas` (users, consents, `colony.db`).
+3. Set `HIVE_HUB_CUSTOMER_STORE=colony-only` and roll the hub.
+4. On that boot the hub runs the colony boot sync, which must report parity,
+   writes every person's CRM fields and consent records into colony in one
+   transaction, reads them all back and compares them with the JSON. Only
+   then does it copy `/data/saas/users` to `users.migrated`, rename
+   `/data/saas/consents` to `consents.migrated` (a taken name gets a
+   `-<time>` suffix; nothing is overwritten or deleted) and log
+   `colony-only took over`. If the sync has no parity or the read-back does
+   not match, it logs why (counts only) and runs in `colony` mode with every
+   file where it was.
+5. From then on a user record is written without its CRM fields
+   (`crm_in_colony: true`), only after the colony write succeeded; when the
+   colony write fails the full record is written as before. Consent records
+   are read, written, stamped and swept in colony only.
+
+**Rolling back:** set `HIVE_HUB_CUSTOMER_STORE` to `colony`, `shadow` or
+`json` and roll the hub. The boot finds the colony-only marker in `colony.db`
+and writes the CRM fields back into every stripped user record and the
+consent files back into `/data/saas/consents` first (an existing consents
+directory is set aside as `consents.pre-restore`, never overwritten), then
+drops the marker. If that restore fails, the hub stays colony-only and
+retries on the next boot, so it never serves records without their CRM
+fields. By hand: stop the hub, run `hive colony export --format hive-hub-json
+--dir /data/saas --out /tmp/hub-export`, check the files, copy
+`users/*.json` and `consents/*.json` into place, set the mode and start the
+hub. The export never overwrites a file without `--force`.
+
+`users.migrated` and `consents.migrated` are kept until an operator removes
+them: they are the JSON as it stood when colony-only took over. Deleting a
+user removes their copies there too. Before running an older hub image
+(which has no colony-only and reads it as `json`), roll back first.
 
 ### Ask AI help
 

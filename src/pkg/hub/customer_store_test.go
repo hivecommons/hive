@@ -614,12 +614,12 @@ func TestParseHubCustomerStoreMode(t *testing.T) {
 	// Unset is the colony default (#19972); an explicit json still works; an
 	// unknown value fails closed to json and reports it.
 	for raw, want := range map[string]string{"": "colony", "  ": "colony", "JSON": "json", "json": "json", " shadow ": "shadow",
-		"colony": "colony", "colony-only": "json", "bogus": "json"} {
+		"colony": "colony", "colony-only": "colony-only", " Colony-Only ": "colony-only", "colony_only": "json", "bogus": "json"} {
 		got, ok := parseHubCustomerStoreMode(raw)
 		if got != want {
 			t.Errorf("%q -> %q, want %q", raw, got, want)
 		}
-		known := raw != "colony-only" && raw != "bogus"
+		known := raw != "colony_only" && raw != "bogus"
 		if ok != known {
 			t.Errorf("%q ok = %v, want %v", raw, ok, known)
 		}
