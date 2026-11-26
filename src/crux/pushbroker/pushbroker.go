@@ -298,16 +298,25 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 	// helpers are reset before the -c helper above is appended, and the
 	// remote's URL is the pinned one.
 	env := append(b.gitEnv(), pushTokenEnvVar+"="+token)
+	var pushOutput []byte
 	_, err = effects.Execute(ctx, b.Mutation, effects.Claim{
 		Repo:   b.Repo,
 		Kind:   effects.KindBranchPush,
 		Target: b.Branch,
 		Inputs: inputs,
 	}, func(ctx context.Context) (effects.Result, error) {
-		_, runErr := b.runner().Run(ctx, b.Workspace, env, "git", args...)
+		out, runErr := b.runner().Run(ctx, b.Workspace, env, "git", args...)
+		pushOutput = out
 		return effects.Result{Provenance: res.Commit}, runErr
 	})
 	if err != nil {
+		// Keep git's own diagnostics (a 403 for a missing scope, a rejected
+		// ref, a DNS failure) so the operator and the agent can tell them
+		// apart. The tail is scrubbed first: git can echo a remote URL, and
+		// the minted token must never travel in an error string.
+		if detail := pushFailureDetail(pushOutput, token); detail != "" {
+			err = fmt.Errorf("%w: %s", err, detail)
+		}
 		if res.Lease != "" {
 			return b.fail(res, fmt.Errorf("git push to existing branch %q refused or failed; with the lease, a branch that moved off %s since the kick checked it out is never overwritten: %w", b.Branch, shortSHA(res.Lease), err))
 		}
@@ -315,6 +324,51 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 	}
 	res.Pushed = true
 	return res, nil
+}
+
+const (
+	// pushFailureTailLines bounds how many trailing lines of git's output a
+	// push error carries. Git prints the cause last ("remote: Forbidden",
+	// "The requested URL returned error: 403"); progress noise comes first.
+	pushFailureTailLines = 6
+	// pushFailureTailBytes caps the carried tail so a chatty remote cannot
+	// turn one error string into a log flood.
+	pushFailureTailBytes = 1024
+)
+
+// urlUserinfoRE matches the userinfo part of a URL (scheme://user:pass@host).
+// Git prints remote URLs in its diagnostics, and a URL written with embedded
+// credentials would otherwise carry them into the error.
+var urlUserinfoRE = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]+@`)
+
+// pushFailureDetail returns a scrubbed, bounded tail of git's push output for
+// an error message, or "" when git printed nothing useful. It removes the
+// minted token verbatim, any URL userinfo, and every credential shape
+// logscrub knows, then keeps the last pushFailureTailLines non-empty lines
+// within pushFailureTailBytes.
+func pushFailureDetail(out []byte, token string) string {
+	text := string(out)
+	if t := strings.TrimSpace(token); t != "" {
+		text = strings.ReplaceAll(text, t, "[REDACTED]")
+	}
+	text = urlUserinfoRE.ReplaceAllString(text, "${1}[REDACTED]@")
+	text = logscrub.ScrubString(text)
+	var lines []string
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\r", "\n"), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) > pushFailureTailLines {
+		lines = lines[len(lines)-pushFailureTailLines:]
+	}
+	detail := strings.Join(lines, " | ")
+	if len(detail) > pushFailureTailBytes {
+		detail = "..." + detail[len(detail)-pushFailureTailBytes:]
+		// Never cut inside a multi-byte rune.
+		detail = strings.ToValidUTF8(detail, "")
+	}
+	return detail
 }
 
 func (b *Broker) validate() error {
