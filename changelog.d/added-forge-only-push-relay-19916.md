@@ -1,0 +1,1 @@
+- A forge-only hive now pushes branches from push-branch requests to the repo's Forgejo remote, and answers review and merge requests with a reason instead of leaving the agent waiting (#19916).

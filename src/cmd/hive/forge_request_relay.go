@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
@@ -45,6 +46,8 @@ import (
 //     so the agent does not wait on them.
 //   - A forge 4xx (other than 408 and 429) is final; other failures are
 //     retried a bounded number of times.
+//   - Push-branch requests are served, and review and merge requests are
+//     answered with a reason (forge_push_relay.go, #19916).
 //
 // Agent-written titles and bodies pass through prosefilter before they are
 // sent, as on the GitHub relays.
@@ -96,6 +99,14 @@ type forgeRequestRelay struct {
 	// openPRs is the per-repo open-PRs gate (repo_open_prs.go): the repo's
 	// mode and, when the PR may not open, why.
 	openPRs func(agent, repo string, issues []int, via string) (string, string)
+
+	// The push-branch, review and merge queues (forge_push_relay.go, #19916).
+	pushAuthz   github.PushBranchRequestAuthorizer
+	pushRemote  pushbroker.ForgeRemoteResolver
+	pushDir     string
+	reviewDir   string
+	mergeDir    string
+	queuesReady bool
 }
 
 func newForgeRequestRelay(cfg func() *config.Config, prAuthz github.PRRequestAuthorizer, issueAuthz github.IssueRequestAuthorizer, logger *slog.Logger) *forgeRequestRelay {
@@ -109,6 +120,10 @@ func newForgeRequestRelay(cfg func() *config.Config, prAuthz github.PRRequestAut
 		logger:     logger,
 		attempts:   map[string]int{},
 		openPRs:    hiveOpenPRsGate(cfg, logger),
+		pushRemote: forgeRemoteResolver(cfg),
+		pushDir:    github.PushBranchRequestDir,
+		reviewDir:  github.ReviewRequestDir,
+		mergeDir:   github.MergeRequestDir,
 	}
 }
 
@@ -136,7 +151,7 @@ func startForgeRequestRelay(ctx context.Context, r *forgeRequestRelay) <-chan st
 	return done
 }
 
-// scanOnce handles every pending request in both directories once.
+// scanOnce handles every pending request in every queue once.
 //
 // It does nothing unless every repo is off GitHub, read on each scan, so a
 // reload that puts a repo on GitHub hands the queues back to the GitHub
@@ -150,6 +165,16 @@ func (r *forgeRequestRelay) scanOnce(ctx context.Context) {
 	}
 	for _, path := range pendingRequestFiles(r.issueDir) {
 		r.handleIssue(ctx, path)
+	}
+	r.ensureQueueDirs()
+	for _, path := range pendingRequestFiles(r.pushDir) {
+		r.handlePushBranch(ctx, path)
+	}
+	for _, path := range pendingRequestFiles(r.reviewDir) {
+		r.handleReviewRequest(path)
+	}
+	for _, path := range pendingRequestFiles(r.mergeDir) {
+		r.handleMergeRequest(path)
 	}
 }
 
