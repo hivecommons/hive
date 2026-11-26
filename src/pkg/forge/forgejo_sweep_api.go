@@ -222,14 +222,44 @@ func (f *forgejoForge) IssueReopened(ctx context.Context, repo string, number in
 	return reopened, nil
 }
 
+// Permission levels Permission returns when it answers from the assignee
+// list instead of the permission API.
+const (
+	permissionWrite = "write"
+	permissionNone  = "none"
+)
+
+// Permission reads login's access through
+// GET /repos/{owner}/{repo}/collaborators/{login}/permission. Forgejo answers
+// that call about another user only for a site admin or a repo admin, and
+// returns 403 to a caller with write access (#19914). On that 403 the
+// answer comes from GET /repos/{owner}/{repo}/assignees, which any repo
+// reader may call and which lists the active users with write access
+// (direct collaborators, and members of a team with write on any unit or
+// with access to pull requests): a login on it is "write", one missing from
+// it "none". The list never says "admin" or "owner", and it leaves out a
+// site admin with no access of their own to the repo.
 func (f *forgejoForge) Permission(ctx context.Context, repo, login string) (string, error) {
 	var out struct {
 		Permission string `json:"permission"`
 	}
-	if err := f.getJSON(ctx, fmt.Sprintf("%s/collaborators/%s/permission", f.repoPath(repo), url.PathEscape(login)), nil, &out); err != nil {
+	err := f.getJSON(ctx, fmt.Sprintf("%s/collaborators/%s/permission", f.repoPath(repo), url.PathEscape(login)), nil, &out)
+	if err == nil {
+		return strings.ToLower(strings.TrimSpace(out.Permission)), nil
+	}
+	if !isGiteaStatus(err, http.StatusForbidden) {
 		return "", fmt.Errorf("%s: permission of %s on %s: %w", f.label, login, repo, err)
 	}
-	return strings.ToLower(strings.TrimSpace(out.Permission)), nil
+	var assignees []gtUser
+	if aerr := f.getJSON(ctx, f.repoPath(repo)+"/assignees", nil, &assignees); aerr != nil {
+		return "", fmt.Errorf("%s: permission of %s on %s: %v; reading the assignee list instead: %w", f.label, login, repo, err, aerr)
+	}
+	for _, u := range assignees {
+		if u.Login != "" && strings.EqualFold(u.Login, login) {
+			return permissionWrite, nil
+		}
+	}
+	return permissionNone, nil
 }
 
 func (f *forgejoForge) RecentlyMergedPulls(ctx context.Context, repo string, limit int) ([]MergedPull, error) {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -118,7 +119,8 @@ func TestForgejoSweeperFor(t *testing.T) {
 		t.Errorf("sweeper = %+v", s)
 	}
 	joined := strings.Join(s.BlockingLabels, ",")
-	for _, want := range []string{forgejoHoldLabel, cfg.Sentinel.LabelOrDefault(), cfg.Governor.Labels.DecisionNeededLabelOrDefault(), "meta-tracker"} {
+	for _, want := range []string{forgejoHoldLabel, cfg.Sentinel.LabelOrDefault(), cfg.Governor.Labels.DecisionNeededLabelOrDefault(), "meta-tracker",
+		github.ReadyForReviewLabelName(), github.DecisionNeededLabelName(), github.DefaultReadyForReviewLabel, github.DefaultDecisionNeededLabel} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("BlockingLabels %v lacks %q", s.BlockingLabels, want)
 		}
@@ -228,4 +230,35 @@ func TestStartForgejoSweepsLogsPanic(t *testing.T) {
 	<-ran
 	cancel()
 	<-done
+}
+
+// gatedPullAPI serves one open pull request that carries lgtm and the
+// relay's ready-for-review hold. Any read past the label gate (timeline,
+// permission, status) or a merge hits the nil embedded SweepAPI and panics.
+type gatedPullAPI struct {
+	forge.SweepAPI
+	labels []string
+}
+
+func (g *gatedPullAPI) ListOpenChangeRequests(context.Context, string) ([]forge.ChangeRequest, error) {
+	return []forge.ChangeRequest{{Number: 6, Labels: g.labels}}, nil
+}
+
+func (g *gatedPullAPI) PullFacts(context.Context, string, int) (forge.PullFacts, error) {
+	return forge.PullFacts{Number: 6, State: "open", Mergeable: true, Author: "hive-bot", Labels: g.labels, HeadSHA: "abc", Base: "main"}, nil
+}
+
+// TestForgejoAutoMergeHonoursReadyForReview is #19912: the PR relay holds
+// every PR it opens with ready-for-review, and the sweep must not merge one
+// that still carries it, even with lgtm and green CI.
+func TestForgejoAutoMergeHonoursReadyForReview(t *testing.T) {
+	for _, gate := range []string{github.ReadyForReviewLabelName(), "Ready-For-Review", github.DefaultDecisionNeededLabel} {
+		t.Setenv(testForgejoTokenEnv, "fj-secret")
+		stubForgejoSweepAPI(t, &gatedPullAPI{labels: []string{"lgtm", gate}}, nil)
+		s := forgejoSweeperFor(forgejoSweepTestConfig(), forgejoSweepDeps{})
+		out := s.AutoMerge(context.Background())
+		if len(out) != 1 || out[0].Merged || !strings.HasPrefix(out[0].Reason, "blocked-by-label:") {
+			t.Errorf("%s: outcomes = %+v, want the PR skipped as blocked by the gate label", gate, out)
+		}
+	}
 }

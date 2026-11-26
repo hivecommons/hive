@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -399,6 +401,10 @@ func TestIsPermanentForgeRefusal(t *testing.T) {
 		if got := isPermanentForgeRefusal(errors.New(msg)); got != want {
 			t.Errorf("%q = %v, want %v", msg, got, want)
 		}
+	} // A label the forge still left off after the adapter tried to create
+	// it is final: a retry sends the same call (#19910).
+	if !isPermanentForgeRefusal(fmt.Errorf("add labels: %w: x", forge.ErrLabelsMissing)) {
+		t.Error("ErrLabelsMissing: want a permanent refusal")
 	}
 }
 
@@ -428,5 +434,117 @@ func TestRepoRefusalRefusesGitHubRepo(t *testing.T) {
 	}
 	if got := repoRefusal(forgejoOnlyConfig("https://fj.example"), "worker", "acme/widgets"); got != "" {
 		t.Errorf("owner-qualified managed repo refused: %q", got)
+	}
+}
+
+// fakeForgejoLabels is a Forgejo 17 repo with no labels as the PR relay sees
+// it: the add-labels call answers 200 and applies nothing for a name the repo
+// lacks (#19910). allowCreate lets the token create labels.
+type fakeForgejoLabels struct {
+	allowCreate bool
+	created     []string
+	applied     []string
+}
+
+func (f *fakeForgejoLabels) server(t *testing.T) *httptest.Server {
+	t.Helper()
+	const repo = "/api/v1/repos/acme/widgets"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == repo+"/pulls":
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodGet && r.URL.Path == repo:
+			_, _ = w.Write([]byte(`{"full_name":"acme/widgets","default_branch":"main"}`))
+		case r.Method == http.MethodPost && r.URL.Path == repo+"/pulls":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"number": 4, "html_url": "https://fj.example/acme/widgets/pulls/4"}`))
+		case r.Method == http.MethodPost && r.URL.Path == repo+"/issues/4/labels":
+			var req struct {
+				Labels []any `json:"labels"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			for _, l := range req.Labels {
+				if id, ok := l.(float64); ok && int(id) == 9 && len(f.created) > 0 {
+					f.applied = append(f.applied, f.created[0])
+				}
+			}
+			out := []map[string]string{}
+			for _, name := range f.applied {
+				out = append(out, map[string]string{"name": name})
+			}
+			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodGet && r.URL.Path == repo+"/labels":
+			_, _ = w.Write([]byte(`[]`))
+		case r.Method == http.MethodPost && r.URL.Path == repo+"/labels":
+			if !f.allowCreate {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"message":"forbidden"}`))
+				return
+			}
+			var req map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			f.created = append(f.created, req["name"])
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 9, "name": req["name"]})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func useRealForgejoWriter(t *testing.T, url string) {
+	t.Helper()
+	forgeRelayWriterForRepo = func(*config.Config, string) (forgeRelayWriter, error) {
+		f, err := forge.NewForge(forge.KindForgejo, "fj", forge.Options{BaseURL: url, Org: "acme"})
+		if err != nil {
+			return nil, err
+		}
+		w, ok := f.(forgeRelayWriter)
+		if !ok {
+			t.Fatal("the Forgejo adapter is not a forgeRelayWriter")
+		}
+		return w, nil
+	}
+}
+
+// TestForgeRelayPRWithoutGateLabelIsNotACleanOpen is #19910 through the
+// real Forgejo adapter: the repo lacks ready-for-review and the token may not
+// create it, so the PR is open but not held, and the result must say so.
+func TestForgeRelayPRWithoutGateLabelIsNotACleanOpen(t *testing.T) {
+	h := newRelayHarness(t)
+	fake := &fakeForgejoLabels{}
+	useRealForgejoWriter(t, fake.server(t).URL)
+	path := writeRelayRequest(t, h.relay.prDir, "a.json", goodPR())
+	h.relay.scanOnce(context.Background())
+
+	var resp github.PRResponse
+	readRelayResult(t, path, &resp)
+	if !resp.OK || resp.Number != 4 || !strings.Contains(resp.Error, "labels were not applied") || !strings.Contains(resp.Error, github.ReadyForReviewLabelName()) {
+		t.Errorf("resp = %+v, want an open that names the missing gate label", resp)
+	}
+}
+
+// When the token may create labels, the relay's PR is held: the adapter
+// creates ready-for-review and applies it.
+func TestForgeRelayPRCreatesMissingGateLabel(t *testing.T) {
+	h := newRelayHarness(t)
+	fake := &fakeForgejoLabels{allowCreate: true}
+	useRealForgejoWriter(t, fake.server(t).URL)
+	path := writeRelayRequest(t, h.relay.prDir, "a.json", goodPR())
+	h.relay.scanOnce(context.Background())
+
+	var resp github.PRResponse
+	readRelayResult(t, path, &resp)
+	if !resp.OK || resp.Number != 4 || resp.Error != "" {
+		t.Errorf("resp = %+v, want a clean, held open", resp)
+	}
+	if len(fake.created) != 1 || fake.created[0] != github.ReadyForReviewLabelName() {
+		t.Errorf("created = %v, want the gate label", fake.created)
+	}
+	if len(fake.applied) != 1 || fake.applied[0] != github.ReadyForReviewLabelName() {
+		t.Errorf("applied = %v, want the gate label on the PR", fake.applied)
 	}
 }

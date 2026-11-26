@@ -284,21 +284,8 @@ func (f *giteaForge) CreateIssueComment(ctx context.Context, repo string, number
 	return nil
 }
 
-// AddLabels adds labels to an issue/PR via
-// POST /repos/{owner}/{repo}/issues/{index}/labels. Modern Gitea/Forgejo accept
-// label names in the "labels" array. It is a no-op when labels is empty.
-func (f *giteaForge) AddLabels(ctx context.Context, repo string, number int, labels []string) error {
-	if len(labels) == 0 {
-		return nil
-	}
-	owner, name := f.ownerRepo(repo)
-	endpoint := fmt.Sprintf("/repos/%s/%s/issues/%d/labels", url.PathEscape(owner), url.PathEscape(name), number)
-	payload := map[string]any{"labels": labels}
-	if err := f.doWrite(ctx, http.MethodPost, endpoint, payload, nil); err != nil {
-		return fmt.Errorf("%s: add labels to %s/%s#%d: %w", f.label, owner, name, number, err)
-	}
-	return nil
-}
+// AddLabels lives in gitea_labels.go: it verifies what the forge applied
+// and creates a label the repo lacks (#19910).
 
 // RemoveLabel removes a single label via
 // DELETE /repos/{owner}/{repo}/issues/{index}/labels/{label}. Modern
@@ -533,7 +520,7 @@ func (f *giteaForge) getRaw(ctx context.Context, endpoint string, q url.Values) 
 
 	data, readErr := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s API %s returned status %d: %s", f.label, endpoint, resp.StatusCode, truncate(string(data), 200))
+		return nil, &giteaStatusError{label: f.label, endpoint: endpoint, status: resp.StatusCode, body: truncate(string(data), 200)}
 	}
 	if readErr != nil {
 		return nil, fmt.Errorf("reading body from %s: %w", endpoint, readErr)

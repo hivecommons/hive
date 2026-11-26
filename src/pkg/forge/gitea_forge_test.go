@@ -519,7 +519,9 @@ func TestGiteaAddLabels(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[]`))
+		// Echo the requested labels back as applied, as the forge does
+		// for labels the repo has.
+		_, _ = w.Write(echoAppliedLabels(b))
 	}))
 	defer srv.Close()
 
@@ -596,7 +598,7 @@ func TestGiteaSetHold(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		lastBody = string(b)
 		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`[]`))
+		_, _ = w.Write(echoAppliedLabels(b))
 	}))
 	defer srv.Close()
 

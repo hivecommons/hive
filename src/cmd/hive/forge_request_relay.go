@@ -345,6 +345,12 @@ const forgeStatusPrefix = "returned status "
 // can fix (the forge rejected the request itself). 408 and 429 are
 // throttling and stay transient.
 func isPermanentForgeRefusal(err error) bool {
+	// The forge took the call but left a label off, after the adapter
+	// looked the label up and tried to create it: a retry sends the same
+	// call (#19910).
+	if errors.Is(err, forge.ErrLabelsMissing) {
+		return true
+	}
 	msg := err.Error()
 	i := strings.Index(msg, forgeStatusPrefix+"4")
 	if i < 0 {
