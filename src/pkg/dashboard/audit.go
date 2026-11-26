@@ -120,6 +120,8 @@ var auditSensitiveActions = map[string]bool{
 	"finding_publication_refused":           true,
 	"gh_auth_logout":                        true,
 	"gh_auth_start":                         true,
+	"github_token_rejected":                 true,
+	"github_token_rotated":                  true,
 	"ioscan_fail_closed":                    true,
 	"lease_stage_refused":                   true,
 	"lease_stage_reset":                     true,
