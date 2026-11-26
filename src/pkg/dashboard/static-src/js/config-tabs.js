@@ -1967,7 +1967,7 @@
       if (st.configured) {
         let line = 'In use: fingerprint ' + st.fingerprint;
         if (st.login) line += ', signed in as ' + st.login;
-        line += st.verified_at ? ', last verified ' + new Date(st.verified_at).toLocaleString() : ', not verified since this hive started';
+        line += st.verified_at ? ', last verified ' + formatDashboardDateTime(st.verified_at) : ', not verified since this hive started';
         state.textContent = line;
       } else {
         state.className += ' text-muted';

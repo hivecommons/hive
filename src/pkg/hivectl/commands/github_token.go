@@ -14,10 +14,14 @@ func newGitHubCommand(env *commandEnv) *cobra.Command {
 	github := &cobra.Command{
 		Use:   "github",
 		Short: "Manage the hive's GitHub credential",
+		Example: "  hivectl github token status\n" +
+			"  hivectl github token set --stdin",
 	}
 	token := &cobra.Command{
 		Use:   "token",
 		Short: "Show or rotate the GitHub personal access token (owner only)",
+		Example: "  hivectl github token status\n" +
+			"  hivectl github token set --file /run/secrets/github_pat",
 	}
 	token.AddCommand(&cobra.Command{
 		Use:     "status",
