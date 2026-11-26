@@ -1,6 +1,6 @@
 # RFC #19788: Hive Chat config assist (model-proposed, owner-confirmed config changes)
 
-Status: accepted ([#19835](https://github.com/hivecommons/hive/pull/19835)). Phase 1 ([#19979](https://github.com/hivecommons/hive/issues/19979)), phase 2 ([#19977](https://github.com/hivecommons/hive/issues/19977)), phase 3a ([#19978](https://github.com/hivecommons/hive/issues/19978), proposals with "Open in agent config") and phase 3b ([#19985](https://github.com/hivecommons/hive/issues/19985), direct Apply and Undo) are implemented.
+Status: accepted ([#19835](https://github.com/hivecommons/hive/pull/19835)). Phase 1 ([#19979](https://github.com/hivecommons/hive/issues/19979)), phase 2 ([#19977](https://github.com/hivecommons/hive/issues/19977)), phase 3a ([#19978](https://github.com/hivecommons/hive/issues/19978), proposals with "Open in agent config"), phase 3b ([#19985](https://github.com/hivecommons/hive/issues/19985), direct Apply and Undo) and the phase 1 follow-up ([#20092](https://github.com/hivecommons/hive/issues/20092), `config_assist.model` and the owner-only Settings panel) are implemented.
 Target: Hive v5
 Scope: dashboard Hive Chat panel, the `chat:` config block, agent config write endpoints, audit log
 Out of scope: a write-capable MCP server, writes from Slack/Discord/email chat surfaces, secrets, governance and write-surface settings, hub-level settings
@@ -9,11 +9,10 @@ Refs: [#19788](https://github.com/hivecommons/hive/issues/19788), [#19177](https
 > **This design was accepted on [#19788](https://github.com/hivecommons/hive/issues/19788)**
 > after review in [#19835](https://github.com/hivecommons/hive/pull/19835). It is
 > implemented one phase per issue; the status line above says which phases have
-> shipped. [Decisions for maintainers](#decisions-for-maintainers) D2 and D4
-> are still open (D6 was settled by shipping 3b) and are settled when their phase is picked up. Phase 3a keeps
+> shipped. [Decisions for maintainers](#decisions-for-maintainers) D4
+> is still open (D2 was settled by shipping `config_assist.model` in #20092, D6 by shipping 3b) and is settled when its phase is picked up. Phase 3a keeps
 > the proposal TTL, rate and caps as code constants (the values in
-> [§3](#3-the-proposal-turn)); the `config_assist.model` and `proposal_ttl` knobs
-> wait on D2.
+> [§3](#3-the-proposal-turn)); the `proposal_ttl` knob is not shipped.
 
 Code references are to `v5` at `302fcc6e0` and name a file plus the function or
 type. Treat them as pointers, not line-exact citations.

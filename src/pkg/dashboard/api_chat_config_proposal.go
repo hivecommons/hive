@@ -29,9 +29,13 @@ import (
 // the same section endpoint on the owner's click. The model never writes, and
 // chat text never applies anything.
 
+// ChatConfigAssistProfile names the config assist proposal turn. The chat
+// runner keys its model choice on it (chat.config_assist.model).
+const ChatConfigAssistProfile = "hive-chat-config"
+
 const (
 	// chatConfigProfile names the proposal turn in runner errors.
-	chatConfigProfile = "hive-chat-config"
+	chatConfigProfile = ChatConfigAssistProfile
 	// chatConfigProposalTTL is how long a proposal card stays usable.
 	chatConfigProposalTTL = 10 * time.Minute
 	// chatConfigProposalRate is the per-user proposal turns per minute.

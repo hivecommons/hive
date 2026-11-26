@@ -57,6 +57,91 @@ func TestChatConfigAssistToggleOwnerOnly(t *testing.T) {
 	}
 }
 
+// #20092: the GET is owner-only like the PUT, so a non-owner's panel shows
+// the owner-only note instead of a switch that answers 403 on save.
+func TestChatConfigAssistGetOwnerOnly(t *testing.T) {
+	s := covApiServer(t)
+	for _, role := range []string{"", config.RoleRead, config.RoleMerger, config.RoleOwner} {
+		if rec := doGetRole(s, chatConfigAssistPath, role, false); rec.Code != http.StatusForbidden {
+			t.Fatalf("role %q: status %d, want 403", role, rec.Code)
+		}
+	}
+	rec := doGetRole(s, chatConfigAssistPath, config.RoleOwner, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("verified owner: status %d (%s)", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for _, key := range []string{"enabled", "model", "fallback_model", "runner_attached"} {
+		if _, ok := body[key]; !ok {
+			t.Errorf("GET body is missing %q: %v", key, body)
+		}
+	}
+}
+
+// #20092: chat.config_assist.model is saved, audited, served with the
+// grounded_answers fallback, cleared by an empty string, and validated.
+func TestChatConfigAssistModelRoundTrip(t *testing.T) {
+	s := covApiServer(t)
+	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	s.deps.Config.Chat.GroundedAnswers.Model = "grounded-model"
+	if rec := doPut(s, chatConfigAssistPath, map[string]any{"model": " assist-model "}); rec.Code != http.StatusOK {
+		t.Fatalf("set model: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := s.deps.Config.Chat.ConfigAssist.Model; got != "assist-model" {
+		t.Fatalf("model = %q, want assist-model", got)
+	}
+	if s.deps.Config.Chat.ConfigAssist.Enabled != nil {
+		t.Fatal("a model-only PUT must not touch enabled")
+	}
+	entries := chatAssistAuditEntries(s)
+	if len(entries) != 1 || !strings.Contains(entries[0].Detail, "assist-model") {
+		t.Fatalf("audit entries = %+v, want one naming the new model", entries)
+	}
+	rec := doGetRole(s, chatConfigAssistPath, config.RoleOwner, true)
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body["model"] != "assist-model" || body["fallback_model"] != "grounded-model" {
+		t.Fatalf("GET body = %v", body)
+	}
+	if rec := doPut(s, chatConfigAssistPath, map[string]any{"model": "two words"}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad model: %d, want 400", rec.Code)
+	}
+	if rec := doPut(s, chatConfigAssistPath, map[string]any{"model": strings.Repeat("m", chatConfigAssistMaxModel+1)}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("long model: %d, want 400", rec.Code)
+	}
+	if got := s.deps.Config.Chat.ConfigAssist.Model; got != "assist-model" {
+		t.Fatalf("rejected PUT changed model to %q", got)
+	}
+	if rec := doPut(s, chatConfigAssistPath, map[string]any{"model": ""}); rec.Code != http.StatusOK {
+		t.Fatalf("clear model: %d", rec.Code)
+	}
+	if got := s.deps.Config.Chat.ConfigAssistModel(); got != "grounded-model" {
+		t.Fatalf("cleared model resolves to %q, want grounded-model", got)
+	}
+}
+
+// #20092: the Settings panel offers the model picker and saves the model
+// with the toggle.
+func TestChatConfigAssistPanelOffersModel(t *testing.T) {
+	html := indexHTML(t)
+	body := jsFunctionBody(t, html, "function renderChatConfigAssistPanel(host, data)")
+	for _, want := range []string{
+		"chat.config_assist.model",
+		"'security-model-options'",
+		"data.fallback_model",
+		"model: state.model",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("renderChatConfigAssistPanel does not contain %q", want)
+		}
+	}
+}
+
 func chatAssistAuditEntries(s *Server) []AuditEntry {
 	var out []AuditEntry
 	if s.audit == nil {
