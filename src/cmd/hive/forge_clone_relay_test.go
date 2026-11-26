@@ -186,6 +186,21 @@ func TestForgeCloneRelayHandsTheAgentABundle(t *testing.T) {
 			t.Errorf("fetch env lacks %q:\n%s", want, env)
 		}
 	}
+	// The last followRedirects pin wins, and it follows none.
+	redirects := ""
+	for _, e := range fetch.env {
+		if k, ok := strings.CutPrefix(e, "GIT_CONFIG_KEY_"); ok && strings.HasSuffix(k, "=http.followRedirects") {
+			idx := strings.TrimSuffix(k, "=http.followRedirects")
+			for _, v := range fetch.env {
+				if val, ok := strings.CutPrefix(v, "GIT_CONFIG_VALUE_"+idx+"="); ok {
+					redirects = val
+				}
+			}
+		}
+	}
+	if redirects != "false" {
+		t.Errorf("fetch follows redirects (%q); want false", redirects)
+	}
 	if args := strings.Join(fetch.args, " "); !strings.Contains(args, "https://fj.example/acme/widgets.git") || !strings.Contains(args, "--no-recurse-submodules") {
 		t.Errorf("fetch args = %q", args)
 	}
@@ -314,20 +329,23 @@ func TestForgeCloneRelayFailedMintFailsClosed(t *testing.T) {
 		t.Fatal("a bundle was handed out after a failed mint")
 	}
 
-	// A minter that returns an empty token is a failed mint too.
+	// A remote whose minter is not the short-lived JWT minter (a reload
+	// that dropped forgejo.integration between the checks) is refused
+	// before any mint, so the access token is never used.
 	h2 := newCloneHarness(t)
 	h2.relay.pushRemote = func(string) (pushbroker.ForgeRemote, bool, error) {
-		return pushbroker.ForgeRemote{BaseURL: "https://fj.example", Minter: pushbroker.StaticTokenMinter{Token: func() (string, error) { return " ", nil }}}, true, nil
+		return pushbroker.ForgeRemote{BaseURL: "https://fj.example", Minter: pushbroker.StaticTokenMinter{Token: func() (string, error) { return forgePushTestToken, nil }}}, true, nil
 	}
 	path = writeRelayRequest(t, h2.relay.cloneDir, "worker-2.json", goodClone())
 	h2.relay.scanOnce(context.Background())
 	if len(h2.calls) != 0 {
-		t.Fatalf("ran git with an empty token: %+v", h2.calls)
+		t.Fatalf("ran git with a long-lived token minter: %+v", h2.calls)
 	}
 	readRelayResult(t, path, &resp)
-	if resp.OK || !strings.Contains(resp.Error, "minting the clone token") {
-		t.Fatalf("empty token resp = %+v", resp)
+	if resp.OK || !strings.Contains(resp.Error, "never uses the long-lived access token") {
+		t.Fatalf("static minter resp = %+v", resp)
 	}
+	assertExists(t, path+".rejected", true)
 }
 
 // Only the agent's own, configured repos are cloned, only by the agent the
@@ -398,11 +416,14 @@ func TestForgeCloneRelayNeedsAnAgentOwnedRequest(t *testing.T) {
 			asked = true
 			return agentmode.TokenTierContributor, nil
 		})
-		prev := forgeCloneFileOwnerUID
-		forgeCloneFileOwnerUID = func(string) int { return owner }
+		prev := forgeCloneReadRequest
+		forgeCloneReadRequest = func(p string) ([]byte, int, error) {
+			data, _, err := prev(p)
+			return data, owner, err
+		}
 		path := writeRelayRequest(t, h.relay.cloneDir, "a.json", goodClone())
 		h.relay.scanOnce(context.Background())
-		forgeCloneFileOwnerUID = prev
+		forgeCloneReadRequest = prev
 		if asked || len(h.calls) != 0 {
 			t.Fatalf("owner %d: authorizer asked %v, git calls %+v", owner, asked, h.calls)
 		}
@@ -461,9 +482,10 @@ func TestForgeCloneMaxBundleBytes(t *testing.T) {
 	}
 }
 
-// One scan serves at most forgeCloneMaxPerScan clones, and the queue is
-// idle on a hive with a GitHub repo.
-func TestForgeCloneRelayBoundedPerScanAndForgeOnly(t *testing.T) {
+// One scan serves at most one request per agent and forgeCloneMaxPerScan
+// fetches, oldest first; a refused request spends no budget; and the queue
+// is idle on a hive with a GitHub repo.
+func TestForgeCloneRelayFairPerScanAndForgeOnly(t *testing.T) {
 	h := newCloneHarness(t)
 	h.cfg.Project.RepoPolicies = []config.RepoPolicy{{Repo: "gh-repo", Forge: config.ForgeGitHub}}
 	first := writeRelayRequest(t, h.relay.cloneDir, "a.json", goodClone())
@@ -472,14 +494,95 @@ func TestForgeCloneRelayBoundedPerScanAndForgeOnly(t *testing.T) {
 		t.Fatalf("served a clone on a hive with a GitHub repo: %+v", h.calls)
 	}
 	assertExists(t, first, true)
-
 	h.cfg.Project.RepoPolicies = nil
-	for _, n := range []string{"b.json", "c.json"} {
-		writeRelayRequest(t, h.relay.cloneDir, n, goodClone())
+
+	// Same owner: one fetch per scan, the oldest request first.
+	second := writeRelayRequest(t, h.relay.cloneDir, "0-newer.json", goodClone())
+	past := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(first, past, past); err != nil {
+		t.Fatal(err)
 	}
 	h.relay.scanOnce(context.Background())
-	if got := len(h.callsOf("fetch")); got != forgeCloneMaxPerScan {
+	if got := len(h.callsOf("fetch")); got != 1 {
+		t.Fatalf("fetches for one agent in one scan = %d, want 1", got)
+	}
+	assertExists(t, first, false)
+	assertExists(t, second, true)
+
+	// Several owners: the budget caps the scan, and a refused request
+	// (unmanaged repo) ahead of them does not spend it.
+	h2 := newCloneHarness(t)
+	prevOwner := forgeCloneQueueOwner
+	t.Cleanup(func() { forgeCloneQueueOwner = prevOwner })
+	forgeCloneQueueOwner = func(p string, _ os.FileInfo) int { return int(filepath.Base(p)[0]) }
+	bad := goodClone()
+	bad.Repo = "other"
+	writeRelayRequest(t, h2.relay.cloneDir, "x-refused.json", bad)
+	for _, n := range []string{"a.json", "b.json", "c.json"} {
+		writeRelayRequest(t, h2.relay.cloneDir, n, goodClone())
+	}
+	h2.relay.scanOnce(context.Background())
+	if got := len(h2.callsOf("fetch")); got != forgeCloneMaxPerScan {
 		t.Fatalf("fetches in one scan = %d, want %d", got, forgeCloneMaxPerScan)
+	}
+}
+
+// An agent holds at most one bundle: a new clone removes its earlier one.
+func TestForgeCloneRelayOneBundlePerAgent(t *testing.T) {
+	h := newCloneHarness(t)
+	p1 := writeRelayRequest(t, h.relay.cloneDir, "worker-1.json", goodClone())
+	h.relay.scanOnce(context.Background())
+	var r1, r2 forgeCloneResponse
+	readRelayResult(t, p1, &r1)
+	p2 := writeRelayRequest(t, h.relay.cloneDir, "worker-2.json", goodClone())
+	h.relay.scanOnce(context.Background())
+	readRelayResult(t, p2, &r2)
+	if !r1.OK || !r2.OK {
+		t.Fatalf("resps %+v %+v", r1, r2)
+	}
+	assertExists(t, r1.Bundle, false)
+	assertExists(t, r2.Bundle, true)
+}
+
+// A plain-http forge URL is refused: the token travels over https only.
+func TestForgeCloneRelayRefusesPlainHTTP(t *testing.T) {
+	h := newCloneHarness(t)
+	h.relay.pushRemote = func(string) (pushbroker.ForgeRemote, bool, error) {
+		return pushbroker.ForgeRemote{BaseURL: "http://fj.example", Minter: forgejoMinter(h.cfg)}, true, nil
+	}
+	path := writeRelayRequest(t, h.relay.cloneDir, "a.json", goodClone())
+	h.relay.scanOnce(context.Background())
+	if len(h.calls) != 0 {
+		t.Fatalf("ran git against an http forge: %+v", h.calls)
+	}
+	var resp forgeCloneResponse
+	readRelayResult(t, path, &resp)
+	if resp.OK || !strings.Contains(resp.Error, "https only") {
+		t.Fatalf("resp = %+v", resp)
+	}
+}
+
+// A request path that is a symlink (for example to another agent's file, to
+// borrow its owner) is quarantined unread.
+func TestForgeCloneRelayRefusesSymlinkedRequest(t *testing.T) {
+	h := newCloneHarness(t)
+	target := writeRelayRequest(t, t.TempDir(), "elsewhere.json", goodClone())
+	link := filepath.Join(h.relay.cloneDir, "a.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	h.relay.scanOnce(context.Background())
+	if len(h.calls) != 0 {
+		t.Fatalf("served a symlinked request: %+v", h.calls)
+	}
+	assertExists(t, link+".rejected", true)
+}
+
+func TestForgeCloneWithConfigOverridesLast(t *testing.T) {
+	env := forgeCloneWithConfig([]string{"A=1", "GIT_CONFIG_COUNT=2", "GIT_CONFIG_KEY_0=x", "GIT_CONFIG_VALUE_0=1", "GIT_CONFIG_KEY_1=y", "GIT_CONFIG_VALUE_1=2"}, "http.followRedirects", "false")
+	joined := strings.Join(env, " ")
+	if !strings.Contains(joined, "GIT_CONFIG_KEY_2=http.followRedirects") || !strings.Contains(joined, "GIT_CONFIG_VALUE_2=false") || !strings.HasSuffix(joined, "GIT_CONFIG_COUNT=3") || strings.Contains(joined, "GIT_CONFIG_COUNT=2") {
+		t.Fatalf("env = %q", joined)
 	}
 }
 

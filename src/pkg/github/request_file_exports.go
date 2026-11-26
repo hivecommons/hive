@@ -125,3 +125,15 @@ func PushBranchIsolatedGitDir(repoInfo, branch, sha string, ownerUID int) (strin
 func FirstOutputLines(output string, n int) string {
 	return firstOutputLines(output, n)
 }
+
+// ReadRequestFileOwner is ReadRequestFile that also returns the UID owning
+// the file it read, taken from the same open file descriptor, so a request
+// path swapped for a link to another agent's file after the read cannot
+// change whose request it is. The UID is -1 when the platform reports none.
+func ReadRequestFileOwner(path string) ([]byte, int, error) {
+	data, fi, err := readUntrustedFile(path, requestMaxBytes)
+	if err != nil {
+		return nil, -1, err
+	}
+	return data, fileOwnerUID(fi), nil
+}

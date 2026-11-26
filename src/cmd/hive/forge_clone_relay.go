@@ -3,16 +3,20 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/hivecommons/hive/crux/agentmode"
+	"github.com/hivecommons/hive/crux/forgejwt"
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
@@ -122,10 +126,11 @@ var forgeCloneExec = func(ctx context.Context, dir string, env []string, args ..
 	return out.String(), err
 }
 
-// forgeCloneFileOwnerUID is the request file's owner UID
-// (github.RequestFileOwnerUID). It is a variable so tests, whose files are
-// all owned by the test's own UID, can present other owners.
-var forgeCloneFileOwnerUID = github.RequestFileOwnerUID
+// forgeCloneReadRequest reads a request file and returns the UID that owns
+// the file it read, from the same descriptor (github.ReadRequestFileOwner).
+// It is a variable so tests, whose files are all owned by the test's own
+// UID, can present other owners.
+var forgeCloneReadRequest = github.ReadRequestFileOwner
 
 // forgeCloneChown gives the bundle to the requesting agent's UID. It is a
 // variable so tests, which cannot chown to another UID, can observe it.
@@ -167,19 +172,92 @@ func (r *forgeRequestRelay) withCloneRelay(authz forgeCloneAuthorizer) *forgeReq
 	return r
 }
 
-// serveCloneQueue handles up to forgeCloneMaxPerScan clone requests and
-// removes expired bundles.
+// serveCloneQueue serves pending clone requests oldest first, at most one
+// per owner UID and forgeCloneMaxPerScan fetches per scan, so one agent
+// cannot starve the others, and removes expired bundles. A request that
+// never reaches the fetch (refused, torn, malformed) spends no budget.
 func (r *forgeRequestRelay) serveCloneQueue(ctx context.Context) {
 	if r.cloneDir == "" {
 		return
 	}
 	r.expireCloneBundles()
-	for i, path := range pendingRequestFiles(r.cloneDir) {
-		if i >= forgeCloneMaxPerScan || ctx.Err() != nil {
+	type pending struct {
+		path  string
+		owner int
+		mod   time.Time
+	}
+	var queue []pending
+	for _, p := range pendingRequestFiles(r.cloneDir) {
+		fi, err := os.Lstat(p)
+		if err != nil {
+			continue
+		}
+		queue = append(queue, pending{path: p, owner: forgeCloneQueueOwner(p, fi), mod: fi.ModTime()})
+	}
+	sort.SliceStable(queue, func(i, j int) bool { return queue[i].mod.Before(queue[j].mod) })
+	served := map[int]bool{}
+	fetches := 0
+	for _, q := range queue {
+		if fetches >= forgeCloneMaxPerScan || ctx.Err() != nil {
 			return
 		}
-		r.handleClone(ctx, path)
+		if served[q.owner] {
+			continue
+		}
+		if r.handleClone(ctx, q.path) {
+			served[q.owner] = true
+			fetches++
+		}
 	}
+}
+
+// forgeCloneFileUID is the owner UID in fi, or -1. It only orders and groups
+// the queue; authorization reads the owner from the opened request.
+func forgeCloneFileUID(fi os.FileInfo) int {
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		return int(st.Uid)
+	}
+	return -1
+}
+
+// forgeCloneQueueOwner groups the queue by owner. It is a variable so tests,
+// whose files all share one owner, can present several agents.
+var forgeCloneQueueOwner = func(_ string, fi os.FileInfo) int { return forgeCloneFileUID(fi) }
+
+// removeAgentBundles removes the regular-file bundles in the queue owned by
+// uid. A symlink is never followed.
+func (r *forgeRequestRelay) removeAgentBundles(uid int) {
+	entries, err := os.ReadDir(r.cloneDir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), forgeCloneBundleSuffix) {
+			continue
+		}
+		p := filepath.Join(r.cloneDir, e.Name())
+		if fi, err := os.Lstat(p); err == nil && fi.Mode().IsRegular() && forgeCloneFileUID(fi) == uid {
+			_ = os.Remove(p)
+		}
+	}
+}
+
+// forgeCloneWithConfig adds one command-scope git config pair to env built
+// by github.PushBranchGitEnv, after its own pairs, so it takes precedence.
+func forgeCloneWithConfig(env []string, key, value string) []string {
+	out := make([]string, 0, len(env)+3)
+	count := 0
+	for _, e := range env {
+		if n, ok := strings.CutPrefix(e, "GIT_CONFIG_COUNT="); ok {
+			count, _ = strconv.Atoi(n)
+			continue
+		}
+		out = append(out, e)
+	}
+	return append(out,
+		fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", count, key),
+		fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", count, value),
+		"GIT_CONFIG_COUNT="+strconv.Itoa(count+1))
 }
 
 // expireCloneBundles removes bundles older than forgeCloneBundleTTL. Only
@@ -216,7 +294,9 @@ func canonicalManagedRepo(cfg *config.Config, repo string) string {
 	return ""
 }
 
-func (r *forgeRequestRelay) handleClone(ctx context.Context, path string) {
+// handleClone serves one clone request. It reports whether the request
+// reached the network fetch, which is what the per-scan budget counts.
+func (r *forgeRequestRelay) handleClone(ctx context.Context, path string) (fetched bool) {
 	var req forgeCloneRequest
 	result := func(resp forgeCloneResponse) {
 		if resp.Repo == "" {
@@ -226,8 +306,22 @@ func (r *forgeRequestRelay) handleClone(ctx context.Context, path string) {
 		writeRelayResult(path, resp)
 	}
 	fail := func(msg string) { result(forgeCloneResponse{Error: msg}) }
-	if !r.readRequest(path, &req, fail) {
-		return
+	data, fileUID, err := forgeCloneReadRequest(path)
+	if err != nil {
+		if github.IsRequestFileRejected(err) {
+			_ = os.Rename(path, path+".rejected")
+			r.logger.Warn("forge request relay: clone REJECTED (unsafe file)", "path", path, "reason", err.Error())
+		}
+		return false
+	}
+	if err := json.Unmarshal(data, &req); err != nil {
+		if github.RequestFileTorn(path, r.now()) {
+			return false
+		}
+		fail("invalid JSON: " + err.Error())
+		_ = os.Rename(path, path+".bad")
+		r.logger.Warn("forge request relay: bad clone request quarantined", "path", path, "error", err.Error())
+		return false
 	}
 	deny := func(reason string) {
 		fail("authorization denied: " + reason)
@@ -243,7 +337,6 @@ func (r *forgeRequestRelay) handleClone(ctx context.Context, path string) {
 		deny("no authorizer configured (fail closed)")
 		return
 	}
-	fileUID := forgeCloneFileOwnerUID(path)
 	if fileUID <= 0 {
 		deny(fmt.Sprintf("the clone relay needs a request file owned by the agent's own UID, not uid %d", fileUID))
 		return
@@ -284,9 +377,19 @@ func (r *forgeRequestRelay) handleClone(ctx context.Context, path string) {
 		reject(reason)
 		return
 	}
+	// The remote is resolved from a second read of the config; a reload in
+	// between must not swap in the long-lived access token.
+	if _, ok := remote.Minter.(forgejwt.Minter); !ok {
+		reject("the forge remote does not mint short-lived forgejo.integration tokens; the clone relay never uses the long-lived access token")
+		return
+	}
 	remoteURL := pushbroker.ForgeRepoURL(remote.BaseURL, repo)
 	if remoteURL == "" {
 		reject(fmt.Sprintf("repo %s has no usable clone URL on %s", repo, remote.BaseURL))
+		return
+	}
+	if !strings.HasPrefix(remoteURL, "https://") {
+		reject(fmt.Sprintf("the clone relay sends its token over https only, and %s is not https", remote.BaseURL))
 		return
 	}
 	attempt := r.attempts[path] + 1
@@ -327,8 +430,11 @@ func (r *forgeRequestRelay) handleClone(ctx context.Context, path string) {
 	}
 	defer cleanup()
 	bare := append(github.PushBranchGitEnv(stage, remoteURL, ""), "GIT_DIR="+stage)
-	fetchEnv := append(github.PushBranchGitEnv(stage, remoteURL, token), "GIT_DIR="+stage)
+	// The clone URL is canonical, so no redirect is followed at all: the
+	// header is never sent on to another URL.
+	fetchEnv := append(forgeCloneWithConfig(github.PushBranchGitEnv(stage, remoteURL, token), "http.followRedirects", "false"), "GIT_DIR="+stage)
 	scrub := forgeCloneScrubber(token, fetchEnv)
+	fetched = true
 	if out, err := forgeCloneExec(ctx, stage, fetchEnv, "fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head",
 		remoteURL, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"); err != nil {
 		retry("git fetch failed: " + scrub(github.FirstOutputLines(out, forgePushOutputLines)))
@@ -399,6 +505,9 @@ func (r *forgeRequestRelay) deliverCloneBundle(reqPath, staged string, uid int) 
 	if limit := forgeCloneMaxBundleBytes(); info.Size() > limit {
 		return "", fmt.Errorf("the bundle is %d bytes, over the %d-byte limit (%s)", info.Size(), limit, forgeCloneMaxBundleBytesEnv)
 	}
+	// One live bundle per agent: an earlier one it did not delete goes
+	// first, so an agent cannot fill the disk with bundles.
+	r.removeAgentBundles(uid)
 	base := strings.TrimSuffix(filepath.Base(reqPath), ".json")
 	dst, err := os.CreateTemp(r.cloneDir, base+".*"+forgeCloneBundleSuffix)
 	if err != nil {
@@ -412,9 +521,6 @@ func (r *forgeRequestRelay) deliverCloneBundle(reqPath, staged string, uid int) 
 			_ = os.Remove(name)
 		}
 	}()
-	if err := dst.Chmod(forgeCloneStageFileMode); err != nil {
-		return "", err
-	}
 	if _, err := io.Copy(dst, src); err != nil {
 		return "", err
 	}
