@@ -100,7 +100,7 @@ func TestCodexProberAPIKeyEnvLoginIsMetered(t *testing.T) {
 	for _, name := range codexAPIKeyEnvVars {
 		t.Run(name, func(t *testing.T) {
 			home := isolateCodexAuth(t)
-			writeCodexAuth(t, home, `{"auth_mode":"api_key"}`)
+			writeCodexAuth(t, home, `{"auth_mode":"apikey"}`)
 			fakeCodexAuthRequired(t)
 			t.Setenv(name, "test-api-key-value")
 			assertAPIKeyReading(t, CodexProber{ThresholdPct: 80}.Probe(context.Background()))
@@ -116,12 +116,21 @@ func TestCodexProberAPIKeyInAuthFileIsMetered(t *testing.T) {
 	assertAPIKeyReading(t, CodexProber{ThresholdPct: 80}.Probe(context.Background()))
 }
 
+// The file Codex writes for an API-key login carries its own auth_mode
+// spelling ("apikey", from serde lowercase of AuthMode::ApiKey).
+func TestCodexProberCodexWrittenAPIKeyFileIsMetered(t *testing.T) {
+	home := isolateCodexAuth(t)
+	fakeCodexAuthRequired(t)
+	writeCodexAuth(t, home, `{"auth_mode":"apikey","OPENAI_API_KEY":"test-api-key-value"}`)
+	assertAPIKeyReading(t, CodexProber{ThresholdPct: 80}.Probe(context.Background()))
+}
+
 // An app-server that answers with no windows takes the same path.
 func TestCodexProberAPIKeyEmptyWindowsIsMetered(t *testing.T) {
 	home := isolateCodexAuth(t)
 	fakeCodexReply(t, `{"rateLimits":{}}`)
 	t.Setenv("OPENAI_API_KEY", "test-api-key-value")
-	writeCodexAuth(t, home, `{"auth_mode":"api_key"}`)
+	writeCodexAuth(t, home, `{"auth_mode":"apikey"}`)
 	assertAPIKeyReading(t, CodexProber{ThresholdPct: 80}.Probe(context.Background()))
 }
 
@@ -158,7 +167,7 @@ func TestCodexProberUnreadableAuthFileStillHolds(t *testing.T) {
 // A keyring login or an absent auth file cannot be identified from an
 // unrelated environment key, even when the probe returns no windows.
 func TestCodexProberAmbiguousEnvKeyStillHolds(t *testing.T) {
-	for _, body := range []string{"", `{}`, `{"auth_mode":"chatgpt"}`, `{"auth_mode":"chatgpt","OPENAI_API_KEY":"key"}`, `null`} {
+	for _, body := range []string{"", `{}`, `{"auth_mode":"chatgpt"}`, `{"auth_mode":"chatgpt","OPENAI_API_KEY":"key"}`, `{"auth_mode":"api_key"}`, `{"auth_mode":"chatgptAuthTokens"}`, `null`} {
 		t.Run(body, func(t *testing.T) {
 			home := isolateCodexAuth(t)
 			t.Setenv("OPENAI_API_KEY", "test-api-key-value")

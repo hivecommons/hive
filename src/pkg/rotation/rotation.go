@@ -1025,6 +1025,13 @@ func codexAuthFilePath() string {
 	return filepath.Join(home, ".codex", "auth.json")
 }
 
+// codexFileAuthModeAPIKey is the auth_mode Codex itself writes to auth.json
+// for an API-key login. Codex serializes its AuthMode enum with serde
+// rename_all = "lowercase", so ApiKey becomes "apikey" (and Chatgpt
+// "chatgpt"); see AuthDotJson in openai/codex codex-rs/login/src/auth/storage.rs.
+// It differs from hive's own published AuthModeAPIKey ("api_key").
+const codexFileAuthModeAPIKey = "apikey"
+
 // codexAPIKeyLogin requires evidence of an API-key login. An environment key
 // alone cannot rule out a ChatGPT login stored in the system keyring.
 func codexAPIKeyLogin() bool {
@@ -1041,7 +1048,7 @@ func codexAPIKeyLogin() bool {
 		return false
 	}
 	mode, _ := data["auth_mode"].(string)
-	if mode != "" && mode != AuthModeAPIKey {
+	if mode != "" && mode != codexFileAuthModeAPIKey {
 		return false
 	}
 	if tokens, ok := data["tokens"].(map[string]any); ok {
@@ -1054,7 +1061,7 @@ func codexAPIKeyLogin() bool {
 	if v, ok := data["OPENAI_API_KEY"].(string); ok && strings.TrimSpace(v) != "" {
 		return true
 	}
-	if mode != AuthModeAPIKey {
+	if mode != codexFileAuthModeAPIKey {
 		return false
 	}
 	for _, name := range codexAPIKeyEnvVars {
