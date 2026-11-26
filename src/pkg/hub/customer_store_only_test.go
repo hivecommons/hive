@@ -179,6 +179,9 @@ func TestHubColonyOnlyRollback(t *testing.T) {
 				if ok, _ := hubColonyOnlyMigrated(st); ok {
 					t.Error("the colony-only document survived the rollback")
 				}
+				if _, ok := colonyPerson(t, st, users[0]).Attachments[crmAttachRecord]; ok {
+					t.Error("the colony-only copy outlived the rollback")
+				}
 			}
 			if _, err := os.Stat(migratedDir("users")); err != nil {
 				t.Errorf("users.migrated must be kept: %v", err)
@@ -338,20 +341,44 @@ func TestUniqueSiblingNeverOverwrites(t *testing.T) {
 	}
 }
 
-// A consents directory that reappears beside a colony-only store is set
-// aside on the next boot, never read as the records.
-func TestHubColonyOnlySetsAsideReappearedConsents(t *testing.T) {
-	defer helperSetupTempDirs(t)()
-	users := fixtureUsers(t)
-	useHubCustomerStore(t, hubCustomerStoreColonyOnly)
-	closeHubCustomerStore()
+// writeReappearedConsents puts a consents directory (one file for ada)
+// beside a migrated store, last changed at mtime.
+func writeReappearedConsents(t *testing.T, body string, mtime time.Time) string {
+	t.Helper()
 	if err := os.MkdirAll(customerConsentDir(), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	stale := filepath.Join(customerConsentDir(), "ada-example.json")
-	if err := os.WriteFile(stale, []byte(`{}`), 0o600); err != nil {
+	path := filepath.Join(customerConsentDir(), "ada-example.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	for _, p := range []string{path, customerConsentDir()} {
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path
+}
+
+func hubMigratedAt(t *testing.T, st *store.Store) time.Time {
+	t.Helper()
+	doc, ok, err := hubColonyOnlyDocOf(st)
+	if err != nil || !ok {
+		t.Fatalf("colony-only document = %v, %v", ok, err)
+	}
+	return doc.MigratedAt
+}
+
+// A consents directory older than the migration that reappears beside a
+// colony-only store (a stale copy put back) is set aside on the next boot,
+// kept, and never read as the records.
+func TestHubColonyOnlySetsAsideReappearedConsents(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	st := useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	at := hubMigratedAt(t, st)
+	closeHubCustomerStore()
+	writeReappearedConsents(t, `{}`, at.Add(-time.Hour))
 	useHubCustomerStore(t, hubCustomerStoreColonyOnly)
 	if _, err := os.Stat(customerConsentDir()); !os.IsNotExist(err) {
 		t.Fatalf("the reappeared consents directory is still in place: %v", err)
@@ -361,5 +388,316 @@ func TestHubColonyOnlySetsAsideReappearedConsents(t *testing.T) {
 	}
 	if c := readMatchConsent(t, users[0], "own"); !c.Fields.RealName {
 		t.Errorf("colony consent lost after a stale directory reappeared: %+v", c)
+	}
+}
+
+// A consents directory changed after the migration (an older binary, or a
+// json-mode fallback, wrote it) that differs from colony refuses
+// colony-only, and refuses a rollback, with nothing moved or written:
+// neither copy can be chosen safely. The hub reads that directory in json
+// mode until an operator moves it aside.
+func TestHubColonyOnlyRefusesNewerConsents(t *testing.T) {
+	for _, mode := range []string{hubCustomerStoreColonyOnly, hubCustomerStoreColony, hubCustomerStoreShadow, hubCustomerStoreJSON} {
+		t.Run(mode, func(t *testing.T) {
+			defer helperSetupTempDirs(t)()
+			users := fixtureUsers(t)
+			st := useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+			if err := saveSaaSUser(loadSaaSUser("ada-example")); err != nil {
+				t.Fatal(err)
+			}
+			at := hubMigratedAt(t, st)
+			closeHubCustomerStore()
+			// A withdrawal made while colony-only was not running.
+			newer := `{"own":{"person":"ada-example","hive_id":"own","withdrawn_at":"2026-11-20T00:00:00Z"}}`
+			path := writeReappearedConsents(t, newer, at.Add(time.Hour))
+			before, err := os.ReadFile(mustUserPath(t, users[0]))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			got := openHubCustomerStore(context.Background(), nil, mode)
+			t.Cleanup(closeHubCustomerStore)
+			if got != hubCustomerStoreJSON {
+				t.Fatalf("mode = %q, want json (refused)", got)
+			}
+			if data, err := os.ReadFile(path); err != nil || string(data) != newer {
+				t.Fatalf("the newer consents directory was moved or rewritten: %v", err)
+			}
+			for _, aside := range []string{hubIgnoredSuffix, hubRestoredAsideSuffix} {
+				if _, err := os.Stat(customerConsentDir() + aside); !os.IsNotExist(err) {
+					t.Errorf("consents%s written by a refused boot: %v", aside, err)
+				}
+			}
+			if after, err := os.ReadFile(mustUserPath(t, users[0])); err != nil || string(after) != string(before) {
+				t.Errorf("a refused boot rewrote a user record: %v", err)
+			}
+			closeHubCustomerStore()
+			st2, err := store.Open(hubCustomerStorePath(), store.Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = st2.Close() }()
+			if ok, _ := hubColonyOnlyMigrated(st2); !ok {
+				t.Error("a refused boot dropped the colony-only document")
+			}
+			if _, ok, _ := crmGetRecord(st2, crmPersonID(users[0])); !ok {
+				t.Error("a refused boot dropped the colony record")
+			}
+		})
+	}
+}
+
+// The by-hand rollback copies the export into place: a consents directory
+// that matches colony exactly is not a conflict, and the restore finishes,
+// drops the document and clears the colony-only copies.
+func TestHubColonyOnlyRestoreAcceptsMatchingConsents(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	if err := saveSaaSUser(loadSaaSUser("ada-example")); err != nil {
+		t.Fatal(err)
+	}
+	closeHubCustomerStore()
+	out := t.TempDir()
+	rep, err := ExportHubCustomerStore(filepath.Dir(saasUsersDir), out, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(customerConsentDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(rep.Consent, "ada-example.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(customerConsentDir(), "ada-example.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	st := useHubCustomerStore(t, hubCustomerStoreColony)
+	if ok, _ := hubColonyOnlyMigrated(st); ok {
+		t.Fatal("the colony-only document survived a restore over the exported files")
+	}
+	if _, ok := colonyPerson(t, st, users[0]).Attachments[crmAttachRecord]; ok {
+		t.Error("the colony-only copy outlived the restore")
+	}
+	if _, err := os.Stat(customerConsentDir() + hubRestoredAsideSuffix); !os.IsNotExist(err) {
+		t.Errorf("a matching consents directory was set aside: %v", err)
+	}
+	if c := readMatchConsent(t, users[0], "own"); !c.Fields.RealName {
+		t.Errorf("consent after the restore = %+v", c)
+	}
+	if u := loadSaaSUser("ada-example"); u.CRMInColony || u.FullName != "Ada Example" {
+		t.Errorf("user after the restore = %+v", u)
+	}
+}
+
+// An older consents directory is set aside by a rollback, never
+// overwritten, and the records come back from colony.
+func TestHubColonyOnlyRestoreSetsAsideOlderConsents(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	st := useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	at := hubMigratedAt(t, st)
+	closeHubCustomerStore()
+	writeReappearedConsents(t, `{}`, at.Add(-time.Hour))
+	useHubCustomerStore(t, hubCustomerStoreColony)
+	if data, err := os.ReadFile(filepath.Join(customerConsentDir()+hubRestoredAsideSuffix, "ada-example.json")); err != nil || string(data) != `{}` {
+		t.Fatalf("the older consents directory was not kept aside: %v", err)
+	}
+	if c := readMatchConsent(t, users[0], "own"); !c.Fields.RealName {
+		t.Errorf("consent after the restore = %+v", c)
+	}
+}
+
+// A migration that crashed after renaming the consents directory, before
+// the document, is undone on the next boot: the directory comes back and
+// no boot reads the consents as gone.
+func TestHubColonyOnlyRecoversInterruptedMigration(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	st := useHubCustomerStore(t, hubCustomerStoreColony)
+	to := customerConsentDir() + hubMigratedSuffix
+	note, _ := json.Marshal(hubColonyOnlyPending{Version: crmOnlyVersion, ConsentsTo: to})
+	if err := st.SetStoreAttachment(crmAttachPending, note); err != nil {
+		t.Fatal(err)
+	}
+	closeHubCustomerStore()
+	if err := os.Rename(customerConsentDir(), to); err != nil {
+		t.Fatal(err)
+	}
+
+	st = useHubCustomerStore(t, hubCustomerStoreColony)
+	if _, err := os.Stat(filepath.Join(customerConsentDir(), "ada-example.json")); err != nil {
+		t.Fatalf("the consents directory was not put back: %v", err)
+	}
+	if _, ok, _ := st.StoreAttachment(crmAttachPending); ok {
+		t.Error("the pending note survived the recovery")
+	}
+	if c, ok := colonyPerson(t, st, users[0]).Consent("own"); !ok || len(c.Fields) == 0 {
+		t.Errorf("the boot sync after the recovery lost the consent: %+v, %v", c, ok)
+	}
+}
+
+// With both the renamed and a new consents directory, nothing is chosen.
+func TestHubColonyOnlyInterruptedMigrationWithBothDirsRefused(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	fixtureUsers(t)
+	st := useHubCustomerStore(t, hubCustomerStoreColony)
+	to := customerConsentDir() + hubMigratedSuffix
+	note, _ := json.Marshal(hubColonyOnlyPending{Version: crmOnlyVersion, ConsentsTo: to})
+	if err := st.SetStoreAttachment(crmAttachPending, note); err != nil {
+		t.Fatal(err)
+	}
+	closeHubCustomerStore()
+	if err := os.Mkdir(to, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := openHubCustomerStore(context.Background(), nil, hubCustomerStoreColony); got != hubCustomerStoreJSON {
+		t.Fatalf("mode = %q, want json", got)
+	}
+	closeHubCustomerStore()
+	if _, err := os.Stat(to); err != nil {
+		t.Errorf("the renamed directory was touched: %v", err)
+	}
+}
+
+// A pending note beside a finished migration is only dropped.
+func TestHubColonyOnlyPendingAfterFinishedMigration(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	fixtureUsers(t)
+	st := useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	note, _ := json.Marshal(hubColonyOnlyPending{Version: crmOnlyVersion, ConsentsTo: migratedDir("consents")})
+	if err := st.SetStoreAttachment(crmAttachPending, note); err != nil {
+		t.Fatal(err)
+	}
+	closeHubCustomerStore()
+	st = useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	if _, err := os.Stat(customerConsentDir()); !os.IsNotExist(err) {
+		t.Errorf("a finished migration was undone: %v", err)
+	}
+	if _, ok, _ := st.StoreAttachment(crmAttachPending); ok {
+		t.Error("the pending note survived")
+	}
+}
+
+// A migration that fails after writing the records clears them and the
+// pending note, leaves the consents directory in place, and removes only
+// the users copy it made.
+func TestHubColonyOnlyFailedMigrationClearsWhatItWrote(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	st := useHubCustomerStore(t, hubCustomerStoreColony)
+	now := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	// Both names for the consents copy are taken: the migration cannot
+	// rename the directory and must undo everything.
+	for _, name := range []string{customerConsentDir() + hubMigratedSuffix, customerConsentDir() + hubMigratedSuffix + "-" + now.Format(hubMigratedStamp)} {
+		if err := os.Mkdir(name, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := migrateHubColonyOnly(st, now); err == nil {
+		t.Fatal("the migration did not fail")
+	}
+	for _, u := range users {
+		if p, err := st.Get(crmPersonID(u)); err == nil {
+			if _, ok := p.Attachments[crmAttachRecord]; ok {
+				t.Errorf("a failed migration left a colony-only record for %s", u.GitHubUsername)
+			}
+		}
+	}
+	if ok, _ := hubColonyOnlyMigrated(st); ok {
+		t.Error("a failed migration wrote the document")
+	}
+	if _, ok, _ := st.StoreAttachment(crmAttachPending); ok {
+		t.Error("a failed migration left the pending note")
+	}
+	if _, err := os.Stat(filepath.Join(customerConsentDir(), "ada-example.json")); err != nil {
+		t.Errorf("a failed migration moved the consents: %v", err)
+	}
+	if _, err := os.Stat(migratedDir("users")); !os.IsNotExist(err) {
+		t.Errorf("a failed migration left its users copy: %v", err)
+	}
+}
+
+// A rename that fails after the users copy is undone the same way: the
+// copy the migration made goes, the records and the pending note are
+// cleared, and the consents directory stays where it was.
+func TestHubColonyOnlyFailedRenameUndoesCopy(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	st := useHubCustomerStore(t, hubCustomerStoreColony)
+	orig := hubMigrateRename
+	hubMigrateRename = func(string, string) error { return os.ErrPermission }
+	t.Cleanup(func() { hubMigrateRename = orig })
+	if err := migrateHubColonyOnly(st, time.Now()); err == nil {
+		t.Fatal("the migration did not fail")
+	}
+	if _, err := os.Stat(migratedDir("users")); !os.IsNotExist(err) {
+		t.Errorf("a failed migration left its users copy: %v", err)
+	}
+	if _, ok, _ := st.StoreAttachment(crmAttachPending); ok {
+		t.Error("a failed migration left the pending note")
+	}
+	if ok, _ := hubColonyOnlyMigrated(st); ok {
+		t.Error("a failed migration wrote the document")
+	}
+	if _, ok := colonyPerson(t, st, users[0]).Attachments[crmAttachRecord]; ok {
+		t.Error("a failed migration left a colony-only record")
+	}
+	if _, err := os.Stat(filepath.Join(customerConsentDir(), "ada-example.json")); err != nil {
+		t.Errorf("the consents directory moved: %v", err)
+	}
+}
+
+// Removing the consents of a person colony holds no record for succeeds:
+// a delete must never be blocked by nothing to remove.
+func TestHubColonyOnlyRemoveConsentsWithoutRecord(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	fixtureUsers(t)
+	useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	// Written beside the store, not through it: colony holds nothing.
+	fresh := &SaaSUser{GitHubUsername: "fresh-example", Hives: map[string]string{}}
+	data, _ := json.Marshal(fresh)
+	if err := os.WriteFile(filepath.Join(saasUsersDir, "fresh-example.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path, err := customerConsentPath(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := removeCustomerConsents(path); err != nil {
+		t.Errorf("removing nothing failed: %v", err)
+	}
+}
+
+// A deleted user's copies go from every directory colony-only sets aside.
+func TestScrubHubMigratedSetAsideDirs(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	saasDir := filepath.Dir(saasUsersDir)
+	var dirs []string
+	for _, name := range []string{"consents" + hubIgnoredSuffix, "consents" + hubRestoredAsideSuffix + "-x"} {
+		d := filepath.Join(saasDir, name)
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range []string{"ada-example.json", "bob-example.json"} {
+			if err := os.WriteFile(filepath.Join(d, f), []byte(`{}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		dirs = append(dirs, d)
+	}
+	if err := scrubHubMigrated(users[0]); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range dirs {
+		if _, err := os.Stat(filepath.Join(d, "ada-example.json")); !os.IsNotExist(err) {
+			t.Errorf("%s still holds the deleted user: %v", filepath.Base(d), err)
+		}
+		if _, err := os.Stat(filepath.Join(d, "bob-example.json")); err != nil {
+			t.Errorf("another user's copy was removed from %s: %v", filepath.Base(d), err)
+		}
 	}
 }

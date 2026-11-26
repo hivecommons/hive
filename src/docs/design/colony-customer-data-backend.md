@@ -351,9 +351,10 @@ v0.3.0 (`src/pkg/customers/colony.go`). What it does beyond the steps above:
   Writes go to the file first, so a colony copy that fell behind can only
   send less. The
   delivery bookkeeping (first and last delivery, the delivered field sets and
-  the rev) has no slot in colony's `Consent`, so it is still read from
-  `/data/saas/consents`. Only hive ids the consent file lists are read, because
-  colony has no delete and keeps a pruned consent as an emptied record. A
+  the rev) is still read from `/data/saas/consents` in this mode (colony
+  holds a copy since v0.4.0). Only hive ids the consent file lists are read:
+  the file decides which records exist, and a pruned consent is deleted from
+  colony too. A
   person whose last sync failed is read from the file alone. Consent writes,
   the delivery stamp and the retention sweep still read and write the file
   first and mirror it, so `json` stays the rollback. In `json` and `shadow`
@@ -467,10 +468,18 @@ compares identity provenance.
   every person's attachment in one transaction and compares the read-back
   with the JSON. Only then does it copy `users` to `users.migrated`, rename
   `consents` to `consents.migrated` and write the `hub.colony-only` marker.
-  Otherwise it runs in `colony` mode with every file where it was.
+  The marker, written after the renames and dropped by a restore, is the
+  only thing that says the hub is colony-only; a `hub.colony-only-pending`
+  note written before the renames lets the next boot undo a crashed
+  migration. Otherwise it clears the records it wrote and runs in `colony`
+  mode with every file where it was.
+- **A consents directory beside a migrated store** is never the truth: one
+  that matches colony or is older than the marker's `migrated_at` is set
+  aside; a newer one that differs refuses colony-only and the rollback
+  before any write, and the hub runs in `json` until an operator moves it.
 - **Rollback:** a boot in any other mode that finds the marker writes the CRM
-  fields and consent files back from colony first (an existing consents
-  directory is set aside, never overwritten) and drops the marker; a failed
+  fields and consent files back from colony first, then drops the marker and
+  the `hub.crm` copies of the restored records in one transaction; a failed
   restore keeps the hub colony-only. `hive colony export --format
   hive-hub-json` writes the same files elsewhere by hand.
 - The match answer and the consent paths still gate every answer on

@@ -302,30 +302,49 @@ the user JSON.
    transaction, reads them all back and compares them with the JSON. Only
    then does it copy `/data/saas/users` to `users.migrated`, rename
    `/data/saas/consents` to `consents.migrated` (a taken name gets a
-   `-<time>` suffix; nothing is overwritten or deleted) and log
-   `colony-only took over`. If the sync has no parity or the read-back does
-   not match, it logs why (counts only) and runs in `colony` mode with every
-   file where it was.
+   `-<time>` suffix; nothing is overwritten or deleted), write the
+   `hub.colony-only` marker in `colony.db` and log `colony-only took over`.
+   Only that marker, written after the renames, says the hub is colony-only.
+   If the sync has no parity or the read-back does not match, it logs why
+   (counts only), clears the records it wrote and runs in `colony` mode with
+   every file where it was. A boot after a crash part-way through the
+   migration renames `consents.migrated` back first.
 5. From then on a user record is written without its CRM fields
    (`crm_in_colony: true`), only after the colony write succeeded; when the
    colony write fails the full record is written as before. Consent records
    are read, written, stamped and swept in colony only.
 
+**A consents directory beside a colony-only store** is never read as the
+records, because it could forget consents colony holds or bring back one a
+person withdrew:
+
+- one that matches colony exactly, or was last changed before the
+  migration (a stale copy put back), is set aside as `consents.ignored`
+  (colony-only) or `consents.pre-restore` (rollback), never deleted;
+- one changed after the migration that differs from colony (written by an
+  older hub image, or while the hub fell back to `json`) refuses both
+  colony-only and the rollback before anything is written. The hub then
+  runs in `json` mode and logs `consents_newer_than_colony_only`. Move the
+  directory aside (for example to `consents.held`), boot again, and merge any
+  change from it by hand.
+
 **Rolling back:** set `HIVE_HUB_CUSTOMER_STORE` to `colony`, `shadow` or
 `json` and roll the hub. The boot finds the colony-only marker in `colony.db`
 and writes the CRM fields back into every stripped user record and the
-consent files back into `/data/saas/consents` first (an existing consents
-directory is set aside as `consents.pre-restore`, never overwritten), then
-drops the marker. If that restore fails, the hub stays colony-only and
-retries on the next boot, so it never serves records without their CRM
-fields. By hand: stop the hub, run `hive colony export --format hive-hub-json
---dir /data/saas --out /tmp/hub-export`, check the files, copy
-`users/*.json` and `consents/*.json` into place, set the mode and start the
-hub. The export never overwrites a file without `--force`.
+consent files back into `/data/saas/consents` first, then drops the marker
+and the colony-only copies of those records in one transaction. If that
+restore fails, the hub stays colony-only and retries on the next boot, so it
+never serves records without their CRM fields. By hand: stop the hub, run
+`hive colony export --format hive-hub-json --dir /data/saas --out
+/tmp/hub-export`, check the files, copy `users/*.json` and `consents/*.json`
+into place, set the mode and start the hub; the restore on that boot finds
+the same files and drops the marker. The export never overwrites a file
+without `--force`.
 
 `users.migrated` and `consents.migrated` are kept until an operator removes
 them: they are the JSON as it stood when colony-only took over. Deleting a
-user removes their copies there too. Before running an older hub image
+user removes their copies there too, and in `consents.ignored` and
+`consents.pre-restore`. Before running an older hub image
 (which has no colony-only and reads it as `json`), roll back first.
 
 ### Ask AI help

@@ -23,8 +23,11 @@ package hub
 // parity, copies the users directory to users.migrated, writes every
 // person's attachment in one transaction, reads them all back and compares
 // them with the JSON. Only then is the consents directory renamed and the
-// colony-only document written. A mismatch keeps the hub in colony mode,
-// with every file as it was.
+// colony-only document written; that document alone says the store is
+// colony-only. A mismatch keeps the hub in colony mode, with every file as
+// it was and the records it wrote cleared. A consents directory found beside
+// a colony-only store is never read as the records: older than the
+// migration it is set aside, newer (and different) it refuses the boot.
 //
 // Rollback: a boot in colony, shadow or json mode that finds the
 // colony-only document writes the CRM fields back into every stripped user
@@ -58,6 +61,8 @@ const (
 	crmAttachRecord = "hub.crm"
 	// crmAttachDoc is the store-level marker that colony-only took over.
 	crmAttachDoc = "hub.colony-only"
+	// crmAttachPending notes a migration's renames before they run.
+	crmAttachPending = "hub.colony-only-pending"
 	// crmOnlyVersion versions both attachments.
 	crmOnlyVersion = 1
 	// hubMigratedSuffix names the copies the migration keeps.
@@ -308,6 +313,11 @@ func crmOnlySaveConsents(st *store.Store, path string, records map[string]custom
 		return err
 	}
 	if !have {
+		if len(records) == 0 {
+			// Nothing kept, so nothing to remove (a delete of a person colony
+			// holds no record for must not fail).
+			return nil
+		}
 		// A record not yet moved: its CRM fields are still in the JSON.
 		full := *u
 		if full.CRMInColony {
@@ -392,14 +402,15 @@ func uniqueSibling(path, suffix string, now time.Time) (string, error) {
 	return to, nil
 }
 
-// copyDirFiles copies the regular files of src into a new directory dst.
-func copyDirFiles(src, dst string, mode os.FileMode) error {
+// copyDirFiles copies the regular files of src into a new directory dst. It
+// reports whether it created dst (then dst is its own to remove on error).
+func copyDirFiles(src, dst string, mode os.FileMode) (bool, error) {
 	entries, err := os.ReadDir(src)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if err := os.Mkdir(dst, hubConsentDirMode); err != nil {
-		return err
+		return false, err
 	}
 	for _, e := range entries {
 		if !e.Type().IsRegular() {
@@ -407,19 +418,122 @@ func copyDirFiles(src, dst string, mode os.FileMode) error {
 		}
 		data, err := os.ReadFile(filepath.Join(src, e.Name())) // #nosec G304 -- entries of the hub's own data directory
 		if err != nil {
-			return err
+			return true, err
 		}
 		if err := os.WriteFile(filepath.Join(dst, e.Name()), data, mode); err != nil { // #nosec G703 -- dst is the migration's own new directory beside the hub data dir, and the name is a directory entry of the hub's users directory
-			return err
+			return true, err
 		}
 	}
-	return nil
+	return true, nil
 }
 
-// hubColonyOnlyMigrated reports whether colony-only took over this store.
+// hubColonyOnlyMigrated reports whether colony-only took over this store:
+// only the document written after the renames says so, and a restore drops
+// it.
 func hubColonyOnlyMigrated(st *store.Store) (bool, error) {
-	_, ok, err := st.StoreAttachment(crmAttachDoc)
+	_, ok, err := hubColonyOnlyDocOf(st)
 	return ok, err
+}
+
+// hubColonyOnlyDocOf reads the colony-only document.
+func hubColonyOnlyDocOf(st *store.Store) (hubColonyOnlyDoc, bool, error) {
+	raw, ok, err := st.StoreAttachment(crmAttachDoc)
+	if err != nil || !ok {
+		return hubColonyOnlyDoc{}, false, err
+	}
+	var doc hubColonyOnlyDoc
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return hubColonyOnlyDoc{}, true, fmt.Errorf("hub customer store: decoding %s: %w", crmAttachDoc, err)
+	}
+	if doc.Version > crmOnlyVersion {
+		return hubColonyOnlyDoc{}, true, fmt.Errorf("hub customer store: %s version %d is newer than this release", crmAttachDoc, doc.Version)
+	}
+	return doc, true, nil
+}
+
+// hubColonyOnlyPending is the hub.colony-only-pending store attachment: the
+// names a migration is about to copy and rename to, written before it
+// touches a file, so a boot after a crash part-way through can put the
+// consents directory back (recoverHubColonyOnlyPending).
+type hubColonyOnlyPending struct {
+	Version    int    `json:"version"`
+	UsersTo    string `json:"users_to,omitempty"`
+	ConsentsTo string `json:"consents_to,omitempty"`
+}
+
+// recoverHubColonyOnlyPending finishes what a crashed migration left: with
+// the colony-only document written the migration is done and only the
+// pending note goes; without it, a consents directory the migration renamed
+// is renamed back, so no boot ever reads an empty consents directory as the
+// records. The users copy is a copy and is kept. It runs on every boot that
+// opens colony.db, before anything reads the files.
+func recoverHubColonyOnlyPending(st *store.Store) error {
+	raw, ok, err := st.StoreAttachment(crmAttachPending)
+	if err != nil || !ok {
+		return err
+	}
+	migrated, err := hubColonyOnlyMigrated(st)
+	if err != nil {
+		return err
+	}
+	if !migrated {
+		var p hubColonyOnlyPending
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return fmt.Errorf("hub customer store: decoding %s: %w", crmAttachPending, err)
+		}
+		if p.ConsentsTo != "" {
+			from := filepath.Join(filepath.Dir(saasUsersDir), filepath.Base(p.ConsentsTo))
+			_, fromErr := os.Stat(from)
+			_, dirErr := os.Stat(customerConsentDir())
+			switch {
+			case fromErr == nil && errors.Is(dirErr, os.ErrNotExist):
+				if err := os.Rename(from, customerConsentDir()); err != nil {
+					return err
+				}
+				slog.Warn("hub customer store: an interrupted colony-only migration was undone; the consents directory is back in place")
+			case fromErr == nil && dirErr == nil:
+				// Both exist: neither can be chosen safely, so nothing is.
+				return fmt.Errorf("hub customer store: an interrupted colony-only migration left both %s and %s; move one aside",
+					filepath.Base(from), filepath.Base(customerConsentDir()))
+			case fromErr != nil && !errors.Is(fromErr, os.ErrNotExist):
+				return fromErr
+			}
+		}
+	}
+	return st.SetStoreAttachment(crmAttachPending, nil)
+}
+
+// hubMigrateRename renames the consents directory in a migration; a test
+// replaces it to fail the step after the users copy.
+var hubMigrateRename = os.Rename
+
+// crmSnapshotRecords returns each person's hub.crm attachment as it is now
+// (nil where there is none), so a migration that fails can put them back.
+func crmSnapshotRecords(st *store.Store, ids []string) (map[string]json.RawMessage, error) {
+	out := make(map[string]json.RawMessage, len(ids))
+	for _, id := range ids {
+		p, err := st.Get(id)
+		if errors.Is(err, store.ErrNotFound) {
+			out[id] = nil
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		out[id] = p.Attachments[crmAttachRecord]
+	}
+	return out, nil
+}
+
+// crmPutBackRecords restores the attachments crmSnapshotRecords saw, in one
+// transaction.
+func crmPutBackRecords(st *store.Store, before map[string]json.RawMessage) error {
+	return st.Batch(func(b *store.Batch) error {
+		for id, raw := range before {
+			_ = b.SetAttachment(id, crmAttachRecord, raw)
+		}
+		return nil
+	})
 }
 
 // migrateHubColonyOnly is the first colony-only boot, after a colony boot
@@ -467,6 +581,22 @@ func migrateHubColonyOnly(st *store.Store, now time.Time) error {
 		}
 		wants = append(wants, want{u: u, rec: rec})
 	}
+	ids := make([]string, 0, len(wants))
+	for _, w := range wants {
+		ids = append(ids, crmPersonID(w.u))
+	}
+	before, err := crmSnapshotRecords(st, ids)
+	if err != nil {
+		return err
+	}
+	// undo clears what this migration wrote to colony: a migration that
+	// does not finish leaves the store as it found it.
+	undo := func(cause error) error {
+		if err := crmPutBackRecords(st, before); err != nil {
+			return fmt.Errorf("%w (and the records it wrote were not cleared: %v)", cause, crmErrClass(err))
+		}
+		return cause
+	}
 	// One transaction for every attachment.
 	err = st.Batch(func(b *store.Batch) error {
 		for _, w := range wants {
@@ -491,43 +621,75 @@ func migrateHubColonyOnly(st *store.Store, now time.Time) error {
 		}
 	}
 	if mismatches > 0 {
-		return fmt.Errorf("hub customer store: %d of %d records did not read back", mismatches, len(wants))
+		return undo(fmt.Errorf("hub customer store: %d of %d records did not read back", mismatches, len(wants)))
 	}
-	saasDir := filepath.Dir(saasUsersDir)
+	var pending hubColonyOnlyPending
+	pending.Version = crmOnlyVersion
+	_, usersErr := os.Stat(saasUsersDir)
+	if usersErr == nil {
+		if pending.UsersTo, err = uniqueSibling(saasUsersDir, hubMigratedSuffix, now); err != nil {
+			return undo(err)
+		}
+	}
+	_, consentsErr := os.Stat(customerConsentDir())
+	if consentsErr == nil {
+		if pending.ConsentsTo, err = uniqueSibling(customerConsentDir(), hubMigratedSuffix, now); err != nil {
+			return undo(err)
+		}
+	}
+	// Noted before any file moves, so a crash part-way is undone on the
+	// next boot (recoverHubColonyOnlyPending).
+	note, err := json.Marshal(pending)
+	if err != nil {
+		return undo(err)
+	}
+	if err := st.SetStoreAttachment(crmAttachPending, note); err != nil {
+		return undo(err)
+	}
+	// fail undoes the file steps that ran and clears what was written.
+	usersCopied, consentsRenamed := false, false
+	fail := func(cause error) error {
+		if consentsRenamed {
+			if err := os.Rename(pending.ConsentsTo, customerConsentDir()); err != nil {
+				// The pending note stays, so the next boot puts it back.
+				return fmt.Errorf("%w (and the consents directory was not put back: %v)", cause, crmErrClass(err))
+			}
+		}
+		if usersCopied {
+			// The copy this migration just made, and nothing else.
+			_ = os.RemoveAll(pending.UsersTo)
+		}
+		_ = st.SetStoreAttachment(crmAttachPending, nil)
+		return undo(cause)
+	}
 	var renamed []string
-	if _, err := os.Stat(saasUsersDir); err == nil {
-		to, err := uniqueSibling(saasUsersDir, hubMigratedSuffix, now)
+	if pending.UsersTo != "" {
+		created, err := copyDirFiles(saasUsersDir, pending.UsersTo, hubUserFileMode)
+		usersCopied = created
 		if err != nil {
-			return err
+			return fail(err)
 		}
-		if err := copyDirFiles(saasUsersDir, to, hubUserFileMode); err != nil {
-			return err
-		}
-		renamed = append(renamed, filepath.Base(to))
+		renamed = append(renamed, filepath.Base(pending.UsersTo))
 	}
-	if _, err := os.Stat(customerConsentDir()); err == nil {
-		to, err := uniqueSibling(customerConsentDir(), hubMigratedSuffix, now)
-		if err != nil {
-			return err
+	if pending.ConsentsTo != "" {
+		if err := hubMigrateRename(customerConsentDir(), pending.ConsentsTo); err != nil {
+			return fail(err)
 		}
-		if err := os.Rename(customerConsentDir(), to); err != nil {
-			return err
-		}
-		renamed = append(renamed, filepath.Base(to))
+		consentsRenamed = true
+		renamed = append(renamed, filepath.Base(pending.ConsentsTo))
 	}
 	doc, err := json.Marshal(hubColonyOnlyDoc{Version: crmOnlyVersion, MigratedAt: now.UTC(), Renamed: renamed})
 	if err != nil {
-		return err
+		return fail(err)
 	}
-	if err := st.SetStoreAttachment(crmAttachDoc, doc); err != nil {
-		// The consents directory is renamed already: put it back, so a
-		// colony-mode hub reads the files again.
-		for _, name := range renamed {
-			if strings.HasPrefix(name, filepath.Base(customerConsentDir())) {
-				_ = os.Rename(filepath.Join(saasDir, name), customerConsentDir())
-			}
-		}
-		return err
+	// The document and the end of the pending note in one transaction:
+	// this is the moment colony-only takes over.
+	if err := st.Batch(func(b *store.Batch) error {
+		_ = b.SetStoreAttachment(crmAttachDoc, doc)
+		_ = b.SetStoreAttachment(crmAttachPending, nil)
+		return nil
+	}); err != nil {
+		return fail(err)
 	}
 	slog.Info("hub customer store: colony-only took over; consent files renamed, CRM fields leave the user json on the next save",
 		"people", len(wants), "renamed", len(renamed))
@@ -593,11 +755,14 @@ func hubCustomerFiles(st *store.Store, usersDir string) (map[string][]byte, map[
 // restoreHubFromColonyOnly is the automatic rollback, in every mode but
 // colony-only: when the colony-only document is there, it writes the CRM
 // fields back into every stripped user record and the consent files back
-// from colony, then drops the document. A consents directory that exists is
-// set aside first, never overwritten. On error nothing is dropped and the
-// next boot tries again.
+// from colony, then drops the document and the attachments of the records
+// it wrote back, in one transaction. A consents directory that exists is
+// handled first, before anything is written (checkReappearedConsents): one
+// that matches colony is kept, an older one is set aside, never
+// overwritten, and a newer one refuses the restore. On error the document
+// stays and the next boot tries again.
 func restoreHubFromColonyOnly(st *store.Store, now time.Time) (bool, error) {
-	migrated, err := hubColonyOnlyMigrated(st)
+	doc, migrated, err := hubColonyOnlyDocOf(st)
 	if err != nil || !migrated {
 		return false, err
 	}
@@ -606,7 +771,14 @@ func restoreHubFromColonyOnly(st *store.Store, now time.Time) (bool, error) {
 		return false, err
 	}
 	dir := customerConsentDir()
-	if _, err := os.Stat(dir); err == nil {
+	state, err := checkReappearedConsents(dir, consents, doc.MigratedAt)
+	if err != nil {
+		return false, err
+	}
+	switch state {
+	case consentsNewer:
+		return false, errConsentsNewer
+	case consentsOlder:
 		aside, err := uniqueSibling(dir, hubRestoredAsideSuffix, now)
 		if err != nil {
 			return false, err
@@ -618,12 +790,101 @@ func restoreHubFromColonyOnly(st *store.Store, now time.Time) (bool, error) {
 	if err := writeHubCustomerFiles(saasUsersDir, dir, users, consents); err != nil {
 		return false, err
 	}
-	if err := st.SetStoreAttachment(crmAttachDoc, nil); err != nil {
+	ids := make([]string, 0, len(users))
+	for name, data := range users {
+		var u SaaSUser
+		if json.Unmarshal(data, &u) == nil {
+			if id := crmPersonID(&u); id != "" {
+				ids = append(ids, id)
+			}
+		} else {
+			return false, fmt.Errorf("hub customer store: re-reading a restored record %s failed", name)
+		}
+	}
+	if err := st.Batch(func(b *store.Batch) error {
+		// The JSON holds these records again; the copies go with the
+		// document, so no stale copy outlives the rollback.
+		for _, id := range ids {
+			_ = b.SetAttachment(id, crmAttachRecord, nil)
+		}
+		_ = b.SetStoreAttachment(crmAttachDoc, nil)
+		return nil
+	}); err != nil {
 		return false, err
 	}
 	slog.Info("hub customer store: restored the user json and consent files from the colony-only store",
 		"users", len(users), "consents", len(consents))
 	return true, nil
+}
+
+// errConsentsNewer refuses a boot: a consents directory written after the
+// colony-only migration (by an older binary, or a json-mode fallback) holds
+// changes colony lacks, and colony holds records it lacks. Neither can be
+// chosen safely, so neither is, and nothing is written.
+var errConsentsNewer = errors.New("hub customer store: /data/saas/consents is newer than the colony-only migration and differs from colony.db; " +
+	"move it aside to keep colony.db (merge any change from it by hand), then boot again")
+
+// Reappeared consents directory states.
+const (
+	consentsAbsent = iota
+	consentsSame
+	consentsOlder
+	consentsNewer
+)
+
+// checkReappearedConsents compares a consents directory beside a
+// colony-only store with what colony holds (want, as hubCustomerFiles
+// renders it): absent, the same files and bytes, or different and last
+// changed before or after the migration.
+func checkReappearedConsents(dir string, want map[string][]byte, migratedAt time.Time) (int, error) {
+	fi, err := os.Stat(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return consentsAbsent, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, err
+	}
+	newest := fi.ModTime()
+	same := true
+	seen := 0
+	for _, e := range entries {
+		info, err := e.Info()
+		if err != nil {
+			return 0, err
+		}
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+		if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), ".json") {
+			same = false
+			continue
+		}
+		w, ok := want[e.Name()]
+		if !ok {
+			same = false
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name())) // #nosec G304 -- entries of the hub's own consents directory
+		if err != nil {
+			return 0, err
+		}
+		if string(data) != string(w) {
+			same = false
+		}
+		seen++
+	}
+	switch {
+	case same && seen == len(want):
+		return consentsSame, nil
+	case newest.After(migratedAt):
+		return consentsNewer, nil
+	default:
+		return consentsOlder, nil
+	}
 }
 
 // writeHubCustomerFiles writes rendered user and consent files atomically.
@@ -737,8 +998,9 @@ func ExportHubCustomerStore(saasDir, outDir string, force bool) (HubCustomerExpo
 	return rep, nil
 }
 
-// scrubHubMigrated removes a deleted user's copies from users.migrated* and
-// consents.migrated*: a deletion must not leave them in a kept copy.
+// scrubHubMigrated removes a deleted user's copies from users.migrated*,
+// consents.migrated*, consents.pre-restore* and consents.ignored*: a
+// deletion must not leave them in a kept copy.
 func scrubHubMigrated(u *SaaSUser) error {
 	path, err := saveSaaSUserPath(u)
 	if err != nil {
@@ -750,8 +1012,15 @@ func scrubHubMigrated(u *SaaSUser) error {
 	}
 	saasDir := filepath.Dir(saasUsersDir)
 	var dirs []string
-	for _, stem := range []string{filepath.Base(saasUsersDir), filepath.Base(customerConsentDir())} {
-		matches, err := filepath.Glob(filepath.Join(saasDir, stem+hubMigratedSuffix+"*"))
+	// Every copy colony-only keeps or sets aside: .migrated, and the
+	// consents directories a restore or a colony-only boot set aside.
+	for _, pat := range []string{
+		filepath.Base(saasUsersDir) + hubMigratedSuffix + "*",
+		filepath.Base(customerConsentDir()) + hubMigratedSuffix + "*",
+		filepath.Base(customerConsentDir()) + hubRestoredAsideSuffix + "*",
+		filepath.Base(customerConsentDir()) + hubIgnoredSuffix + "*",
+	} {
+		matches, err := filepath.Glob(filepath.Join(saasDir, pat))
 		if err != nil {
 			return err
 		}
@@ -767,15 +1036,32 @@ func scrubHubMigrated(u *SaaSUser) error {
 	return nil
 }
 
-// setAsideReappearedConsents moves a consents directory that reappeared
-// beside a colony-only store out of the way, so it is never mistaken for
-// the records. It reports whether there was one.
-func setAsideReappearedConsents(now time.Time) (bool, error) {
+// setAsideReappearedConsents handles a consents directory beside a
+// colony-only store, which is never read as the records: one older than the
+// migration (a stale copy put back) or matching colony is set aside, never
+// deleted; a newer one that differs refuses colony-only (errConsentsNewer)
+// with nothing moved. It reports whether one was set aside.
+func setAsideReappearedConsents(st *store.Store, now time.Time) (bool, error) {
 	dir := customerConsentDir()
 	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	} else if err != nil {
 		return false, err
+	}
+	doc, _, err := hubColonyOnlyDocOf(st)
+	if err != nil {
+		return false, err
+	}
+	_, consents, err := hubCustomerFiles(st, saasUsersDir)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return false, err
+	}
+	state, err := checkReappearedConsents(dir, consents, doc.MigratedAt)
+	if err != nil {
+		return false, err
+	}
+	if state == consentsNewer {
+		return false, errConsentsNewer
 	}
 	to, err := uniqueSibling(dir, hubIgnoredSuffix, now)
 	if err != nil {

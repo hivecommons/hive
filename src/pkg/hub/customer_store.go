@@ -233,6 +233,10 @@ func crmErrClass(err error) string {
 		return "identity_conflict"
 	case errors.Is(err, errCRMNotStored):
 		return "not_stored"
+	case errors.Is(err, errConsentsNewer):
+		// /data/saas/consents changed after the colony-only migration:
+		// move it aside (hub-deployment.md, colony-only).
+		return "consents_newer_than_colony_only"
 	case errors.Is(err, fs.ErrPermission):
 		return "permission"
 	case errors.Is(err, fs.ErrNotExist):
@@ -302,6 +306,14 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 		logger.Warn("hub customer store: open failed; json mode", "requested", mode, "error", crmErrClass(err))
 		return hubCustomerStoreJSON
 	}
+	// A colony-only migration that crashed part-way is undone first, so
+	// nothing below reads a consents directory it had renamed away.
+	if err := recoverHubColonyOnlyPending(st); err != nil {
+		_ = st.Close()
+		logger.Error("hub customer store: an interrupted colony-only migration could not be undone; json mode, nothing changed",
+			"requested", mode, "error", crmErrClass(err))
+		return hubCustomerStoreJSON
+	}
 	if mode != hubCustomerStoreColonyOnly {
 		// Back from colony-only: the CRM fields and consent files are
 		// written back from colony first (#19972).
@@ -327,9 +339,12 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 		if migrated {
 			// A consents directory beside a store colony-only took over is
 			// never read as the truth: it is set aside, not deleted.
-			if aside, err := setAsideReappearedConsents(time.Now()); err != nil {
+			// One newer than the migration refuses colony-only, with
+			// nothing written: json mode reads that directory, and colony.db
+			// and every stripped record stay as they are.
+			if aside, err := setAsideReappearedConsents(st, time.Now()); err != nil {
 				_ = st.Close()
-				logger.Warn("hub customer store: a consents directory reappeared and could not be set aside; json mode",
+				logger.Error("hub customer store: a consents directory beside the colony-only store was not set aside; json mode",
 					"error", crmErrClass(err))
 				return hubCustomerStoreJSON
 			} else if aside {
@@ -1039,13 +1054,15 @@ func crmOverlayUser(u *SaaSUser) {
 // not run (a user file that could not be read at that moment) must never
 // bring back a field the person turned off or undo a withdrawal. The
 // hub-only delivery bookkeeping (first and last delivery, delivered fields,
-// rev), which colony's Consent has no slot for, always comes from the file.
+// rev) always comes from the file in this mode, though colony holds a copy
+// since v0.4.0.
 // It is called by the read paths: the match index, the match answer and the
 // person's own consent page. Write paths never call it.
 //
-// Only hive ids the consent file still lists are considered: colony has no
-// delete, so a consent the hub pruned is an emptied record there, and the
-// file decides which records exist. A person whose last sync failed or was
+// Only hive ids the consent file still lists are considered: the file
+// decides which records exist (a consent the hub prunes is deleted from
+// colony too, and an emptied record an older release left there is never
+// read). A person whose last sync failed or was
 // skipped is read from the file alone, like crmOverlayUser.
 func crmOverlayConsents(u *SaaSUser, records map[string]customerConsent) {
 	st, mode := hubCRM.active()
