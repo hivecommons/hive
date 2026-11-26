@@ -1,1 +1,0 @@
-- Preserve recognizable context overflow errors from inference gateways for Claude Code recovery.

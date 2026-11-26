@@ -11,6 +11,27 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.373.1)
+
+### Fixed
+
+- A block edited into the dashboard overlay (`ask`, `chat`, `customers` or any other block the config knows) now survives the config reload and the next save instead of being dropped silently. A block the hive cannot load, or an overlay file that is not valid YAML, is logged and kept as written rather than overwritten (#19740).
+- The close-on-merge backfill now recognises a real `Fixes #N` on a confirmation-gated issue (needs-human, epic, reporter confirmation) when the repo is configured without its owner. Such an issue gets `hive/likely-done` and the awaiting-confirmation comment again, instead of being labelled `hive/partially-addressed` as if the merge had been partial. Follow-up to [#19956](https://github.com/hivecommons/hive/issues/19956).
+
+## 2026-11-26 (v5.373.0)
+
+### Added
+
+- Colony P5: hub consent reads from colony, Settings for store and auto-accept (#19973)
+
+### Fixed
+
+- Preserve recognizable context overflow errors from inference gateways for Claude Code recovery.
+
+### Security
+
+- The push-branch relays (the GitHub push watcher and the forge-only push relay) no longer let an agent's own checkout config steer where the hive's credentialed push goes ([#19959](https://github.com/hivecommons/hive/issues/19959)). The push now runs from a hive-owned `GIT_DIR` (a minimal config, HEAD and the one branch ref at the commit the relay resolved, plus the checkout's shallow list) with `GIT_OBJECT_DIRECTORY` pointing at the checkout's objects, so it never reads the agent's `.git/config` or anything it includes, and the agent cannot swap that config in between a check and the push. Every relay git command also runs with system and global config off, `GIT_ASKPASS`/`SSH_ASKPASS` and `core.askPass` unset, lazy fetches disabled, `http.sslVerify`, `http.followRedirects`, `push.gpgSign`, `log.showSignature` and `push.recurseSubmodules` pinned, and only the remote's own scheme allowed. Commands that read the checkout (resolving the branch, the sign-off check) no longer carry the token at all. A checkout whose config sets `url.*.insteadOf`/`pushInsteadOf`, `http.<url>.*`, `credential.<url>.*`, a remote named by URL, a remote proxy, or an `http.*` key other than transport tuning (such as `http.proxy` or `http.sslCAInfo`) is refused with the keys to remove. Operators who relied on `/etc/gitconfig` or `~/.gitconfig` for the hive's own pushes (a CA bundle, a proxy) should use the `GIT_SSL_CAINFO` and `https_proxy` environment variables instead, which still apply. The GitHub watcher's git commands are now also bounded by a five-minute timeout.
+
 ## 2026-11-26 (v5.372.0)
 
 ### Added
