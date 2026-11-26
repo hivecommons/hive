@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/reviewgate"
@@ -137,7 +138,32 @@ func (c *Client) GateApprovalLabels(ctx context.Context, repo string, number int
 	if c == nil || !c.approvalLabels(labels) {
 		return nil
 	}
-	return c.GateChangesRequested(ctx, repo, number, ChangesRequestedGateActionLabel, PRAuditPathRelay)
+	return c.gateApprovalLabelWrite(ctx, repo, number)
+}
+
+// gateApprovalLabelWrite is what an `lgtm` / `approved` write must clear:
+// the configured sentinel alert label (the same block QueuePRAutoMerge and
+// the review swarm's approval apply; an operator's dashboard Approve is the
+// path that acknowledges it) and an open change request. Writing either
+// label hands the PR to Tide, which does not know about either.
+func (c *Client) gateApprovalLabelWrite(ctx context.Context, repo string, number int) error {
+	if c == nil || c.client == nil || number <= 0 {
+		return nil
+	}
+	owner, name := c.splitRepo(repo)
+	full := owner + "/" + name
+	if c.sentinelAlertLabel() != "" {
+		issue, _, err := c.client.Issues.Get(WithRESTCaller(ctx, "hive:approval_label_sentinel"), owner, name, number)
+		if err != nil {
+			return fmt.Errorf("approval label on %s#%d: reading labels for the sentinel check: %w", full, number, err)
+		}
+		if blocked := c.sentinelBlockedLabel(labelNames(issue.Labels)); blocked != "" {
+			c.recordWriteAudit(AuditActionSentinelBlockedApproval, InvocationMeta{Agent: AttributionAgentGovernor},
+				WriteTarget{Repo: full, Number: number}, "path", PRAuditPathRelay, "label", blocked)
+			return fmt.Errorf("approval label on %s#%d: %s label blocks Hive approval and auto-merge", full, number, blocked)
+		}
+	}
+	return c.GateChangesRequested(ctx, full, number, ChangesRequestedGateActionLabel, PRAuditPathRelay)
 }
 
 // The dashboard reaches the gate through pkg/github only (its import

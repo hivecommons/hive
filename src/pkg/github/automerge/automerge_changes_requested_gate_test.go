@@ -2,11 +2,15 @@ package automerge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/effects"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/reviewgate"
 )
 
@@ -142,4 +146,36 @@ func laterReview(id int64, login, state string) map[string]any {
 	rv := humanReview(id, login, state, "sha7", "")
 	rv["submitted_at"] = "2026-10-09T18:00:00Z"
 	return rv
+}
+
+// TestQueuedLaneStopsOnSentinelAlert: a sentinel alert that lands after a
+// merger queued the PR stops the merge-train lane like a hold does
+// (hivecommons/hive#20067, after #20064 merged with sentinel-alert on).
+func TestQueuedLaneStopsOnSentinelAlert(t *testing.T) {
+	merges := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
+			json.NewEncoder(w).Encode(map[string]any{
+				"number": 7, "state": "open", "mergeable_state": "clean", "mergeable": true,
+				"user":   map[string]string{"login": "alice"},
+				"head":   map[string]string{"sha": "sha7"},
+				"base":   map[string]string{"ref": "main", "sha": "base1"},
+				"labels": []map[string]string{{"name": hgithub.AutoMergeQueuedLabel}, {"name": "sentinel-alert"}},
+			})
+		case r.Method == http.MethodPut:
+			merges++
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer api.Close()
+	c := newAutoMergeSweepClient(api.URL)
+	_, reason, err := c.trySweepQueuedPR(context.Background(), "widget", "acme", "widget", 7, hgithub.AutoMergeQueuedLabel)
+	if err != nil || reason != "sentinel" {
+		t.Fatalf("trySweepQueuedPR reason=%q err=%v, want sentinel", reason, err)
+	}
+	if merges != 0 {
+		t.Fatalf("merges = %d, want none", merges)
+	}
 }

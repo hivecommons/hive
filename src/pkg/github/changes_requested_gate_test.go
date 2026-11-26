@@ -40,6 +40,7 @@ type crFake struct {
 	mu        sync.Mutex
 	reviews   []map[string]any
 	perms     map[string]string
+	labelSet  []string
 	merges    int
 	approvals int
 	labels    int
@@ -75,6 +76,12 @@ func (f *crFake) serve(t *testing.T) *httptest.Server {
 				"head": map[string]string{"sha": "head7"}, "base": map[string]string{"ref": "main"},
 				"user": map[string]string{"login": "contributor"},
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/7":
+			labels := []map[string]string{}
+			for _, l := range f.labelSet {
+				labels = append(labels, map[string]string{"name": l})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "labels": labels})
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/o/r/pulls/7/merge":
 			f.merges++
 			_ = json.NewEncoder(w).Encode(map[string]any{"merged": true, "sha": "merged7"})
@@ -319,5 +326,35 @@ func TestChangesRequestedUnreadableFailsClosed(t *testing.T) {
 	}
 	if !sink.find(AuditActionChangesRequestedGate, "outcome=unreadable") {
 		t.Fatalf("audit = %v, want an unreadable record", sink.actions)
+	}
+}
+
+// A sentinel alert blocks the hive's own `lgtm` / `approved` writes the same
+// way it blocks the queue approval: writing either hands the PR to Tide,
+// which does not know about the sentinel (hivecommons/hive#20064 merged so).
+func TestSentinelAlertBlocksApprovalLabelWrites(t *testing.T) {
+	f := &crFake{labelSet: []string{"Sentinel-Alert"}}
+	c, sink := crClient(t, f)
+	c.SetSentinelAlertLabel("sentinel-alert")
+	for _, label := range []string{"lgtm", "approved"} {
+		if err := c.AddLabels(context.Background(), "o/r", 7, []string{label}); err == nil || !strings.Contains(err.Error(), "sentinel-alert") {
+			t.Fatalf("AddLabels(%s) err = %v, want the sentinel refusal", label, err)
+		}
+		if err := c.GateApprovalLabels(context.Background(), "o/r", 7, []string{label}); err == nil {
+			t.Fatalf("GateApprovalLabels(%s) = nil, want the sentinel refusal", label)
+		}
+	}
+	if f.count(&f.labels) != 0 {
+		t.Fatal("an approval label reached GitHub on a sentinel-labelled PR")
+	}
+	if !sink.find(AuditActionSentinelBlockedApproval, "label=sentinel-alert") {
+		t.Fatalf("audit = %v, want sentinel-blocked-approval", sink.actions)
+	}
+	// Without the sentinel label the same write goes through.
+	f.mu.Lock()
+	f.labelSet = nil
+	f.mu.Unlock()
+	if err := c.AddLabels(context.Background(), "o/r", 7, []string{"lgtm"}); err != nil {
+		t.Fatalf("AddLabels(lgtm) without sentinel: %v", err)
 	}
 }

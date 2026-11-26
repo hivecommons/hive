@@ -3646,9 +3646,10 @@ func (c *Client) addLabelsObserved(ctx context.Context, repo string, number int,
 	}
 	owner, repoName := c.splitRepo(repo)
 	// `lgtm` / `approved` (or the configured auto-merge label) approves a
-	// PR for merging: an open change request refuses it (#20067).
+	// PR for merging: a sentinel alert or an open change request refuses
+	// it (#20067).
 	if c.approvalLabels(labels) {
-		if err := c.GateChangesRequested(ctx, owner+"/"+repoName, number, ChangesRequestedGateActionLabel, PRAuditPathRelay); err != nil {
+		if err := c.gateApprovalLabelWrite(ctx, owner+"/"+repoName, number); err != nil {
 			return err
 		}
 	}
