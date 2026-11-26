@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 )
@@ -14,6 +15,13 @@ func inferenceContextLengthError(status int, body []byte) bool {
 	return strings.Contains(text, "context_length_exceeded") ||
 		strings.Contains(text, "prompt is too long") ||
 		strings.Contains(text, "maximum context length")
+}
+
+func inferenceAnthropicErrorStatus(status int, body []byte) (int, string) {
+	if inferenceContextLengthError(status, body) {
+		return http.StatusBadRequest, "invalid_request_error"
+	}
+	return status, "api_error"
 }
 
 // inferenceBackendErrorMessage builds the agent-facing text for a non-2xx
