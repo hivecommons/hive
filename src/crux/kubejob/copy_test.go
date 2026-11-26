@@ -243,7 +243,9 @@ func failedCopyRun(t *testing.T, tweak func(*fakeAPI, *Launcher)) (*fakeAPI, err
 	tweak(api, l)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	_, err := l.Run(ctx, specFor("/data/agents/sandbox/x"))
+	// A real workspace directory, so a run that gets as far as the push packs
+	// it and the failure under test is the bridge's, not a missing path.
+	_, err := l.Run(ctx, specFor(t.TempDir()))
 	return api, err
 }
 
