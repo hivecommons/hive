@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.373.1)
+
+### Fixed
+
+- A block edited into the dashboard overlay (`ask`, `chat`, `customers` or any other block the config knows) now survives the config reload and the next save instead of being dropped silently. A block the hive cannot load, or an overlay file that is not valid YAML, is logged and kept as written rather than overwritten (#19740).
+- The close-on-merge backfill now recognises a real `Fixes #N` on a confirmation-gated issue (needs-human, epic, reporter confirmation) when the repo is configured without its owner. Such an issue gets `hive/likely-done` and the awaiting-confirmation comment again, instead of being labelled `hive/partially-addressed` as if the merge had been partial. Follow-up to [#19956](https://github.com/hivecommons/hive/issues/19956).
+
 ## 2026-11-26 (v5.373.0)
 
 ### Added
