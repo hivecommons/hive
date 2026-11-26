@@ -767,6 +767,26 @@ Because the `200` has already gone out, a gateway failure on a streamed request 
 
 If a turn is still cut, raise the CLI's own limits: `CLAUDE_STREAM_IDLE_TIMEOUT_MS` (5 to 30 minutes) lengthens the watchdogs, and `API_FORCE_IDLE_TIMEOUT=0` turns the body idle timeout off. Hive does not set either. An agent in a tmux pane inherits the hive process's environment, so setting them in the hive container's environment reaches the CLI; a sandbox Job runs in its own pod and does not inherit it.
 
+#### Headless turns (`headless_turns`): one `claude -p` per kick
+
+A translator-routed agent (`vllm`, `llm-d`, `litellm`, `watsonx` or a named gateway) normally runs the interactive Claude CLI resident in its pane. Anthropic counts that as interactive Claude Code even when the route ends at Anthropic with a Console API key, and the monthly API credits that come with Max, Ultra and Team plans do not pay for interactive Claude Code: the request fails with `Your credit balance is too low` while the credit sits unspent. Per Anthropic's [help article](https://support.claude.com/en/articles/17154008), `claude -p` run with an API key from the linked Console organization is billed as Agent SDK usage, which those credits do cover ([#19902](https://github.com/hivecommons/hive/issues/19902)).
+
+`headless_turns: true` on an agent switches it to that mode. It is off by default:
+
+```yaml
+agents:
+  ci-maintainer:
+    backend: litellm
+    model: anthropic/claude-sonnet-5-5
+    headless_turns: true
+```
+
+- **What changes.** The pane holds a shell instead of a resident CLI. Each kick runs `hive claude-turn`, which starts one `claude -p --input-format stream-json --output-format stream-json` with the agent's usual launch flags (model, `--bare --settings`, the GitHub-write and host-state deny rules, tool rules, MCP flags), feeds it the prompt on stdin, and renders its output as plain pane text. The pane shows `HIVE_CLAUDE_HEADLESS_RUNNING` while a turn runs and `HIVE_CLAUDE_HEADLESS_READY` at the prompt, which the kick, busy and turn-end gates read.
+- **What does not change.** The CLI still talks to Hive's translator, so the real gateway key stays out of the agent's environment, `/v1/models` discovery, metering, key rotation, the opt-in timeouts and retries, and spending-limit detection all work as before. Hive does not edit the CLI's requests or its system prompt.
+- **Continuity.** The first kick after a launch starts a new session; later kicks resume it by id (`--resume`). `clear_on_kick: true` (the default) starts a new session on every non-resume kick, which replaces the interactive `/clear`. If the recorded session can no longer be resumed, the turn starts a new one and says so in the pane.
+- **What is skipped.** There is no idle placeholder kick at launch (a headless turn is a full model call), no consent-screen watcher, and no post-kick "continue" or action nudges, because the pane is a shell between turns and each turn ends when `claude -p` exits. PR follow-up resume kicks are refused, as for headless agy.
+- **Scope.** The setting applies only to translator-routed agents; it is ignored on `claude` (subscription) and every other CLI backend, and when `launch_cmd` is set. Whether a given request is covered by subscriber credits is Anthropic's decision; Hive only changes how the CLI is started.
+
 ### Claude Managed Agents hosted execution
 
 Claude Managed Agents is an external hosted engine, not a `backend:` value.

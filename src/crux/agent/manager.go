@@ -383,9 +383,13 @@ type AgentProcess struct {
 	// authenticated CLI sits there producing nothing. Written under paneMu by
 	// pollTmuxOutputForAgent alongside lastPaneCapture; zero until the poller
 	// has seen two differing captures, which reads as "unknown", never "idle".
-	LastPaneChange          time.Time
-	consentSeenAt           time.Time // watcher: when a consent screen was first seen in the pane
-	lastConsentDismiss      time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	LastPaneChange     time.Time
+	consentSeenAt      time.Time // watcher: when a consent screen was first seen in the pane
+	lastConsentDismiss time.Time // watcher: cooldown for re-running dismissInferencePrompts
+	// claudeHeadlessTurnCmd is the claude launch line a headless_turns agent
+	// runs once per kick (claude_headless.go). Rebuilt on every launch pass,
+	// the surviving-pane path included, so a hub restart keeps it.
+	claudeHeadlessTurnCmd   string
 	lastInferKickAt         time.Time // stall watchdog: when the last kick was delivered to an inference agent
 	lastInferKickPane       string    // stall watchdog: hash of the visible pane just after kick delivery
 	lastInferKickVisible    string    // stall watchdog: visible pane text just after kick delivery

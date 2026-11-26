@@ -417,6 +417,16 @@ type AgentConfig struct {
 	// opt-OUT that survives an operator turning explanation on fleet-wide.
 	// Valid values: "" | off | brief | full — see ExplainMode* constants.
 	ExplainMode string `yaml:"explain_mode,omitempty" json:"explain_mode,omitempty"`
+	// HeadlessTurns runs a translator-routed agent (an inference backend or a
+	// named model gateway) as one headless `claude -p` per kick instead of a
+	// resident interactive Claude Code session (#19902). The CLI still talks
+	// to Hive's translator, so key custody, metering and /v1/models discovery
+	// are unchanged; what changes is how the CLI is started. Anthropic bills
+	// `claude -p` run with a Console API key as Agent SDK usage, which the
+	// subscriber API credits of Max/Ultra/Team plans cover, whereas they do
+	// not cover interactive Claude Code. Default off. Ignored on every other
+	// backend and when launch_cmd is set.
+	HeadlessTurns bool `yaml:"headless_turns,omitempty" json:"headless_turns,omitempty"`
 	// Sandbox opts this agent into phase-1 sandbox execution when the global
 	// agent_sandbox.enabled gate is also true.
 	Sandbox *AgentSandboxOverride `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
