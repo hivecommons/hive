@@ -100,7 +100,7 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 	// per-Job object hive deletes by name.
 	var policyPath string
 	cleanup := func(c context.Context) {
-		l.deleteQuiet(c, policyPath)
+		l.deletePolicyOrWarn(c, policyPath)
 	}
 	if l.copyPlan != nil {
 		// The Job is created suspended, then its Secret and NetworkPolicy,
@@ -259,8 +259,16 @@ func (l *Launcher) createPerJobObjects(ctx context.Context, ns, name, jobsPath s
 		return fmt.Errorf("kubejob: creating job %s: %w", name, err)
 	}
 	jobPath := jobsPath + "/" + name
+	// The cleanup delete runs on a fresh context: a kick timeout or cancel
+	// that ended a create would otherwise fail it too, and a suspended Job
+	// never finishes, so neither its TTL nor its deadline would remove it
+	// (or the Secret and policy it owns) before the next boot sweep.
 	fail := func(err error) error {
-		_ = l.delete(ctx, jobPath)
+		dctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+		defer cancel()
+		if derr := l.delete(dctx, jobPath); derr != nil {
+			slog.Warn("kubejob: could not delete the suspended job after a failed create; the boot sweep removes it", "job", name, "err", derr)
+		}
 		return err
 	}
 	uid := jobUID(created)
@@ -300,4 +308,17 @@ func (l *Launcher) createPerJobObjects(ctx context.Context, ns, name, jobsPath s
 		return fail(fmt.Errorf("kubejob: resuming job %s (needs the patch verb on jobs): %w", name, err))
 	}
 	return nil
+}
+
+// deletePolicyOrWarn deletes the claim transport's per-Job NetworkPolicy and
+// logs a failure other than not-found. That policy has no owner, so a failed
+// delete (for example a spoke whose only NetworkPolicy grant is the copy
+// Role's create) leaves it behind; the log says so instead of hiding it.
+func (l *Launcher) deletePolicyOrWarn(ctx context.Context, policyPath string) {
+	if policyPath == "" {
+		return
+	}
+	if err := l.delete(ctx, policyPath); err != nil && !strings.Contains(err.Error(), "HTTP 404") {
+		slog.Warn("kubejob: could not delete the per-Job NetworkPolicy; it stays until removed by hand (grant delete on networkpolicies for the claim transport with network: none)", "policy", policyPath, "err", err)
+	}
 }

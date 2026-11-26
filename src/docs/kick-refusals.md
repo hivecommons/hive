@@ -201,6 +201,15 @@ interactive session; sandbox kicks are blocked until it stops`.
   interactive session. Switching an agent into sandbox mode stops its terminal
   session on its own.
 
+A Kubernetes Job kick on `workspace_transport: copy` also fails closed, before
+it creates anything, with `kubejob: workspace_transport: copy is refused
+because HIVE_REQUIRE_HARDENED is set` (copy mode skips the relay containment
+preflight; use the claim transport on a hardened hive) or `kubejob:
+workspace_transport: copy is refused because hive's own pod runs under
+runtimeClassName "<class>" and job.runtime_class_name is empty` (set
+`job.runtime_class_name`, usually to the same class). See
+[Sandbox isolation](sandbox-isolation.md).
+
 ### unknown_agent
 
 Error text: `agent <name> not found`. The name does not match a configured
