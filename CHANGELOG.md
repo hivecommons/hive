@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v6.63.2)
+
+### Fixed
+
+- Stop logging a writeback gate suppression as a warning when a blocked verdict's named blocker cannot be recorded, so it is no longer self-reported as an unclassified error.
+
+### Security
+
+- `coverage-hourly.yml` no longer grants `issues: write` at the workflow level. Only `create-issue-on-coverage-drop` files coverage issues, and it already asks for that permission itself, so the `gate` and `coverage` jobs now run read-only. Flagged by zizmor ([#19951](https://github.com/hivecommons/hive/issues/19951)).
+
 ## 2026-11-25 (v6.63.1)
 
 ### Fixed

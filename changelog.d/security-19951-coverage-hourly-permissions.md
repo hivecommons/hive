@@ -1,1 +1,0 @@
-- `coverage-hourly.yml` no longer grants `issues: write` at the workflow level. Only `create-issue-on-coverage-drop` files coverage issues, and it already asks for that permission itself, so the `gate` and `coverage` jobs now run read-only. Flagged by zizmor ([#19951](https://github.com/hivecommons/hive/issues/19951)).
