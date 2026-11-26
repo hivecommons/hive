@@ -10,6 +10,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/crux/logscrub"
 )
 
 // Unanswered human feedback on a PR the hive's own agent opened
@@ -201,6 +202,14 @@ func (c *Client) FetchPRFeedback(ctx context.Context, repo string, number int) (
 		RuleCandidates:          RuleCandidates(raw.rawPRConversation, c.isHumanFeedbackAuthor),
 		AddressedChangeRequests: AddressedChangeRequests(raw.rawPRConversation, raw.HeadRefOid, c.isHumanFeedbackAuthor, c.isHiveIdentityComment),
 	}, nil
+}
+
+// IssueCommentPosted checks for a previously applied comment using the same
+// body matching as CreateIssueComment's reconciliation.
+func (c *Client) IssueCommentPosted(ctx context.Context, repo string, number int, body string) (bool, error) {
+	owner, repoName := c.SplitRepo(repo)
+	state, err := c.observeIssueComment(ctx, owner, repoName, number, logscrub.ScrubString(body))
+	return state.Applied, err
 }
 
 func (c *Client) isHiveAuthor(a *rawPRCommentAuthor) bool {

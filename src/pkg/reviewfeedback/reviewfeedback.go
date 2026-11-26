@@ -59,7 +59,8 @@ const (
 	threadMessageRunes = 600
 	// bodyRunes bounds each comment quoted into the brief.
 	bodyRunes = 800
-	// handledRetention is how long a PR's record is kept after its last kick.
+	// handledRetention is how long a PR's record is kept after its last kick
+	// or its hand-off's last verified check or completion.
 	handledRetention = 45 * 24 * time.Hour
 	// maxBlockedDrafts bounds the refused replies held per PR.
 	maxBlockedDrafts = DefaultMaxItems
@@ -156,8 +157,12 @@ type PRState struct {
 	Retries int `json:"retries,omitempty"`
 	// RetryPending says the next kick is a re-route of stranded feedback.
 	RetryPending bool `json:"retry_pending,omitempty"`
+	// PendingHandoffs outlive subsequent kicks for new review feedback.
+	PendingHandoffs []StrandedHandoff `json:"pending_handoffs,omitempty"`
+	// HandoffCheckedAt retains hand-offs and their disposition past the kick's cutoff.
+	HandoffCheckedAt time.Time `json:"handoff_checked_at,omitzero"`
 	// StrandedClosed says the last kick was judged: the agent acted, the
-	// feedback was answered, or it was handed to a person.
+	// feedback was answered, or a handoff was queued for a person.
 	StrandedClosed bool `json:"stranded_closed,omitempty"`
 }
 
@@ -427,8 +432,8 @@ func (s *Store) RecordKickHead(key string, items []github.FeedbackItem, head str
 	return s.saveLocked(now)
 }
 
-// MarkNeedsHuman records the needs-human note was posted, reporting whether it
-// was newly set (the caller posts the note only then).
+// MarkNeedsHuman records a posted note and reports whether the flag was newly
+// set. A note covers all stranded handoffs pending for the PR.
 func (s *Store) MarkNeedsHuman(key string, now time.Time) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -437,6 +442,10 @@ func (s *Store) MarkNeedsHuman(key string, now time.Time) (bool, error) {
 		return false, nil
 	}
 	st.NeedsHumanNoted = true
+	if len(st.PendingHandoffs) > 0 {
+		st.PendingHandoffs = nil // one needs-human note covers the PR
+		st.HandoffCheckedAt = now
+	}
 	if st.LastKick.IsZero() {
 		st.LastKick = now
 	}
@@ -515,7 +524,11 @@ func (s *Store) NeedsHumanNoted(key string) bool {
 
 func (s *Store) saveLocked(now time.Time) error {
 	for k, st := range s.PRs {
-		if !st.LastKick.IsZero() && now.Sub(st.LastKick) > handledRetention {
+		retainedSince := st.LastKick
+		if st.HandoffCheckedAt.After(retainedSince) {
+			retainedSince = st.HandoffCheckedAt
+		}
+		if !retainedSince.IsZero() && now.Sub(retainedSince) > handledRetention {
 			delete(s.PRs, k)
 		}
 	}
