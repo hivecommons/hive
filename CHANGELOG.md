@@ -11,6 +11,23 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.372.0)
+
+### Added
+
+- Customers can now keep person records and enrichment results in the embedded hivecommons/colony store (`/data/customers/colony.db`, colony v0.3.0), behind `customers.store` / `HIVE_CUSTOMERS_STORE` (`json` by default, so nothing changes until an owner opts in). `shadow` imports `people.json` and `enrichment.json` in one transaction, keeps `.pre-colony` copies, writes every change to both and logs parity counts only; `colony` reads the colony store and still writes the JSON, so setting `json` again is a lossless rollback. Provenance maps onto colony's ranks (a hand edit is user-set, a hub value hub-shared with its label, forge and provider values enrichment), forget erases the person from the colony store and the backups in every mode, and a new `customers.enrichment.auto_accept: gitdm_high` policy (default `off`) can fill an empty organization from a gitdm login match without ever replacing a hand-set, hub or forge-profile value ([#19855](https://github.com/hivecommons/hive/issues/19855)).
+- Sandbox Jobs can now copy the workspace in and out with `agent_sandbox.job.workspace_transport: copy`, so `runtime: job` works without ReadWriteMany storage and the Job never mounts hive's data claim (#19621).
+- The copy transport's per-Job Secret and NetworkPolicy are owned by the Job, so they no longer leak after a hive restart. It also keeps the Job when the pull fails, pulls the workspace after a kick timeout, leaves sockets and FIFOs out of the archive, bounds the workspace `emptyDir` (`job.workspace_size_limit`), and refuses `network: host`. Its RBAC moved to a separate `hive-sandbox-jobs-copy` Role that you bind on purpose (#19694).
+
+### Fixed
+
+- Close-on-merge no longer closes an issue when the merged PR only references it with `Refs` (or `Part of`, `Addresses`, ...). A claim-ledger row, a covered-by-PR comment or a branch named after the issue used to outrank the author's own non-closing reference, so a PR that explicitly said it was partial still closed its issue with "Fixed by #N" on merge. Such a PR now leaves the issue open with the skip reason `refs_only` (logged at info). An issue labelled `hive/partially-addressed` is also left open unless the merged PR names it with `Fixes`/`Closes`/`Resolves`, on the close-on-merge sweep, its backfill and the task-list sweep alike. `Fixes`/`Closes` close as before, and decomposed-parent auto-close and `parent_autoclose` are unchanged ([#19956](https://github.com/hivecommons/hive/issues/19956)).
+
+### Security
+
+- The copy workspace transport is stricter before it ships. Its `hive-sandbox-jobs-copy` Role now grants only `create` on Secrets and NetworkPolicies and `patch` on Jobs, with no `delete` on either kind: the per-Job token Secret and policy are owned by the Job and garbage-collected with it, and hive no longer deletes them by name. The sample admission policy `sandbox-job-copy-admission.yaml` now enforces (`Deny`), names no namespace or service account (it matches namespaces labelled `hivecommons.dev/service-account=<sa>`), denies every Secret delete from hive, requires the Secret to be owned by its Job, constrains the NetworkPolicy's selector and rules, and allows only a resume of a Job. New `job.runtime_class_name` (env override `HIVE_SANDBOX_JOB_RUNTIME_CLASS_NAME`, default empty, unchanged behaviour) sets the Job pod's `runtimeClassName`. Copy mode is refused when `HIVE_REQUIRE_HARDENED` is set, and when hive's own pod runs under a runtime class such as Kata and `job.runtime_class_name` is empty, so agent code never leaves the VM silently. Reported by sdwilsh (#19621, #19694).
+- The Forgejo push relay now refuses a push that would publish a hive-authored commit without a `Signed-off-by` trailer, with the same denial as the GitHub push watcher, and records the `agent_branch_pushed` audit entry for every branch it publishes. On Forgejo the hive identity is the configured forge user (`project.ai_author`, by name or its noreply address) and the lanes' commit address domain, not a GitHub login. Both relays share one check and one audit builder ([#19960](https://github.com/hivecommons/hive/issues/19960)).
+
 ## 2026-11-26 (v5.371.0)
 
 ### Added
