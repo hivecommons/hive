@@ -190,3 +190,68 @@ func TestDecideWithoutBlocksAllows(t *testing.T) {
 		t.Fatalf("decision = %+v, want allowed without an override", d)
 	}
 }
+
+func TestNormalizeState(t *testing.T) {
+	for in, want := range map[string]string{
+		"REQUEST_CHANGES": StateChangesRequested, "changes_requested": StateChangesRequested,
+		"APPROVE": StateApproved, "approved": StateApproved, "DISMISSED": StateDismissed,
+		"COMMENT": StateCommented, "commented": StateCommented, " pending ": StatePending,
+	} {
+		if got := NormalizeState(in, false); got != want {
+			t.Errorf("NormalizeState(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := NormalizeState("APPROVED", true); got != StateDismissed {
+		t.Errorf("dismissed approval = %q, want %q", got, StateDismissed)
+	}
+}
+
+func TestEvaluateSortsBlocksAndDescribes(t *testing.T) {
+	reviews := []Review{
+		{ID: 7, Reviewer: "zed", State: "CHANGES_REQUESTED", SubmittedAt: at(1)},
+		{ID: 5, Reviewer: "Amy", State: "CHANGES_REQUESTED", SubmittedAt: at(2)},
+		{ID: 9, Reviewer: "", State: "CHANGES_REQUESTED", SubmittedAt: at(3)},
+	}
+	blocks := Evaluate(context.Background(), reviews, writers("zed", "amy"))
+	if len(blocks) != 2 || blocks[0].Reviewer != "Amy" || blocks[1].Reviewer != "zed" {
+		t.Fatalf("blocks = %+v, want Amy then zed (an anonymous review is ignored)", blocks)
+	}
+	if got := Describe(blocks); got != "Amy (review 5), zed (review 7)" {
+		t.Fatalf("Describe = %q", got)
+	}
+	if got := Reviewers(blocks); got != "Amy,zed" {
+		t.Fatalf("Reviewers = %q", got)
+	}
+	if got := ReviewIDs(blocks); got != "5,7" {
+		t.Fatalf("ReviewIDs = %q", got)
+	}
+	unverified := Block{Reviewer: "x", ReviewID: 1, PermissionUnverified: true}
+	if !strings.Contains(unverified.String(), "access unverified") {
+		t.Fatalf("String = %q", unverified.String())
+	}
+}
+
+func TestBlockedErrorUnwrapAndClear(t *testing.T) {
+	cause := errors.New("503")
+	err := &BlockedError{Repo: "o/r", Number: 7, Cause: cause}
+	if !errors.Is(err, cause) || err.Unwrap() != cause {
+		t.Fatal("BlockedError does not unwrap its cause")
+	}
+	if !strings.Contains(err.Error(), "503") {
+		t.Fatalf("Error = %q", err.Error())
+	}
+	shown := []Block{{Reviewer: "maint", ReviewID: 2}}
+	if _, err := RecordOverride("o/r", 9, "owner", "why", shown); err != nil {
+		t.Fatal(err)
+	}
+	ClearOverride("o/r", 9)
+	if _, ok := OverrideFor("o/r", 9, shown); ok {
+		t.Fatal("override survived ClearOverride")
+	}
+	if _, ok := OverrideFor("o/r", 9, nil); ok {
+		t.Fatal("OverrideFor with no blocks reported an override")
+	}
+	if _, err := RecordOverride("", 9, "owner", "why", shown); !errors.Is(err, ErrOverrideIncomplete) {
+		t.Fatalf("RecordOverride without a repo = %v", err)
+	}
+}

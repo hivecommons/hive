@@ -18,9 +18,6 @@ func GitHubReviews(ctx context.Context, client *gh.Client, owner, repo string, n
 	if client == nil {
 		return nil, errors.New("no GitHub client")
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	opts := &gh.ListOptions{PerPage: githubReviewsPerPage}
 	var out []Review
 	for {

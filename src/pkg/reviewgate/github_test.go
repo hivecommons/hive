@@ -95,3 +95,44 @@ func TestGitHubReviewsServerErrorIsReturned(t *testing.T) {
 		t.Fatal("CheckGitHub = nil error on a 503, want the read failure so callers fail closed")
 	}
 }
+
+func TestGitHubNilClient(t *testing.T) {
+	if _, err := GitHubReviews(context.Background(), nil, "o", "r", 7); err == nil {
+		t.Fatal("GitHubReviews(nil client) = nil error")
+	}
+	if _, err := GitHubWriter(nil, "o", "r")(context.Background(), "x"); err == nil {
+		t.Fatal("GitHubWriter(nil client) = nil error")
+	}
+}
+
+func TestGitHubWriterPropagatesServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "down", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	c := gh.NewClient(nil)
+	base, _ := url.Parse(srv.URL + "/")
+	c.BaseURL = base
+	if _, err := GitHubWriter(c, "o", "r")(context.Background(), "maint"); err == nil {
+		t.Fatal("GitHubWriter on a 502 = nil error, want it returned so Evaluate fails closed")
+	}
+}
+
+func TestGitHubReviewsPaginates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") == "" {
+			w.Header().Set("Link", `<`+"http://"+r.Host+r.URL.Path+`?page=2>; rel="next"`)
+			_ = json.NewEncoder(w).Encode([]map[string]any{review(1, "maint", "CHANGES_REQUESTED", "2026-11-26T10:00:00Z"), nil})
+			return
+		}
+		_ = json.NewEncoder(w).Encode([]map[string]any{review(2, "maint", "APPROVED", "2026-11-26T11:00:00Z")})
+	}))
+	defer srv.Close()
+	c := gh.NewClient(nil)
+	base, _ := url.Parse(srv.URL + "/")
+	c.BaseURL = base
+	reviews, err := GitHubReviews(context.Background(), c, "o", "r", 7)
+	if err != nil || len(reviews) != 2 {
+		t.Fatalf("reviews = %+v, err = %v; want both pages", reviews, err)
+	}
+}
