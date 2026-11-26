@@ -107,13 +107,18 @@ var forgeRepoDefaultBranch = func(ctx context.Context, cfg *config.Config, repo 
 // forgeHiveCommitIdentities is the hive's own commit identity on a forge,
 // for the push relay's sign-off check (#19960). The GitHub watcher matches
 // GitHub logins; on a forge the hive is the configured forge user
-// (project.ai_author), matched by author name or by the local part of its
-// commit email (Forgejo's "<user>@noreply.<host>"), and every lane, which
-// commits as "<agent>@<bot email domain>" (gitidentity.AgentIdentity).
+// (project.ai_author, or the effective author), matched by author name or by
+// the local part of its commit email (Forgejo's "<user>@noreply.<host>"), and
+// every lane, which commits as "<agent>@<bot email domain>"
+// (gitidentity.AgentIdentity). A hive that still has a usable GitHub App
+// gives its lanes the App bot's noreply address instead
+// (gitidentity.AppLinkedAgentIdentity), so the bot login is included too.
 func forgeHiveCommitIdentities(cfg *config.Config) github.HiveCommitIdentities {
 	ids := github.HiveCommitIdentities{EmailDomains: []string{gitidentity.BotEmailDomain()}}
-	if user := strings.TrimSpace(cfg.Project.AIAuthor); user != "" {
-		ids.Logins = append(ids.Logins, user)
+	for _, login := range []string{cfg.Project.AIAuthor, cfg.EffectiveAIAuthor(), cfg.GitHub.BotLogin()} {
+		if login = strings.TrimSpace(login); login != "" {
+			ids.Logins = append(ids.Logins, login)
+		}
 	}
 	return ids
 }

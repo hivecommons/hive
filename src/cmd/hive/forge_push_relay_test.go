@@ -294,8 +294,8 @@ func TestForgeRelayRefusesUnsignedHiveCommits(t *testing.T) {
 			}
 			var resp github.PushBranchResponse
 			readRelayResult(t, path, &resp)
-			want := "authorization denied: " + github.HiveCommitSignoffRefusal(tc.log, github.HiveCommitIdentities{Logins: []string{"hive-bot"}, EmailDomains: []string{gitidentity.BotEmailDomain()}})
-			if resp.OK || resp.Error != want || !strings.Contains(resp.Error, "cafe1234") || !strings.Contains(resp.Error, tc.author) || !strings.Contains(resp.Error, "Signed-off-by") {
+			want := "authorization denied: commit cafe1234 is authored by hive identity \"" + tc.author + "\" without a Signed-off-by trailer; hive-authored commits must be signed off at creation (git commit -s)"
+			if resp.OK || resp.Error != want {
 				t.Errorf("resp = %+v, want error %q naming cafe1234 and %q", resp, want, tc.author)
 			}
 			if resp.Branch != "fix-1" {
@@ -309,16 +309,61 @@ func TestForgeRelayRefusesUnsignedHiveCommits(t *testing.T) {
 	}
 }
 
+// The sign-off check needs no ai_author: lanes are matched by their commit
+// address domain, including a HIVE_GIT_BOT_EMAIL_DOMAIN override, and a hive
+// that keeps a usable GitHub App also matches its lanes' App noreply address
+// (#19960).
+func TestForgeRelaySignoffIdentityWithoutAIAuthor(t *testing.T) {
+	cases := map[string]struct {
+		setup  func(*testing.T, *pushHarness)
+		log    string
+		author string
+	}{
+		"domain override": {
+			setup:  func(t *testing.T, _ *pushHarness) { t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "bots.example") },
+			log:    commitRecord("cafe1234", "worker", "worker@bots.example", "fix\n"),
+			author: "worker@bots.example",
+		},
+		"app-linked lane address": {
+			setup: func(_ *testing.T, h *pushHarness) {
+				h.cfg.GitHub.AppID = 4242
+				h.cfg.GitHub.InstallationID = 99
+				h.cfg.GitHub.AppSlug = "acme-hive"
+			},
+			log:    commitRecord("cafe1234", "worker", "280983584+acme-hive[bot]@users.noreply.github.com", "fix\n"),
+			author: "acme-hive[bot]",
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newPushHarness(t)
+			h.cfg.Project.AIAuthor = ""
+			tc.setup(t, h)
+			h.log = tc.log
+			path := writeRelayRequest(t, h.relay.pushDir, "a.json", h.goodPush())
+			h.relay.scanOnce(context.Background())
+			if len(h.pushCalls()) != 0 {
+				t.Fatalf("pushed an unsigned hive commit: %+v", h.calls)
+			}
+			var resp github.PushBranchResponse
+			readRelayResult(t, path, &resp)
+			if resp.OK || !strings.Contains(resp.Error, "cafe1234") || !strings.Contains(resp.Error, tc.author) {
+				t.Errorf("resp = %+v, want a denial naming %q", resp, tc.author)
+			}
+			assertExists(t, path+".denied", true)
+		})
+	}
+}
+
 // Signed hive commits, and commits by anyone else whatever their trailers,
 // are pushed: the relay checks only the hive's own commits (#19960).
 func TestForgeRelayPushesSignedAndOtherAuthorsCommits(t *testing.T) {
 	_, laneEmail, _ := gitidentity.AgentIdentity("worker")
 	cases := map[string]string{
-		"signed lane commit":                     commitRecord("a1", "worker", laneEmail, "fix\n\nSigned-off-by: worker <"+laneEmail+">\n"),
-		"signed forge user commit":               commitRecord("a2", "hive-bot", "hive-bot@noreply.fj.example", "fix\n\nSigned-off-by: hive-bot <hive-bot@noreply.fj.example>\n"),
-		"unsigned other author":                  commitRecord("a3", "Mallory", "mallory@example.com", "theirs\n"),
-		"github login is not the forge identity": commitRecord("a4", "hivecommons-hive[bot]", "280983584+hivecommons-hive[bot]@users.noreply.github.com", "theirs\n"),
-		"nothing new":                            "",
+		"signed lane commit":       commitRecord("a1", "worker", laneEmail, "fix\n\nSigned-off-by: worker <"+laneEmail+">\n"),
+		"signed forge user commit": commitRecord("a2", "hive-bot", "hive-bot@noreply.fj.example", "fix\n\nSigned-off-by: hive-bot <hive-bot@noreply.fj.example>\n"),
+		"unsigned other author":    commitRecord("a3", "Mallory", "mallory@example.com", "theirs\n"),
+		"nothing new":              "",
 	}
 	for name, log := range cases {
 		t.Run(name, func(t *testing.T) {
