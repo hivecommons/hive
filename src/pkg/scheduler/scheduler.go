@@ -31,6 +31,13 @@ type Scheduler struct {
 	// for the GitHub fallback in remoteAgentsRepoRoot (#17090).
 	remoteAgents   map[string]remoteAgentsMd
 	remoteAgentsMu sync.Mutex
+	// remoteSkills is "owner/repo/<skill>" -> when skills/<skill>.md was last
+	// fetched for the same fallback (#20009); guarded by remoteAgentsMu.
+	remoteSkills map[string]time.Time
+	// checkoutMissingWarned is local root -> struct{}{} once a configured
+	// checkout root with no AGENTS.md or skills/ has been reported, so the
+	// fallback to the forge is logged once, not per kick.
+	checkoutMissingWarned sync.Map
 	// agentsMdWarned is root -> "<sha256 of AGENTS.md>|<cap>" last warned
 	// about, so a truncated file is logged once per change, not per kick.
 	agentsMdWarned            sync.Map

@@ -35,18 +35,36 @@ const maxIssuesToPrime = 5
 //     out of it), but it is a checkout of policies.repo, so it is used ONLY when
 //     that repo IS the repo being asked about. Otherwise it would inject the
 //     config repo's AGENTS.md into work on an unrelated repo.
-//  3. the forge — when neither local root is configured and a GitHub client is
-//     wired (SetAgentsMdFetcher), AGENTS.md is fetched from the repo's default
-//     branch and materialised under remoteAgentsMdDir (#17090). Hosted spokes
-//     keep no clones at all, so without this they never injected anything.
+//  3. the forge — when neither local root is configured (or the configured one
+//     is empty, see below) and a GitHub client is wired (SetAgentsMdFetcher),
+//     AGENTS.md is fetched from the repo's default branch and materialised
+//     under remoteAgentsMdDir (#17090). Hosted spokes keep no clones at all, so
+//     without this they never injected anything.
 //
-// Neither local root is checked for existence here: agentsmd.Parse tolerates a missing
-// directory or file and yields "", and primeAgentsMd logs which root came up
-// empty. One stat per kick to say the same thing earlier is not worth it.
+// A local root is used as configured when no fetcher is wired, since there is
+// nothing to fall back to. With a fetcher wired, a local root that holds
+// neither AGENTS.md nor skills/ (a missing, empty or failed mount) is reported
+// once at warn and the forge is used instead, so a bad mount no longer turns
+// injection off silently (#20009). That costs two stats per kick.
 func (s *Scheduler) agentsRepoRoot(repo string) string {
 	if s.cfg == nil {
 		return ""
 	}
+	if root := s.localAgentsRepoRoot(repo); root != "" {
+		if s.agentsMdFetcherOrNil() == nil || localRootHasAgentsContent(root) {
+			return root
+		}
+		if _, warned := s.checkoutMissingWarned.LoadOrStore(root, struct{}{}); !warned {
+			s.logger.Warn("agentsmd: configured checkout root has no AGENTS.md or skills/, falling back to GitHub",
+				"repo", repo, "root", root)
+		}
+	}
+	return s.remoteAgentsRepoRoot(repo)
+}
+
+// localAgentsRepoRoot returns the configured local root for repo (checkouts_dir,
+// then policies.local_dir for its own repo), or "" when none is configured.
+func (s *Scheduler) localAgentsRepoRoot(repo string) string {
 	if root := s.cfg.Project.CheckoutRootFor(repo); root != "" {
 		return root
 	}
@@ -54,7 +72,19 @@ func (s *Scheduler) agentsRepoRoot(repo string) string {
 		sameRepo(s.cfg.Policies.Repo, s.cfg.Project.Org, repo) {
 		return local
 	}
-	return s.remoteAgentsRepoRoot(repo)
+	return ""
+}
+
+// localRootHasAgentsContent reports whether root holds an AGENTS.md file or a
+// skills/ directory, the two things the priming path reads from it.
+func localRootHasAgentsContent(root string) bool {
+	if info, err := os.Stat(filepath.Join(root, agentsmd.AgentsFileName)); err == nil && !info.IsDir() {
+		return true
+	}
+	if info, err := os.Stat(filepath.Join(root, agentsmd.SkillsDirName)); err == nil && info.IsDir() {
+		return true
+	}
+	return false
 }
 
 // sameRepo reports whether a git source's repo field names org/repo. The source
@@ -204,6 +234,15 @@ const maxSkillsInjectionBytes = 8192
 // Loading happens per kick (not once at startup) so an operator editing either
 // source sees it take effect on the next kick without a restart.
 func (s *Scheduler) primeSkills(agentName, repoRoot string) string {
+	return s.primeSkillsForRepo(agentName, "", repoRoot)
+}
+
+// primeSkillsForRepo is primeSkills for the kick's primary repo. When repo has
+// no local checkout (repoRoot is empty or the GitHub-fetched cache root), each
+// declared skill the registry lacks is fetched from the repo's skills/
+// directory first, so a hosted or API-only spoke gets repo skills too
+// (#20009). An empty repo disables that fetch.
+func (s *Scheduler) primeSkillsForRepo(agentName, repo, repoRoot string) string {
 	if s.cfg == nil {
 		return ""
 	}
@@ -226,9 +265,34 @@ func (s *Scheduler) primeSkills(agentName, repoRoot string) string {
 		return ""
 	}
 
+	reg := skillreg.NewRegistry()
+	loaded, err := reg.Load(skillsRegistryDir, s.logger)
+	if err != nil {
+		// An unexpected registry failure must not suppress a valid repo-local
+		// fallback.
+		s.logger.Warn("skillreg: cannot load skills registry, continuing with repo skills",
+			"dir", skillsRegistryDir, "error", err)
+	}
+
+	if repo != "" && s.isRemoteRepoRoot(repo, repoRoot) {
+		// The registry wins on a name collision, so only names it lacks are
+		// worth a fetch.
+		var missing []string
+		for _, name := range requested {
+			if name = strings.TrimSpace(name); name == "" {
+				continue
+			}
+			if _, ok := reg.Get(name); !ok {
+				missing = append(missing, name)
+			}
+		}
+		if root := s.syncRemoteRepoSkills(repo, missing); root != "" {
+			repoRoot = root
+		}
+	}
+
 	var repoCfg *agentsmd.AgentsConfig
 	if repoRoot != "" {
-		var err error
 		repoCfg, err = agentsmd.Parse(repoRoot, s.logger)
 		if err != nil {
 			// Parse is tolerant and should not error; log defensively and keep
@@ -237,15 +301,6 @@ func (s *Scheduler) primeSkills(agentName, repoRoot string) string {
 				"agent", agentName, "root", repoRoot, "error", err)
 			repoCfg = nil
 		}
-	}
-
-	reg := skillreg.NewRegistry()
-	loaded, err := reg.Load(skillsRegistryDir, s.logger)
-	if err != nil {
-		// An unexpected registry failure must not suppress a valid repo-local
-		// fallback.
-		s.logger.Warn("skillreg: cannot load skills registry, continuing with repo skills",
-			"dir", skillsRegistryDir, "error", err)
 	}
 
 	resolved := reg.ResolveRequested(repoCfg, requested)

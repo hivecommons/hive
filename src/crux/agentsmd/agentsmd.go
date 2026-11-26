@@ -23,7 +23,9 @@
 //     the heading to the next "## " heading (or end of file). Skills may also be
 //     defined as standalone files at "skills/<name>.md" relative to the repo
 //     root; when both a file and an inline section define the same name, the
-//     inline section wins.
+//     inline section wins. Skill files load even when AGENTS.md is absent,
+//     only regular files are read (symlinks are refused), and a leading YAML
+//     front-matter block in a skill file is stripped.
 //
 // The "body" is the Markdown document with the front-matter block and all
 // "## Skill:" sections removed — the general instructions that always apply.
@@ -199,12 +201,14 @@ func parseAt(baseDir, agentsPath string, lg *slog.Logger) (*AgentsConfig, error)
 
 	raw, err := os.ReadFile(agentsPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			// Missing file is not an error — empty config.
-			return cfg, nil
+		if !os.IsNotExist(err) {
+			// Unreadable file: tolerate, log, and fall through to skills/.
+			lg.Warn("agentsmd: cannot read AGENTS.md, skipping", "path", agentsPath, "error", err)
 		}
-		// Unreadable file: tolerate, log, return empty config.
-		lg.Warn("agentsmd: cannot read AGENTS.md, skipping", "path", agentsPath, "error", err)
+		// A missing AGENTS.md is not an error and does not hide the repo's
+		// skills/ directory: a repo may keep standalone skill files with no
+		// AGENTS.md at all (hivecommons/hive#20009). The body stays empty.
+		loadSkillFiles(baseDir, cfg.Skills, lg)
 		return cfg, nil
 	}
 
@@ -285,29 +289,60 @@ func extractSkillSections(body string) (string, map[string]string) {
 
 // loadSkillFiles reads standalone "<name>.md" files from baseDir/skills into
 // dst. Unreadable files are skipped tolerantly.
+//
+// Only regular files are read. A committed symlink (to a file or to the whole
+// skills/ directory) is refused, so a repository cannot make Hive read a file
+// from the host into an agent prompt (hivecommons/hive#20009). Subdirectories
+// are skipped. An optional YAML front-matter block is stripped the same way the
+// skill registry strips it, so the agent receives only the instruction body.
 func loadSkillFiles(baseDir string, dst map[string]string, lg *slog.Logger) {
 	skillsDir := filepath.Join(baseDir, SkillsDirName)
-	entries, err := os.ReadDir(skillsDir)
+	dirInfo, err := os.Lstat(skillsDir)
 	if err != nil {
 		// No skills dir (or unreadable) — nothing to load.
 		return
 	}
+	if !dirInfo.IsDir() {
+		if dirInfo.Mode()&os.ModeSymlink != 0 {
+			lg.Warn("agentsmd: skills directory is a symlink, refusing to read it", "dir", skillsDir)
+		}
+		return
+	}
+	entries, err := os.ReadDir(skillsDir)
+	if err != nil {
+		return
+	}
 	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
 		name := e.Name()
-		if !strings.HasSuffix(name, SkillFileExt) {
+		if e.IsDir() || !strings.HasSuffix(name, SkillFileExt) {
 			continue
 		}
-		text, rErr := os.ReadFile(filepath.Join(skillsDir, name))
+		if !e.Type().IsRegular() {
+			lg.Warn("agentsmd: skill file is not a regular file, skipping", "file", name)
+			continue
+		}
+		path := filepath.Join(skillsDir, name)
+		// Re-check at open time: the entry type comes from the directory read,
+		// and the file could have been swapped for a symlink since.
+		if info, lErr := os.Lstat(path); lErr != nil || !info.Mode().IsRegular() {
+			lg.Warn("agentsmd: skill file is not a regular file, skipping", "file", name)
+			continue
+		}
+		text, rErr := os.ReadFile(path)
 		if rErr != nil {
 			lg.Warn("agentsmd: cannot read skill file, skipping", "file", name, "error", rErr)
 			continue
 		}
 		skillName := strings.TrimSuffix(name, SkillFileExt)
-		dst[skillName] = strings.TrimSpace(string(text))
+		dst[skillName] = skillFileBody(string(text))
 	}
+}
+
+// skillFileBody returns a standalone skill file's instruction text with any
+// leading YAML front-matter block removed.
+func skillFileBody(content string) string {
+	_, rest := frontmatter.Split(content)
+	return strings.TrimSpace(rest)
 }
 
 // Resolve concatenates the instruction text of the named skills, in the order
