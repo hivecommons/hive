@@ -91,6 +91,41 @@ func TestAgentEnvPairs_InferenceContextWindow(t *testing.T) {
 	}
 }
 
+func TestAgentEnvPairs_AutoCompact(t *testing.T) {
+	tests := []struct {
+		name, backend, model, override, pass, percent, wantWindow, wantPercent string
+		explicit, discovered                                                   int
+	}{
+		{name: "direct claude", backend: "claude", model: "sonnet", explicit: 150000, wantWindow: "150000"},
+		{name: "default claude", model: "sonnet", explicit: 150000, wantWindow: "150000"},
+		{name: "routed claude", backend: "litellm", model: "anthropic/claude-sonnet-5-5", explicit: 150000, wantWindow: "150000"},
+		{name: "known window", backend: "litellm", model: "vllm/Qwen", discovered: 262144, percent: "80", wantPercent: "80"},
+		{name: "explicit wins", backend: "litellm", model: "vllm/Qwen", discovered: 262144, explicit: 150000, percent: "80", wantWindow: "150000"},
+		{name: "unknown window", backend: "litellm", model: "vllm/Qwen", percent: "80"},
+		{name: "disabled", backend: "litellm", model: "vllm/Qwen", discovered: 262144, pass: "0", percent: "80"},
+		{name: "other model", backend: "claude", model: "sonnet", override: "opus", explicit: 150000},
+		{name: "invalid percent", backend: "litellm", model: "vllm/Qwen", discovered: 262144, percent: "101"},
+		{name: "codex", backend: "codex", model: "o3", explicit: 150000},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(inferencePassContextWindowEnv, tc.pass)
+			t.Setenv(inferenceAutoCompactPercentEnv, tc.percent)
+			cfg := config.AgentConfig{Backend: tc.backend, Model: tc.model, AutoCompactWindowTokens: tc.explicit}
+			m := NewManager(map[string]config.AgentConfig{"a": cfg}, discardLogger(), ProjectContext{})
+			m.SetInferenceContextWindowLookup(func(string) (int, string) { return tc.discovered, tc.model })
+			pairs := m.agentEnvPairs(&AgentProcess{Name: "a", Config: cfg, ModelOverride: tc.override})
+			got := map[string]string{}
+			for _, p := range pairs {
+				got[p.Key] = p.Value
+			}
+			if got[claudeAutoCompactWindowEnv] != tc.wantWindow || got[claudeAutoCompactPercentEnv] != tc.wantPercent {
+				t.Fatalf("window=%q percent=%q; want %q, %q", got[claudeAutoCompactWindowEnv], got[claudeAutoCompactPercentEnv], tc.wantWindow, tc.wantPercent)
+			}
+		})
+	}
+}
+
 // The lookup is asked for the agent by name.
 func TestAgentEnvPairs_InferenceContextWindowLookupByName(t *testing.T) {
 	t.Setenv(inferencePassContextWindowEnv, "")

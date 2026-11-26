@@ -234,6 +234,10 @@ func SanitizedEnv(base []string, allowlist []string, explicit map[string]string)
 func Available() bool { _, err := exec.LookPath(PodmanBinary); return err == nil }
 
 func isCredentialName(name string) bool {
+	// This exact name holds a context-window size, not an authentication token.
+	if name == "CLAUDE_CODE_MAX_CONTEXT_TOKENS" {
+		return false
+	}
 	_, ok := credentialEnvNames[name]
 	return ok || strings.Contains(name, "TOKEN") || strings.Contains(name, "SECRET")
 }

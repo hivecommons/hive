@@ -38,6 +38,50 @@ func writeTempConfig(t *testing.T, content string) string {
 	return path
 }
 
+func TestLoadAutoCompactWindowTokens(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		value     int
+		wantError bool
+	}{
+		{"unset", 0, false},
+		{"negative", -1, true},
+		{"below minimum", 99999, true},
+		{"minimum", 100000, false},
+		{"above minimum", 200000, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			content := minimalValidYAML("my-org", "ghp_tok") + fmt.Sprintf("    auto_compact_window_tokens: %d\n", tc.value)
+			cfg, err := Load(writeTempConfig(t, content))
+			if tc.wantError {
+				if err == nil || !strings.Contains(err.Error(), "auto_compact_window_tokens") {
+					t.Fatalf("Load() error = %v, want auto_compact_window_tokens validation error", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if got := cfg.Agents["worker"].AutoCompactWindowTokens; got != tc.value {
+				t.Errorf("auto_compact_window_tokens = %d, want %d", got, tc.value)
+			}
+		})
+	}
+}
+
+func TestValidateAgentOverlayAutoCompactWindowTokens(t *testing.T) {
+	cfg := validatableConfig(nil)
+	for _, tc := range []struct {
+		value     int
+		wantError bool
+	}{{0, false}, {-1, true}, {99999, true}, {100000, false}} {
+		err := cfg.validateAgentOverlay("worker", AgentConfig{Backend: "claude", AutoCompactWindowTokens: tc.value})
+		if (err != nil) != tc.wantError {
+			t.Errorf("auto_compact_window_tokens %d: error = %v, want error %v", tc.value, err, tc.wantError)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Load — happy path
 // ---------------------------------------------------------------------------
