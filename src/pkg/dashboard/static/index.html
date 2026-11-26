@@ -68851,8 +68851,8 @@ function burnAreaChart() {
         try {
           const res = await fetch('/api/github-token', { method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify({ token: token }) });
           if (!res.ok) {
-            /* 422 token refused, 429 cooling down after a refusal, 409 App
-               hive: the server's reason is shown and the current token stays. */
+            /* 422 token refused, 429 cooling down after a refusal, 409 on an App-mode install:
+               the server's reason is shown and the current token stays. */
             throw new Error(await saveErrorMessage(res));
           }
           const d = await res.json();
