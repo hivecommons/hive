@@ -324,6 +324,18 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 			return hubCustomerStoreJSON
 		}
 		migrated = m
+		if migrated {
+			// A consents directory beside a store colony-only took over is
+			// never read as the truth: it is set aside, not deleted.
+			if aside, err := setAsideReappearedConsents(time.Now()); err != nil {
+				_ = st.Close()
+				logger.Warn("hub customer store: a consents directory reappeared and could not be set aside; json mode",
+					"error", crmErrClass(err))
+				return hubCustomerStoreJSON
+			} else if aside {
+				logger.Warn("hub customer store: a consents directory reappeared beside the colony-only store; set aside as consents.ignored, colony stays the truth")
+			}
+		}
 	}
 	if mode != hubCustomerStoreJSON && exists {
 		// Backed up only once the lock is held, from a consistent read of

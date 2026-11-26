@@ -65,6 +65,9 @@ const (
 	// hubRestoredAsideSuffix names a consents directory set aside by a
 	// rollback restore.
 	hubRestoredAsideSuffix = ".pre-restore"
+	// hubIgnoredSuffix names a consents directory that reappeared beside a
+	// colony-only store and was set aside.
+	hubIgnoredSuffix = ".ignored"
 	// hubMigratedStamp suffixes a name that is already taken.
 	hubMigratedStamp = "20060102T150405Z"
 	// hubUserFileMode and hubConsentFileMode match saveSaaSUser and
@@ -762,4 +765,21 @@ func scrubHubMigrated(u *SaaSUser) error {
 		}
 	}
 	return nil
+}
+
+// setAsideReappearedConsents moves a consents directory that reappeared
+// beside a colony-only store out of the way, so it is never mistaken for
+// the records. It reports whether there was one.
+func setAsideReappearedConsents(now time.Time) (bool, error) {
+	dir := customerConsentDir()
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	to, err := uniqueSibling(dir, hubIgnoredSuffix, now)
+	if err != nil {
+		return false, err
+	}
+	return true, os.Rename(dir, to)
 }

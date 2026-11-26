@@ -337,3 +337,29 @@ func TestUniqueSiblingNeverOverwrites(t *testing.T) {
 		t.Error("a taken name was handed out again")
 	}
 }
+
+// A consents directory that reappears beside a colony-only store is set
+// aside on the next boot, never read as the records.
+func TestHubColonyOnlySetsAsideReappearedConsents(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	closeHubCustomerStore()
+	if err := os.MkdirAll(customerConsentDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(customerConsentDir(), "ada-example.json")
+	if err := os.WriteFile(stale, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	if _, err := os.Stat(customerConsentDir()); !os.IsNotExist(err) {
+		t.Fatalf("the reappeared consents directory is still in place: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(customerConsentDir()+hubIgnoredSuffix, "ada-example.json")); err != nil {
+		t.Fatalf("the reappeared consents were not kept aside: %v", err)
+	}
+	if c := readMatchConsent(t, users[0], "own"); !c.Fields.RealName {
+		t.Errorf("colony consent lost after a stale directory reappeared: %+v", c)
+	}
+}
