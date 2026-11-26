@@ -47,11 +47,17 @@ func TestWireCustomersStoreMode(t *testing.T) {
 	if _, err := svc.svc.Forget(ownerViewer, p.ID); err != nil {
 		t.Fatal(err)
 	}
-	// The viewer's own profile may exist too; the forgotten person is gone
-	// from both stores and the two still agree.
+	// The forgotten person is gone, and the two stores still agree (the
+	// viewer's own dashboard profile may have been created meanwhile).
+	if _, err := svc.svc.Store().Get(p.ID); !errors.Is(err, customers.ErrNotFound) {
+		t.Fatalf("the forgotten person is still in people.json: %v", err)
+	}
 	after, err := svc.svc.Store().ColonyParity()
-	if err != nil || after.ColonyPeople != par.ColonyPeople-1 || after.JSONPeople != after.ColonyPeople || after.Mismatches != 0 {
+	if err != nil || after.JSONPeople != after.ColonyPeople || after.JSONIdentities != after.ColonyIdent || after.Mismatches != 0 {
 		t.Fatalf("parity after forget = %+v (before %+v), %v", after, par, err)
+	}
+	if !svc.svc.Store().Forgotten(customers.KindGitHub, "ada") {
+		t.Fatal("the forgotten login has no tombstone")
 	}
 }
 
