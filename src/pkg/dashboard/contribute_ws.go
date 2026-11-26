@@ -3975,6 +3975,12 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 		// true whenever clientGen == 0, and omitting task_gen yields 0, so
 		// the guard is opt-in from the client.
 		if hasTask {
+			if msg.Model != "" {
+				s.contributor.model = msg.Model
+				if s.contributor.profile != nil {
+					s.contributor.profile.Model = msg.Model
+				}
+			}
 			s.contributor.currentTask = nil
 			// #2539: drop the previewable prompt with the task it belonged to
 			// so the ops tab does not show a stale instruction after completion.
@@ -4348,6 +4354,12 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 		// cooldown was booked and the abandoned issue became instantly
 		// re-admissible while the credential stayed live.
 		if hasTask {
+			if msg.Model != "" {
+				s.contributor.model = msg.Model
+				if s.contributor.profile != nil {
+					s.contributor.profile.Model = msg.Model
+				}
+			}
 			s.contributor.currentTask = nil
 			s.contributor.tokenMintedAt = time.Time{}
 			s.contributor.taskAssignedAt = time.Time{}

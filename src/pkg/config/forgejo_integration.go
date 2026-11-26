@@ -30,11 +30,18 @@ type ForgejoIntegrationConfig struct {
 	// KeyFile is the absolute path of the RSA signing key (PEM, mode 0600 or
 	// 0400, or 0440 with group hive-launch as the /secrets mount presents
 	// it; see forgejwt.LaunchGID). It is read at every mint, so replacing the
-	// file rotates the key.
+	// file rotates the key. A cached REST token (rest_audience) is dropped
+	// when the file's size or modification time changes.
 	KeyFile string `yaml:"key_file"`
 	// Audiences maps a token tier (agentmode.KnownTokenTiers) to the aud
 	// Forgejo generated for that tier's integration.
 	Audiences map[string]string `yaml:"audiences"`
+	// RESTAudience is the aud of the integration for the hive's own Forgejo
+	// REST calls (work discovery, the relays, merges and the sweeps). When
+	// set, those calls send a JWT with sub hive:rest instead of the forgejo
+	// block's access token; when empty they keep using the access token
+	// (hivecommons/hive#19920). It must differ from every tier audience.
+	RESTAudience string `yaml:"rest_audience,omitempty"`
 }
 
 // Validate checks the block. A nil block (the default) is valid: the
@@ -54,12 +61,23 @@ func (c *ForgejoIntegrationConfig) Validate() error {
 	if len(c.Audiences) == 0 {
 		return fmt.Errorf("%s.audiences: at least one token tier needs the audience of its Forgejo integration", field)
 	}
+	if c.RESTAudience != "" && strings.TrimSpace(c.RESTAudience) == "" {
+		return fmt.Errorf("%s.rest_audience: audience is blank", field)
+	}
+	rest := strings.TrimSpace(c.RESTAudience)
 	for _, tier := range c.tiers() {
 		if !slices.Contains(agentmode.KnownTokenTiers, agentmode.TokenTier(tier)) {
 			return fmt.Errorf("%s.audiences: unknown token tier %q (want one of %s)", field, tier, knownTokenTierList())
 		}
-		if strings.TrimSpace(c.Audiences[tier]) == "" {
+		aud := strings.TrimSpace(c.Audiences[tier])
+		if aud == "" {
 			return fmt.Errorf("%s.audiences.%s: audience is empty", field, tier)
+		}
+		// The REST integration and a tier's integration are separate, each
+		// pinned to its own sub; one audience for both is a copy-paste slip
+		// that Forgejo would only refuse at the first REST call.
+		if rest != "" && aud == rest {
+			return fmt.Errorf("%s.rest_audience: same audience as audiences.%s; the REST integration needs its own", field, tier)
 		}
 	}
 	return nil

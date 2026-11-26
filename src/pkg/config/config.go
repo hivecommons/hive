@@ -4357,6 +4357,12 @@ type ForgejoConfig struct {
 	// short-lived JWT per token tier, signed by an operator-held key, instead
 	// of the access token. See ForgejoIntegrationConfig.
 	Integration *ForgejoIntegrationConfig `yaml:"integration,omitempty" json:"Integration,omitempty"`
+	// Login is the hive's own Forgejo username. Optional and not a secret: set
+	// it when the access token is limited to specific repositories, because
+	// such a token cannot read the token's own user through GET /user
+	// (#19994). The sweeps then use this login to recognize the hive's own
+	// pull requests and issues without that lookup.
+	Login string `yaml:"login,omitempty" json:"Login,omitempty"`
 }
 
 const (

@@ -64,7 +64,7 @@ var forgeListerForRepo = func(cfg *config.Config, repo string) (forgeLister, err
 	if err := cfg.CheckForgeTokenHost(repo); err != nil {
 		return nil, err
 	}
-	token, source, err := gov.Resolve()
+	token, source, err := resolveForgeRESTToken(cfg, kind, gov)
 	if err != nil {
 		return nil, fmt.Errorf("forge %s: %w", kind, err)
 	}
