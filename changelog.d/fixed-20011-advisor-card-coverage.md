@@ -1,1 +1,0 @@
-- The Knowledge tab Advisor card now shows how many closed work beads the retro arm comparison saw (with a closed PR, without a ref, without a matching decision), and its empty-state and footer copy no longer say only beads with a closed PR are counted.

@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.373.6)
+
+### Fixed
+
+- The Knowledge tab Advisor card now shows how many closed work beads the retro arm comparison saw (with a closed PR, without a ref, without a matching decision), and its empty-state and footer copy no longer say only beads with a closed PR are counted.
+
 ## 2026-11-26 (v5.373.5)
 
 ### Changed
