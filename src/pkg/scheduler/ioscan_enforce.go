@@ -362,6 +362,11 @@ const classifierFixHint = "check the ioscan classifier model/endpoint is served 
 // fail-open, so recommending fail_mode: open would be a no-op.
 const classifierFixHintOpen = "configure governor.trajectory/litellm for the ioscan model endpoint, or set ioscan.classifier.enabled: false"
 
+// classifierFixHintOpenError is the fail-open hint for a genuine backend error
+// (endpoint configured but unreachable, erroring or answering badly). Telling
+// the operator to configure an endpoint that is already set misleads them.
+const classifierFixHintOpenError = "check the ioscan classifier endpoint and model are reachable and healthy (governor.trajectory/litellm, ioscan.classifier.model), or set ioscan.classifier.enabled: false"
+
 // isNoEndpointErr reports whether err is the resolver's "unconfigured"
 // signal, which both fail modes special-case so the WARN is logged once per
 // process instead of once per distinct error string.
@@ -434,7 +439,7 @@ func (s *Scheduler) classifierErrored(sanitized string, v ioscan.Verdict, err er
 	} else if s.logger != nil {
 		s.warnOnce("classifier-open-error:"+err.Error(), "ioscan classifier failed open; text passes on unclassified",
 			"error", err,
-			"fix", classifierFixHintOpen)
+			"fix", classifierFixHintOpenError)
 	}
 	return sanitized, v
 }
