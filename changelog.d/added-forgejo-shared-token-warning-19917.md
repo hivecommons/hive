@@ -1,1 +1,0 @@
-- Boot and the dashboard's forge settings warn when Forgejo repos have no `forgejo.integration`, so every token tier, the read-only ones included, pushes with the one write token (#19917).

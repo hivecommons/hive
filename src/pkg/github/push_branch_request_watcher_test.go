@@ -22,23 +22,39 @@ type pushExecCall struct {
 
 // withPushExec installs a stub git runner for the test and returns the calls
 // it receives. sha is what `rev-parse` reports; pushErr, when non-nil, fails
-// the `push` invocation with output pushOut.
+// the `push` invocation with output pushOut. Every other command (the sign-off
+// log, the config listing) succeeds with no output.
 func withPushExec(t *testing.T, sha string, pushErr error, pushOut string) *[]pushExecCall {
 	t.Helper()
 	var calls []pushExecCall
 	old := pushBranchExec
+	commonDir := fakeCommonGitDir(t)
 	pushBranchExec = func(_ context.Context, dir string, env []string, name string, args ...string) (string, error) {
 		calls = append(calls, pushExecCall{dir: dir, env: env, args: append([]string{name}, args...)})
 		if len(args) > 0 && args[0] == "rev-parse" {
+			if strings.Contains(strings.Join(args, " "), "--git-common-dir") {
+				return commonDir + "\nsha1\n", nil
+			}
 			return sha + "\n", nil
 		}
-		if pushErr != nil {
+		if pushErr != nil && len(args) > 0 && args[0] == "push" {
 			return pushOut, pushErr
 		}
 		return "", nil
 	}
 	t.Cleanup(func() { pushBranchExec = old })
 	return &calls
+}
+
+// fakeCommonGitDir is a directory shaped like a checkout's common git dir
+// (it has an objects store), for the stub rev-parse to report.
+func fakeCommonGitDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Mkdir(dir+"/objects", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 // withPushDir points the watcher at a temp request dir for the test.
@@ -99,13 +115,15 @@ func TestPushBranchRequestWatcher_PushesAndConsumes(t *testing.T) {
 	if !resp.OK || resp.Branch != "scanner/fix-1" || resp.SHA != "cafe1234" {
 		t.Errorf("result = %+v, want ok with branch and sha", resp)
 	}
-	if len(*calls) != 3 {
-		t.Fatalf("git calls = %d, want rev-parse + sign-off log + push", len(*calls))
+	if len(*calls) != 5 {
+		t.Fatalf("git calls = %d, want rev-parse + sign-off log + config listing + git dir + push", len(*calls))
 	}
-	push := (*calls)[2]
+	push := (*calls)[4]
 	joined := strings.Join(push.args, " ")
-	if push.dir != checkout ||
-		!strings.Contains(joined, "https://github.com/o/r.git") ||
+	if push.dir == checkout || !strings.Contains(strings.Join(push.env, "\n"), "GIT_DIR="+push.dir) {
+		t.Errorf("push ran in %q with env %v, want a hive-owned GIT_DIR, never the agent's checkout", push.dir, push.env)
+	}
+	if !strings.Contains(joined, "https://github.com/o/r.git") ||
 		!strings.Contains(joined, "refs/heads/scanner/fix-1:refs/heads/scanner/fix-1") {
 		t.Errorf("push call = %+v, want the validated repo's URL and a full refspec", push)
 	}
@@ -136,10 +154,10 @@ func TestPushBranchRequestWatcher_ForceWithLease(t *testing.T) {
 	}
 	c.ProcessPushBranchRequestsOnce(context.Background())
 
-	if len(*calls) != 3 {
-		t.Fatalf("git calls = %d, want 3", len(*calls))
+	if len(*calls) != 5 {
+		t.Fatalf("git calls = %d, want 5", len(*calls))
 	}
-	if joined := strings.Join((*calls)[2].args, " "); !strings.Contains(joined, "--force-with-lease") || strings.Contains(joined, " --force ") {
+	if joined := strings.Join((*calls)[4].args, " "); !strings.Contains(joined, "--force-with-lease") || strings.Contains(joined, " --force ") {
 		t.Errorf("push args = %q, want --force-with-lease and never a plain --force", joined)
 	}
 }
@@ -364,6 +382,29 @@ func TestPushBranchGitEnv_NeutralizesRepoLocalExecution(t *testing.T) {
 		"core.fsmonitor":    "false",
 		"credential.helper": "",
 		"http." + strings.TrimRight(remote, "/") + ".extraHeader": "AUTHORIZATION: basic abc",
+		// hivecommons/hive#19959: where the credentialed request goes.
+		"core.askPass":           "",
+		"http.sslVerify":         "true",
+		"http.followRedirects":   "initial",
+		"push.recurseSubmodules": "no",
+		"push.gpgSign":           "false",
+		"log.showSignature":      "false",
+	}
+	for k, v := range map[string]string{
+		"GIT_CONFIG_NOSYSTEM": "1",
+		"GIT_CONFIG_SYSTEM":   os.DevNull,
+		"GIT_CONFIG_GLOBAL":   os.DevNull,
+		"GIT_ASKPASS":         "",
+		"SSH_ASKPASS":         "",
+		"GIT_ALLOW_PROTOCOL":  "https",
+		"GIT_NO_LAZY_FETCH":   "1",
+	} {
+		if got[k] != v {
+			t.Errorf("%s = %q, want %q", k, got[k], v)
+		}
+	}
+	if _, ok := got["GIT_ASKPASS"]; !ok {
+		t.Error("GIT_ASKPASS is not overridden, so an inherited askpass program would run")
 	}
 	n, err := strconv.Atoi(got["GIT_CONFIG_COUNT"])
 	if err != nil || n != len(want) {
