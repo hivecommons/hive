@@ -22,6 +22,14 @@ const claudeSessionFileVar = "HIVE_CLAUDE_SESSION_FILE"
 // are the ones launched as claude against Hive's translator. An operator
 // launch_cmd replaces the shim, as it does for agy. Lock-free, so the launch
 // and kick paths can call it with m.mu held.
+//
+// The CLI still talks to Hive's translator, so key custody, metering and
+// /v1/models discovery are unchanged; only how the CLI is started changes.
+// Anthropic bills `claude -p` run with a Console API key as Agent SDK usage,
+// which subscriber API credits cover, whereas they do not cover interactive
+// Claude Code. AgentProcess.claudeHeadlessTurnCmd holds the per-kick claude
+// line; it is rebuilt on every launch pass, the surviving-pane path included,
+// so a hub restart keeps it.
 func (m *Manager) agentUsesClaudeHeadless(backend string, agent *AgentProcess) bool {
 	if agent == nil || !agent.Config.HeadlessTurns || !m.routableBackend(backend) {
 		return false

@@ -93,7 +93,7 @@ type claudeStreamEvent struct {
 	Subtype   string `json:"subtype"`
 	SessionID string `json:"session_id"`
 	Message   *struct {
-		Content []claudeContentBlock `json:"content"`
+		Content []claudeTurnBlock `json:"content"`
 	} `json:"message"`
 	// result event fields
 	IsError      bool    `json:"is_error"`
@@ -107,7 +107,7 @@ type claudeStreamEvent struct {
 	} `json:"usage"`
 }
 
-type claudeContentBlock struct {
+type claudeTurnBlock struct {
 	Type    string          `json:"type"`
 	Text    string          `json:"text"`
 	Name    string          `json:"name"`
@@ -434,7 +434,7 @@ func (r *claudeTurnRenderer) handleLine(line []byte) string {
 	return ev.SessionID
 }
 
-func (r *claudeTurnRenderer) handleAssistant(blocks []claudeContentBlock) {
+func (r *claudeTurnRenderer) handleAssistant(blocks []claudeTurnBlock) {
 	for _, blk := range blocks {
 		switch blk.Type {
 		case "text":
@@ -451,7 +451,7 @@ func (r *claudeTurnRenderer) handleAssistant(blocks []claudeContentBlock) {
 	}
 }
 
-func (r *claudeTurnRenderer) handleToolResults(blocks []claudeContentBlock) {
+func (r *claudeTurnRenderer) handleToolResults(blocks []claudeTurnBlock) {
 	for _, blk := range blocks {
 		if blk.Type != "tool_result" {
 			continue
@@ -459,7 +459,7 @@ func (r *claudeTurnRenderer) handleToolResults(blocks []claudeContentBlock) {
 		r.mu.Lock()
 		r.lastTool = ""
 		r.mu.Unlock()
-		text := claudeToolResultText(blk.Content)
+		text := claudeTurnToolResultText(blk.Content)
 		if strings.TrimSpace(text) == "" {
 			continue
 		}
@@ -470,9 +470,9 @@ func (r *claudeTurnRenderer) handleToolResults(blocks []claudeContentBlock) {
 	}
 }
 
-// claudeToolResultText flattens a tool_result's content, which claude sends
+// claudeTurnToolResultText flattens a tool_result's content, which claude sends
 // either as a string or as an array of content blocks.
-func claudeToolResultText(raw json.RawMessage) string {
+func claudeTurnToolResultText(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
 	}
@@ -480,7 +480,7 @@ func claudeToolResultText(raw json.RawMessage) string {
 	if json.Unmarshal(raw, &s) == nil {
 		return s
 	}
-	var parts []claudeContentBlock
+	var parts []claudeTurnBlock
 	if json.Unmarshal(raw, &parts) != nil {
 		return ""
 	}
