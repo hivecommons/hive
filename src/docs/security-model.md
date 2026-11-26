@@ -675,7 +675,16 @@ verify-only window; rotation is triggered by an admin endpoint and spokes
 converge through a 15-minute reconcile sweep. The sweep patches each spoke's
 Deployment with kubectl, so it reaches only hub-provisioned spokes on clusters
 the hub can reach, and the endpoint refuses to rotate unless the last sweep
-considered at least one hive and reached every hive it considered. A spoke that holds hand-copied derived keys
+considered at least one hive and reached every hive it considered. From the
+moment of rotation the hub signs session cookies with the current
+generation. It signs SSO handoffs and heartbeat responses with the current
+generation too, except for a spoke the sweep last saw on the previous
+generation, which gets the previous one until its window ends. During the
+window the hub verifies both generations, and swept spokes accept both
+through the `_PREV` public keys. When the window ends the previous generation is retired. Swept spokes
+keep working because they already hold the current keys, and session cookies
+from before the rotation have expired by then (their lifetime equals the
+window). A spoke that holds hand-copied derived keys
 gets nothing from a rotation; see
 [hub-deployment.md](hub-deployment.md#master-rotation-and-spokes-that-hold-only-derived-keys).
 Setting a fresh master secret directly strands every spoke.

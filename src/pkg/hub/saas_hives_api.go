@@ -1806,7 +1806,7 @@ func (s *HubServer) handleOpenHive(w http.ResponseWriter, r *http.Request) {
 	// mints with its Ed25519 signing seed, and a spoke that cannot verify
 	// Ed25519 tokens simply falls through to the plain dashboard redirect below.
 	if s.hubSecret != "" {
-		if tok := MintSSOToken(s.ssoSigningSeed(), username, role, id, time.Now()); tok != "" {
+		if tok := MintSSOToken(s.ssoSigningSeedForHive(id, time.Now()), username, role, id, time.Now()); tok != "" {
 			http.Redirect(w, r, base+"/sso?token="+url.QueryEscape(tok), http.StatusSeeOther)
 			return
 		}

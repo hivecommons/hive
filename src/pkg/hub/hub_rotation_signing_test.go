@@ -97,7 +97,12 @@ func (sp rotationSpoke) acceptsHeartbeat(t *testing.T, s *HubServer) bool {
 // mintSSO mints an SSO handoff token the way the hub's handoff route does.
 func mintSSO(t *testing.T, s *HubServer) string {
 	t.Helper()
-	tok := MintSSOToken(s.ssoSigningSeed(), "alice", "admin", rotationSigningHiveID, time.Now())
+	return mintSSOFor(t, s, rotationSigningHiveID)
+}
+
+func mintSSOFor(t *testing.T, s *HubServer, hiveID string) string {
+	t.Helper()
+	tok := MintSSOToken(s.ssoSigningSeedForHive(hiveID, time.Now()), "alice", "admin", hiveID, time.Now())
 	if tok == "" {
 		t.Fatal("hub minted no SSO token")
 	}
@@ -237,5 +242,178 @@ func TestRotationSigningPathsSurviveRetirement(t *testing.T) {
 	}
 	if !restarted.acceptsHeartbeat(t, s2) {
 		t.Error("after restart: the spoke rejected the hub's heartbeat signature")
+	}
+}
+
+func mustGenerateMaster(t *testing.T) string {
+	t.Helper()
+	m, err := generateMasterSecret()
+	if err != nil {
+		t.Fatalf("generateMasterSecret: %v", err)
+	}
+	return m
+}
+
+// TestMintingSecretFollowsActiveGeneration pins the accessor every hub signing
+// path derives from: the active generation after a rotation, and s.hubSecret
+// only when there is no generation set.
+func TestMintingSecretFollowsActiveGeneration(t *testing.T) {
+	masterA, masterB := mustGenerateMaster(t), mustGenerateMaster(t)
+	s := &HubServer{hubSecret: masterA, keyGenerations: legacyGenerationSet(masterA)}
+	before := s.ssoSigningSeed()
+	if before != SSOSigningSeedFromMaster(masterA) {
+		t.Fatal("un-rotated hub must sign exactly as the single-master hub did")
+	}
+
+	s.keyGenerations = s.keyGenerations.rotate(masterB, time.Now(), defaultVerifyWindow)
+	checks := map[string][2]string{
+		"sso seed":        {s.ssoSigningSeed(), deriveDomainKey(masterB, infoSSOEd25519Seed)},
+		"session seed":    {s.sessionSigningSeed(), deriveDomainKey(masterB, infoSessionEd25519Seed)},
+		"impersonate":     {s.impersonateKey(), deriveDomainKey(masterB, infoImpersonateKey)},
+		"heartbeat":       {s.heartbeatKey(), deriveDomainKey(masterB, infoHeartbeatKey)},
+		"session hmac":    {s.sessionKey(), deriveDomainKey(masterB, infoSessionKey)},
+		"per-hive bearer": {s.heartbeatKeyFor("hive-x"), derivePerHiveKey(masterB, infoHeartbeatKey, "hive-x")},
+	}
+	for name, c := range checks {
+		if c[0] == "" || c[0] != c[1] {
+			t.Errorf("%s does not derive from the active generation after a rotation", name)
+		}
+	}
+
+	bare := &HubServer{hubSecret: masterA}
+	if bare.mintingSecret() != masterA {
+		t.Error("a hub with no generation set must fall back to s.hubSecret")
+	}
+	var nilHub *HubServer
+	if nilHub.mintingSecret() != "" {
+		t.Error("a nil hub must have no minting secret")
+	}
+}
+
+// TestLiveGenerationsRootLifecycle covers the lineage root that keeps the
+// derivation set authoritative after retirement, and that it does not make a
+// set from a DIFFERENT master authoritative.
+func TestLiveGenerationsRootLifecycle(t *testing.T) {
+	withCleanLiveGenerations(t)
+	masterA, masterB, other := mustGenerateMaster(t), mustGenerateMaster(t), mustGenerateMaster(t)
+	withTestMaster(t, masterA)
+
+	// After retirement the set holds only B; the ambient master is still A.
+	retiredSet := newGenerationSet(2, []keyGeneration{{ID: 2, Secret: masterB}})
+
+	installLiveGenerations(retiredSet, masterA)
+	if provisionGenerationSet() != retiredSet {
+		t.Fatal("a set loaded against the ambient master must stay authoritative after its root generation retires")
+	}
+	advanceLiveGenerations(retiredSet)
+	if provisionGenerationSet() != retiredSet {
+		t.Fatal("advancing the live set must keep the recorded root")
+	}
+
+	// A set with no recorded root and without the ambient master is stale.
+	setLiveGenerations(retiredSet, false)
+	if provisionGenerationSet() == retiredSet {
+		t.Fatal("setLiveGenerations must not carry a root over to a set it did not load")
+	}
+
+	// A root that is not the ambient master grants nothing.
+	installLiveGenerations(retiredSet, other)
+	if provisionGenerationSet() == retiredSet {
+		t.Fatal("a set loaded against a different master must not be trusted")
+	}
+
+	// Installing or advancing to nil clears the root.
+	installLiveGenerations(nil, masterA)
+	advanceLiveGenerations(nil)
+	liveGenerationsMu.RLock()
+	root := liveGenerationsRoot
+	liveGenerationsMu.RUnlock()
+	if root != "" {
+		t.Error("a nil live set must not keep a root")
+	}
+	installLiveGenerations(retiredSet, masterA)
+	advanceLiveGenerations(nil)
+	liveGenerationsMu.RLock()
+	root = liveGenerationsRoot
+	liveGenerationsMu.RUnlock()
+	if root != "" {
+		t.Error("advancing to a nil set must clear the root")
+	}
+}
+
+// TestUnsweptSpokeKeepsWorkingDuringOverlap: a spoke the sweep has not patched
+// yet holds only the previous generation's public key. Per-hive artifacts for
+// it (SSO handoff, heartbeat signature) are signed with the generation the
+// sweep last observed it on while that generation is still acceptable, and
+// with the current generation once it is not.
+func TestUnsweptSpokeKeepsWorkingDuringOverlap(t *testing.T) {
+	withTempGenerationsPath(t)
+	masterA := mustGenerateMaster(t)
+	s := newRotationTestHub(t, masterA)
+	const hiveID = "hive-unswept"
+	prevPub := ssoPublicKeyFromSeed(SSOSigningSeedFromMaster(masterA))
+	s.recordPerHiveEnvObservation(hiveID, perHiveEnvObservation{Generation: legacyGenerationID, Observed: time.Now()})
+
+	if _, _, err := s.rotateMasterSecret(time.Now(), false); err != nil {
+		t.Fatalf("rotateMasterSecret: %v", err)
+	}
+	gs := s.currentGenerations()
+	curPub := ssoPublicKeyFromSeed(deriveDomainKey(gs.currentSecret(), infoSSOEd25519Seed))
+
+	unswept := []string{prevPub}
+	swept := []string{curPub, prevPub}
+	accepts := func(keys []string, tok string) bool {
+		_, _, _, err := hubspoke.VerifySSOTokenAcrossKeys(keys, tok, hiveID, time.Now())
+		return err == nil
+	}
+
+	tok := mintSSOFor(t, s, hiveID)
+	if !accepts(unswept, tok) {
+		t.Error("overlap: an unswept spoke rejected the hub's SSO handoff")
+	}
+	if !accepts(swept, tok) {
+		t.Error("overlap: a just-swept spoke (current + _PREV) rejected the hub's SSO handoff")
+	}
+	sp := rotationSpoke{ssoKeys: unswept, hb: spoke.NewVerifier(spoke.ModeEnforce, nil)}
+	rec := httptest.NewRecorder()
+	resp := &HeartbeatResponse{OK: true}
+	s.signHeartbeatResponse(rec, resp, hiveID)
+	body, _ := json.Marshal(resp)
+	if got := sp.hb.Verify(sp.ssoKeys, hiveID, body, rec.Header().Get(spoke.SigHeader), time.Now()); !got.Accepted || !got.Signed {
+		t.Errorf("overlap: an unswept spoke rejected the hub's heartbeat signature: %+v", got)
+	}
+
+	// Once the sweep observes the spoke on the current generation, the hub
+	// signs with it, and a spoke still holding only the old key would fail:
+	// the selection really moves.
+	s.recordPerHiveEnvObservation(hiveID, perHiveEnvObservation{Generation: gs.Current, Observed: time.Now()})
+	tok = mintSSOFor(t, s, hiveID)
+	if accepts(unswept, tok) || !accepts([]string{curPub}, tok) {
+		t.Error("a spoke observed on the current generation must get a current-generation signature")
+	}
+
+	// Past verify_until the previous generation is never used, even for a
+	// spoke still observed on it.
+	s.recordPerHiveEnvObservation(hiveID, perHiveEnvObservation{Generation: legacyGenerationID, Observed: time.Now()})
+	afterWindow := time.Now().Add(defaultVerifyWindow + time.Hour)
+	if got, want := s.ssoSigningSeedForHive(hiveID, afterWindow), deriveDomainKey(gs.currentSecret(), infoSSOEd25519Seed); got != want {
+		t.Error("after verify_until the hub must sign with the current generation")
+	}
+	if _, err := s.retireExpiredGenerations(afterWindow); err != nil {
+		t.Fatalf("retireExpiredGenerations: %v", err)
+	}
+	tok = mintSSOFor(t, s, hiveID)
+	if accepts(unswept, tok) {
+		t.Error("after retirement the hub signed with the retired generation")
+	}
+
+	// Hand-built hubs with no generation set keep the single-master seed.
+	bare := &HubServer{hubSecret: masterA}
+	if bare.ssoSigningSeedForHive(hiveID, time.Now()) != SSOSigningSeedFromMaster(masterA) {
+		t.Error("a hub with no generation set must sign with s.hubSecret")
+	}
+	var nilHub *HubServer
+	if nilHub.ssoSigningSeedForHive(hiveID, time.Now()) != "" || nilHub.observedSpokeGeneration(hiveID) != 0 {
+		t.Error("a nil hub must sign nothing")
 	}
 }

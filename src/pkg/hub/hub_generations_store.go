@@ -600,6 +600,6 @@ func (s *HubServer) rotateMasterSecret(now time.Time, force bool) (*generationSe
 	// never disagree, even transiently. setLiveGenerations takes a DIFFERENT
 	// mutex (liveGenerationsMu) and nothing that holds liveGenerationsMu ever
 	// reaches for keyGenerationsMu, so this cannot deadlock.
-	setLiveGenerations(next, false)
+	advanceLiveGenerations(next)
 	return next, decision, nil
 }

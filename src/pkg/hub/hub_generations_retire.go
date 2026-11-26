@@ -252,7 +252,7 @@ func (s *HubServer) retireExpiredGenerations(now time.Time) ([]int, error) {
 	// Without this line the sweep would keep advertising a _PREV public key for
 	// a generation the hub has just stopped accepting, and the removal path in
 	// perHiveEnvPatchJSON would never fire.
-	setLiveGenerations(next, false)
+	advanceLiveGenerations(next)
 	return retired, nil
 }
 
