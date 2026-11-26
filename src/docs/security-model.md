@@ -672,8 +672,13 @@ only; there is no symmetric fallback, and a missing key fails closed. Every
 spoke uses keys derived per hive from the hub master secret. The master
 secret supports two generations, current and previous, with a seven-day
 verify-only window; rotation is triggered by an admin endpoint and spokes
-converge through a 15-minute reconcile sweep. Setting a fresh master secret
-directly strands every spoke.
+converge through a 15-minute reconcile sweep. The sweep patches each spoke's
+Deployment with kubectl, so it reaches only hub-provisioned spokes on clusters
+the hub can reach, and the endpoint refuses to rotate unless the last sweep
+considered at least one hive and reached every hive it considered. A spoke that holds hand-copied derived keys
+gets nothing from a rotation; see
+[hub-deployment.md](hub-deployment.md#master-rotation-and-spokes-that-hold-only-derived-keys).
+Setting a fresh master secret directly strands every spoke.
 
 **Webhooks and terminals.** GitHub webhooks are verified with HMAC-SHA256
 against `X-Hub-Signature-256`. Terminal access uses short-lived signed
