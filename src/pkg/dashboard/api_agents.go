@@ -588,8 +588,7 @@ func (s *Server) bakePromptSource(ctx context.Context, name string, agent *confi
 	}
 
 	templateFileName := name + ".md"
-	savePath, _, err := writePromptTemplate(templateFileName, []byte(body))
-	if err != nil {
+	if _, _, err := writePromptTemplate(templateFileName, []byte(body)); err != nil {
 		return fmt.Errorf("failed to write baked prompt: %w", err)
 	}
 	agent.KickTemplate = templateFileName
