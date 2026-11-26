@@ -219,6 +219,32 @@ func TestForgejoSweepAPISelfError(t *testing.T) {
 	}
 }
 
+// TestForgejoSweepAPISelfConfiguredLogin is #19994: with forgejo.login set the
+// sweeps already know the hive's own user, so Self returns it without a GET
+// /user lookup — the call a repository-limited token cannot make.
+func TestForgejoSweepAPISelfConfiguredLogin(t *testing.T) {
+	var calls []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	api, err := NewForgejoSweepAPI("fj-token", Options{BaseURL: srv.URL, Org: "acme", Login: "  Hive-Bot  "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	self, err := api.Self(context.Background())
+	if err != nil {
+		t.Fatalf("Self: %v", err)
+	}
+	if self != "Hive-Bot" {
+		t.Errorf("Self = %q, want %q", self, "Hive-Bot")
+	}
+	if len(calls) != 0 {
+		t.Errorf("Self made %v request(s); want none when login is configured", calls)
+	}
+}
+
 // TestForgejoPermissionForWriteAccessHive is #19914: Forgejo answers the
 // permission API about another user only for a repo or site admin, and
 // returns 403 to a hive user with write access. The sweep then reads the

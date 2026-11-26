@@ -333,6 +333,12 @@ func (f *forgejoForge) CloseIssue(ctx context.Context, repo string, number int) 
 }
 
 func (f *forgejoForge) Self(ctx context.Context) (string, error) {
+	// A repository-limited token cannot read /user (#19994). When the operator
+	// names the hive's own login in config, trust it and skip the lookup; the
+	// sweeps only compare the login against PR and issue authors.
+	if f.login != "" {
+		return f.login, nil
+	}
 	var u gtUser
 	if err := f.getJSON(ctx, "/user", nil, &u); err != nil {
 		return "", fmt.Errorf("%s: read token user: %w", f.label, err)

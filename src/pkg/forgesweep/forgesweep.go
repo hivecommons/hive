@@ -342,7 +342,7 @@ func (s *Sweeper) CloseOnMerge(ctx context.Context) []CloseOutcome {
 		}
 		self, err := api.Self(ctx)
 		if err != nil {
-			s.log().Warn("forgejo close-on-merge: token user unknown", "repo", repo, "error", err)
+			s.log().Warn("forgejo close-on-merge: token user unknown (a token limited to specific repositories cannot read /user; set forgejo.login)", "repo", repo, "error", err)
 			continue
 		}
 		pulls, err := api.RecentlyMergedPulls(ctx, repo, DefaultMergedPullsScanned)
