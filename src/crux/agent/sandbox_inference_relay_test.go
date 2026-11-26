@@ -1,14 +1,18 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/sandbox"
 )
 
 const inferenceTestKickKey = "sk-hive-kick-0123"
@@ -84,6 +88,47 @@ func TestEnrollInferenceRelayJobKick(t *testing.T) {
 	release()
 	if relay.released != 1 {
 		t.Fatal("kick key not revoked when the kick ended")
+	}
+}
+
+func TestSandboxJobCarriesContextSettings(t *testing.T) {
+	t.Setenv(inferencePassContextWindowEnv, "")
+	t.Setenv(inferenceAutoCompactPercentEnv, "80")
+	for _, relayFails := range []bool{false, true} {
+		for _, window := range []int{0, 160000} {
+			t.Run(strconv.FormatBool(relayFails)+"/"+strconv.Itoa(window), func(t *testing.T) {
+				cfg := config.AgentConfig{Backend: "litellm", Model: "vllm/Qwen", AutoCompactWindowTokens: window}
+				m := NewManager(map[string]config.AgentConfig{"scanner": cfg}, discardLogger(), ProjectContext{})
+				m.SetInferenceContextWindowLookup(func(string) (int, string) { return 262144, cfg.Model })
+				agent := &AgentProcess{Name: "scanner", Config: cfg}
+				relay := &fakeInferenceRelay{}
+				if relayFails {
+					relay.err = errors.New("enrollment failed")
+				}
+				launcher, env, _ := spoolProbe("")
+				e := &SandboxExecutor{Runner: &sandboxFakeRunner{}, Launcher: launcher, InferenceRelay: relay}
+				_, err := e.Run(context.Background(), SandboxKickSpec{
+					Agent: "scanner", AgentConfig: configSnapshot{Backend: "claude"}, Message: "test",
+					Org: "example", Repo: "repo", WorkspaceDir: t.TempDir(), Image: "agent-image",
+					Runtime: config.SandboxRuntimeJob, InferenceRouted: true,
+					ClaudeContextEnv: m.claudeContextEnv(agent, cfg.Backend, cfg.Model),
+				})
+				if err != nil {
+					t.Fatalf("Run: %v", err)
+				}
+				got := sandbox.SanitizedEnv(nil, nil, *env)
+				if !slices.Contains(got, claudeMaxContextTokensEnv+"=262144") {
+					t.Fatalf("context window missing from job env: %v", got)
+				}
+				if window == 0 {
+					if !slices.Contains(got, claudeAutoCompactPercentEnv+"=80") {
+						t.Fatalf("compaction percentage missing from job env: %v", got)
+					}
+				} else if !slices.Contains(got, claudeAutoCompactWindowEnv+"=160000") || slices.Contains(got, claudeAutoCompactPercentEnv+"=80") {
+					t.Fatalf("explicit compaction window must override percentage: %v", got)
+				}
+			})
+		}
 	}
 }
 

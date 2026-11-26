@@ -247,3 +247,23 @@ func TestExpandReviewHeadsDropsMaxContextTokensForOtherModels(t *testing.T) {
 		t.Errorf("other-model head max_context_tokens = %d, want 0", got["vllm/DeepSeek"])
 	}
 }
+
+func TestExpandReviewHeadsDropsAutoCompactWindowTokensForOtherModels(t *testing.T) {
+	base := AgentConfig{
+		ID: "reviewer", Backend: "litellm", Model: "vllm/Qwen", AutoCompactWindowTokens: 262144,
+		ReviewHeads: []ReviewHead{
+			{Backend: "litellm", Model: "vllm/Qwen", Alias: "same"},
+			{Backend: "litellm", Model: "vllm/DeepSeek", Alias: "other"},
+		},
+	}
+	got := map[string]int{}
+	for _, d := range expandReviewHeads("reviewer", base) {
+		got[d.Model] = d.AutoCompactWindowTokens
+	}
+	if got["vllm/Qwen"] != 262144 {
+		t.Errorf("same-model head auto_compact_window_tokens = %d, want 262144", got["vllm/Qwen"])
+	}
+	if got["vllm/DeepSeek"] != 0 {
+		t.Errorf("other-model head auto_compact_window_tokens = %d, want 0", got["vllm/DeepSeek"])
+	}
+}

@@ -113,6 +113,8 @@ type SandboxKickSpec struct {
 	// InferenceRouted marks a Job kick on a model gateway backend whose CLI
 	// reaches hive's translator through the inference listener (#19619).
 	InferenceRouted bool
+	// ClaudeContextEnv holds per-kick context and compaction settings.
+	ClaudeContextEnv map[string]string
 
 	// targetHead and targetURL are set by workspace prep for a TargetPR
 	// kick: the head commit checked out (the push's lease) and the PR URL.
@@ -282,6 +284,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	defer releaseRelay()
 	inferenceEnv, releaseInference := e.enrollInferenceRelay(spec, workspace)
 	defer releaseInference()
+	inferenceEnv = mergeSandboxEnv(inferenceEnv, spec.ClaudeContextEnv)
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
 	sres, runErr := e.launcher().Run(runCtx, sandbox.LaunchSpec{
