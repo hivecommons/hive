@@ -171,7 +171,7 @@ const (
 	// protect. Rotation still treats it as a failed probe (never a target), and
 	// only the contributor reading turns it into an admitted, windowless
 	// reading marked auth_mode "api_key".
-	ProbeCauseAPIKeyLogin ProbeErrorCause = "api_key_login"
+	ProbeCauseAPIKeyLogin ProbeErrorCause = "api_key_login" // #nosec G101 -- a probe-cause label, not a credential
 )
 
 // causedError couples a probe error with its ProbeErrorCause so failOpen can
