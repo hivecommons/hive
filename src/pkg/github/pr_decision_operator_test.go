@@ -615,6 +615,23 @@ func TestRecordOperatorPullRequestDecisionAdoptedInPlaceStaysWithHiveFixer(t *te
 		pr.MaintainerCanModify = false
 		contributorRouted(t, pr)
 	})
+	t.Run("fork whose diff changes a workflow, nothing recorded yet", func(t *testing.T) {
+		// projectbluefin/testsuite#1037's shape: maintainer edits allowed,
+		// but the App cannot push a fork that changes .github/workflows/.
+		adoptInPlace(t, number, liveDecisionHead)
+		pr := adoptedClankerPR(number)
+		pr.Files = []string{"src/main.go", ".github/workflows/e2e.yml"}
+		contributorRouted(t, pr)
+	})
+	t.Run("fork whose diff changes no workflow", func(t *testing.T) {
+		adoptInPlace(t, number, liveDecisionHead)
+		pr := adoptedClankerPR(number)
+		pr.Files = []string{"src/main.go", "docs/readme.md"}
+		event, _, _, _ := direct(t, pr)
+		if !event.AdoptedInPlace {
+			t.Fatalf("event = %+v, want the hive's fixer for a fork that changes no workflow", event)
+		}
+	})
 	t.Run("contributor pushed since", func(t *testing.T) {
 		adoptInPlace(t, number, "0ld0ld0ffee0ffee0ffee0ffee0ffee0ffee0ff")
 		contributorRouted(t, adoptedClankerPR(number))

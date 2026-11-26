@@ -82,7 +82,7 @@ func (c *Client) tryUnparkPullRequest(ctx context.Context, displayRepo, owner, r
 		head = strings.TrimSpace(pr.GetHead().GetSHA())
 	}
 	selfAuthored := c.isHiveAccount(pr.GetUser()) || labelPresent(issueLabelNames(pr.Labels), authorkind.Hive.Label())
-	adopted := !selfAuthored && c.commentDecisionAdopted(owner, repo, number, head, pr)
+	adopted := !selfAuthored && c.commentDecisionAdopted(ctx, owner, repo, number, head, pr)
 
 	reply := ""
 	if closer, closeRequested := supersessionCloseDecision(command); closeRequested {
@@ -376,7 +376,7 @@ func (c *Client) reconcileAnsweredPRDecision(ctx context.Context, displayRepo, o
 		return false, nil
 	}
 	selfAuthored := c.isHiveAccount(pr.GetUser()) || labelPresent(issueLabelNames(pr.Labels), authorkind.Hive.Label())
-	adopted := !selfAuthored && c.commentDecisionAdopted(owner, repo, number, head, pr)
+	adopted := !selfAuthored && c.commentDecisionAdopted(ctx, owner, repo, number, head, pr)
 	if !selfAuthored && !adopted {
 		return false, nil
 	}
@@ -408,9 +408,9 @@ func (c *Client) reconcileAnsweredPRDecision(ctx context.Context, displayRepo, o
 // `needs-human` is on the PR the engine keeps the park instead of the
 // adoption, so promising the hive's fixer would promise what nothing
 // moves: such a PR keeps the review-side reply until a person lifts it.
-func (c *Client) commentDecisionAdopted(owner, repo string, number int, head string, pr *gh.PullRequest) bool {
+func (c *Client) commentDecisionAdopted(ctx context.Context, owner, repo string, number int, head string, pr *gh.PullRequest) bool {
 	labels := issueLabelNames(pr.Labels)
-	return c.prAuthorKind(labels) == authorkind.Clanker && !c.hasNeedsHumanLabel(labels) && c.hiveOwnsAdoptedBranch(owner, repo, number, head, pr)
+	return c.prAuthorKind(labels) == authorkind.Clanker && !c.hasNeedsHumanLabel(labels) && c.hiveOwnsAdoptedBranch(ctx, owner, repo, number, head, pr)
 }
 
 // unparkRepliesByCommentID maps each answered command's comment ID to the

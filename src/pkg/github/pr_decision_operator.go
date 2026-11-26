@@ -374,7 +374,7 @@ func (c *Client) openPullRequestDecisionTarget(ctx context.Context, owner, name 
 		// markers are author-controlled hints for the sweep, not sufficient
 		// evidence to accept a dashboard direction on a person's PR.
 		t.clanker = kind == authorkind.Clanker
-		t.adoptedInPlace = t.clanker && c.hiveOwnsAdoptedBranch(owner, name, number, t.head, pr)
+		t.adoptedInPlace = t.clanker && c.hiveOwnsAdoptedBranch(ctx, owner, name, number, t.head, pr)
 	}
 	return t, nil
 }
@@ -387,7 +387,7 @@ func (c *Client) openPullRequestDecisionTarget(ctx context.Context, owner, name 
 // sweep keeps and the blocker ledger the fixer reports to, and applies
 // adoptedBranchOwned. Anything it cannot confirm keeps the contributor's
 // routing.
-func (c *Client) hiveOwnsAdoptedBranch(owner, name string, number int, head string, pr *gh.PullRequest) bool {
+func (c *Client) hiveOwnsAdoptedBranch(ctx context.Context, owner, name string, number int, head string, pr *gh.PullRequest) bool {
 	if c == nil || pr == nil {
 		return false
 	}
@@ -399,16 +399,56 @@ func (c *Client) hiveOwnsAdoptedBranch(owner, name string, number int, head stri
 	headRepo := strings.TrimSpace(pr.GetHead().GetRepo().GetFullName())
 	// A deleted fork (no head repo) reads as a fork nobody can push.
 	push := prstage.AdoptedPushFacts{Fork: headRepo == "" || !strings.EqualFold(headRepo, repo), MaintainerCanModify: pr.GetMaintainerCanModify()}
+	if push.Fork && push.MaintainerCanModify {
+		// The App cannot push a fork whose diff changes .github/workflows/
+		// (projectbluefin/testsuite#1037), and nothing may be recorded about
+		// it yet: list the files as the dashboard's delegate does. A list
+		// that cannot be read or is incomplete is not confirmation.
+		wf, ok := c.prChangesWorkflowPath(ctx, owner, name, number, pr.GetChangedFiles())
+		if !ok {
+			return false
+		}
+		push.WorkflowPath = wf
+	}
 	if e, ok := itemblocker.Shared().Get(repo, number); ok && e.Blocks() && e.Blocker.Kind.IsCapability() {
 		push.Capability = e.Blocker.Kind.Short()
 	}
 	return adoptedBranchOwned(rec, head, push)
 }
 
+// prChangesWorkflowPath reports whether the PR's diff changes a file under
+// .github/workflows/, and whether the whole file list was read (changed is
+// GitHub's changed_files count; a shorter list is not the whole diff).
+func (c *Client) prChangesWorkflowPath(ctx context.Context, owner, name string, number, changed int) (workflow, ok bool) {
+	if c == nil || c.client == nil {
+		return false, false
+	}
+	seen := 0
+	opts := &gh.ListOptions{PerPage: listPerPage}
+	for {
+		page, resp, err := c.client.PullRequests.ListFiles(WithRESTCaller(ctx, "hive:pr_decision_adopted"), owner, name, number, opts)
+		if err != nil {
+			return false, false
+		}
+		for _, f := range page {
+			seen++
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(f.GetFilename())), ".github/workflows/") {
+				return true, true
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	return false, seen >= changed
+}
+
 // adoptedBranchOwned is the rule the PR-decision relay routes by: whether
 // the hive adopted a PR in place and still owns and can push its branch at
 // head, so a direction on that head is its own fixer's. push carries the
-// PR's shape (fork, maintainer edits, a workflow diff the caller listed)
+// PR's shape (fork, maintainer edits, whether a fork's diff changes
+// .github/workflows/)
 // and any capability blocker; the record's half is filled here. It holds
 // only for an in-place adoption (never a supersession, whose copy PR takes
 // the fixes) at a head the adoption settled on or the hive recorded

@@ -35,6 +35,8 @@ type unparkWireIssue struct {
 	// fork's pushability).
 	HeadRepo            string `json:"-"`
 	MaintainerCanModify bool   `json:"-"`
+	// Files feeds pulls/{n}/files (an adopted fork's workflow-path check).
+	Files []string `json:"-"`
 	// UpdatedAt is the item's updated_at in the list; empty omits it, which
 	// keeps the sweep's per-item read cache out of the test.
 	UpdatedAt string `json:"updated_at,omitempty"`
@@ -196,6 +198,15 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 				return
 			}
 			_ = json.NewEncoder(w).Encode(issue)
+
+		case strings.HasPrefix(path, "pulls/") && strings.HasSuffix(path, "/files") && r.Method == http.MethodGet:
+			var n int
+			fmt.Sscanf(path, "pulls/%d/files", &n)
+			files := []map[string]any{}
+			for _, f := range byNum[n].Files {
+				files = append(files, map[string]any{"filename": f})
+			}
+			_ = json.NewEncoder(w).Encode(files)
 
 		case strings.HasPrefix(path, "pulls/") && r.Method == http.MethodGet:
 			var n int

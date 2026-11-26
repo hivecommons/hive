@@ -210,7 +210,7 @@ func (c *Client) replyOptionsAdopted(ctx context.Context, owner, repo string, nu
 	if err != nil {
 		return false
 	}
-	return c.commentDecisionAdopted(owner, repo, number, strings.TrimSpace(pr.GetHead().GetSHA()), pr)
+	return c.commentDecisionAdopted(ctx, owner, repo, number, strings.TrimSpace(pr.GetHead().GetSHA()), pr)
 }
 
 // syncPRReplyOptions writes or clears the PR's "Your move" section. A PR
