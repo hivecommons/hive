@@ -119,7 +119,10 @@ func (r *forgeRequestRelay) ensureQueueDirs() {
 func (r *forgeRequestRelay) handlePushBranch(ctx context.Context, path string) {
 	var req github.PushBranchRequest
 	result := func(resp github.PushBranchResponse) {
-		resp.Branch, resp.At = req.Branch, r.stamp()
+		if resp.Branch == "" {
+			resp.Branch = req.Branch
+		}
+		resp.At = r.stamp()
 		writeRelayResult(path, resp)
 	}
 	fail := func(msg string) { result(github.PushBranchResponse{Error: msg}) }
@@ -219,7 +222,7 @@ func (r *forgeRequestRelay) handlePushBranch(ctx context.Context, path string) {
 		retry("git push failed: " + github.FirstOutputLines(out, forgePushOutputLines))
 		return
 	}
-	result(github.PushBranchResponse{OK: true, SHA: sha, Attempts: attempt})
+	result(github.PushBranchResponse{OK: true, Branch: branch, SHA: sha, Attempts: attempt})
 	r.settle(path, "", false)
 	r.logger.Info("forge request relay: branch pushed", "agent", req.Agent, "repo", repo, "branch", branch, "sha", sha, "force_with_lease", req.ForceWithLease)
 }

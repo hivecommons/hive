@@ -87,6 +87,7 @@ func TestForgeRelayPushesBranchToForgeRemote(t *testing.T) {
 	h := newPushHarness(t)
 	req := h.goodPush()
 	req.ForceWithLease = true
+	req.Branch = "refs/heads/fix-1"
 	path := writeRelayRequest(t, h.relay.pushDir, "a.json", req)
 	h.relay.scanOnce(context.Background())
 
