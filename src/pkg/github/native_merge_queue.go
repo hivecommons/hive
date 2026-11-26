@@ -80,13 +80,16 @@ func (c *Client) EnqueueNativePullRequest(ctx context.Context, id, head string) 
 	return out.EnqueuePullRequest.MergeQueueEntry, nil
 }
 
+// DequeueNativePullRequest withdraws a queued pull request. Unlike
+// EnqueuePullRequestInput, DequeuePullRequestInput names the pull request's
+// node ID `id`, and GitHub rejects `pullRequestId` there as an undefined field.
 func (c *Client) DequeueNativePullRequest(ctx context.Context, id string) error {
 	if !c.NativeMergeQueueAvailable() {
 		return fmt.Errorf("native merge queue requires App installation authentication")
 	}
 	return c.graphQL(ctx, `mutation($input: DequeuePullRequestInput!) {
  dequeuePullRequest(input: $input) { clientMutationId }
- }`, map[string]any{"input": map[string]any{"pullRequestId": id}}, nil)
+ }`, map[string]any{"input": map[string]any{"id": id}}, nil)
 }
 
 // NativeMergeQueueMethod reads the branch-wide merge method: enqueue has no
