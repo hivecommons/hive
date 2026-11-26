@@ -68,7 +68,7 @@ project:
 | `project.forge` | `github` | `forgejo` selects the Forgejo adapter for every repository in `project.repos`. |
 | `forgejo.forgejo_url` | none | Instance root, for example `https://codeberg.org` or `https://forgejo.example.com`. The adapter appends `/api/v1` itself, so do not add it. |
 | `forgejo.token_env` | `FORGEJO_TOKEN` | Name of the environment variable that holds the token. Sent as `Authorization: token <TOKEN>`. |
-| `forgejo.login` | none | The hive's own Forgejo username. Optional: set it when the token is limited to specific repositories, because such a token cannot read the token's own user through `GET /user`; the close-on-merge sweep uses this login instead ([#19994](https://github.com/hivecommons/hive/issues/19994)). |
+| `forgejo.login` | none | The hive's own Forgejo username. Optional: set it when the token is limited to specific repositories, because such a token cannot read the token's own user through `GET /user`; the close-on-merge sweep uses this login instead ([#19994](https://github.com/hivecommons/hive/issues/19994)). It must be the token's own user: the sweep trusts it only when `GET /user` answers 403 and the login holds write on the repository, and a token that can read its user refuses a different login. |
 | `project.repo_policies[].forge` | `project.forge` | Moves one repository to `forgejo`. |
 | `project.repo_policies[].forge_url` | `forgejo.forgejo_url` | Bare instance root for that repository. Must match the block's host and port. |
 

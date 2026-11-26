@@ -65,6 +65,9 @@ func (s *sweepAPIStub) ListOpenChangeRequests(context.Context, string) ([]forge.
 	return nil, nil
 }
 func (s *sweepAPIStub) Self(context.Context) (string, error) { return "hive-bot", nil }
+func (s *sweepAPIStub) Permission(context.Context, string, string) (string, error) {
+	return "write", nil
+}
 func (s *sweepAPIStub) RecentlyMergedPulls(context.Context, string, int) ([]forge.MergedPull, error) {
 	return nil, nil
 }
@@ -81,10 +84,13 @@ func TestForgejoSweepAPIForRepo(t *testing.T) {
 		t.Errorf("no token: err = %v", err)
 	}
 	t.Setenv(testForgejoTokenEnv, "fj-secret")
+	cfg.Forgejo.Login = "hive-bot"
 	if _, err := forgejoSweepAPIForRepo(cfg, "widgets"); err != nil {
 		t.Fatalf("widgets: %v", err)
 	}
-	if len(*built) != 1 || (*built)[0].BaseURL != "https://forgejo.example.com" || (*built)[0].Org != "acme" {
+	// forgejo.login reaches the client, so Self can answer for a repo-limited
+	// token (#19994).
+	if len(*built) != 1 || (*built)[0].BaseURL != "https://forgejo.example.com" || (*built)[0].Org != "acme" || (*built)[0].Login != "hive-bot" {
 		t.Errorf("built = %+v", *built)
 	}
 

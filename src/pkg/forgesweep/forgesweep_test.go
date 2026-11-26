@@ -293,6 +293,7 @@ var sweepNow = time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
 func closeAPI() *fakeAPI {
 	return &fakeAPI{
 		self:   "hive-bot",
+		perms:  map[string]string{"hive-bot": "write"},
 		merged: []forge.MergedPull{{Number: 30, Author: "hive-bot", Body: "Fixes #5", Base: "release", MergedAt: sweepNow.Add(-time.Hour)}},
 		issues: map[int]string{5: "open"},
 	}
@@ -335,14 +336,20 @@ func TestCloseOnMergeSkips(t *testing.T) {
 		{"needs confirmation", func(a *fakeAPI) { a.merged[0].Body += "\nhive: needs-confirmation" }, ""},
 		{"no closing keyword", func(a *fakeAPI) { a.merged[0].Body = "Refs #5" }, ""},
 		{"no author", func(a *fakeAPI) { a.merged[0].Author = "" }, ""},
-		{"untrusted author", func(a *fakeAPI) { a.merged[0].Author = "drive-by"; a.perms = map[string]string{"drive-by": "read"} }, ""},
+		{"untrusted author", func(a *fakeAPI) { a.merged[0].Author = "drive-by"; a.perms["drive-by"] = "read" }, ""},
 		{"author permission error", func(a *fakeAPI) { a.merged[0].Author = "drive-by"; a.permErr = errBoom }, ""},
 		// Only on the assignee list (#19914): not enough to honour an
 		// author's closing keywords.
 		{"author only assignable", func(a *fakeAPI) {
 			a.merged[0].Author = "drive-by"
-			a.perms = map[string]string{"drive-by": forge.PermissionAssignable}
+			a.perms["drive-by"] = forge.PermissionAssignable
 		}, ""},
+		// The hive's own user (GET /user, or forgejo.login for a
+		// repo-limited token, #19994) is trusted only with write on the
+		// repo, so a login naming someone else closes nothing.
+		{"own user without write", func(a *fakeAPI) { a.perms["hive-bot"] = "read" }, ""},
+		{"own user only assignable", func(a *fakeAPI) { a.perms["hive-bot"] = forge.PermissionAssignable }, ""},
+		{"own user unknown to the permission API", func(a *fakeAPI) { delete(a.perms, "hive-bot") }, ""},
 		{"issue read error", func(a *fakeAPI) { a.issueErr = errBoom }, "issue-read-failed"},
 		{"is a pull", func(a *fakeAPI) { a.issues[5] = "pull" }, "is-pull-request"},
 		{"already closed", func(a *fakeAPI) { a.issues[5] = "closed" }, "already-closed"},
@@ -422,7 +429,7 @@ func TestCloseOnMergeRetriesAFailedCloseWithoutASecondComment(t *testing.T) {
 func TestCloseOnMergeTrustsWriters(t *testing.T) {
 	api := closeAPI()
 	api.merged[0].Author = "maintainer"
-	api.perms = map[string]string{"maintainer": "admin"}
+	api.perms["maintainer"] = "admin"
 	if got := closeSweeper(api).CloseOnMerge(context.Background()); len(got) != 1 || !got[0].Closed {
 		t.Errorf("CloseOnMerge = %+v", got)
 	}
