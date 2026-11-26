@@ -74,3 +74,39 @@ func TestRunConfigCheckForgejoKeyFile(t *testing.T) {
 		t.Errorf("readable key_file did not print config OK:\n%s", stdout.String())
 	}
 }
+
+// TestRunConfigCheckForgejoPreviousKeyFiles: `hive validate` also checks
+// each previous_key_files entry of a served key list (#19996), because the
+// served list leaves out a key it cannot read.
+func TestRunConfigCheckForgejoPreviousKeyFiles(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	good := filepath.Join(dir, "forgejo-jwt.pem")
+	if err := os.WriteFile(good, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "old.pem")
+	path := writeCheckConfigWithForgejoKey(t, good)
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = append(body, []byte("    serve_key_list: true\n    previous_key_files:\n      - "+missing+"\n")...)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := runConfigCheck([]string{"-config", path}, &stdout, &stderr); code != configCheckExitCode {
+		t.Fatalf("missing previous key: runConfigCheck() = %d, want %d\nstdout: %s\nstderr: %s", code, configCheckExitCode, stdout.String(), stderr.String())
+	}
+	if msg := stderr.String(); !strings.Contains(msg, "forgejo.integration.previous_key_files[0]") || !strings.Contains(msg, missing) {
+		t.Errorf("stderr does not name the previous key and its path:\n%s", msg)
+	}
+}

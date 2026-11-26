@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.375.0)
+
+### Added
+
+- Forgejo REST calls (work discovery, the relays, merges and both sweeps) can now authenticate with a short-lived JWT: set `forgejo.integration.rest_audience` to the audience of an authorized integration with `sub=hive:rest`, and REST no longer reads the long-lived `forgejo.token_env` token. A failed mint builds no client and never falls back to the access token, and a replaced key file drops the cached token. Without it, REST keeps using the access token (#19920).
+
+### Fixed
+
+- The Forgejo close-on-merge sweep now accepts an optional `forgejo.login`, the hive's own Forgejo username. A token limited to specific repositories cannot carry `read:user`, so the sweep's `GET /user` identity lookup returned 403 and it skipped every repo; with `login` set it uses the login directly to recognize the hive's own pull requests and issues, and the unknown-user warning names the setting ([#19994](https://github.com/hivecommons/hive/issues/19994)). Reported by sdwilsh.
+- The `forgejo.integration` setup in `src/docs/forge-app-setup.md` now gives a `create-authorized-integration` command that works: it adds the required `--username` and `--name` flags and one `--repo` flag per repository. It also covers Forgejo's `[authorized_integration] ALLOWED_DOMAINS` for an issuer on a private address, says that Forgejo fetches the key list when the integration is created and that `hive validate` never contacts the issuer, ties the rotation wait to Forgejo's `CACHE_TTL`, and adds a "Host the key list" section with Forgejo's fetch rules, an nginx example and a `curl` check ([#19995](https://github.com/hivecommons/hive/issues/19995), [#19996](https://github.com/hivecommons/hive/issues/19996)). `src/docs/env-vars.md` now describes `HIVE_SESSION_KEY` as legacy and no longer provisioned, and the proxy's boot refusal names `HIVE_SESSION_PUBLIC_KEY` as a hub-hosted signal too. The Forgejo integration page no longer says pod-run agents can clone private Forgejo repositories ([#19997](https://github.com/hivecommons/hive/issues/19997)).
+- Reject origin-form HTTP requests sent to the egress proxy with a clear 400 response instead of reporting a failed upstream forward.
+
 ## 2026-11-26 (v5.374.0)
 
 ### Added

@@ -962,7 +962,13 @@ var publicExactPaths = map[string]struct{}{
 	// A hosted spoke's robots.txt (Disallow: /, see dashboard.noIndex) must
 	// reach the spoke unauthenticated; behind the auth-signin redirect a
 	// crawler would only ever see the hub's /login instead.
-	"/robots.txt":          {},
+	"/robots.txt": {},
+	// A hosted spoke's forgejo.integration key list (#19996). Forgejo
+	// fetches both with no credential and follows no redirect. The spoke
+	// answers 404 unless forgejo.integration.serve_key_list is on, and then
+	// serves public keys only.
+	forgejoDiscoveryPath:   {},
+	forgejoKeyListPath:     {},
 	ssoHandoffPath:         {},
 	"/tokens.css":          {},
 	spokeWidgetSummaryPath: {},
@@ -981,6 +987,15 @@ var publicExactPaths = map[string]struct{}{
 	// What hive-mx refused for the hive and why (#18699).
 	wire.SpokeReportPath: {},
 }
+
+// forgejoDiscoveryPath and forgejoKeyListPath are the spoke's served
+// forgejo.integration key list (dashboard forgejo_key_list.go); they are
+// "/" + forgejwt.DiscoveryPath and "/" + forgejwt.KeyListPath, which a test
+// pins.
+const (
+	forgejoDiscoveryPath = "/.well-known/openid-configuration"
+	forgejoKeyListPath   = "/jwks.json"
+)
 
 var publicTreePaths = []string{"/api/contribute", "/api/leaderboard", "/contribute", "/leaderboard", "/snapshot", spokeCompanionMeetingsPath}
 

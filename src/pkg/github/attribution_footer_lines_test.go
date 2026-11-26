@@ -12,6 +12,7 @@ func TestParseAttributionTrailerFooterLines(t *testing.T) {
 		"Closes #1", "Refs #1 — remaining: docs", "Fixes owner/repo#7, #8 and owner/repo#9",
 		"Fixes https://github.com/owner/repo/issues/7", "<!-- marker -->", "🤖 Generated with tool",
 		"Closes #1" + identity, identity + "\n<!-- hive:origin hive=test -->\nFixes #2",
+		"Closes #1000\n" + issueLinkFixedMarker + "\n\n🤖 Generated with tool\nRefs #9" + identity,
 	} {
 		body := "Summary\n\n" + trailer + "\n" + tail
 		for _, input := range []string{body, strings.ReplaceAll(body, "\n", "\r\n")} {
@@ -21,7 +22,7 @@ func TestParseAttributionTrailerFooterLines(t *testing.T) {
 			}
 		}
 	}
-	for _, tail := range []string{"Fixes the flaky test in #7", "Closes #1\nMore prose", "```text\nRefs #1\n```", "<!-- unclosed", "<!-- marker --> text", identity + "\nFixes #1" + identity} {
+	for _, tail := range []string{"Fixes the flaky test in #7", "This Fixes #3 by accident", "Closes #1\nMore prose", "```text\nRefs #1\n```", "<!-- unclosed", "<!-- marker --> text", identity + "\nFixes #1" + identity} {
 		body := trailer + "\n" + tail
 		if meta, ok := ParseAttributionTrailer(body); ok {
 			t.Errorf("accepted %q: %+v", body, meta)

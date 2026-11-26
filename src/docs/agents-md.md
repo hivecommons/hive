@@ -6,10 +6,9 @@
 > `Scheduler.agentsRepoRoot()` returned `""` unconditionally, so no `AGENTS.md`
 > was ever read. It now resolves a real per-repo checkout root
 > ([#5227](https://github.com/hivecommons/hive/issues/5227)), but Hive agents
-> work over the API and keep no clones, so **there is still no root unless you
-> configure one**. Set `project.checkouts_dir` (below). Without it, an
-> `AGENTS.md` you add to a monitored repo has no effect on any agent's prompt —
-> the same as before, and still the default.
+> work over the API and keep no clones. Set `project.checkouts_dir` (below) to
+> supply a root, or rely on the GitHub fallback described under
+> [Turning it on](#turning-it-on), which needs a hive GitHub client.
 
 ## Turning it on
 
@@ -32,6 +31,23 @@ that is the repo the kick's instructions are about.
 
 How you populate that directory is yours: a mounted volume, a sidecar that
 clones and pulls, an NFS export. Hive only reads it.
+
+When no local root is configured and the hive has a GitHub client, Hive
+fetches the primary repo's `AGENTS.md` from its default branch instead and
+caches it under `/data/agentsmd-cache/<owner>/<repo>/` for 15 minutes
+(#17090). If the file is deleted upstream, the next refresh removes the cached
+copy. The same fallback fetches `skills/<name>.md` for each skill an agent
+declares that the hive-wide registry does not have, so repo skills work on a
+spoke with no checkout too (#20009); see [skills.md](skills.md).
+
+A configured `checkouts_dir` (or `policies.local_dir`) root that is missing
+or empty, such as a failed or unpopulated mount, no longer turns injection off
+silently. When a GitHub client is wired, Hive logs one warning for that root
+and uses the GitHub fallback instead. A populated root is always used as is.
+
+GitHub also answers 404 when it denies access (a revoked App installation, or
+a repo made private), so a cached copy that gets a 404 is removed and logged at
+warn; injection resumes once the file is readable again.
 
 One other source is used when it happens to be the same repo:
 `policies.local_dir`, the checkout of `policies.repo`, is a genuine checkout

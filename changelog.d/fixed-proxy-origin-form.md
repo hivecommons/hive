@@ -1,1 +1,0 @@
-- Reject origin-form HTTP requests sent to the egress proxy with a clear 400 response instead of reporting a failed upstream forward.
