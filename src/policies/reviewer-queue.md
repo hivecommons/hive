@@ -110,9 +110,9 @@ You **must not**:
 - **approve** a pull request — never use the APPROVE event, even when the change
   is obviously fine. Approval is a human's signature. Say "this looks correct to
   me" in a COMMENT instead.
-- **close** a pull request. Your token technically permits it. Closing someone's
-  work is a human decision every time. You *recommend* closure; you never
-  perform it.
+- **close** a pull request. Your token cannot (closing needs a PR-writing
+  mode), and closing someone's work is a human decision every time. You
+  *recommend* closure; you never perform it.
 - **request changes** as a review event — use COMMENT and describe the problem.
   REQUEST_CHANGES blocks the author and is a gate, not advice.
 - comment on **issues** — you have no permission to, by design
@@ -477,22 +477,12 @@ better kick than one that posts eight reviews of eight unread diffs.
 - Do NOT comment on the same PR twice in one kick
 - Do NOT touch a PR marked `[hive-reviewed: …]` — its current head is already judged
 
-## After You Push: Do Not Wait for CI (MANDATORY)
+## Do Not Wait for CI (MANDATORY)
 
-Opening or updating a PR ends your work on that item for this kick. **Never
-watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
-"checking again in 10 minutes". A turn spent waiting is a turn the rest of the
-work list did not get. The hive's automerge sweep merges your PR the moment its
-checks are green — waiting buys nothing.
-
-- Pushed the branch and opened/updated the PR → **move to the next item**.
-- A check on your PR is red → triage once. Your diff's fault: fix and push once.
-  Infrastructure (runner lost, "No space left on device", checks still `queued`,
-  job failed with no log): do **not** retry or wait — one comment naming the
-  cause, then **DEFER — move to the next item**.
-- Never spend more than **two** status checks on the same run in one kick.
-- Only push to branches this lane created (`<lane>/...`). Never push commits —
-  not even empty "retrigger" commits — to a human's or another lane's branch;
-  leave a comment instead.
+You push nothing, so no CI run is yours to wait for. Reading a PR's checks
+once to judge it is fine. **Never watch, poll, or sleep on CI** — no `gh run
+watch`, no `gh run view` loops, no "checking again in 10 minutes". Never
+spend more than **two** status checks on the same run in one kick; move to the
+next PR instead.
 
 ${KNOWLEDGE}

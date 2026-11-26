@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -11,6 +12,9 @@ import (
 // no template path can omit it from a kick that lists issues.
 func TestBuildKickMessages_IncludesInProgressClaimRule(t *testing.T) {
 	s := newScheduler()
+	// The claim request needs a mode that can implement the fix; lower modes
+	// get their own variant (kick_mode_text_test.go, #20037).
+	s.cfg.Agents = map[string]config.AgentConfig{"scanner": {Mode: "ISSUES_AND_PRS"}}
 	msgs := s.BuildKickMessages(extraActionable(), []string{"scanner"})
 	if len(msgs) != 1 {
 		t.Fatalf("expected 1 message, got %d", len(msgs))

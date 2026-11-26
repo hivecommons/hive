@@ -77,7 +77,7 @@
         "monitor"
       ],
       "kick_template": "Supervise {{.Repo}}",
-      "include_repos": true,
+      "include_repos": false,
       "bead_role": "supervisor",
       "mode": "autonomous",
       "explain_mode": "brief",

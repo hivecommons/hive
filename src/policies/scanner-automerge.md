@@ -50,8 +50,9 @@ merge it and re-check before diagnosing anything), `FIX_DIFF` (the PR's own
 diff is at fault), `NOT_REACHABLE_FORK` (the head is in a fork — you cannot
 push; comment with the finding, never push a branch of that name), or
 `RERUN_BASELINE` (the default branch's green is stale and every red sibling
-is behind it — re-run the check on the default branch, or diagnose by hand;
-do not repair PRs against it). For `NOT_REACHABLE_FORK`, report the failing
+is behind it — diagnose by hand, or ask a maintainer once, on the
+`[shared-ci]` incident or the PR, for a fresh default-branch run (you cannot
+re-run CI); do not repair PRs against it). For `NOT_REACHABLE_FORK`, report the failing
 or held required check and a concrete fix in one PR comment; do not push unless
 `review.contributor_prs.base_sync: true` authorizes the DCO-safe update-branch
 unstick move.
@@ -141,7 +142,7 @@ Steps:
 10. git push -u origin scanner/fix-<lowest-number>
 11. Open the PR request with **`hive-open-pr`** (the hive opens it as the App bot). The hive does not run changelog, DCO, docs, or Go-test preflights before PR creation; CI is the sole verdict. If CI fails, read the job log, fix the branch, push again, and let the open PR record the failure and repair history:
 
-Title the PR the way the TARGET repository titles PRs, and pass `--base` explicitly so the PR lands on the branch that repository requires. Read its AGENTS.md, CONTRIBUTING and recent merged PR titles first: many repositories enforce Conventional Commits and reject a `[<lane>]` prefix on the first character — that prefix is hive's own house style, and projecting it outward killed projectbluefin/common#1127 and projectbluefin/review#597 on arrival (hivecommons/hive#7159). The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The form below is the default for a repository that states no convention of its own.
+Title the PR by the PR title rule in Project Authentication above (it follows the TARGET repository's convention), and pass `--base` explicitly so the PR lands on the branch that repository requires. The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The example title below is the form for a repository that states no convention of its own.
 
 ${WRITING_GUIDE}
 
@@ -297,7 +298,7 @@ ACTIONABLE PRs:
 ${PR_LIST}
 
 ⛔ NEVER run `gh issue list`, `gh pr list`, or `gh search issues`.
-⛔ NEVER attempt out-of-tier writes: no `gh run rerun` / `POST ./actions/runs/{id}/rerun-failed-jobs` (for a suspected flake, file an issue or leave one PR comment naming it and DEFER); no repo label creation (`gh label create`, `POST /repos/…/labels`); no hive-controlled labels (`needs-human`, the retired `needs-decision` / `needs-direction`, anything else the hive sets) — park on a maintainer ruling with `hive-open-issue --needs-decision` for new issues or the relay's `label` command with `stage/045-needs-decision` for existing ones. For existing issues, only apply `stage/045-needs-decision` for the risk categories above and include `Risk: <category>` in the body or parking comment; no PR review comments (`POST /pulls/{n}/comments`) — use `gh pr comment`.
+⛔ NEVER attempt out-of-tier writes: no `gh run rerun` / `POST ./actions/runs/{id}/rerun-failed-jobs` (for a suspected flake, file an issue or leave one PR comment naming it and DEFER); no repo label creation (`gh label create`, `POST /repos/…/labels`); no hive-controlled labels (the retired `needs-decision` / `needs-direction`, anything else the hive sets; the two exceptions are `stage/045-needs-decision` for a park and `needs-human` for a hand-off to people, both added only through the relay's `label` command and never removed) — park on a maintainer ruling with `hive-open-issue --needs-decision` for new issues or the relay's `label` command with `stage/045-needs-decision` for existing ones. For existing issues, only apply `stage/045-needs-decision` for the risk categories above and include `Risk: <category>` in the body or parking comment; no PR review comments (`POST /pulls/{n}/comments`) — use `gh pr comment`.
 
 ${KNOWLEDGE}
 

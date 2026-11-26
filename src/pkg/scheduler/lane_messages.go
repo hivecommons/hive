@@ -225,10 +225,17 @@ func (s *Scheduler) ghAuthInstructions() string {
     hive-open-pr --repo <org>/<repo> --head <your-branch> --title "<title>" \
       --body "<body citing the issue>" --issues <N>
   --body-file <path> is accepted in place of --body, exactly as gh accepts it.
-  Title convention (the repo's required "PR Type" check reads the first
-  character): ✨ feature, 🐛 fix, 📖 docs/proposal, ⚠️ breaking, 🌱 chore/other.
-  A docs PR is "📖 docs: …" and a proposal is "📖 proposal: …"; the hive corrects
-  an emoji that contradicts the type ("📝 proposal:" → "📖 proposal:") when it opens the PR.
+  PR title rule (stated here once; your policy's PR steps defer to it): title
+  the PR the way the TARGET repository titles PRs. Read its CONTRIBUTING,
+  AGENTS.md and recent merged PR titles first; if it states no convention, use
+  a Conventional Commits header such as "fix: …". The hive never adds an
+  emoji. When a title starts with an emoji followed by a known type, it
+  replaces a wrong emoji with the one for that type ("📝 proposal:" →
+  "📖 proposal:"), and it moves a leading [<lane>] to the end of a Conventional
+  Commits title. A repository that uses the emoji convention (hivecommons/hive
+  does; its required "PR Type" check reads the first character) wants ✨ feature,
+  🐛 fix, 📖 docs/proposal, ⚠️ breaking, 🌱 chore/other there: a docs PR is
+  "📖 docs: …" and a proposal is "📖 proposal: …".
   Pass --issues <N> naming the issue this PR is for whenever the work started
   from an issue: the hive verifies the body actually references that issue and
   refuses the request otherwise, and it always refuses an empty body.

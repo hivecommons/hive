@@ -86,7 +86,7 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 	// is written in reading order and applied in reverse to keep it readable.
 	staticSeams := []func(string) string{
 		func(m string) string { return s.addHouseStyle(a.agent, m) },
-		addGovernorWorkSourceRule,
+		func(m string) string { return addGovernorWorkSourceRuleText(m, s.governorWorkSourceRuleFor(a.agent)) },
 		addPlainDashRule,
 		func(m string) string { return s.addIndependentReviewSection(a.agent, m) },
 		func(m string) string { return s.addWorkflowPushCeiling(a.agent, m) },
@@ -104,7 +104,7 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 	if a.repo != "" {
 		message = appendKickSection(message, "REPO-SCOPED CADENCE TARGET: "+a.repo+s.repoForgeNote(a.repo))
 	}
-	if a.includeRepos {
+	if a.includeRepos && !s.isNoGitHubAgent(a.agent) {
 		// Built per agent, not once for the fleet: a repo-scoped agent must be
 		// told its own AUTHORIZED REPOS, or the one section every agent sees
 		// would name repos it cannot write to (#6204).
@@ -123,9 +123,9 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 	message = s.addMaintainerNotes(message, a.issues)
 	message = s.addCustomerContext(message, a.issues)
 	message = s.addQuestionAnswerContract(a.agent, message, a.issues)
-	message = addInProgressClaimRule(message, a.issues)
+	message = addInProgressClaimRuleText(message, a.issues, s.inProgressClaimRuleFor(a.agent))
 	if a.idleReason == "" {
-		message = addConcreteKickClosingInstruction(message)
+		message = addConcreteKickClosingInstructionText(message, s.concreteKickClosingInstructionFor(a.agent))
 	}
 	return message
 }
