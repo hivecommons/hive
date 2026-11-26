@@ -1,0 +1,1 @@
+- A contributor completion that reports an older PR of theirs which never names the dispatched issue no longer counts as that issue's work, so the hive does not append `Fixes #N` to the wrong PR or mark the issue covered, and a blocked verdict stands (#19985).

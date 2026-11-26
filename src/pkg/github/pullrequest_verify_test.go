@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func verifyTestLogger() *slog.Logger {
@@ -231,5 +232,28 @@ func TestVerifyReportedPR_NilClient(t *testing.T) {
 	}
 	if res.Err == nil {
 		t.Fatalf("nil client should report ErrNoGitHubClient")
+	}
+}
+
+// VerifyReportedPR carries the PR's creation time, body and head branch so
+// the completion path can tell a PR opened for the task from an older one
+// (hivecommons/hive#19985).
+func TestVerifyReportedPR_CarriesCreatedAtBodyAndHeadRef(t *testing.T) {
+	body := `{"number":7,"user":{"login":"alice"},"title":"t","body":"Refs #3",` +
+		`"created_at":"2026-11-26T04:00:00Z","head":{"ref":"feat/x-3"},` +
+		`"base":{"repo":{"name":"hive","full_name":"hivecommons/hive","owner":{"login":"hivecommons"}}}}`
+	ts := verifyMux(t, http.StatusOK, body)
+	c := NewClientForTest(ts.URL, "hivecommons", []string{"hive"}, verifyTestLogger())
+
+	res := c.VerifyReportedPR(context.Background(), "hivecommons/hive", "https://github.com/hivecommons/hive/pull/7", "alice")
+	if !res.Verified {
+		t.Fatalf("expected verified, reason=%q err=%v", res.Reason, res.Err)
+	}
+	want := time.Date(2026, 11, 26, 4, 0, 0, 0, time.UTC)
+	if !res.CreatedAt.Equal(want) {
+		t.Fatalf("CreatedAt = %v, want %v", res.CreatedAt, want)
+	}
+	if res.Body != "Refs #3" || res.HeadRef != "feat/x-3" {
+		t.Fatalf("Body/HeadRef = %q/%q", res.Body, res.HeadRef)
 	}
 }

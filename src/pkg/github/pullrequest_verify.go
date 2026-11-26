@@ -73,6 +73,13 @@ type PRVerification struct {
 	// rather than the assignment's issue title when they mean "what did this PR
 	// say it does".
 	Title string
+	// CreatedAt, Body and HeadRef describe the PR as GitHub reports it. They
+	// let a caller that knows when the task was assigned tell a PR the
+	// contributor opened for this task from an older PR of theirs whose URL
+	// the relay scraped from the agent's output (hivecommons/hive#19985).
+	CreatedAt time.Time
+	Body      string
+	HeadRef   string
 }
 
 // VerifyReportedPR checks a client-reported PR URL against GitHub server-side
@@ -128,7 +135,8 @@ func (c *Client) VerifyReportedPR(ctx context.Context, expectedRepo, prURL, expe
 	baseRepo := pr.GetBase().GetRepo().GetFullName() // "owner/repo"
 	// Merged/Title are recorded even on the negative paths below: they describe
 	// the PR that was looked up, not the verdict.
-	v := PRVerification{Author: author, BaseRepo: baseRepo, Merged: pr.GetMerged(), MergedAt: pr.GetMergedAt().Time, Title: pr.GetTitle()}
+	v := PRVerification{Author: author, BaseRepo: baseRepo, Merged: pr.GetMerged(), MergedAt: pr.GetMergedAt().Time, Title: pr.GetTitle(),
+		CreatedAt: pr.GetCreatedAt().Time, Body: pr.GetBody(), HeadRef: pr.GetHead().GetRef()}
 
 	if !prBaseRepoMatches(baseRepo, expectedRepo) {
 		v.Reason = fmt.Sprintf("PR base repo %q does not match assigned repo %q", baseRepo, expectedRepo)

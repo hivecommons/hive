@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -64,13 +65,22 @@ func TestWireCustomersStoreMode(t *testing.T) {
 func TestCustomersStoreModeFromConfig(t *testing.T) {
 	t.Setenv(config.EnvCustomersStore, "")
 	cfg := &config.Config{}
-	if got := customers.ParseStoreMode(cfg.CustomersStoreMode()); got != customers.StoreColony {
-		t.Fatalf("default mode = %q, want colony (#19972)", got)
+	if got := customers.ParseStoreMode(cfg.CustomersStoreMode()); got != customers.StoreShadow {
+		t.Fatalf("default mode = %q, want shadow (#19972)", got)
 	}
 	cfg.Customers.Store = "json"
 	if got := customers.ParseStoreMode(cfg.CustomersStoreMode()); got != customers.StoreJSON {
 		t.Fatalf("explicit json = %q, want json", got)
 	}
+	cfg.Customers.Store = "shadow"
+	if got := customers.ParseStoreMode(cfg.CustomersStoreMode()); got != customers.StoreShadow {
+		t.Fatalf("explicit shadow = %q, want shadow", got)
+	}
+	t.Setenv(config.EnvCustomersStore, "colony")
+	if got := customers.ParseStoreMode(cfg.CustomersStoreMode()); got != customers.StoreColony {
+		t.Fatalf("env colony = %q, want colony", got)
+	}
+	t.Setenv(config.EnvCustomersStore, "")
 	cfg.Customers.Store = "colony"
 	if got := customers.ParseStoreMode(cfg.CustomersStoreMode()); got != customers.StoreColony {
 		t.Fatalf("mode = %q", got)
@@ -82,8 +92,9 @@ func TestCustomersStoreModeFromConfig(t *testing.T) {
 }
 
 // A hive that ran on the old json default and is upgraded with nothing set
-// boots on colony (#19972): the boot migration imports people.json, keeps the
-// .pre-colony backup, and the records read the same.
+// boots on shadow (#19972): the boot migration imports people.json, keeps the
+// .pre-colony backup, JSON stays authoritative, and colony is written
+// alongside it.
 func TestWireCustomersDefaultUpgradeFromJSON(t *testing.T) {
 	t.Setenv(config.EnvCustomersStore, "")
 	dir := t.TempDir()
@@ -107,16 +118,16 @@ func TestWireCustomersDefaultUpgradeFromJSON(t *testing.T) {
 	}
 
 	mode := customers.ParseStoreMode((&config.Config{}).CustomersStoreMode())
-	if mode != customers.StoreColony {
-		t.Fatalf("default mode = %q, want colony", mode)
+	if mode != customers.StoreShadow {
+		t.Fatalf("default mode = %q, want shadow", mode)
 	}
 	svc, stop = wireCustomersAtMode(data, graph, mode, nil, nil)
 	if svc == nil {
 		t.Fatal("the default mode did not wire")
 	}
 	t.Cleanup(stop)
-	if got := svc.svc.Store().Colony().Mode(); got != customers.StoreColony {
-		t.Fatalf("colony mirror mode = %q, want colony", got)
+	if got := svc.svc.Store().Colony().Mode(); got != customers.StoreShadow {
+		t.Fatalf("colony mirror mode = %q, want shadow", got)
 	}
 	backup, err := os.ReadFile(filepath.Join(data, customers.FileName+customers.PreColonySuffix))
 	if err != nil || string(backup) != string(before) {
@@ -125,6 +136,15 @@ func TestWireCustomersDefaultUpgradeFromJSON(t *testing.T) {
 	got, err := svc.svc.Store().Get(p.ID)
 	if err != nil || got.Name != "Ada Example" {
 		t.Fatalf("person after the upgrade = %+v, %v", got, err)
+	}
+	// Shadow keeps the JSON authoritative and writes colony alongside it: a
+	// change after the upgrade lands in people.json and in colony.db.
+	if _, err := svc.svc.Add(ownerViewer, "Cy Example", []customers.Identity{{Kind: customers.KindGitHub, Value: "cy-example"}}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(filepath.Join(data, customers.FileName))
+	if err != nil || !strings.Contains(string(after), "Cy Example") {
+		t.Fatalf("people.json after a shadow write = %v, want the new person in it", err)
 	}
 	par, err := svc.svc.Store().ColonyParity()
 	if err != nil || par.ColonyPeople != par.JSONPeople || par.Mismatches != 0 || par.Failures != 0 {

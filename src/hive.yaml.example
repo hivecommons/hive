@@ -1436,7 +1436,7 @@ data:
 #   profile_fill:
 #     enabled: false         # true (or env HIVE_CUSTOMERS_PROFILE_FILL_ENABLED=true) fills empty real name, organization, location and country from each confirmed customer's public GitHub, GitHub Enterprise, GitLab or Gitea/Forgejo profile (and Linear member name); default off
 #     max_requests_per_hour: 60  # forge requests the fill may spend per hour across backfill, refresh, accepts and "Refresh from profiles" (default 60, at most 300)
-#   store: colony            # colony (default) | shadow | json (or env HIVE_CUSTOMERS_STORE): colony reads /data/customers/colony.db and still writes people.json and enrichment.json (the first start after an upgrade from json imports both and keeps *.pre-colony copies); shadow writes both and reads the JSON; json is the rollback; an unknown env value falls back to this key, and an unknown value with nothing valid saved means json
+#   store: shadow            # shadow (default) | colony | json (or env HIVE_CUSTOMERS_STORE): shadow imports into /data/customers/colony.db, writes both and reads the JSON (the first start after an upgrade from json imports both and keeps *.pre-colony copies); colony reads colony.db and still writes the JSON, and becomes the default once parity is confirmed on the project's own hive; json is the rollback; an unknown env value falls back to this key, and an unknown value with nothing valid saved means json
 #   enrichment:
 #     auto_accept: off       # off (default) | gitdm_high (or env HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT): gitdm_high fills an empty or automatic organization from a current gitdm match by GitHub login; never a hand-set or hub value
 
