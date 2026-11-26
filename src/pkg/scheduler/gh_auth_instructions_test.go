@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
 )
 
 // kubestellar/hive#1861 asks that agents hold no GitHub token material at all.
@@ -121,5 +122,35 @@ func TestGHAuthInstructions_NamesThePRTitleEmojiConvention(t *testing.T) {
 		if !strings.Contains(block, want) {
 			t.Errorf("hive-open-pr instructions lack %q", want)
 		}
+	}
+}
+
+// hivecommons/hive#20042: the title rule follows the target repository, as the
+// relay does. NormalizePRTitleEmoji never adds an emoji to a bare header, so
+// the prompt must say so and must not call the emoji prefix required without
+// naming the repository whose check requires it.
+func TestGHAuthInstructions_PRTitleRuleMatchesTheRelay(t *testing.T) {
+	block := ghAuthBlock(t)
+	for _, want := range []string{
+		"the way the TARGET repository titles PRs",
+		"never adds an emoji",
+		"hivecommons/hive uses the emoji",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("hive-open-pr title guidance lacks %q", want)
+		}
+	}
+	if strings.Contains(block, `the repo's required "PR Type" check`) {
+		t.Error(`title guidance calls the emoji prefix required in "the repo" without naming hivecommons/hive`)
+	}
+	// The relay behaviour the prose describes.
+	if got := github.NormalizePRTitleEmoji("fix: bare header"); got != "fix: bare header" {
+		t.Errorf("relay added an emoji to a bare header (%q); the GH_AUTH title rule says it never does", got)
+	}
+	if got := github.NormalizePRTitleEmoji("📝 proposal: x"); got != "📖 proposal: x" {
+		t.Errorf("relay no longer corrects a wrong emoji (%q); the GH_AUTH title rule says it does", got)
+	}
+	if got := github.NormalizePRTitle("[scanner] fix: x"); !strings.HasPrefix(got, "fix: x") {
+		t.Errorf("relay no longer moves a leading [<lane>] (%q); the GH_AUTH title rule says it does", got)
 	}
 }

@@ -1,0 +1,1 @@
+- State the PR title rule once in the GH_AUTH kick text: follow the target repository's convention, and say the hive corrects a wrong emoji but never adds one, matching the relay.
