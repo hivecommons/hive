@@ -47,9 +47,9 @@ const setup = ({ status, put }) => {
   let reloads = 0;
   const doc = { createElement: makeEl };
   const fetchStub = async (url, opts) => { calls.push({ url, opts, body: JSON.parse(opts.body) }); return put(); };
-  const render = new Function('document', 'fetch', 'showToast', '_inceptionAuthHeaders', 'saveErrorMessage',
+  const render = new Function('document', 'fetch', 'showToast', '_inceptionAuthHeaders', 'saveErrorMessage', 'formatDashboardDateTime',
     fnSrc('referenceRepoNode') + '\n' + fnSrc('renderGitHubTokenPanel') + '\nreturn renderGitHubTokenPanel;')(
-    doc, fetchStub, (m, k) => toasts.push([m, k]), () => ({}), async res => res.errorMessage);
+    doc, fetchStub, (m, k) => toasts.push([m, k]), () => ({}), async res => res.errorMessage, v => new Date(v).toISOString());
   const host = makeEl('div');
   render(host, status, () => { reloads++; });
   return { host, toasts, calls, reloads: () => reloads };
