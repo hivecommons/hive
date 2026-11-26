@@ -1,0 +1,1 @@
+- Hive Chat config assist gains `chat.config_assist.model`, the model for the proposal turn (falls back to `chat.grounded_answers.model`, then the reviewer model), with a model picker on the Settings panel, which is now owner-only for reading too so other roles see an owner-only note instead of a switch that fails on save (#20092).

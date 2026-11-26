@@ -463,7 +463,13 @@ one of three paths, and never discards a message's arguments:
 
 **Setting.** `chat.grounded_answers.enabled` (default **true**) gates the
 grounded path hive-wide; `chat.grounded_answers.model` overrides the reviewer
-model for the grounding turn. See [operator-reference.md](operator-reference.md).
+model for the grounding turn. `chat.config_assist.enabled` (default **false**)
+lets a verified owner's config-shaped message propose one agent config change
+as a card to apply or review; `chat.config_assist.model` picks the model for
+that proposal turn and falls back to `chat.grounded_answers.model`, then the
+reviewer model. Both are set on the owner-only Settings, Features, Chat,
+Config assist panel; other roles see an owner-only note there instead of the
+controls. See [operator-reference.md](operator-reference.md).
 
 Markdown is rendered from escaped input only: bold, inline code, code fences,
 links, GitHub-style `@mentions`, and `#issue` / `owner/repo#N` references are
