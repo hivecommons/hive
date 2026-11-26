@@ -12,6 +12,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/forgesweep"
+	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/writeback"
 )
 
@@ -68,6 +69,15 @@ func forgejoSweeperFor(cfg *config.Config, deps forgejoSweepDeps) *forgesweep.Sw
 		return nil
 	}
 	blocking := []string{forgejoHoldLabel, cfg.Sentinel.LabelOrDefault(), cfg.Governor.Labels.DecisionNeededLabelOrDefault()}
+	// The hive gate labels block as on GitHub (github.IsHiveGateLabel): the
+	// PR relay holds every PR it opens with ready-for-review, and a person
+	// releases it by removing the label (#19912). The defaults stay in the
+	// list after a rename, so a label applied under the old name still holds.
+	// The configured names are read from cfg too: on a forge-only hive no
+	// GitHub client installs them into pkg/github.
+	blocking = append(blocking, github.HiveGateLabels()...)
+	blocking = append(blocking, cfg.Governor.Labels.ReadyForReviewLabelOrDefault())
+	blocking = append(blocking, github.DefaultReadyForReviewLabel, github.DefaultDecisionNeededLabel)
 	blocking = append(blocking, cfg.Governor.Labels.Exempt...)
 	s := &forgesweep.Sweeper{
 		Repos:            repos,

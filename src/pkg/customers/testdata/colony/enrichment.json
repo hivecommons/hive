@@ -1,0 +1,14 @@
+{
+  "people": {
+    "p_000000000001": {
+      "affiliations": [
+        {"org": "Acme", "from": "2019-01-01", "until": "2022-01-01", "source": "gitdm", "confidence": "high", "matched_by": "github_login"},
+        {"org": "Hooli", "from": "2022-01-01", "source": "gitdm", "confidence": "high", "matched_by": "github_login"}
+      ],
+      "activity": [
+        {"project": "Kubernetes", "contributions": 42, "period": "all time", "url": "https://devstats.cncf.io/x", "source": "devstats"}
+      ],
+      "fetched_at": {"gitdm": "2026-02-01T00:00:00Z", "devstats": "2026-02-01T00:00:00Z"}
+    }
+  }
+}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -58,6 +59,14 @@ func TestForgeTokenResolutionPin(t *testing.T) {
 				fc.setURL(cfg, srv.URL)
 				if scenario.override != "" {
 					fc.setEnv(cfg, scenario.override)
+				}
+				// Forgejo answers a private repo with no token with a 404, so an
+				// empty Forgejo token builds no merger at all (#19919).
+				if fc.kind == config.ForgeForgejo && scenario.wantToken == "" {
+					if _, err := forgeMergerForRepo(cfg, "acme/app"); !errors.Is(err, errForgeTokenEmpty) {
+						t.Fatalf("merger err = %v, want errForgeTokenEmpty", err)
+					}
+					return
 				}
 
 				w := governorForge(cfg, nil, discardLogger())
@@ -207,6 +216,13 @@ func TestForgeListerTokenPin(t *testing.T) {
 				fc.setURL(cfg, srv.URL)
 				if scenario.override != "" {
 					fc.setEnv(cfg, scenario.override)
+				}
+				// An empty Forgejo token builds no reader (#19919).
+				if fc.kind == config.ForgeForgejo && scenario.wantToken == "" {
+					if _, err := forgeListerForRepo(cfg, "acme/app"); !errors.Is(err, errForgeTokenEmpty) {
+						t.Fatalf("lister err = %v, want errForgeTokenEmpty", err)
+					}
+					return
 				}
 
 				l, err := forgeListerForRepo(cfg, "acme/app")

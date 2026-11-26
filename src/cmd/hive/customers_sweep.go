@@ -130,6 +130,9 @@ func (b *boot) runCustomersSweep(ctx context.Context, cfg *config.Config) {
 		}
 		return
 	}
+	// The colony parity check runs after each sweep in shadow and colony
+	// mode (#19855); it logs counts only.
+	logCustomersColonyParity(b.customers.svc.Store(), b.logger, false)
 	if b.logger != nil && (res.Linked > 0 || res.TagsChanged > 0 || res.PrunedEdges > 0 || res.ExpiredSuggestions > 0 || res.DroppedEvidence > 0) {
 		b.logger.Info("[customers] discovery sweep", "users", res.Users, "linked", res.Linked, "edges", res.Edges,
 			"suggestions", res.Suggestions, "tags_changed", res.TagsChanged, "pruned_edges", res.PrunedEdges,

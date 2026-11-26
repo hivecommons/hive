@@ -346,10 +346,16 @@ func TestBootAgentsWith_ArmsForgeRequestRelayWithManagerGates(t *testing.T) {
 	if got == nil {
 		t.Fatal("forge request relay not started")
 	}
-	if got.prAuthz == nil || got.issueAuthz == nil {
+	if got.prAuthz == nil || got.issueAuthz == nil || got.pushAuthz == nil {
 		t.Fatal("forge request relay started without the manager's authorizers")
+	}
+	if got.pushRemote == nil || got.pushDir != github.PushBranchRequestDir || got.reviewDir != github.ReviewRequestDir || got.mergeDir != github.MergeRequestDir {
+		t.Fatal("forge request relay does not serve the push, review and merge queues (#19916)")
 	}
 	if got.cfg() != b.cfg {
 		t.Fatal("forge request relay does not read the live config")
+	}
+	if got.pushAudit == nil {
+		t.Fatal("forge request relay does not audit pushed branches (#19960)")
 	}
 }

@@ -1,0 +1,60 @@
+# Extra grants for workspace_transport: copy (#19621), kept apart from
+# sandbox-job-rbac.yaml and NOT in kustomization.yaml: apply it, and bind it,
+# only on a spoke that uses the copy transport. Without it a copy-transport
+# kick fails at its first create, and the error names the Secret:
+#   kubejob: creating the bridge token Secret for hive-kick-<agent>-<unix>:
+#   POST /api/v1/namespaces/<ns>/secrets: HTTP 403: secrets is forbidden: ...
+#
+# Only the verbs the copy transport uses, and nothing to read or remove:
+#  - secrets create: the per-Job bridge token Secret.
+#  - networkpolicies create: the per-Job NetworkPolicy that admits only hive's
+#    pod to the bridge port.
+#  - jobs patch: the Job is created suspended so the Secret and the policy can
+#    name it as their owner, then resumed with a patch.
+# There is no delete, get, list, watch or update on Secrets or NetworkPolicies.
+# Both objects carry an ownerReference to their Job, and hive deletes the Job
+# with Background propagation, so the garbage collector removes them with it
+# (also after a hive restart, or when the Job's TTL removes it).
+#
+# What remains, so you can weigh it: RBAC cannot scope `create` by name
+# (resourceNames does not apply to create), and the Job names are generated
+# per run, so `create` and `patch` here are namespace-wide. A holder could
+# create a Secret or a NetworkPolicy of its choosing (an allow-all policy
+# overrides default-deny) and patch any Job. sandbox-job-copy-admission.yaml
+# closes that: it is enforcing (Deny), limits hive's service account to
+# hive-kick-* objects with hive's label, requires the Secret to be owned by its
+# Job, constrains the policy's selector and rules, and allows only a resume of
+# a Job. Apply it, and label the namespace, before you bind this Role.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hive-sandbox-jobs-copy
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["patch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hive-sandbox-jobs-copy
+  namespace: hive
+  labels:
+    app.kubernetes.io/name: hive
+subjects:
+  - kind: ServiceAccount
+    name: hive
+    namespace: hive
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hive-sandbox-jobs-copy

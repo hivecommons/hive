@@ -1,1 +1,0 @@
-- A refused push now says why. The push broker kept only `exit status 128` from a failed `git push`, so a missing token scope, a rejected ref and a network failure all read the same. The error now carries the last lines of git's output, with the minted token, URL credentials and other secret shapes removed. (#19924)

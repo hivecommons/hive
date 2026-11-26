@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -32,6 +33,9 @@ const (
 	// DefaultPort is the port the bridge serves on inside the actor and the
 	// port hive's CONNECT tunnel targets.
 	DefaultPort = 8477
+	// JobTokenEnv is the variable the Job manifest puts the bearer token in
+	// and the job-bridge command reads it from.
+	JobTokenEnv = "HIVE_JOB_BRIDGE_TOKEN" // #nosec G101 -- env var name, not a credential
 	// DefaultWorkspace is where the bridge unpacks the kick workspace.
 	DefaultWorkspace = "/workspace"
 
@@ -51,6 +55,14 @@ const (
 	contentTypeJSON = "application/json"
 	maxRequestJSON  = 1 << 20
 	maxTarEntry     = 1 << 30
+)
+
+// maxTarTotal and maxTarEntries bound one Unpack: the bytes it may write and
+// the entries it may read. A request body on PUT /workspace is capped at
+// maxTarTotal as well. Variables so a test can lower them.
+var (
+	maxTarTotal   int64 = 16 << 30
+	maxTarEntries       = 2_000_000
 )
 
 // RunRequest is the body of POST /run.
@@ -136,7 +148,7 @@ func (h *Handler) putWorkspace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("substrate bridge: clearing %s: %v", dir, err), http.StatusInternalServerError)
 		return
 	}
-	if err := Unpack(r.Body, dir); err != nil {
+	if err := Unpack(http.MaxBytesReader(w, r.Body, maxTarTotal), dir); err != nil {
 		http.Error(w, fmt.Sprintf("substrate bridge: unpacking workspace: %v", err), http.StatusBadRequest)
 		return
 	}
@@ -290,23 +302,55 @@ func capString(b []byte) string {
 // and symlinks, paths relative to dir. Git workspaces are small enough that a
 // single stream is simpler than any chunked protocol.
 func Pack(dir string, w io.Writer) error {
+	_, err := PackSkipped(dir, w)
+	return err
+}
+
+// PackSkipped is Pack that also returns what it left out: sockets, FIFOs and
+// devices (dev servers, language servers and git's fsmonitor leave them in a
+// tree, and Unpack refuses them), regular files over maxTarEntry (Unpack
+// refuses those too), and entries that vanished while the tree was walked (a
+// background process may still be running). Leaving them out keeps one stray
+// entry from failing the whole transfer and losing the rest of the tree.
+func PackSkipped(dir string, w io.Writer) ([]string, error) {
+	var skipped []string
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
+		rel, relErr := filepath.Rel(dir, path)
+		if relErr != nil {
+			return relErr
 		}
-		rel, err := filepath.Rel(dir, path)
 		if err != nil {
+			// The root itself missing is an error; an entry under it that
+			// vanished mid-walk is not.
+			if path != dir && errors.Is(err, fs.ErrNotExist) {
+				skipped = append(skipped, filepath.ToSlash(rel)+" (vanished)")
+				return nil
+			}
 			return err
 		}
 		if rel == "." {
 			return nil
 		}
+		mode := info.Mode()
+		switch {
+		case mode.IsRegular() && info.Size() > maxTarEntry:
+			skipped = append(skipped, filepath.ToSlash(rel)+" (over the size cap)")
+			return nil
+		case !mode.IsRegular() && !mode.IsDir() && mode&os.ModeSymlink == 0:
+			skipped = append(skipped, filepath.ToSlash(rel)+" ("+specialKind(mode)+")")
+			return nil
+		}
 		link := ""
-		if info.Mode()&os.ModeSymlink != 0 {
-			if link, err = os.Readlink(path); err != nil {
-				return err
+		if mode&os.ModeSymlink != 0 {
+			var lerr error
+			if link, lerr = os.Readlink(path); lerr != nil {
+				if errors.Is(lerr, fs.ErrNotExist) {
+					skipped = append(skipped, filepath.ToSlash(rel)+" (vanished)")
+					return nil
+				}
+				return lerr
 			}
 		}
 		hdr, err := tar.FileInfoHeader(info, link)
@@ -317,27 +361,69 @@ func Pack(dir string, w io.Writer) error {
 		if info.IsDir() {
 			hdr.Name += "/"
 		}
+		var f *os.File
+		if mode.IsRegular() {
+			// Open before the header so a file that vanished after the walk
+			// is left out whole, not half written.
+			if f, err = os.Open(path); err != nil { // #nosec G122 -- the packed tree is the agent's own workspace; only regular files reach here and symlinks are archived as links, never followed.
+				if errors.Is(err, fs.ErrNotExist) {
+					skipped = append(skipped, filepath.ToSlash(rel)+" (vanished)")
+					return nil
+				}
+				return err
+			}
+			defer f.Close()
+			// A file that grew or shrank after the stat must not corrupt the
+			// archive: write exactly the size the header declares.
+			if fi, serr := f.Stat(); serr == nil {
+				hdr.Size = fi.Size()
+			}
+		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
-		if !info.Mode().IsRegular() {
+		if f == nil {
 			return nil
 		}
-		f, err := os.Open(path)
+		n, err := io.Copy(tw, io.LimitReader(f, hdr.Size))
 		if err != nil {
 			return err
 		}
-		defer f.Close()
-		_, err = io.Copy(tw, f)
+		if n < hdr.Size {
+			// Truncated under us: pad so the archive stays well formed.
+			_, err = io.CopyN(tw, zeroReader{}, hdr.Size-n)
+		}
 		return err
 	})
 	if err != nil {
-		return err
+		return skipped, err
 	}
 	if err := tw.Close(); err != nil {
-		return err
+		return skipped, err
 	}
-	return gz.Close()
+	return skipped, gz.Close()
+}
+
+// specialKind names a file mode Pack leaves out.
+func specialKind(mode os.FileMode) string {
+	switch {
+	case mode&os.ModeSocket != 0:
+		return "socket"
+	case mode&os.ModeNamedPipe != 0:
+		return "fifo"
+	case mode&os.ModeDevice != 0:
+		return "device"
+	}
+	return "special file"
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
 }
 
 // Unpack reads a Pack stream into dir, refusing entries that escape it
@@ -359,6 +445,8 @@ func Unpack(r io.Reader, dir string) error {
 	}
 	defer root.Close()
 	tr := tar.NewReader(gz)
+	var total int64
+	entries := 0
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -366,6 +454,12 @@ func Unpack(r io.Reader, dir string) error {
 		}
 		if err != nil {
 			return fmt.Errorf("tar: %w", err)
+		}
+		if entries++; entries > maxTarEntries {
+			return fmt.Errorf("tar: more than %d entries", maxTarEntries)
+		}
+		if total += hdr.Size; total > maxTarTotal {
+			return fmt.Errorf("tar: more than %d bytes", maxTarTotal)
 		}
 		rel, err := safeRel(hdr.Name)
 		if err != nil {

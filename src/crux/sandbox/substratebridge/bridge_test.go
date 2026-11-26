@@ -13,7 +13,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -521,5 +523,91 @@ func TestFrameWriterCapsOutput(t *testing.T) {
 	buf.Reset()
 	if n, err := w.Write([]byte("more")); err != nil || n != 4 || buf.Len() != 0 {
 		t.Fatalf("past the cap: n=%d err=%v frames=%q", n, err, buf.String())
+	}
+}
+
+// TestPackSkipsEntriesUnpackRefuses (#19694 review): a socket, a FIFO and a
+// file over the size cap must not fail the whole pack, which would lose the
+// rest of the tree; they are left out and reported.
+func TestPackSkipsEntriesUnpackRefuses(t *testing.T) {
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "keep.txt"), "kept")
+	if err := os.Symlink("keep.txt", filepath.Join(src, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(src, "pipe"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A socket path is short-limited, so bind it relative to a short dir.
+	sockDir, err := os.MkdirTemp("", "pk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(sockDir)
+	ln, err := net.Listen("unix", filepath.Join(sockDir, "s"))
+	if err != nil {
+		t.Skipf("no unix sockets here: %v", err)
+	}
+	defer ln.Close()
+	if err := os.Rename(filepath.Join(sockDir, "s"), filepath.Join(src, "sock")); err != nil {
+		t.Skipf("cannot place a socket in the tree: %v", err)
+	}
+	big := filepath.Join(src, "big.bin")
+	if err := os.WriteFile(big, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(big, maxTarEntry+1); err != nil { // sparse
+		t.Skipf("no sparse files here: %v", err)
+	}
+
+	var packed bytes.Buffer
+	skipped, err := PackSkipped(src, &packed)
+	if err != nil {
+		t.Fatalf("PackSkipped: %v", err)
+	}
+	got := strings.Join(skipped, "|")
+	for _, want := range []string{"pipe (fifo)", "sock (socket)", "big.bin (over the size cap)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("skipped = %q, want it to name %q", got, want)
+		}
+	}
+	dst := t.TempDir()
+	if err := Unpack(&packed, dst); err != nil {
+		t.Fatalf("Unpack of what Pack wrote: %v", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dst, "keep.txt")); string(b) != "kept" {
+		t.Errorf("keep.txt = %q, want the rest of the tree intact", b)
+	}
+	if target, err := os.Readlink(filepath.Join(dst, "link")); err != nil || target != "keep.txt" {
+		t.Errorf("symlink = %q, %v", target, err)
+	}
+}
+
+// TestUnpackCapsTotalBytesAndEntries: one entry under maxTarEntry can still
+// not fill the volume with many of them.
+func TestUnpackCapsTotalBytesAndEntries(t *testing.T) {
+	oldTotal, oldEntries := maxTarTotal, maxTarEntries
+	t.Cleanup(func() { maxTarTotal, maxTarEntries = oldTotal, oldEntries })
+
+	build := func(n int, size int) *bytes.Buffer {
+		return tarStream(t, func(tw *tar.Writer) {
+			for i := 0; i < n; i++ {
+				name := "f" + strconv.Itoa(i)
+				_ = tw.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(size)})
+				_, _ = tw.Write(make([]byte, size))
+			}
+		})
+	}
+	maxTarTotal, maxTarEntries = 100, 1000
+	if err := Unpack(build(3, 50), t.TempDir()); err == nil || !strings.Contains(err.Error(), "bytes") {
+		t.Errorf("150 bytes over a 100 byte cap: err = %v", err)
+	}
+	maxTarTotal, maxTarEntries = 1<<20, 2
+	if err := Unpack(build(3, 1), t.TempDir()); err == nil || !strings.Contains(err.Error(), "entries") {
+		t.Errorf("3 entries over a 2 entry cap: err = %v", err)
+	}
+	maxTarTotal, maxTarEntries = 1<<20, 3
+	if err := Unpack(build(3, 1), t.TempDir()); err != nil {
+		t.Errorf("a tree within both caps must unpack: %v", err)
 	}
 }

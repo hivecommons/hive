@@ -300,6 +300,11 @@ type Config struct {
 	// from or last saved to; Save refuses to overwrite a file whose content
 	// changed since (hivecommons/hive#19561). See disk_state.go.
 	disk *diskLayers
+	// overlayCarry holds the dashboard overlay content this config could
+	// not load (unknown or unparseable blocks, or an unparseable file) so
+	// saving the overlay keeps it instead of erasing it
+	// (hivecommons/hive#19740). See overlay_carry.go.
+	overlayCarry *overlayCarryState
 	// LaunchCmdDegradations lists the base-config agents whose launch_cmd the
 	// loader dropped because it contradicted the agent's backend, so the
 	// dashboard can raise a banner for each. Runtime-only; see
@@ -1719,7 +1724,7 @@ func AgentSandboxGateReport(cfg *Config) SandboxGateReport {
 		switch rt := a.SandboxRuntime(cfg.AgentSandbox); {
 		case !ValidSandboxRuntimes[rt]:
 			badRuntime = append(badRuntime, name+"="+rt)
-		case rt == SandboxRuntimeJob && strings.TrimSpace(a.SandboxJob(cfg.AgentSandbox).WorkspaceClaim) == "":
+		case rt == SandboxRuntimeJob && !a.SandboxJob(cfg.AgentSandbox).CopiesWorkspace() && strings.TrimSpace(a.SandboxJob(cfg.AgentSandbox).WorkspaceClaim) == "":
 			noClaim = append(noClaim, name)
 		case rt == SandboxRuntimeOpenShell:
 			os := a.SandboxOpenShell(cfg.AgentSandbox)
@@ -6410,11 +6415,28 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// The overlay's agents and blocks win over the config file below, so a
 	// hand edit to it must be protected from the next save the same way as
 	// an edit to the config file (hivecommons/hive#19561).
-	cfg.recordLayerSum(DashboardOverlayFile, sumBytes(data))
-	var overlay Config
-	if err := yaml.Unmarshal([]byte(expandEnvVars(string(data))), &overlay); err != nil {
+	overlayFileSum := sumBytes(data)
+	cfg.recordLayerSum(DashboardOverlayFile, overlayFileSum)
+	// Decoded key by key (#19740): a block that is unknown or does not parse
+	// is logged and kept for the next save instead of costing the whole
+	// overlay. A file that is not YAML at all falls back to the seed, as
+	// before, but is no longer overwritten by the next save.
+	// The config file as loadWithOverrides read it: the overlay is expanded
+	// with its resolver policy and compared against it. A read failure here
+	// (the file vanished since) leaves nothing to compare, so nothing is
+	// carried generically on this load.
+	primaryData, perr := os.ReadFile(path)
+	if perr != nil {
+		primaryData = nil
+	}
+	decoded, derr := decodeDashboardOverlay(data, primaryData)
+	if derr != nil {
+		logOverlayOnce("file", data, "[config] WARNING: dashboard overlay %s is not valid YAML (%v); none of it is loaded, and saves leave the file as it is until it is fixed", DashboardOverlayFile, derr)
+		cfg.overlayCarry = &overlayCarryState{keepWhole: &overlayFileSum}
 		return cfg, nil // malformed overlay: fall back to seed, don't fail the reload
 	}
+	cfg.overlayCarry = decoded.carry
+	overlay := decoded.cfg
 	// Tombstones live in the dashboard overlay because that is the only agent
 	// source the dashboard can write. Adopt them BEFORE the fullness guard below
 	// so a short/empty overlay (one that has no agents yet, or only carries the
@@ -6472,6 +6494,22 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// #18804 and #19740). Only the open_prs field of each repo policy is
 	// adopted; BEFORE the fullness guard so a short overlay still wins.
 	adoptOverlayRepoOpenPRs(cfg, &overlay)
+	// Every other block (ask, chat, customers, …): carried generically so a
+	// hand edit or a dashboard save to any block survives the reload and the
+	// next persist (#19740). BEFORE the fullness guard, like the blocks
+	// above. Env and config.env overrides are re-applied afterwards so they
+	// still win over an adopted block, as they win over the config file.
+	if primaryData != nil && adoptOverlayBlocksGeneric(cfg, path, primaryData, decoded, validateOpts) {
+		// Adopted blocks replace the loaded ones whole; fill their defaults
+		// the way the load filled the config file's.
+		cfg.applyDefaults()
+		if envPath := findConfigEnv(path); envPath != "" {
+			if err := cfg.applyConfigEnv(envPath); err != nil {
+				return nil, fmt.Errorf("applying config.env %s: %w", envPath, err)
+			}
+		}
+		cfg.applyBootstrapEnv()
+	}
 	if len(overlay.RemovedAgents) > 0 {
 		cfg.RemovedAgents = overlay.RemovedAgents
 		cfg.PruneRemovedAgents()
@@ -8461,6 +8499,17 @@ func (c *Config) saveDashboardOverlay() error {
 	if guardLivePVCPathUnderTest(DashboardOverlayFile, defaultDashboardOverlayFile, "DashboardOverlayFile") {
 		return errLivePVCPathGuarded
 	}
+	// #19740: an overlay that was not valid YAML when this config loaded it
+	// is an operator's edit in progress. Overwriting it would erase that edit
+	// silently, so leave it until it is fixed (the fix changes its content,
+	// the #19561 guard then reloads it). The runtime config still carries
+	// this save, and it is the boot input whenever it exists.
+	if c.overlayKeptWhole() {
+		if data, rerr := os.ReadFile(DashboardOverlayFile); rerr == nil {
+			logOverlayOnce("file-save", data, "[config] WARNING: dashboard overlay %s is not valid YAML; this save leaves it as it is (fix or remove the file to let saves update it)", DashboardOverlayFile)
+		}
+		return nil
+	}
 	data, err := c.dashboardOverlayBytes()
 	if err != nil {
 		log.Printf("[config] warning: failed to marshal dashboard overlay: %v", err)
@@ -8530,7 +8579,13 @@ func (c *Config) dashboardOverlayBytes() ([]byte, error) {
 		}
 	}
 	cp = *cp.redactedForPersist()
-	return yaml.Marshal(&cp)
+	data, err := yaml.Marshal(&cp)
+	if err != nil || c.overlayCarry == nil {
+		return data, err
+	}
+	// #19740: blocks the overlay carried that this config could not load
+	// (unknown keys, values that do not parse) go back in as written.
+	return spliceOverlayBlocks(data, c.overlayCarry.preserved)
 }
 
 func (c *Config) redactedForPersist() *Config {

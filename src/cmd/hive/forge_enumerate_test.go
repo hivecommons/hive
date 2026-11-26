@@ -315,10 +315,12 @@ func TestForgeListerForRepoRefusesGitHubAndForeignHost(t *testing.T) {
 		t.Errorf("foreign forge_url: err = %v, want the token host refusal", err)
 	}
 
+	t.Setenv(forgejoTestTokenEnv, forgejoTestToken)
 	for _, kind := range []string{config.ForgeGitLab, config.ForgeGitea, config.ForgeForgejo} {
 		cfg := &config.Config{}
 		cfg.Project.Forge = kind
 		cfg.GitLab.URL, cfg.Gitea.URL, cfg.Forgejo.URL = "https://gl.example", "https://gt.example", "https://fj.example"
+		cfg.Forgejo.TokenEnv = forgejoTestTokenEnv
 		l, err := forgeListerForRepo(cfg, "widgets")
 		if err != nil {
 			t.Fatalf("%s: %v", kind, err)

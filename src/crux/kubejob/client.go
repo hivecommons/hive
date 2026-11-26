@@ -41,7 +41,11 @@ func (l *Launcher) do(ctx context.Context, method, path string, body []byte) ([]
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		contentType := "application/json"
+		if method == http.MethodPatch {
+			contentType = "application/merge-patch+json"
+		}
+		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -56,6 +60,12 @@ func (l *Launcher) do(ctx context.Context, method, path string, body []byte) ([]
 		return nil, fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode, apiMessage(out))
 	}
 	return out, nil
+}
+
+// patch sends a JSON merge patch to path.
+func (l *Launcher) patch(ctx context.Context, path string, body []byte) error {
+	_, err := l.do(ctx, http.MethodPatch, path, body)
+	return err
 }
 
 // apiMessage pulls the human message out of a Kubernetes Status body, falling
