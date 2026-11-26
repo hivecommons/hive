@@ -167,7 +167,7 @@ func (s *HubServer) customerMatchIndexFor(hiveID string, keys []string, now time
 		if c, ok := records[hiveID]; !ok || c.discardable(now) || c.WithdrawnAt != nil && c.DeliveredFields == nil {
 			continue
 		}
-		user := loadSaaSUser(strings.TrimSuffix(entry.Name(), ".json"))
+		user := loadSaaSUser(strings.TrimSuffix(filepath.Base(path), ".json"))
 		if user == nil {
 			continue
 		}
