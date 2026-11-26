@@ -228,10 +228,31 @@ forgejo:
 1. Generate the RSA key (2048 bits or more), and publish the two files that
    `hive forge key-list --issuer https://keys.example.com --key /etc/hive/forgejo-jwt.pem --out DIR`
    writes at the issuer, over https.
-2. For each tier, run
-   `forgejo admin user create-authorized-integration --issuer https://keys.example.com --scope <scope> --repo <owner/repo> --claim-eq sub=hive:<tier>`.
-   Pass `--scope` and `--repo` explicitly, because both default to `all`.
+2. For each tier, run the command below. Forgejo fetches the key list when
+   you create the integration, so the key host must already be live. If the
+   command fails with `invalid issuer`, fix the key host before you continue.
+
+   ```
+   forgejo admin user create-authorized-integration --username <hive user> --name hive-<tier> \
+     --issuer https://keys.example.com --scope <scope> \
+     --repo <owner/repo1> --repo <owner/repo2> --claim-eq sub=hive:<tier>
+   ```
+
+   `--username` is the Forgejo user the integration acts as, which is the
+   hive's user. `--name` is a label for the integration. Both are required.
+   Pass `--scope` and `--repo` explicitly, because both default to `all`. Give
+   `--repo` once per repo. A comma-separated list is not split and fails with
+   `invalid repo name`.
 3. Copy each integration's audience under `audiences`, keyed by tier.
+
+Forgejo does not fetch the issuer from a private address unless the admin
+allows it. If the issuer host resolves to a private address, step 2 fails with
+`authorized_integration can only call allowed HTTP servers`. Set
+`[authorized_integration] ALLOWED_DOMAINS` to the issuer host in Forgejo's
+`app.ini`. Setting it replaces the default, which allows every external host,
+so list every other external host that Forgejo must reach as well. Setting
+`ALLOW_LOCALNETWORKS = true` also works, but it allows every private and
+loopback address.
 
 A tier with no audience gets the closest less-privileged tier that has one,
 and never a more-privileged one. A tier with none cannot clone or push. The
@@ -245,7 +266,9 @@ group-readable key under any other group, because agent UIDs share group
 `node` (GID 1000), and refuses any key that others can read. A key kept under
 `/data/secrets` is sealed in place by the keystore at boot and still loads
 afterwards. `hive validate` reports a `key_file` that does not exist or
-cannot be read.
+cannot be read. It does not contact the issuer, so `config OK` does not show
+that the key host is reachable or serves this key. The first clone or push is
+the first real check.
 
 `forgejo.integration` covers git clone and push only. Work discovery, the
 issue and pull request relays, merges and both sweeps still call the Forgejo
@@ -277,14 +300,16 @@ forgejo:
 #### Rotate the signing key
 
 The key file is read at every mint, so replacing it rotates the key. Forgejo
-caches the key list for about 10 minutes, and does not fetch it again when a
-token names a key ID it does not know. A token signed with a key that is not
+caches the key list for `[authorized_integration] CACHE_TTL`, 10 minutes by
+default, and does not fetch it again when a token names a key ID it does not
+know. A token signed with a key that is not
 yet in Forgejo's cached copy is refused, and the clone or push fails with
 `Authentication failed`. Rotate in this order:
 
 1. Publish a key list with both the old and the new key:
    `hive forge key-list --issuer https://keys.example.com --key old.pem --key new.pem --out DIR`.
-2. Wait more than 10 minutes, so Forgejo fetches the new list.
+2. Wait longer than the cache window (`CACHE_TTL`, 10 minutes by default),
+   so Forgejo fetches the new list.
 3. Point `key_file` at the new key, or replace the file in place.
 4. One hour after step 3, when the last token signed with the old key has
    expired, publish the key list with the new key only.
@@ -292,7 +317,8 @@ yet in Forgejo's cached copy is refused, and the clone or push fails with
 #### The key host is a git dependency
 
 Forgejo keeps no stale copy of the key list. If the host that serves it at
-`issuer` is unreachable for longer than the cache window, about 10 minutes,
+`issuer` is unreachable for longer than the cache window (`CACHE_TTL`, 10
+minutes by default),
 Forgejo refuses every JWT, and every clone and push on a Forgejo repo fails
 until the host is back. Run the key host with the same availability you expect
 from git.

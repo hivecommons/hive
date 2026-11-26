@@ -727,14 +727,14 @@ only when neither is configured.
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
 | `HIVE_HEARTBEAT_KEY` | No | derived from `HIVE_HUB_SECRET` | Spoke heartbeat signing sub-key. For a self-service (`byo-`) hive this is the only key the spoke holds: the hub mints it at registration, shows it once, and stores only a hash. There is no derivation fallback for a `byo-` ID; rotate it from the dashboard if it is lost (see [hub-deployment.md](hub-deployment.md#self-service-registration)). |
-| `HIVE_SESSION_KEY` | No | derived from `HIVE_HUB_SECRET` | Spoke session-cookie signing sub-key. |
+| `HIVE_SESSION_KEY` | No | derived from `HIVE_HUB_SECRET` | Legacy. Hub provisioning no longer sends it, and the per-hive env reconcile sweep removes it from spokes. It is not used to sign or verify session cookies. The proxy reads it only as one of two signals that the hive is hub-hosted; the other is `HIVE_SESSION_PUBLIC_KEY`. |
 | `HIVE_CUSTOMER_MATCH_KEY` | No | derived from `HIVE_HUB_SECRET` and `HIVE_ID` | Per-hive key the Customers hub import salts GitHub login hashes with (label `hive-customer-match-v1`). Never the heartbeat bearer. Without it and without `HIVE_HUB_SECRET` the import asks nothing. |
 | `HIVE_INVITE_KEY` | No | derived from `HIVE_HUB_SECRET` | Per-hive contributor-invite signing key. Symmetric: the spoke both mints and verifies invite tokens with it. |
 | `HIVE_TERMINAL_KEY` | No | self-derived per-hive from `HIVE_HUB_SECRET` + `HIVE_ID` | Per-hive terminal-assertion signing key. It never falls back to a fleet-uniform key. |
 | `HIVE_SSO_PUBLIC_KEY` | No | none | Ed25519 **public** key a spoke verifies hub-minted SSO handoff tokens with. Holding only the public key, a spoke can verify but cannot mint. |
 | `HIVE_SSO_PUBLIC_KEY_PREV` | No | none | Previous SSO public key, accepted during rotation so a spoke bridges a hub key change. |
 | `HIVE_SSO_KEY` | No | none | Legacy symmetric SSO key, still read for one release so spokes on a pre-cutover Deployment keep working. |
-| `HIVE_SESSION_PUBLIC_KEY` | No | none | Ed25519 **public** key (exactly 64 hex characters) the spoke's Node proxy (`src/proxy/server.js`) verifies hub-minted session cookies with. Set at provisioning and kept converged by the hub's per-hive env reconcile sweep (`pkg/hub/perhive_env_reconcile.go`) — do not hand-edit it on hosted spokes. |
+| `HIVE_SESSION_PUBLIC_KEY` | No | none | Ed25519 **public** key (exactly 64 hex characters) the spoke's Node proxy (`src/proxy/server.js`) verifies hub-minted session cookies with. Set at provisioning and kept converged by the hub's per-hive env reconcile sweep (`pkg/hub/perhive_env_reconcile.go`) — do not hand-edit it on hosted spokes. The proxy also reads it as the signal that the hive is hub-hosted, which decides whether `HIVE_DASHBOARD_TOKEN` is required. |
 | `HIVE_SESSION_PUBLIC_KEY_PREV` | No | none | Previous-generation session public key, also accepted by the proxy so terminal sessions keep verifying while a hub key rotation's reconcile sweep walks the fleet (`pkg/hub/hub_pubkey_generations.go`). A deliberately separate variable — a `<hex>,<hex>` list in the primary would be silently truncated by Node and rejected by the Go verifier. Unset on an un-rotated fleet. |
 
 ### Hub login providers
