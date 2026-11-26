@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
@@ -29,7 +30,7 @@ func forgejoSweepTestConfig() *config.Config {
 				{Repo: "gadgets", Forge: config.ForgeGitea, ForgeURL: "https://gitea.example.com"},
 			},
 		},
-		Forgejo: config.ForgejoConfig{URL: "https://forgejo.example.com", TokenEnv: testForgejoTokenEnv},
+		Forgejo: config.ForgejoConfig{URL: "https://forgejo.example.com", ForgeTokens: cruxconfig.ForgeTokens{TokenSource: cruxconfig.TokenSource{TokenEnv: testForgejoTokenEnv}}},
 	}
 	cfg.Governor.Labels.AutoMerge = "lgtm"
 	cfg.Governor.Labels.Exempt = []string{"meta-tracker"}

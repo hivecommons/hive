@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -4002,7 +4003,11 @@ func (b *boot) bootPoliciesWith(deps bootPoliciesDeps) {
 func (b *boot) bootWatchers() { b.bootWatchersWith(defaultBootWatchersDeps()) }
 
 func syncForgeCredentialEnv(cfg *config.Config) {
-	cruxconfig.AddExtraCredentialEnvVars(cfg.GitLab.TokenEnvName(), cfg.Gitea.TokenEnvName(), cfg.Forgejo.TokenEnvName())
+	cruxconfig.AddExtraCredentialEnvVars(slices.Concat(
+		cfg.GitLab.Credentials().EnvNames(),
+		cfg.Gitea.Credentials().EnvNames(),
+		cfg.Forgejo.Credentials().EnvNames(),
+	)...)
 }
 
 // bootWatchersWith is bootWatchers with its long-lived effects injected; see

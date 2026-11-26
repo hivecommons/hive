@@ -40,5 +40,5 @@ func (c *Config) ForgejoSharedWriteTokenWarning() string {
 		return ""
 	}
 	return fmt.Sprintf("forgejo.integration is not set, so git on every Forgejo repo uses the %s token for every token tier, the read-only tiers (advisor, shared-uid-read) included: those agents' clones can push with a write token. Set forgejo.integration to give each tier its own short-lived token (docs/forge-app-setup.md, \"Forgejo git credentials\").",
-		c.Forgejo.TokenEnvName())
+		c.Forgejo.Credentials().Governor().TokenEnv)
 }

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
@@ -21,8 +21,8 @@ import (
 //   - "github" (and unset, the default): ghClient itself. No adapter is
 //     interposed, so the GitHub path is byte-for-byte what it was before.
 //   - "gitlab" / "gitea" / "forgejo": the corresponding pkg/forge adapter,
-//     built from the already-present config (instance URL + the env var
-//     named by token_env).
+//     built from the already-present config (instance URL + the token
+//     from token_env or token_file).
 //
 // It falls back to ghClient on any construction failure — a Gitea forge with no
 // URL set, an unparseable instance URL, a forge kind this build does not know.
@@ -65,17 +65,17 @@ func forgeForRepo(cfg *config.Config, repo string, ghClient *github.Client, logg
 	var (
 		kind    forge.Kind
 		baseURL string
-		tokenID string
+		gov     cruxconfig.TokenSource
 	)
 	switch k := cfg.ForgeKindForRepo(repo); k {
 	case config.ForgeGitHub:
 		return fallback()
 	case config.ForgeGitLab:
-		kind, baseURL, tokenID = forge.KindGitLab, cfg.ForgeURLForRepo(repo), cfg.GitLab.TokenEnvName()
+		kind, baseURL, gov = forge.KindGitLab, cfg.ForgeURLForRepo(repo), cfg.GitLab.Credentials().Governor()
 	case config.ForgeGitea:
-		kind, baseURL, tokenID = forge.KindGitea, cfg.ForgeURLForRepo(repo), cfg.Gitea.TokenEnvName()
+		kind, baseURL, gov = forge.KindGitea, cfg.ForgeURLForRepo(repo), cfg.Gitea.Credentials().Governor()
 	case config.ForgeForgejo:
-		kind, baseURL, tokenID = forge.KindForgejo, cfg.ForgeURLForRepo(repo), cfg.Forgejo.TokenEnvName()
+		kind, baseURL, gov = forge.KindForgejo, cfg.ForgeURLForRepo(repo), cfg.Forgejo.Credentials().Governor()
 	default:
 		logger.Warn("unknown project.forge; falling back to the GitHub client",
 			"forge", k, "repo", repo, "known", config.KnownForgeKinds)
@@ -91,14 +91,20 @@ func forgeForRepo(cfg *config.Config, repo string, ghClient *github.Client, logg
 		return nil
 	}
 
-	// The token is read from the environment by name, never from config: the
-	// no-hardcoded-secrets rule is why config carries token_env rather than the
-	// secret itself. An empty value is passed through on GitLab and Gitea; GitLab
-	// rejects it with a 401 whose message names the real problem. Forgejo answers a
-	// private repo with a 404 instead, so an empty Forgejo token builds no
-	// writer (requireForgeToken), and does not fall back to GitHub either.
-	token := os.Getenv(tokenID)
-	if err := requireForgeToken(kind, tokenID, token); err != nil {
+	// The token is read from the environment by name or from token_file, never
+	// from config itself: the no-hardcoded-secrets rule is why config carries
+	// token_env and token_file rather than the secret. A bad token_file is a
+	// config error and builds no writer. An unset env var passes an empty
+	// token through on GitLab and Gitea; GitLab rejects it with a 401 whose
+	// message names the real problem. Forgejo answers a private repo with a
+	// 404 instead, so an empty Forgejo token builds no writer
+	// (requireForgeToken), and does not fall back to GitHub either.
+	token, tokenSource, err := gov.Resolve()
+	if err != nil {
+		logger.Error("forge token unavailable; no writer built", "forge", kind, "repo", repo, "error", err)
+		return nil
+	}
+	if err := requireForgeToken(kind, tokenSource, token); err != nil {
 		logger.Error("forge token unset; no writer built", "forge", kind, "repo", repo, "error", err)
 		return nil
 	}
@@ -108,7 +114,7 @@ func forgeForRepo(cfg *config.Config, repo string, ghClient *github.Client, logg
 	})
 	if err != nil {
 		logger.Warn("forge adapter unavailable; falling back to the GitHub client",
-			"forge", kind, "repo", repo, "token_env", tokenID, "error", err)
+			"forge", kind, "repo", repo, "token_source", tokenSource, "error", err)
 		return fallback()
 	}
 	return f
@@ -169,14 +175,14 @@ var newForgeMerger = func(kind forge.Kind, token string, opts forge.Options) (fo
 // client could never succeed and must not be attempted.
 func forgeMergerForRepo(cfg *config.Config, repo string) (forge.Merger, error) {
 	var kind forge.Kind
-	var tokenID string
+	var gov cruxconfig.TokenSource
 	switch cfg.ForgeKindForRepo(repo) {
 	case config.ForgeGitLab:
-		kind, tokenID = forge.KindGitLab, cfg.GitLab.TokenEnvName()
+		kind, gov = forge.KindGitLab, cfg.GitLab.Credentials().Governor()
 	case config.ForgeGitea:
-		kind, tokenID = forge.KindGitea, cfg.Gitea.TokenEnvName()
+		kind, gov = forge.KindGitea, cfg.Gitea.Credentials().Governor()
 	case config.ForgeForgejo:
-		kind, tokenID = forge.KindForgejo, cfg.Forgejo.TokenEnvName()
+		kind, gov = forge.KindForgejo, cfg.Forgejo.Credentials().Governor()
 	default:
 		return nil, nil
 	}
@@ -184,8 +190,11 @@ func forgeMergerForRepo(cfg *config.Config, repo string) (forge.Merger, error) {
 	if err := cfg.CheckForgeTokenHost(repo); err != nil {
 		return nil, err
 	}
-	token := os.Getenv(tokenID)
-	if err := requireForgeToken(kind, tokenID, token); err != nil {
+	token, source, err := gov.Resolve()
+	if err != nil {
+		return nil, fmt.Errorf("forge %s: %w", kind, err)
+	}
+	if err := requireForgeToken(kind, source, token); err != nil {
 		return nil, err
 	}
 	return newForgeMerger(kind, token, forge.Options{
