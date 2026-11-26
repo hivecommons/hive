@@ -67,6 +67,16 @@ type MergeVerdict struct {
 	// It changes no merge bucket and no reason; the hand-merge marking and the
 	// dashboard's waiting-on-the-author wording read it.
 	ReviewChangesRequested bool `json:"review_changes_requested,omitempty"`
+	// CIReportingStall is the stalled observation behind a verdict whose
+	// reason is the hive's own ci-reporting-stalled reason: GitHub still
+	// reports a required check unfinished after its Actions job finished,
+	// confirmed past the propagation grace on this head (CIReportingStallFor).
+	// The classifier sets it only when the reason it records is that stall,
+	// read from the evaluation's structured observation, never parsed from
+	// reason text (a check name a contributor chose can appear there). It
+	// changes no merge bucket, state or reason; only the dashboard's
+	// your-turn decision reads it.
+	CIReportingStall *CIReportingObservation `json:"ci_reporting_stall,omitempty"`
 }
 
 // MergeVerdictKey is the map key the governor records verdicts under and the
