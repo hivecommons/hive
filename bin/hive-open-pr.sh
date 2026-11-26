@@ -57,7 +57,9 @@ set -euo pipefail
 
 REQ_DIR="${HIVE_OPEN_PR_REQ_DIR:-/var/run/hive-metrics/pr-requests}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ISSUE_COAUTHOR="${SCRIPT_DIR}/../src/scripts/issue-coauthor.sh"
+# The agent image ships the helper at /usr/local/bin/issue-coauthor; a checkout
+# of this repository runs it from src/scripts. Kept on one line so tests can stub it.
+ISSUE_COAUTHOR="$(if [ -f /usr/local/bin/issue-coauthor ]; then echo /usr/local/bin/issue-coauthor; else echo "${SCRIPT_DIR}/../src/scripts/issue-coauthor.sh"; fi)"
 
 extract_closing_issue_numbers() {
   if ! command -v python3 >/dev/null 2>&1; then
@@ -147,7 +149,7 @@ check_issue_author_coauthors() {
       continue
     fi
     echo "hive-open-pr: WARN: HEAD is missing issue #${issue} trailer: ${trailer}" >&2
-    echo "hive-open-pr: WARN: add it before pushing (for example: src/scripts/issue-coauthor.sh --amend ${issue})" >&2
+    echo "hive-open-pr: WARN: add it before pushing (for example: issue-coauthor --amend ${issue}, or src/scripts/issue-coauthor.sh --amend ${issue} in a checkout of this repository)" >&2
   done <<EOF_COAUTHOR_ISSUES
 $(printf '%s' "$body" | extract_closing_issue_numbers)
 EOF_COAUTHOR_ISSUES

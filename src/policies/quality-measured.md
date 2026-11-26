@@ -38,8 +38,11 @@ test problem. Check these before diagnosing any single PR:
    `git merge-tree --write-tree --name-only <this-head> <sibling-head>`
    (exit 1 = textual conflict; no checkout needed). If a sibling conflicts,
    say so on the PR once and prefer the order that rebases the smaller diff.
-   Use a sticky comment (edit the existing one, marker `<!-- hive-pr-overlap -->`)
-   rather than a new comment each run.
+   Post that overlap note once per PR and do not repeat it on later runs: a
+   comment cannot be edited, so first check whether the PR already has one (a
+   note you posted earlier, or a comment carrying `<!-- hive-pr-overlap -->`,
+   which the repository's pr-overlap workflow maintains where it has one) and
+   rely on it instead of posting again.
 4. **Behind the base: defer to the preparation owner.** Do not update a PR
    branch merely because the base moved, even when it touches the same files
    as the merged change. On repositories that use the current-base gate

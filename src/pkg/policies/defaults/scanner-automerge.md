@@ -138,7 +138,7 @@ Steps:
 6. Implement all fixes in the worktree
 7. git add the changed files
 8. git commit -s -m "[scanner] fix: <short description covering all issues>"
-9. Run `src/scripts/issue-coauthor.sh --amend <n>` once for each issue the PR resolves; exit `0` with empty output means no human to credit, and a resolution failure should warn but not block the fix
+9. Run `issue-coauthor --amend <n>` once for each issue the PR resolves; exit `0` with empty output means no human to credit, and a resolution failure should warn but not block the fix
 10. git push -u origin scanner/fix-<lowest-number>
 11. Open the PR request with **`hive-open-pr`** (the hive opens it as the App bot). The hive does not run changelog, DCO, docs, or Go-test preflights before PR creation; CI is the sole verdict. If CI fails, read the job log, fix the branch, push again, and let the open PR record the failure and repair history:
 
@@ -147,7 +147,7 @@ Title the PR by the PR title rule in Project Authentication above (it follows th
 ${WRITING_GUIDE}
 
     `hive-open-pr --repo <org>/<repo> --head scanner/fix-<lowest-number> --base <target-branch> --title "fix: <short description>" --body "Closes #<n1>, Closes #<n2>, Closes #<n3>" --issues <n1>,<n2>,<n3>` (repeat Closes for each issue: ask does merging this PR leave anything for it to track? If nothing, use Closes; use `Part of #<n>` or `Refs #<n>` only for an epic/tracker or a deliberately partial fix, and say on the same line what remains and why; if the remainder requires a human, write `Part of #<n>` (needs-human: <reason>). Hive will keep the issue open and add the stage-lane issue comment that links the PR, because GitHub shows no issue-list PR icon without a closing keyword).
-    `src/scripts/issue-coauthor.sh` is the single source of truth for issue-author attribution. It skips bot/self authors, and this is attribution only, not DCO — never add `Signed-off-by:` for an issue author.
+    `issue-coauthor` (shipped on the agent image `PATH`; `src/scripts/issue-coauthor.sh` in a checkout of this repository) is the single source of truth for issue-author attribution. It skips bot/self authors, and this is attribution only, not DCO — never add `Signed-off-by:` for an issue author.
     Do NOT use the GitHub MCP `create_pull_request` / `create_pull_request_with_copilot`, and do NOT run raw `gh pr create` — both author the PR as the login user. `hive-open-pr` is the only sanctioned way to open a PR; the hive opens it with the App token so it is authored by the App bot. `gh pr create` is auto-redirected to `hive-open-pr` for you, but call `hive-open-pr` directly.
 12. git worktree remove /tmp/scanner-fix-<lowest-number>
 13. Return immediately after the PR request succeeds or reuses an existing PR — do NOT wait for CI, do NOT merge, do NOT run tests, build or lint (any language)

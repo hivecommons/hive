@@ -867,6 +867,10 @@ COPY bin/hive-review.sh /usr/local/bin/hive-review
 COPY bin/hive-topic.sh /usr/local/bin/hive-topic
 COPY bin/hive-push-branch.sh /usr/local/bin/hive-push-branch
 COPY bin/hive-baseline-check.sh /usr/local/bin/hive-baseline-check.sh
+# issue-coauthor prints the Co-authored-by trailer that credits an issue's
+# author. Default policies tell agents to run `issue-coauthor --amend <n>`, and
+# hive-open-pr uses it to check the trailer; it needs only bash, gh and git.
+COPY src/scripts/issue-coauthor.sh /usr/local/bin/issue-coauthor
 COPY bin/gh-wrapper.sh /usr/local/bin/gh
 # Compact `gh --json` projections for the common read verbs (#12127); runs the
 # wrapper above, so every gate still applies — it is a projection, not a bypass.
@@ -880,7 +884,7 @@ RUN chmod +x /usr/local/bin/ttyd-tmux.sh /usr/local/bin/hive-panes /usr/local/bi
     /usr/local/bin/hive-config.sh /usr/local/bin/agent-launch.sh /usr/local/bin/gh /usr/local/go/bin/go \
     /usr/local/bin/git-credential-hive.sh /usr/local/bin/hive-open-pr /usr/local/bin/hive-open-issue /usr/local/bin/hive-merge /usr/local/bin/hive-review /usr/local/bin/hive-topic \
     /usr/local/bin/hive-push-branch /usr/local/bin/hive-gh \
-    /usr/local/bin/hive-baseline-check.sh
+    /usr/local/bin/hive-baseline-check.sh /usr/local/bin/issue-coauthor
 
 # SECURITY (#4045): interactive-shell arm of the agent credential scrub.
 # BASH_ENV (exported by agent-launch.sh) only reaches NON-interactive shells;

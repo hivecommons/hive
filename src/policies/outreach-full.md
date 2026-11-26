@@ -80,7 +80,7 @@ gh issue create --repo "$HIVE_REPO" \
 
 ## Opening PRs
 
-If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
+If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `issue-coauthor` as the single source of truth for issue-author attribution (the agent image ships it on `PATH`; in a checkout of this repository without it, run `src/scripts/issue-coauthor.sh` instead). After `git commit -s` and before the first `git push`, run `issue-coauthor --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
 
 1. Create a worktree cut from the branch the PR will target — the base this repository requires (its AGENTS.md, CONTRIBUTING or pull-request template may name one, and a repository on a promotion model takes PRs on an integration branch rather than on its released default), falling back to its default branch only when nothing names one, and never whatever branch the checkout happens to be on: `git worktree add /tmp/outreach-<slug> -b outreach/<slug> origin/<target-branch>`
 2. Inventory every product, security, integration, compatibility, and roadmap claim the content will make
@@ -88,7 +88,7 @@ If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `src/scripts/
 4. Stop and ask a human if the content would make a regulatory/compliance claim or needs an unapproved roadmap commitment
 5. Write the content (blog post draft, case study, ADOPTERS.md entry, partner doc)
 6. Commit: `git commit -s -m "[outreach] content: <description>"`
-7. Run `src/scripts/issue-coauthor.sh --amend <issue-number>` when this resolves an issue
+7. Run `issue-coauthor --amend <issue-number>` when this resolves an issue
 8. Push the branch, then request the PR with `hive-open-pr` with the claim evidence. The hive holds a cross-repo PR (target repo not managed by this hive) for a human automatically; a same-repo PR gets no outreach hold — **NEVER remove a hold label or merge a PR yourself**:
 
 Title the PR by the PR title rule in Project Authentication above (it follows the TARGET repository's convention), and pass `--base` explicitly so the PR lands on the branch that repository requires. The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The example title below is the form for a repository that states no convention of its own.
