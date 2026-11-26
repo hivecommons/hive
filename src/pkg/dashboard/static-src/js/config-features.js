@@ -283,6 +283,7 @@
       setTimeout(() => { if (typeof loadReviewRulesSettings === 'function') loadReviewRulesSettings(); }, 0);
       /* Stranded review-feedback retry (#19320): its own owner-only endpoint. */
       setTimeout(() => { if (typeof loadReviewRetrySettings === 'function') loadReviewRetrySettings(); }, 0);
+      setTimeout(() => { if (typeof loadChatConfigAssistSettings === 'function') loadChatConfigAssistSettings(); }, 0);
       // Status line: distinguish ON+running from ON+not-configured from OFF.
       let trajStatus, trajStatusColor;
       if (!trajOn) { trajStatus = 'Off'; trajStatusColor = 'var(--muted)'; }
@@ -1140,6 +1141,13 @@
             <div class="config-field"><label>Posture history (days) ${yamlHint('compliance.posture_checks.history_days')} ${settingHelpMark('settings', 'features', 'Posture history', `How long posture-check results are kept, 30 to 1095 days. 0 uses the default (${esc(String(platformDefaults.compliancePostureHistoryDays || 365))}).`)}</label><input type="number" min="0" max="1095" step="1" value="${esc(String(f.compliancePostureHistoryDays || ''))}" placeholder="${esc(String(platformDefaults.compliancePostureHistoryDays || 365))}" data-change-action="markDirty" data-arg0="features" data-arg1="compliancePostureHistoryDays" data-arg-types="s,s,N"></div>
           </div>
           <div class="config-help">Applies on the next posture pass.</div>
+        </div>
+        `)}
+
+        ${featuresSectionHtml('chat', `
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Config assist ${yamlHint('chat.config_assist')} ${settingHelpMark('settings', 'features', 'Config assist', `Lets Hive Chat propose config changes (model, reasoning effort, cadence) for an owner to confirm, instead of only answering questions. Owner-only; persisted and audited as config_chat_assist.`)}</div>
+          <div id="cfg-chat-assist-host"><div class="fs-sm text-muted">Loading…</div></div>
         </div>
         `)}
 
