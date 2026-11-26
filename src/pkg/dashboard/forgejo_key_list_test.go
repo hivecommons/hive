@@ -10,10 +10,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/hivecommons/hive/crux/forgejwt"
 	"github.com/hivecommons/hive/pkg/config"
@@ -176,27 +177,47 @@ func TestForgejoKeyListGetOnly(t *testing.T) {
 	}
 }
 
-func TestForgejoKeyListRateLimitedPerClient(t *testing.T) {
-	s, _ := keyListServer(t, true)
-	const client = "203.0.113.7:4000"
-	for i := range forgejoKeyListBurst {
-		if rec := getKeyList(s, http.MethodGet, forgejoKeyListRoute, client); rec.Code != http.StatusOK {
-			t.Fatalf("request %d = %d, want 200 within the burst", i, rec.Code)
+// A cached document is served to every request, however many: limiting
+// those would let one anonymous client behind the same proxy as Forgejo
+// keep Forgejo's fetch on 429. Only re-reading the key files is limited.
+func TestForgejoKeyListRateLimitsRendersNotCachedHits(t *testing.T) {
+	s, in := keyListServer(t, true)
+	// Two renders allowed, then none: deterministic, no clock involved.
+	s.forgejoKeys.renders = rate.NewLimiter(0, 2)
+	const many = 200
+	for i := range many {
+		if rec := getKeyList(s, http.MethodGet, forgejoKeyListRoute, "203.0.113.7:4000"); rec.Code != http.StatusOK {
+			t.Fatalf("cached request %d = %d, want 200", i, rec.Code)
 		}
 	}
-	rec := getKeyList(s, http.MethodGet, forgejoKeyListRoute, client)
-	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" {
-		t.Fatalf("over the burst = %d (Retry-After %q), want 429", rec.Code, rec.Header().Get("Retry-After"))
+	// A changed key file needs a render: one token is left, then none.
+	touch := func(d time.Duration) {
+		at := time.Now().Add(d)
+		if err := os.Chtimes(in.KeyFile, at, at); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if rec := getKeyList(s, http.MethodGet, forgejoKeyListRoute, "198.51.100.9:4000"); rec.Code != http.StatusOK {
-		t.Fatalf("another client = %d, want 200", rec.Code)
+	touch(time.Minute)
+	if rec := getKeyList(s, http.MethodGet, forgejoKeyListRoute, ""); rec.Code != http.StatusOK {
+		t.Fatalf("re-render within budget = %d, want 200", rec.Code)
 	}
-	// The limiter table is bounded.
-	for i := range forgejoKeyListMaxClients + 1 {
-		s.forgejoKeys.allow("client-" + strconv.Itoa(i))
+	touch(2 * time.Minute)
+	rec := getKeyList(s, http.MethodGet, forgejoKeyListRoute, "")
+	if rec.Code != http.StatusTooManyRequests || rec.Header().Get("Retry-After") == "" || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("re-render over budget = %d (Retry-After %q, Cache-Control %q), want an uncached 429", rec.Code, rec.Header().Get("Retry-After"), rec.Header().Get("Cache-Control"))
 	}
-	if n := len(s.forgejoKeys.limiters); n > forgejoKeyListMaxClients {
-		t.Fatalf("limiter table holds %d clients, cap %d", n, forgejoKeyListMaxClients)
+}
+
+// On an open spoke (no dashboard auth) the paths are not public through
+// isPublicPath at all, and with the setting off the handler answers 404
+// rather than letting the static catch-all serve something.
+func TestForgejoKeyListOffOnOpenSpokeIs404(t *testing.T) {
+	s, _ := keyListServer(t, false)
+	s.authToken = ""
+	for _, path := range []string{forgejoDiscoveryRoute, forgejoKeyListRoute} {
+		if rec := getKeyList(s, http.MethodGet, path, ""); rec.Code != http.StatusNotFound {
+			t.Fatalf("open spoke, serve off: GET %s = %d, want 404", path, rec.Code)
+		}
 	}
 }
 

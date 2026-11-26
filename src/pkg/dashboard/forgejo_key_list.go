@@ -1,9 +1,9 @@
 package dashboard
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -29,6 +29,9 @@ import (
 // setting is on; the hub's publicExactPaths admit them on a hosted spoke so
 // the ingress gate does not bounce Forgejo to a login page, and this handler
 // still 404s there unless the setting is on.
+//
+// A cached document is served to every request; only re-reading the key
+// files is rate limited (forgejoKeyListRenderRate).
 const (
 	forgejoDiscoveryRoute = "/" + forgejwt.DiscoveryPath
 	forgejoKeyListRoute   = "/" + forgejwt.KeyListPath
@@ -38,26 +41,31 @@ const (
 	// intermediary's copy, so a rotation is not held up by it for long.
 	forgejoKeyListMaxAge = time.Minute
 
-	// forgejoKeyListRate and forgejoKeyListBurst bound requests per client
-	// address. Forgejo fetches each document once per CACHE_TTL, so these are
-	// far above any real use.
-	forgejoKeyListRate  = 5
-	forgejoKeyListBurst = 20
-	// forgejoKeyListMaxClients bounds the per-address limiter table; past it
-	// the table is cleared rather than grown.
-	forgejoKeyListMaxClients = 1024
+	// forgejoKeyListRenderRate and forgejoKeyListRenderBurst bound how often
+	// the key files are read and parsed again. Only a request that misses the
+	// cache (a changed key file, or a key that cannot be read) spends a
+	// token; a cached document is always served. Limiting every request
+	// instead would let one anonymous client, sharing a reverse proxy's
+	// address with Forgejo, keep Forgejo's fetch on 429 and so break every
+	// clone and push.
+	forgejoKeyListRenderRate  = 1
+	forgejoKeyListRenderBurst = 5
 	// forgejoKeyListRetryAfterSeconds is the Retry-After of a 429.
 	forgejoKeyListRetryAfterSeconds = 1
 )
 
-// forgejoKeyListState holds the rendered documents and the rate limiter.
+// errKeyListRenderLimited is render's answer when the cache is stale and
+// the render budget is spent.
+var errKeyListRenderLimited = errors.New("forgejo key list: render rate limit reached")
+
+// forgejoKeyListState holds the rendered documents and the render limiter.
 // The zero value is ready to use.
 type forgejoKeyListState struct {
 	mu          sync.Mutex
 	fingerprint string
 	discovery   []byte
 	jwks        []byte
-	limiters    map[string]*rate.Limiter
+	renders     *rate.Limiter
 }
 
 // forgejoServedIntegration returns the forgejo.integration block when it
@@ -90,12 +98,13 @@ func (s *Server) handleForgejoKeyList(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !s.forgejoKeys.allow(clientAddress(r)) {
+	discovery, jwks, err := s.forgejoKeys.render(in, s.keyListLogger())
+	if errors.Is(err, errKeyListRenderLimited) {
 		w.Header().Set("Retry-After", strconv.Itoa(forgejoKeyListRetryAfterSeconds))
+		w.Header().Set("Cache-Control", "no-store")
 		http.Error(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
-	discovery, jwks, err := s.forgejoKeys.render(in, s.keyListLogger())
 	if err != nil {
 		// The error names key paths; it goes to the log only.
 		s.keyListLogger().Warn("forgejo key list: cannot render the served key list; Forgejo will refuse new tokens until it can", "error", err)
@@ -120,35 +129,12 @@ func (s *Server) keyListLogger() *slog.Logger {
 	return slog.Default()
 }
 
-// clientAddress is the request's peer address without the port. Behind a
-// reverse proxy every request shares the proxy's address, so the limit is
-// then per proxy.
-func clientAddress(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
-func (st *forgejoKeyListState) allow(client string) bool {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	if st.limiters == nil || len(st.limiters) >= forgejoKeyListMaxClients {
-		st.limiters = make(map[string]*rate.Limiter)
-	}
-	l, ok := st.limiters[client]
-	if !ok {
-		l = rate.NewLimiter(rate.Limit(forgejoKeyListRate), forgejoKeyListBurst)
-		st.limiters[client] = l
-	}
-	return l.Allow()
-}
-
 // render returns the two documents, rendering them again only when the
 // issuer, the key paths, or any key file's size, mode or modification time has
 // changed, so a request does not parse the keys each time. Replacing a key
-// file, or the boot keystore sweep sealing it in place, re-renders.
+// file, or the boot keystore sweep sealing it in place, re-renders. A
+// re-render spends a token of the render limiter; with none left it returns
+// errKeyListRenderLimited.
 func (st *forgejoKeyListState) render(in *config.ForgejoIntegrationConfig, logger *slog.Logger) (discovery, jwks []byte, err error) {
 	current := strings.TrimSpace(in.KeyFile)
 	previous := in.PreviousKeyPaths()
@@ -157,6 +143,12 @@ func (st *forgejoKeyListState) render(in *config.ForgejoIntegrationConfig, logge
 	defer st.mu.Unlock()
 	if st.fingerprint == fp && st.jwks != nil {
 		return st.discovery, st.jwks, nil
+	}
+	if st.renders == nil {
+		st.renders = rate.NewLimiter(rate.Limit(forgejoKeyListRenderRate), forgejoKeyListRenderBurst)
+	}
+	if !st.renders.Allow() {
+		return nil, nil, errKeyListRenderLimited
 	}
 	iss, err := forgejwt.ParseIssuer(in.IssuerOrigin())
 	if err != nil {

@@ -379,15 +379,15 @@ When the spoke serves the key list itself (`serve_key_list: true`, see
 same order becomes:
 
 1. Write the new key to its own path and add that path to
-   `previous_key_files`, leaving `key_file` on the old key, and apply the
-   config. `previous_key_files` only publishes a key and never signs with
+   `previous_key_files`, leaving `key_file` on the old key, and restart the
+   hive so it reads the new config. `previous_key_files` only publishes a key and never signs with
    it, so the served list now holds both keys and tokens are still signed
    with the old one.
 2. Wait longer than Forgejo's `CACHE_TTL`, plus the one-minute
    `Cache-Control` max-age of the served list if a cache sits in front of the
    spoke.
-3. Point `key_file` at the new key and `previous_key_files` at the old one.
-   New tokens are signed with the new key, and both still verify.
+3. Point `key_file` at the new key and `previous_key_files` at the old one,
+   and restart the hive. New tokens are signed with the new key, and both still verify.
 4. One hour after step 3, remove the old key from `previous_key_files`.
 
 The served list re-reads a key file when its size, mode or modification
@@ -470,18 +470,20 @@ forgejo:
 
 - The dashboard then answers `GET /.well-known/openid-configuration` and
   `GET /jwks.json` with no login. They are the only anonymous paths this
-  adds, and only while `serve_key_list` is on; with it off both answer 404
-  like any unknown path. A hosted spoke's ingress passes the two paths
+  adds, and only while `serve_key_list` is on. With it off, both answer 404
+  to a signed-in caller and the usual sign-in response to anyone else. A hosted spoke's ingress passes the two paths
   through to the spoke the same way.
 - Both documents are rendered from `key_file` and `previous_key_files` and
   hold public keys only: the modulus and exponent of each key, its key ID,
   the issuer and the `jwks_uri`. No private key material and no file path is
   served.
 - The routes serve GET only, with `Content-Type: application/json` and
-  `Cache-Control: public, max-age=60`, and are rate limited per client
-  address. Behind a reverse proxy every request shares the proxy's address,
-  so the limit is then shared too; Forgejo fetches each document only once
-  per `CACHE_TTL`.
+  `Cache-Control: public, max-age=60`. The rendered documents are cached, and
+  a cached document is served to every request. Only re-reading the key
+  files, after one changes or while one cannot be read, is rate limited, and
+  a request over that limit gets 429. Limiting every request would let one
+  anonymous client behind the same reverse proxy as Forgejo keep Forgejo's
+  fetch on 429.
 - If `key_file` cannot be read, both paths answer 503 and the dashboard logs
   why, and Forgejo refuses new tokens once its cached copy expires. A
   `previous_key_files` entry that cannot be read is left out of the list and
