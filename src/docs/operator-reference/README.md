@@ -549,8 +549,13 @@ fallback when the approval sweep is off or refused:
   posts no hand-off for that head. Every other case keeps the hand-off; see
   [hive-merge.md](../hive-merge.md#dependency-bot-prs-that-need-a-code-change).
   With `auto_merge.dependency_bot_red_issue.enabled` on (default off), a
-  red-CI hand-off whose failing required checks fail on no other open PR and
-  all pass on the base tip in runs newer than the failure also files one
+  red-CI hand-off whose failing required checks no other open PR fails for
+  the same cause (both PRs without the repository's secrets, or the same
+  failure-level annotation message, warnings and generic lines aside; with
+  no message on one side, the two failed jobs' logs sharing an error line
+  or either having none, compared in memory only; a check name alone is not
+  enough) and all pass on the base tip in runs that started after the
+  failure also files one
   issue in the repository (write-back kind `issue_file`) asking for the
   repository change the bump needs, and the hand-off names it, when the
   failure reproduced one of two ways: in-suite (on a head that contains the
@@ -563,7 +568,11 @@ fallback when the approval sweep is off or refused:
   only temporary (budget, a 5xx, 429 or rate limit) is retried, at most 3
   attempts per head; either gets the issue only, and only while the
   `needs-human` label events still show the App's own label. Any other 4xx
-  is final. At most 3 PRs per pass
+  is final. The issue quotes failure annotations only, never a job's log;
+  for a job that left only the exit code it names the job and failed steps
+  and points at the job's log. An open issue a member (not the PR's author)
+  filed about the PR since it opened is named instead of filing another,
+  until it closes with the PR still red. At most 3 PRs per pass
   are checked; no hand-off waits for the filer. One issue per PR and failing
   check set; see
   [hive-merge.md](../hive-merge.md#repository-issues-for-red-dependency-bot-prs).

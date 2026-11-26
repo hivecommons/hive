@@ -531,6 +531,11 @@ func sweepDependencyBotHandoffs(
 					retryRedHead(store, repo, key, pr, out, logger)
 				} else if store.redHeadPending(key, pr.HeadSHA) {
 					store.markRedHeadJudged(key, pr.HeadSHA)
+				} else {
+					// Final under these rules: only a newer rules
+					// version judges the head again
+					// (reopenRedHeadForRules).
+					store.markRedHeadRules(key, pr.HeadSHA)
 				}
 			}
 		}

@@ -1209,6 +1209,14 @@ type PullRequest struct {
 	// so a re-run of the check is a new run the marker does not cover.
 	FailingCheckRunIDs []int64 `json:"-"`
 	CIFailureExcerpt   string  `json:"ci_failure_excerpt,omitempty"`
+	// CIFailureAnnotations is CIFailureExcerpt's failure-level part:
+	// "<check>: <message>" lines from failure annotations only, without
+	// warnings and without the bare exit-code line, with the same caps.
+	// The dependency-bot red-CI issue compares two PRs' failures on it, so
+	// a deprecation warning every run prints never reads as one cause.
+	// Only that in-process filer reads it, so like FailingCheckRunIDs it is
+	// never persisted (last-actionable.json).
+	CIFailureAnnotations string `json:"-"`
 	// CIChecksRunning reports that CI has NOT settled: at least one non-meta
 	// check on the head is still running. It is set alongside a "failure"
 	// CIStatus when a shard has already failed while others report — the
@@ -3084,7 +3092,7 @@ func (c *Client) enrichPRCI(ctx context.Context, pr *PullRequest) map[string]boo
 		// "failed, all done": only the latter means the PR is stuck rather
 		// than still reporting (hivecommons/hive#9472).
 		pr.CIChecksRunning = !allDone
-		pr.CIFailureExcerpt = c.fetchFailureExcerpt(ctx, owner, repoName, failingIDs, failingNames)
+		pr.CIFailureExcerpt, pr.CIFailureAnnotations = c.fetchFailureExcerpts(ctx, owner, repoName, failingIDs, failingNames)
 		pr.HeadTree = c.headTreeOID(ctx, owner, repoName, pr)
 	case allDone:
 		pr.CIStatus = ciStatusSuccess
@@ -3198,8 +3206,18 @@ var exitCodeOnlyAnnotation = regexp.MustCompile(`(?i)^Process completed with exi
 // single noisy shard cannot crowd every other failing check out of the
 // excerpt.
 func (c *Client) fetchFailureExcerpt(ctx context.Context, owner, repo string, runIDs []int64, runNames []string) string {
+	excerpt, _ := c.fetchFailureExcerpts(ctx, owner, repo, runIDs, runNames)
+	return excerpt
+}
+
+// fetchFailureExcerpts is fetchFailureExcerpt plus, from the same
+// annotation reads, the failure-level lines alone (CIFailureAnnotations):
+// no warnings, no bare exit-code line, deduplicated within each run only,
+// so every failing check keeps its own messages.
+func (c *Client) fetchFailureExcerpts(ctx context.Context, owner, repo string, runIDs []int64, runNames []string) (string, string) {
 	seen := map[string]bool{}
 	perRun := make([][]string, 0, len(runIDs))
+	perRunFailures := make([][]string, 0, len(runIDs))
 	for idx, id := range runIDs {
 		if id <= 0 {
 			continue
@@ -3215,13 +3233,30 @@ func (c *Client) fetchFailureExcerpt(ctx context.Context, owner, repo string, ru
 		if idx < len(runNames) {
 			name = runNames[idx]
 		}
-		var msgs []string
+		var msgs, fails []string
+		runSeen := map[string]bool{}
 		for _, a := range anns {
 			level := a.GetAnnotationLevel()
 			if level != "failure" && level != "warning" {
 				continue
 			}
 			msg := strings.TrimSpace(a.GetMessage())
+			if level == "failure" && msg != "" && !runSeen[msg] {
+				runSeen[msg] = true
+				first := msg
+				if nl := strings.IndexByte(first, '\n'); nl > 0 {
+					first = strings.TrimSpace(first[:nl])
+				}
+				if len(first) > 300 {
+					first = strings.ToValidUTF8(first[:300], "")
+				}
+				if !exitCodeOnlyAnnotation.MatchString(first) {
+					if name != "" {
+						first = name + ": " + first
+					}
+					fails = append(fails, first)
+				}
+			}
 			if msg == "" || seen[msg] {
 				continue
 			}
@@ -3255,8 +3290,17 @@ func (c *Client) fetchFailureExcerpt(ctx context.Context, owner, repo string, ru
 		if len(msgs) > 0 {
 			perRun = append(perRun, msgs)
 		}
+		if len(fails) > 0 {
+			perRunFailures = append(perRunFailures, fails)
+		}
 	}
+	return roundRobinExcerpt(perRun), roundRobinExcerpt(perRunFailures)
+}
 
+// roundRobinExcerpt fills up to excerptMaxLines lines and excerptMaxChars
+// characters from perRun, one line per run before any run contributes a
+// second.
+func roundRobinExcerpt(perRun [][]string) string {
 	var lines []string
 	total := 0
 	for round := 0; len(lines) < excerptMaxLines; round++ {
