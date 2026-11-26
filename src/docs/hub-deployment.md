@@ -36,7 +36,7 @@ Use ReadWriteMany storage for hosted spoke PVCs. The provisioning template in `p
 | `HIVE_MODE=hub` | Yes | Selects hub mode. |
 | `HIVE_HUB_PORT` | No | Defaults to `3001`. Set to `80` for the published hub image contract if needed. |
 | `HIVE_CONFIG` or `--config` | No | Defaults to `/etc/hive/hive.yaml`; `Dockerfile.hub` passes `--config /etc/hive/hive.yaml`. |
-| `HIVE_HUB_SECRET` | Strongly recommended | Master secret from which heartbeat bearers and per-hive keys derive. If unset, the hub reads `/data/saas/hub-secret.key` when present. The hub additionally maintains a rotation generation set alongside it — see [security-model.md](security-model.md#9-platform-and-supply-chain); rotate via the admin endpoint, never by swapping the master in place. |
+| `HIVE_HUB_SECRET` | Strongly recommended | Master secret from which heartbeat bearers and per-hive keys derive. If unset, the hub reads `/data/saas/hub-secret.key` when present. The hub additionally maintains a rotation generation set alongside it — see [security-model.md](security-model.md#9-platform-and-supply-chain); rotate via the admin endpoint, never by swapping the master in place. Rotation does not reach spokes the hub cannot patch with kubectl; see [Master rotation and spokes that hold only derived keys](#master-rotation-and-spokes-that-hold-only-derived-keys). |
 | `HIVE_HUB_OAUTH_CLIENT_ID` / `HIVE_HUB_OAUTH_CLIENT_SECRET` | Enables **GitHub** login | These two enable the GitHub provider specifically. Human login is multi-provider: Google, IBMid, Red Hat, Microsoft Entra ID, and a generic OIDC slot are each enabled independently via `HIVE_HUB_OIDC_<PROVIDER>_CLIENT_ID` (+ `_CLIENT_SECRET`, `_ISSUER`, `_SCOPES`, `_DISPLAY` — see [env-vars.md](env-vars.md#hub-login-providers)). With two or more providers configured the hub shows a provider picker at `/login`; with exactly one it redirects straight into it; with none it logs OAuth disabled and registers no login routes. A provider with a client id but a missing/invalid issuer is silently skipped (check the `hub login enabled providers=` startup log line). |
 | `HIVE_GITHUB_TOKEN` or GitHub App config | Required for operations that call GitHub | Same GitHub auth rules as a spoke. |
 | `HIVE_HUB_SLACK_BOT_TOKEN`, `HIVE_NTFY_SERVER`, `HIVE_NTFY_TOPIC` | No | Optional hub notifications. |
@@ -87,6 +87,26 @@ env:
 ```
 
 Without `HIVE_HUB_SECRET`, a protected hub returns `401 unauthorized`, the spoke logs `hub heartbeat rejected status=401`, and the hub shows the hive offline. This matches the gotcha in `manual-provisioning.md`.
+
+### Master rotation and spokes that hold only derived keys
+
+A spoke can run without the master: give it the per-hive keys the hub derives (`HIVE_HEARTBEAT_KEY`, `HIVE_SSO_PUBLIC_KEY`, `HIVE_TERMINAL_KEY`, `HIVE_INVITE_KEY`, `HIVE_CUSTOMER_MATCH_KEY`) instead of `HIVE_HUB_SECRET`. This section describes what the code does when the hub master is rotated for such a spoke. In short, **there is no supported rotation procedure for a spoke that the hub cannot reach with kubectl.**
+
+**What a rotation changes.** `POST /api/saas/admin/rotate-master-key` generates a new master and writes the generation set to `/data/saas/hub-generations.json`. It never rewrites `HIVE_HUB_SECRET` or `/data/saas/hub-secret.key`. Once the generations file exists, the hub loads the current master from it, and `HIVE_HUB_SECRET` is used only when the file does not exist. After a rotation, `HIVE_HUB_SECRET` therefore still holds the old master, which is now the previous generation.
+
+- The previous generation keeps verifying for seven days (`verify_until`), and at most two generations are live. When the window ends, the previous generation is retired.
+- A second rotation inside eight hours is refused unless the request sets `force`.
+- Keys derived from `HIVE_HUB_SECRET` after a rotation are previous-generation keys. They stop verifying when that generation retires.
+
+**How spokes get the new keys.** The only delivery path is the per-hive env reconcile sweep. Every 15 minutes, it reads the spoke's `hive` Deployment with kubectl and patches the derived keys into its env. It covers only hives the hub has a SaaS record for, on clusters the hub can reach. Pull-only and unreachable clusters are skipped. A spoke whose keys an operator copied into its environment by hand gets nothing from a rotation.
+
+**Rotation is refused when the sweep cannot see the whole fleet.** The endpoint refuses to rotate unless the last sweep considered at least one hive and reached every hive it considered. `force` does not override this check. A hub with no kubectl access to its spokes, or with no hub-provisioned hives, cannot rotate through the endpoint at all, so its master stays on the current generation.
+
+**Where to read the current keys.** Nowhere. No hub route or CLI returns the master or a per-hive key. `GET /api/saas/admin/key-generations` returns generation IDs, timestamps and the persist path only, and the rotate response carries no key material. Do not replace the master in place to get around this; that strands every spoke, as [security-model.md](security-model.md) says.
+
+**`HIVE_HEARTBEAT_KEY_PREVIOUS` covers the keystore only.** The spoke's secrets keystore reads it as decrypt-only key material, so secrets sealed under an old heartbeat key stay readable after that key changes. The heartbeat bearer, SSO, session, terminal, invite and customer-match checks do not read it, and the hub never sets it. Copying an old heartbeat key into it does not keep a spoke's heartbeat working.
+
+Delivering a new master to a spoke the hub cannot patch exists only as a design, in [design/master-delivery-wrapped.md](design/master-delivery-wrapped.md). Until it is built, a spoke that holds only derived keys needs its keys updated by hand after a rotation, and an operator has no hub-supported way to obtain them.
 
 ### Customer profile sharing
 
