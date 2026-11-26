@@ -5,25 +5,26 @@
 #   kubejob: creating the bridge token Secret for hive-kick-<agent>-<unix>:
 #   POST /api/v1/namespaces/<ns>/secrets: HTTP 403: secrets is forbidden: ...
 #
-# What each rule is for:
-#  - secrets create, delete: the per-Job bridge token Secret.
-#  - networkpolicies create, delete: the per-Job NetworkPolicy.
+# Only the verbs the copy transport uses, and nothing to read or remove:
+#  - secrets create: the per-Job bridge token Secret.
+#  - networkpolicies create: the per-Job NetworkPolicy that admits only hive's
+#    pod to the bridge port.
 #  - jobs patch: the Job is created suspended so the Secret and the policy can
 #    name it as their owner, then resumed with a patch.
+# There is no delete, get, list, watch or update on Secrets or NetworkPolicies.
+# Both objects carry an ownerReference to their Job, and hive deletes the Job
+# with Background propagation, so the garbage collector removes them with it
+# (also after a hive restart, or when the Job's TTL removes it).
 #
-# Read what they allow before you bind them. RBAC cannot scope `create` by
-# name and `delete` takes no resourceNames, so these apply to EVERY Secret and
-# EVERY NetworkPolicy in the namespace:
-#  - NetworkPolicies are additive. `create` lets the holder add a policy with
-#    podSelector: {} that opens ingress and egress for every pod, which
-#    overrides default-deny. `delete` lets it remove the operator's own
-#    policies by name.
-#  - `delete` on Secrets removes any Secret by name (hive-secrets, a GitHub
-#    App key, an env_from_secrets Secret), and with `create` it can recreate it
-#    with other contents.
-# Argo CD self-heal restores a deleted object it manages, but does not prune
-# one it does not track. sandbox-job-copy-admission.yaml limits the hive
-# service account to the objects hive itself creates.
+# What remains, so you can weigh it: RBAC cannot scope `create` by name
+# (resourceNames does not apply to create), and the Job names are generated
+# per run, so `create` and `patch` here are namespace-wide. A holder could
+# create a Secret or a NetworkPolicy of its choosing (an allow-all policy
+# overrides default-deny) and patch any Job. sandbox-job-copy-admission.yaml
+# closes that: it is enforcing (Deny), limits hive's service account to
+# hive-kick-* objects with hive's label, requires the Secret to be owned by its
+# Job, constrains the policy's selector and rules, and allows only a resume of
+# a Job. Apply it, and label the namespace, before you bind this Role.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -37,10 +38,10 @@ rules:
     verbs: ["patch"]
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["create", "delete"]
+    verbs: ["create"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
-    verbs: ["create", "delete"]
+    verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

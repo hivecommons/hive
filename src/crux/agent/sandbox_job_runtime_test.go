@@ -148,9 +148,13 @@ func TestJobOptionsFromConfig(t *testing.T) {
 		Volumes:             []config.SandboxJobVolume{{Name: "cache", Claim: "compile-cache", MountPath: "/cache", ReadOnly: true}},
 		TTLSeconds:          600,
 		WorkspaceTransport:  config.SandboxJobWorkspaceCopy,
+		RuntimeClassName:    "kata",
 	})
 	if got.WorkspaceTransport != config.SandboxJobWorkspaceCopy {
 		t.Errorf("workspace_transport not carried: %q", got.WorkspaceTransport)
+	}
+	if got.RuntimeClassName != "kata" {
+		t.Errorf("runtime_class_name not carried: %q", got.RuntimeClassName)
 	}
 	if got.WorkspaceClaim != "hive-data" || got.WorkspaceClaimMount != "/data" || got.ServiceAccount != "hive" || got.SchedulerName != "spyre-scheduler" || got.TTLSeconds != 600 {
 		t.Errorf("scalar fields not carried: %+v", got)
@@ -202,5 +206,14 @@ func TestJobLauncherSetsDeadlineFromKickTimeout(t *testing.T) {
 	want := int64((kickTimeout + kubejob.DeadlineMargin) / time.Second)
 	if l.Options.ActiveDeadlineSeconds != want {
 		t.Fatalf("ActiveDeadlineSeconds = %d, want %d", l.Options.ActiveDeadlineSeconds, want)
+	}
+}
+
+// TestJobOptionsFromConfigRuntimeClassEnv: the env var overrides
+// job.runtime_class_name for the launcher.
+func TestJobOptionsFromConfigRuntimeClassEnv(t *testing.T) {
+	t.Setenv(config.SandboxJobRuntimeClassEnv, "kata-clh")
+	if got := JobOptionsFromConfig(config.SandboxJobConfig{RuntimeClassName: "kata"}).RuntimeClassName; got != "kata-clh" {
+		t.Errorf("RuntimeClassName = %q, want the env override kata-clh", got)
 	}
 }

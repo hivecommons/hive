@@ -13,6 +13,7 @@ agent_sandbox.job.inference_proxy.endpoint # TODO #19619
 agent_sandbox.job.inference_proxy.listen_addr # TODO #19619
 agent_sandbox.job.relay_image # TODO #11854
 agent_sandbox.job.relay_run_as_user # TODO #11854
+agent_sandbox.job.runtime_class_name # TODO #11854
 agent_sandbox.job.volumes[].claim # TODO #11854
 agent_sandbox.job.volumes[].mount_path # TODO #11854
 agent_sandbox.job.volumes[].name # TODO #11854
@@ -138,6 +139,7 @@ agents.<key>.sandbox.job.inference_proxy.endpoint # TODO #19619
 agents.<key>.sandbox.job.inference_proxy.listen_addr # TODO #19619
 agents.<key>.sandbox.job.relay_image # TODO #11854
 agents.<key>.sandbox.job.relay_run_as_user # TODO #11854
+agents.<key>.sandbox.job.runtime_class_name # TODO #11854
 agents.<key>.sandbox.job.scheduler_name # TODO #11854
 agents.<key>.sandbox.job.service_account # TODO #11854
 agents.<key>.sandbox.job.ttl_seconds # TODO #11854

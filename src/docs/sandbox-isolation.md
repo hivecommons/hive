@@ -354,7 +354,7 @@ agent_sandbox:
 
 Every bridge request but `/healthz` carries a random per-run bearer token. It lives in a per-Job Secret that the pod reads through `secretKeyRef` (never a literal in the Job spec), and is removed from the kick command's environment.
 
-**Per-Job objects and their lifetime.** Hive creates the Job suspended, then the Secret and a per-Job NetworkPolicy, each with an `ownerReference` to the Job (and the labels `app.kubernetes.io/managed-by` and `hive.kubestellar.io/job`), then resumes the Job with a patch. No pod runs before the policy exists. Because the Job owns them, Kubernetes garbage-collects both with the Job, including after a hive restart or crash and when `ttl_seconds` removes a finished Job. Hive also deletes them by name when it deletes the Job. A crash between the creates leaves a suspended Job, which the boot sweep deletes once it is older than the kick timeout.
+**Per-Job objects and their lifetime.** Hive creates the Job suspended, then the Secret and a per-Job NetworkPolicy, each with an `ownerReference` to the Job (and the labels `app.kubernetes.io/managed-by` and `hive.kubestellar.io/job`), then resumes the Job with a patch. No pod runs before the policy exists. Because the Job owns them, Kubernetes garbage-collects both with the Job, including after a hive restart or crash and when `ttl_seconds` removes a finished Job. That is the only way they are removed: hive deletes the Job with Background propagation and never deletes the Secret or the policy by name, so it needs no `delete` on either kind. A failed create deletes the Job, which takes whatever was already created with it. A crash between the creates leaves a suspended Job, which the boot sweep deletes once it is older than the kick timeout.
 
 **NetworkPolicy.** The per-Job policy admits only pods with hive's own labels to port 8477. With `network: none` it is the deny-all policy plus that one ingress rule (egress stays denied, so a Claude CLI agent cannot reach its model: use `network: none` only for agents that need no network). On other networks it is an ingress-only policy and egress is unchanged. Hive's own pod must carry labels for that. NetworkPolicies are additive: any other policy that selects the Job pod widens the ingress, so "admits only hive's pod" holds only if nothing else selects Job pods.
 
@@ -363,11 +363,25 @@ On a cluster with default-deny NetworkPolicies, add these rules yourself:
 1. Egress from the hive pod to the Job pods on TCP 8477. Select the Job pods with `app.kubernetes.io/managed-by: hive-kubejob`.
 2. Egress from the Job pods to CoreDNS and to wherever the agent's model runs, such as a gateway or the translator listener for Job kicks.
 
-Until rule 1 exists, no push succeeds. Hive logs the first failed connection and every 15th after it (`kubejob: the job bridge is not answering; retrying`, with the job, phase and port), and after 6 connection timeouts in a row fails the kick with an error that names the requirement. A pod that is still starting refuses connections rather than timing out, so a slow image pull does not trip it. Job pods carry only the `managed-by`, `job-name`, `hive.kubestellar.io/job` and agent labels. **There is no `job.pod_labels`, `job.pod_annotations` or `job.runtime_class_name` yet**, so an operator who allows egress by a label such as `internet-client` cannot apply it to Job pods, and Jobs cannot run under a sandboxed runtime class such as Kata. Select Job pods by the labels above, or use a namespace-wide policy, until those options exist.
+Until rule 1 exists, no push succeeds. Hive logs the first failed connection and every 15th after it (`kubejob: the job bridge is not answering; retrying`, with the job, phase and port), and after 6 connection timeouts in a row fails the kick with an error that names the requirement. A pod that is still starting refuses connections rather than timing out, so a slow image pull does not trip it. Job pods carry only the `managed-by`, `job-name`, `hive.kubestellar.io/job` and agent labels. **There is no `job.pod_labels` or `job.pod_annotations` yet**, so an operator who allows egress by a label such as `internet-client` cannot apply it to Job pods. Select Job pods by the labels above, or use a namespace-wide policy, until those options exist.
+
+**Runtime class (`job.runtime_class_name`).** Sets the Job pod's `runtimeClassName`, for example `kata`, on either transport. Empty (the default) leaves the cluster default, as before. `HIVE_SANDBOX_JOB_RUNTIME_CLASS_NAME`, when set, overrides it for every Job. A per-agent `job` block that leaves it empty inherits the `agent_sandbox.job` value, so an agent's own block cannot drop the spoke's runtime class by accident. The value must be a Kubernetes object name; anything else is refused when the config loads.
+
+```yaml
+agent_sandbox:
+  job:
+    workspace_transport: copy
+    runtime_class_name: kata
+```
+
+**Copy mode refuses to run in two cases**, before it creates anything, with an error in the kick and an ERROR log line:
+
+- `HIVE_REQUIRE_HARDENED` is set. Copy mode runs the kick without the relay containment preflight that enforces that variable inside the pod, so a hive that asks for hardening never gets a copy kick whose containment nothing checked. The error reads `kubejob: workspace_transport: copy is refused because HIVE_REQUIRE_HARDENED is set: ...`. Use the claim transport on such a spoke.
+- Hive's own pod runs under a runtime class (a Kata VM, for example) and `job.runtime_class_name` is empty. The Job would otherwise run the agent under the cluster's default runtime, outside the VM, with nothing saying so. The error names hive's runtime class and asks for `job.runtime_class_name`. Naming a different class than hive's is allowed: that is an explicit choice, not a silent one.
 
 **What copy mode does not do or check:**
 
-- The relays are off, and the kick runs without the relay preflight. That preflight also checks `no_new_privs`, capabilities and seccomp and enforces `HIVE_REQUIRE_HARDENED`; it runs only through the relay wrapper, so copy mode skips all of it.
+- The relays are off, and the kick runs without the relay preflight. That preflight also checks `no_new_privs`, capabilities and seccomp and enforces `HIVE_REQUIRE_HARDENED`; it runs only through the relay wrapper, so copy mode skips all of it, and for that reason copy mode is refused when `HIVE_REQUIRE_HARDENED` is set (above).
 - The pull is all-or-nothing, and a hive restart loses the kick's work: the token lives in hive's memory and nothing re-attaches to a running Job, so the bridge waits 10 minutes for a pull and exits. Recovery after a restart is not built yet.
 - The bridge waits a fixed 10 minutes in each phase (for the push, and for the pull after the command exits).
 - The token and the workspace cross the pod network over plain HTTP, inside the cluster.
@@ -375,7 +389,7 @@ Until rule 1 exists, no push succeeds. Hive logs the first failed connection and
 - The whole workspace, `.git` included, is a single archive. Hive streams the push, but the bridge builds the pull archive in memory, so give the Job container a memory limit with room for it. Hive caps one unpack at 16 GiB and 2,000,000 entries, and the bridge caps a push body at 16 GiB. A pull unpacks into a `.substrate-pull-*` directory next to the workspace on hive's data volume; a crash leaves it behind, and nothing removes it at boot yet.
 - Sockets, FIFOs, devices and files over 1 GiB in the workspace are left out of the archive and logged by hive, and files that vanish mid-walk are skipped, so one stray entry does not lose the rest of the tree.
 
-**When the pull fails or the kick ends early.** A failed unpack is retried (3 tries). If the pull still fails, the Job is kept until `ttl_seconds`, as a failed kick's is, with its Secret and policy; the agent's work exists only in the Job's `emptyDir` and is gone when the bridge exits. On a kick timeout or cancel, hive stops the command (`POST /stop`), pulls the workspace on a fresh context bounded to 2 minutes, then deletes the Job, so the partial work survives as it does on the claim.
+**When the pull fails or the kick ends early.** A failed unpack is retried (3 tries). If the pull still fails, the Job is kept until `ttl_seconds`, as a failed kick's is, with its Secret and policy (they go when the Job does); the agent's work exists only in the Job's `emptyDir` and is gone when the bridge exits. On a kick timeout or cancel, hive stops the command (`POST /stop`), pulls the workspace on a fresh context bounded to 2 minutes, then deletes the Job, so the partial work survives as it does on the claim.
 
 **Disk and memory.** The workspace `emptyDir` has a `sizeLimit` (`job.workspace_size_limit`, default `10Gi`) and the bridge `emptyDir` one of `1Gi`. Kubernetes counts `emptyDir` data against the node's ephemeral storage, so also set `ephemeral-storage` requests and limits under `job.resources`, or an agent that fills the volume can push the node into `DiskPressure` and evict unrelated pods.
 
@@ -475,12 +489,26 @@ The rules match the read relay: when `enabled` is true, `listen_addr` is require
 - The spoke pod must mount a service-account token, and every process in the pod can read it, including agent processes that run outside a sandbox. If your spoke sets `automountServiceAccountToken: false`, mount a projected token (a `serviceAccountToken` volume with a short `expirationSeconds`) into the hive container only.
 - `jobs` create is already a strong grant in a namespace that enforces Pod Security `privileged`: the holder can start a privileged pod with a `hostPath` mount, which is root on the node. This predates the copy transport. Jobs cannot run in a different namespace than the spoke today, so if you cannot accept it, limit the pod spec the hive service account may create with an admission policy.
 
-`workspace_transport: copy` needs more, and it is a **separate Role**, `hive-sandbox-jobs-copy` (`sandbox-job-copy-rbac.yaml`, not in the kustomize base; the hub provisioner emits the Role but binds nothing, because the hub does not know a spoke's sandbox config): `create` and `delete` on `secrets` and `networkpolicies` for the per-Job objects, and `patch` on `jobs` to resume the suspended Job. Bind it only on a spoke that uses the copy transport. RBAC cannot scope `create` by name and `delete` takes no `resourceNames`, so these grants cover every Secret and every NetworkPolicy in the namespace, not only the ones hive creates:
+`workspace_transport: copy` needs more, and it is a **separate Role**, `hive-sandbox-jobs-copy` (`sandbox-job-copy-rbac.yaml`, not in the kustomize base; the hub provisioner emits the Role but binds nothing, because the hub does not know a spoke's sandbox config). It holds only the verbs copy mode uses, and nothing to read or remove:
 
-- A holder of `create` on NetworkPolicies can add one with `podSelector: {}` that opens ingress and egress for every pod, overriding default-deny. With `delete` it can remove the operator's own policies by name.
-- A holder of `delete` on Secrets can remove any Secret by name, and with `create` recreate it with other contents. That sidesteps the narrower `get` and `patch` grant on `hive-secrets-writer`.
+| Grant | Why |
+|---|---|
+| `secrets`: `create` | the per-Job bridge token Secret |
+| `networkpolicies`: `create` | the per-Job policy that admits only hive's pod to the bridge port |
+| `jobs`: `patch` | resume the Job, created suspended so the Secret and the policy can name it as their owner |
 
-`sandbox-job-copy-admission.yaml` is a sample ValidatingAdmissionPolicy (Kubernetes 1.30 and later) that limits the hive service account to objects named `hive-kick-*` with the `managed-by` label and, for policies, to a `podSelector` that carries the Job label. It starts in `Audit` and `Warn`; it has not been run against a cluster. A missing grant fails the kick at its first create, before any pod exists. A missing `secrets` grant reads `kubejob: creating the bridge token Secret for hive-kick-<agent>-<unix>: POST /api/v1/namespaces/<ns>/secrets: HTTP 403: secrets is forbidden: ...`, then a missing `networkpolicies` grant `kubejob: creating the NetworkPolicy for <job>: ...`, then a missing `jobs` patch `kubejob: resuming job <job> (needs the patch verb on jobs): ...`. Whatever was created is removed.
+There is no `delete`, `get`, `list`, `watch` or `update` on Secrets or NetworkPolicies: both objects are owned by their Job and garbage-collected with it. What remains is namespace-wide, because RBAC cannot scope `create` by name and the Job names are generated per run: a holder could create a Secret or a NetworkPolicy of its choosing (a `podSelector: {}` allow-all policy overrides default-deny) and patch any Job. Bind the Role only on a spoke that uses the copy transport, and only with the admission policy below in place.
+
+`sandbox-job-copy-admission.yaml` is a ValidatingAdmissionPolicy and binding (Kubernetes 1.30 and later) that **enforces** (`validationActions: [Deny]`) the rest. It names no namespace and no service account. The binding matches namespaces that carry the label `hive.kubestellar.io/service-account`, and the label's value names the service account hive runs as there, so one cluster-wide copy covers every spoke you label, whatever it runs as:
+
+```sh
+kubectl apply -f deploy/k8s/sandbox-job-copy-admission.yaml
+kubectl label namespace <ns> hive.kubestellar.io/service-account=<sa>   # hive, or default / hive-sa on a hub-provisioned spoke
+```
+
+For requests from that service account in that namespace it allows only: a Secret CREATE named `hive-kick-*`, labelled `app.kubernetes.io/managed-by=hive-kubejob` and owned by the Job of the same name (every Secret DELETE is denied; Secret UPDATE and PATCH are not matched, so the `hive-secrets-writer` patch of `hive-secrets` keeps working); a NetworkPolicy CREATE or DELETE of a `hive-kick-*` policy with that label, where a created one selects only its own Job's pods, includes `Ingress`, has no egress rule and admits ingress only from labelled pods on TCP 8477 (NetworkPolicy UPDATE is denied); and a Job UPDATE of a `hive-kick-*` Job with that label that leaves the pod template unchanged. Other users and service accounts, Argo CD and the hub included, are not checked. A policy in `Deny` that does not fit your cluster blocks the kick, and the kick error carries the policy's message, so dry-run a copy kick in a test namespace first.
+
+A missing grant fails the kick at its first create, before any pod exists. A missing `secrets` grant reads `kubejob: creating the bridge token Secret for hive-kick-<agent>-<unix>: POST /api/v1/namespaces/<ns>/secrets: HTTP 403: secrets is forbidden: ...`, then a missing `networkpolicies` grant `kubejob: creating the NetworkPolicy for <job>: ...`, then a missing `jobs` patch `kubejob: resuming job <job> (needs the patch verb on jobs): ...`. The Job is deleted, and anything already created goes with it.
 
 Hive warns at boot and on reload (`config.AgentSandboxGateWarnings`) when a job-runtime agent resolves no `workspace_claim` (unless `workspace_transport: copy`) or names a runtime hive does not have, and refuses the kick with the same message rather than failing it after the agent is marked running.
 

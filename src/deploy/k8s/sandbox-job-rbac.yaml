@@ -18,10 +18,10 @@
 #    a projected token (a serviceAccountToken volume with a short
 #    expirationSeconds) into the hive container only.
 #
-# workspace_transport: copy needs more (a per-Job Secret and NetworkPolicy,
-# and patch on jobs). That is NOT here: it is the separate Role in
-# sandbox-job-copy-rbac.yaml, which you bind on purpose, and
-# sandbox-job-copy-admission.yaml is a sample policy that limits it.
+# workspace_transport: copy needs more (create on a per-Job Secret and
+# NetworkPolicy, and patch on jobs). That is NOT here: it is the separate Role
+# in sandbox-job-copy-rbac.yaml, which you bind on purpose, after applying the
+# enforcing admission policy in sandbox-job-copy-admission.yaml that limits it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

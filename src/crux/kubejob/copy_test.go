@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/crux/posture"
 	"github.com/hivecommons/hive/crux/sandbox/substratebridge"
 )
 
@@ -113,8 +114,13 @@ func TestCopyTransportPushesRunsAndPullsTheWorkspace(t *testing.T) {
 	if strings.Contains(env, token) || !strings.Contains(env, `"name":"`+substratebridge.JobTokenEnv+`","valueFrom":{"secretKeyRef":`) {
 		t.Errorf("container env = %s, want the bridge token by secretKeyRef, never a literal", env)
 	}
-	if !strings.Contains(asJSON(api.secret), `"token":"`+token+`"`) || !api.secretDeleted {
-		t.Errorf("token Secret = %s deleted=%v, want it created with the token and removed with the Job", asJSON(api.secret), api.secretDeleted)
+	if !strings.Contains(asJSON(api.secret), `"token":"`+token+`"`) {
+		t.Errorf("token Secret = %s, want it created with the token", asJSON(api.secret))
+	}
+	// The Secret and the policy go with the Job (ownerReference): hive sends
+	// no delete for either, so the copy Role needs no delete verb on them.
+	if api.secretDeleted || api.policyDeleted {
+		t.Errorf("secret deleted=%v policy deleted=%v, want neither deleted by name: they are owned by the Job", api.secretDeleted, api.policyDeleted)
 	}
 	// Outside network: none the bridge port is still limited to hive's pod.
 	if got := asJSON(api.policy); !strings.Contains(got, `"policyTypes":["Ingress"]`) || !strings.Contains(got, `"matchLabels":{"app":"hive"}`) || strings.Contains(got, "egress") {
@@ -183,7 +189,10 @@ func TestCopyTransportOwnsItsSecretAndPolicy(t *testing.T) {
 	name, _ := api.created["metadata"].(map[string]any)["name"].(string)
 	for kind, obj := range map[string]map[string]any{"Secret": api.secret, "NetworkPolicy": api.policy} {
 		md, _ := obj["metadata"].(map[string]any)
-		want := `[{"apiVersion":"batch/v1","blockOwnerDeletion":true,"kind":"Job","name":"` + name + `","uid":"job-uid-1"}]`
+		// No blockOwnerDeletion: Background deletion does not need it, and
+		// under OwnerReferencesPermissionEnforcement it needs update on
+		// jobs/finalizers, which no hive Role grants.
+		want := `[{"apiVersion":"batch/v1","kind":"Job","name":"` + name + `","uid":"job-uid-1"}]`
 		if got := asJSON(md["ownerReferences"]); got != want {
 			t.Errorf("%s ownerReferences = %s, want %s", kind, got, want)
 		}
@@ -192,9 +201,10 @@ func TestCopyTransportOwnsItsSecretAndPolicy(t *testing.T) {
 			t.Errorf("%s labels = %s, want managed-by and the Job name so it can be selected", kind, labels)
 		}
 	}
-	// The resume failed: what was created is removed, Job included.
-	if !api.secretDeleted || !api.policyDeleted || !api.deleted {
-		t.Errorf("after a failed resume secret deleted=%v policy deleted=%v job deleted=%v, want all removed", api.secretDeleted, api.policyDeleted, api.deleted)
+	// The resume failed: the Job is deleted and its owned Secret and policy
+	// go with it; neither is deleted by name.
+	if !api.deleted || api.secretDeleted || api.policyDeleted {
+		t.Errorf("after a failed resume job deleted=%v secret deleted=%v policy deleted=%v, want only the Job deleted", api.deleted, api.secretDeleted, api.policyDeleted)
 	}
 }
 
@@ -253,16 +263,14 @@ func failedCopyRun(t *testing.T, tweak func(*fakeAPI, *Launcher)) (*fakeAPI, err
 // create names what failed, leaves nothing behind, and never starts a pod.
 func TestCopyTransportFailsClosedWhenAnObjectCreateFails(t *testing.T) {
 	tests := []struct {
-		name         string
-		tweak        func(*fakeAPI, *Launcher)
-		wantErr      string
-		wantSecret   bool // the Secret was created, so it must be deleted
-		wantPolicyIn bool
+		name    string
+		tweak   func(*fakeAPI, *Launcher)
+		wantErr string
 	}{
-		{"policy denied", func(a *fakeAPI, _ *Launcher) { a.policyErr = 403 }, "creating the NetworkPolicy", true, false},
-		{"secret forbidden", func(a *fakeAPI, _ *Launcher) { a.secretErr = 403 }, "creating the bridge token Secret", false, false},
-		{"secret conflict", func(a *fakeAPI, _ *Launcher) { a.secretErr = 409 }, "creating the bridge token Secret", false, false},
-		{"resume forbidden", func(a *fakeAPI, _ *Launcher) { a.patchErr = 403 }, "needs the patch verb on jobs", true, true},
+		{"policy denied", func(a *fakeAPI, _ *Launcher) { a.policyErr = 403 }, "creating the NetworkPolicy"},
+		{"secret forbidden", func(a *fakeAPI, _ *Launcher) { a.secretErr = 403 }, "creating the bridge token Secret"},
+		{"secret conflict", func(a *fakeAPI, _ *Launcher) { a.secretErr = 409 }, "creating the bridge token Secret"},
+		{"resume forbidden", func(a *fakeAPI, _ *Launcher) { a.patchErr = 403 }, "needs the patch verb on jobs"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -273,11 +281,12 @@ func TestCopyTransportFailsClosedWhenAnObjectCreateFails(t *testing.T) {
 			if !api.deleted {
 				t.Error("the suspended Job must be deleted so it cannot run later")
 			}
-			if api.secretDeleted != tc.wantSecret {
-				t.Errorf("secret deleted = %v, want %v", api.secretDeleted, tc.wantSecret)
-			}
-			if api.policyDeleted != tc.wantPolicyIn {
-				t.Errorf("policy deleted = %v, want %v", api.policyDeleted, tc.wantPolicyIn)
+			// Whatever was created is owned by the Job and goes with it:
+			// the only delete is the Job's.
+			for _, d := range api.deletes {
+				if !strings.Contains(d, "/jobs/") {
+					t.Errorf("delete %s: the copy transport must delete only its Job, never a Secret or NetworkPolicy by name", d)
+				}
 			}
 			if len(api.patches) != 0 {
 				t.Errorf("the Job was resumed (%v) after a failed create", api.patches)
@@ -425,5 +434,86 @@ func TestPodIPReadsTheJobPod(t *testing.T) {
 	url, err := l.bridgeURL(context.Background(), "hive", "job")
 	if err != nil || url != "http://10.1.2.3:8477" {
 		t.Errorf("bridgeURL = %q, %v", url, err)
+	}
+}
+
+// TestCopyTransportRefusedWhenHardeningIsRequired (#19694 review): the copy
+// transport skips the relay containment preflight that enforces
+// HIVE_REQUIRE_HARDENED, so a hardened hive refuses it before it creates
+// anything.
+func TestCopyTransportRefusedWhenHardeningIsRequired(t *testing.T) {
+	t.Setenv(posture.RequireHardenedEnv, "1")
+	api := newFakeAPI()
+	api.selfPod = labelledSelfPod
+	srv := httptest.NewServer(api.handler(t))
+	defer srv.Close()
+	_, err := newLauncher(srv, copyOptions()).Run(context.Background(), specFor(t.TempDir()))
+	if err == nil || !strings.Contains(err.Error(), posture.RequireHardenedEnv) || !strings.Contains(err.Error(), "workspace_transport: copy is refused") {
+		t.Fatalf("err = %v, want the copy transport refused naming %s", err, posture.RequireHardenedEnv)
+	}
+	if api.created != nil || api.secret != nil || api.policy != nil {
+		t.Errorf("a refused copy kick created job=%v secret=%v policy=%v, want nothing", api.created != nil, api.secret != nil, api.policy != nil)
+	}
+	// The claim transport is not refused for it.
+	if err := refuseCopyWhenHardened(func(string) string { return "" }); err != nil {
+		t.Errorf("refuseCopyWhenHardened with the variable unset = %v, want nil", err)
+	}
+}
+
+// kataSelfPod is labelledSelfPod running under the kata runtime class.
+var kataSelfPod = strings.Replace(labelledSelfPod, `"spec":{`, `"spec":{"runtimeClassName":"kata",`, 1)
+
+// TestCopyTransportRefusedOutsideHiveRuntimeClass (#19694 review): on a spoke
+// whose pod runs under a runtime class such as Kata, a copy Job with no
+// job.runtime_class_name would run the agent outside the VM; it is refused.
+func TestCopyTransportRefusedOutsideHiveRuntimeClass(t *testing.T) {
+	api := newFakeAPI()
+	api.selfPod = kataSelfPod
+	srv := httptest.NewServer(api.handler(t))
+	defer srv.Close()
+	_, err := newLauncher(srv, copyOptions()).Run(context.Background(), specFor(t.TempDir()))
+	if err == nil || !strings.Contains(err.Error(), `runtimeClassName "kata"`) || !strings.Contains(err.Error(), "job.runtime_class_name") {
+		t.Fatalf("err = %v, want the copy transport refused for leaving hive's runtime class", err)
+	}
+	if api.created != nil || api.secret != nil {
+		t.Errorf("a refused copy kick created job=%v secret=%v, want nothing", api.created != nil, api.secret != nil)
+	}
+}
+
+// TestCopyTransportRunsUnderTheConfiguredRuntimeClass: with
+// job.runtime_class_name set the copy Job runs, under that class.
+func TestCopyTransportRunsUnderTheConfiguredRuntimeClass(t *testing.T) {
+	api := newFakeAPI()
+	api.selfPod = kataSelfPod
+	api.patchErr = 500 // stop after the Job exists; its pod spec is under test
+	srv := httptest.NewServer(api.handler(t))
+	defer srv.Close()
+	opts := copyOptions()
+	opts.RuntimeClassName = "kata"
+	_, err := newLauncher(srv, opts).Run(context.Background(), specFor(t.TempDir()))
+	if err == nil || !strings.Contains(err.Error(), "resuming job") {
+		t.Fatalf("err = %v, want the scripted resume failure (the runtime class check passed)", err)
+	}
+	if got := podSpecOf(t, api.created)["runtimeClassName"]; got != "kata" {
+		t.Errorf("pod runtimeClassName = %v, want kata", got)
+	}
+}
+
+func TestRefuseCopyOutsideRuntimeClass(t *testing.T) {
+	cases := []struct {
+		hive, job string
+		refused   bool
+	}{
+		{"", "", false},
+		{"", "kata", false},
+		{"kata", "kata", false},
+		{"kata", "gvisor", false}, // an explicit choice, not a silent one
+		{"kata", "", true},
+		{" kata ", "  ", true},
+	}
+	for _, c := range cases {
+		if err := refuseCopyOutsideRuntimeClass(c.hive, c.job); (err != nil) != c.refused {
+			t.Errorf("refuseCopyOutsideRuntimeClass(%q, %q) = %v, want refused=%v", c.hive, c.job, err, c.refused)
+		}
 	}
 }

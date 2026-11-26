@@ -95,6 +95,9 @@ type selfPod struct {
 			Image string `json:"image"`
 		} `json:"containers"`
 		ImagePullSecrets []map[string]string `json:"imagePullSecrets"`
+		// RuntimeClassName is hive's own runtime class, read by the copy
+		// transport so a Job never leaves a sandboxed runtime silently.
+		RuntimeClassName string `json:"runtimeClassName"`
 	} `json:"spec"`
 	Status struct {
 		ContainerStatuses []struct {

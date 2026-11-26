@@ -147,14 +147,13 @@ func TestSweepOrphansDeletesOrphansOnly(t *testing.T) {
 	if api.selector != managedByLabel+"="+managedByValue {
 		t.Fatalf("labelSelector = %q", api.selector)
 	}
-	// The Secret and NetworkPolicy of every swept Job are deleted by name as
-	// well (they are owned by the Job, so the garbage collector is the
-	// backstop), and of no Job the sweep left alone. The finished Job's own
-	// objects go with it when its TTL removes it: that is the owner reference
-	// (TestCopyTransportOwnsItsSecretAndPolicy), not a sweep.
+	// The network-none NetworkPolicy of every swept Job is deleted by name,
+	// and of no Job the sweep left alone. A copy-transport Job's Secret and
+	// policy are owned by it and go with it (TestCopyTransportOwnsItsSecretAndPolicy):
+	// the sweep sends no Secret delete, so hive needs no delete verb on Secrets.
 	const swept3 = "hive-kick-reviewer-1,hive-kick-deps-2,hive-kick-deps-3"
-	if got := strings.Join(api.secrets, ","); got != swept3 {
-		t.Errorf("Secret deletes = %q, want %q", got, swept3)
+	if len(api.secrets) != 0 {
+		t.Errorf("Secret deletes = %q, want none: copy-transport Secrets are garbage-collected with their Job", api.secrets)
 	}
 	if got := strings.Join(api.policies, ","); got != swept3 {
 		t.Errorf("NetworkPolicy deletes = %q, want %q", got, swept3)

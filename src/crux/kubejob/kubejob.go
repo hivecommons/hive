@@ -140,6 +140,10 @@ type Options struct {
 	// whose admission webhook requires device-requesting pods to use a custom
 	// scheduler. Empty leaves the cluster default.
 	SchedulerName string
+	// RuntimeClassName is the pod's runtimeClassName (for example "kata").
+	// Empty leaves the cluster default. The copy transport refuses to run
+	// with it empty when hive's own pod has a runtime class (copy.go).
+	RuntimeClassName string
 	// EnvFromSecrets are Secret names whose keys become environment variables
 	// in the Job. This is the ONLY credential path into the Job.
 	EnvFromSecrets []string
@@ -265,6 +269,9 @@ func (o Options) Validate() error {
 	if o.TTLSeconds < 0 {
 		return errors.New("kubejob: ttl_seconds must not be negative")
 	}
+	if err := config.ValidateRuntimeClassName(o.RuntimeClassName); err != nil {
+		return fmt.Errorf("kubejob: %w", err)
+	}
 	for i, v := range o.ExtraVolumes {
 		if strings.TrimSpace(v.Claim) == "" || strings.TrimSpace(v.MountPath) == "" {
 			return fmt.Errorf("kubejob: volumes[%d] needs both claim and mount_path", i)
@@ -309,6 +316,11 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 		return res, errors.New("kubejob: workspace is required")
 	}
 	copyMode := l.Options.copiesWorkspace()
+	if copyMode {
+		if err := refuseCopyWhenHardened(os.Getenv); err != nil {
+			return res, err
+		}
+	}
 	subPath := ""
 	if !copyMode {
 		var err error
@@ -562,6 +574,9 @@ func (l *Launcher) jobManifest(ns, name, subPath string, spec sandbox.LaunchSpec
 	}
 	if l.Options.SchedulerName != "" {
 		podSpec["schedulerName"] = l.Options.SchedulerName
+	}
+	if rc := strings.TrimSpace(l.Options.RuntimeClassName); rc != "" {
+		podSpec["runtimeClassName"] = rc
 	}
 	if l.Options.network() == NetworkHost {
 		podSpec["hostNetwork"] = true

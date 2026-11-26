@@ -19,6 +19,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/egressmark"
+	"github.com/hivecommons/hive/crux/posture"
 	"github.com/hivecommons/hive/crux/sandbox"
 	"github.com/hivecommons/hive/crux/sandbox/substratebridge"
 )
@@ -117,6 +118,34 @@ func (o Options) validateTransport() error {
 	return nil
 }
 
+// refuseCopyWhenHardened fails a copy-transport kick closed when
+// posture.RequireHardenedEnv is set. The copy transport runs the kick without
+// the relays, and so without the relay containment preflight that enforces
+// that variable inside the pod (relays.go): a hive that asks for hardening
+// must not get a kick whose containment nothing checked.
+func refuseCopyWhenHardened(getenv func(string) string) error {
+	if !posture.RequireHardened(getenv) {
+		return nil
+	}
+	err := fmt.Errorf("kubejob: workspace_transport: copy is refused because %s is set: the copy transport runs the kick without the relay containment preflight that enforces it; use the claim transport (workspace_transport: claim) or unset %s", posture.RequireHardenedEnv, posture.RequireHardenedEnv)
+	slog.Error("kubejob: refusing the copy workspace transport on a hardened hive", "env", posture.RequireHardenedEnv, "err", err)
+	return err
+}
+
+// refuseCopyOutsideRuntimeClass fails a copy-transport kick closed when
+// hive's own pod runs under a runtime class (a Kata VM, for example) and the
+// Job names none: the Job would run the agent under the cluster's default
+// runtime, outside the VM, with nothing saying so.
+func refuseCopyOutsideRuntimeClass(hiveClass, jobClass string) error {
+	hiveClass, jobClass = strings.TrimSpace(hiveClass), strings.TrimSpace(jobClass)
+	if hiveClass == "" || jobClass != "" {
+		return nil
+	}
+	err := fmt.Errorf("kubejob: workspace_transport: copy is refused because hive's own pod runs under runtimeClassName %q and job.runtime_class_name is empty; the Job would run the agent outside that runtime. Set job.runtime_class_name (or %s), for example to %q", hiveClass, config.SandboxJobRuntimeClassEnv, hiveClass)
+	slog.Error("kubejob: refusing the copy workspace transport outside hive's runtime class", "hive_runtime_class", hiveClass, "err", err)
+	return err
+}
+
 // copyPlan is what one copy-transport run adds to its Jobs.
 type copyPlan struct {
 	image              *relayPlan
@@ -157,6 +186,9 @@ func (l *Launcher) resolveCopy(ctx context.Context, ns string, spec sandbox.Laun
 	}
 	if len(pod.Metadata.Labels) == 0 {
 		return nil, errors.New("kubejob: workspace_transport: copy needs hive's own pod to carry labels the NetworkPolicy can admit; it has none")
+	}
+	if err := refuseCopyOutsideRuntimeClass(pod.Spec.RuntimeClassName, l.Options.RuntimeClassName); err != nil {
+		return nil, err
 	}
 	plan.hiveLabels = pod.Metadata.Labels
 	return plan, nil
@@ -256,18 +288,23 @@ func (p *copyPlan) allowBridgeIngress(policy map[string]any) {
 
 // ownedBy adds an ownerReference to the Job to obj's metadata, so the
 // garbage collector removes obj with the Job even when hive is not running
-// to do it (a restart, a crash, a Job removed by its TTL).
+// to do it (a restart, a crash, a Job removed by its TTL). It is also the
+// ONLY way these objects are removed: hive deletes the Job with Background
+// propagation and holds no delete verb on Secrets or NetworkPolicies
+// (sandbox-job-copy-rbac.yaml). blockOwnerDeletion is left out on purpose:
+// Background deletion does not need it, and where the
+// OwnerReferencesPermissionEnforcement admission plugin runs, setting it
+// needs update on jobs/finalizers, which no hive Role grants.
 func ownedBy(obj map[string]any, job, uid string) {
 	md, _ := obj["metadata"].(map[string]any)
 	if md == nil {
 		return
 	}
 	md["ownerReferences"] = []map[string]any{{
-		"apiVersion":         "batch/v1",
-		"kind":               "Job",
-		"name":               job,
-		"uid":                uid,
-		"blockOwnerDeletion": true,
+		"apiVersion": "batch/v1",
+		"kind":       "Job",
+		"name":       job,
+		"uid":        uid,
 	}}
 }
 

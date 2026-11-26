@@ -96,16 +96,18 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 	}
 	jobsPath := fmt.Sprintf("/apis/batch/v1/namespaces/%s/jobs", ns)
 	jobPath := jobsPath + "/" + name
-	var policyPath, secretPath string
+	// policyPath is the claim transport's network-none policy, the only
+	// per-Job object hive deletes by name.
+	var policyPath string
 	cleanup := func(c context.Context) {
 		l.deleteQuiet(c, policyPath)
-		l.deleteQuiet(c, secretPath)
 	}
 	if l.copyPlan != nil {
 		// The Job is created suspended, then its Secret and NetworkPolicy,
-		// which carry an ownerReference to it, then it is resumed.
-		var err error
-		if secretPath, policyPath, err = l.createPerJobObjects(ctx, ns, name, jobsPath, body); err != nil {
+		// which carry an ownerReference to it, then it is resumed. Both go
+		// with the Job, so cleanup has nothing to delete by name and hive
+		// needs no delete verb on Secrets or NetworkPolicies.
+		if err := l.createPerJobObjects(ctx, ns, name, jobsPath, body); err != nil {
 			return res, err
 		}
 	} else {
@@ -207,7 +209,8 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 	}
 	if !done.succeeded {
 		// The Job stays for inspection; its pods are finished, so the
-		// policy has nothing left to isolate and goes.
+		// claim transport's policy has nothing left to isolate and goes. A
+		// copy-transport Job's objects are owned by it and go with it.
 		cleanup(live())
 		res.Stderr = done.reason
 		if msg, bad := l.Options.preflightFailure(res); bad {
@@ -246,20 +249,19 @@ func (l *Launcher) runAttempt(ctx context.Context, spec sandbox.LaunchSpec, ns, 
 // createPerJobObjects creates a copy-transport Job suspended, then its token
 // Secret and its NetworkPolicy, each with an ownerReference to the Job so the
 // garbage collector removes them with it even after a hive restart or crash,
-// then resumes the Job. It returns the Secret's and the policy's paths. A
-// failure removes what it created; a Job left suspended by a crash is an
-// unfinished Job the boot sweep deletes once it is old enough.
-func (l *Launcher) createPerJobObjects(ctx context.Context, ns, name, jobsPath string, jobBody []byte) (secretPath, policyPath string, err error) {
+// then resumes the Job. A failure deletes the Job, which takes whatever was
+// already created with it; a Job left suspended by a crash is an unfinished
+// Job the boot sweep deletes once it is old enough. Hive never deletes the
+// Secret or the policy by name, so the copy Role grants only create on them.
+func (l *Launcher) createPerJobObjects(ctx context.Context, ns, name, jobsPath string, jobBody []byte) error {
 	created, err := l.do(ctx, http.MethodPost, jobsPath, jobBody)
 	if err != nil {
-		return "", "", fmt.Errorf("kubejob: creating job %s: %w", name, err)
+		return fmt.Errorf("kubejob: creating job %s: %w", name, err)
 	}
 	jobPath := jobsPath + "/" + name
-	fail := func(err error) (string, string, error) {
-		l.deleteQuiet(ctx, policyPath)
-		l.deleteQuiet(ctx, secretPath)
+	fail := func(err error) error {
 		_ = l.delete(ctx, jobPath)
-		return "", "", err
+		return err
 	}
 	uid := jobUID(created)
 	if uid == "" {
@@ -275,7 +277,6 @@ func (l *Launcher) createPerJobObjects(ctx context.Context, ns, name, jobsPath s
 	if _, err := l.do(ctx, http.MethodPost, secretsPath, secret); err != nil {
 		return fail(fmt.Errorf("kubejob: creating the bridge token Secret for %s: %w", name, err))
 	}
-	secretPath = secretsPath + "/" + name
 
 	var policyBody map[string]any
 	if l.Options.network() == NetworkNone {
@@ -293,11 +294,10 @@ func (l *Launcher) createPerJobObjects(ctx context.Context, ns, name, jobsPath s
 	if _, err := l.do(ctx, http.MethodPost, policiesPath, policy); err != nil {
 		return fail(fmt.Errorf("kubejob: creating the NetworkPolicy for %s: %w", name, err))
 	}
-	policyPath = policiesPath + "/" + name
 
 	resume, _ := json.Marshal(map[string]any{"spec": map[string]any{"suspend": false}})
 	if err := l.patch(ctx, jobPath, resume); err != nil {
 		return fail(fmt.Errorf("kubejob: resuming job %s (needs the patch verb on jobs): %w", name, err))
 	}
-	return secretPath, policyPath, nil
+	return nil
 }

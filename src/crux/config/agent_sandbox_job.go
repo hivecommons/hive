@@ -76,6 +76,46 @@ type SandboxJobConfig struct {
 	// counts emptyDir data as ephemeral storage; pair it with an
 	// ephemeral-storage request and limit in resources.
 	WorkspaceSizeLimit string `yaml:"workspace_size_limit,omitempty" json:"workspace_size_limit,omitempty"`
+	// RuntimeClassName sets the Job pod's runtimeClassName, for example
+	// "kata" on a spoke whose own pod runs in a Kata VM. Empty leaves the
+	// cluster default, as before. SandboxJobRuntimeClassEnv overrides it.
+	// The copy transport refuses to run when hive's own pod has a runtime
+	// class and this is empty, so agent code never leaves the VM silently.
+	RuntimeClassName string `yaml:"runtime_class_name,omitempty" json:"runtime_class_name,omitempty"`
+}
+
+// SandboxJobRuntimeClassEnv, when set to a non-empty value, overrides
+// job.runtime_class_name for every sandbox Job.
+const SandboxJobRuntimeClassEnv = "HIVE_SANDBOX_JOB_RUNTIME_CLASS_NAME"
+
+// runtimeClassName is a Kubernetes object name (a DNS-1123 subdomain).
+var runtimeClassName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`)
+
+// maxRuntimeClassNameLen is the DNS-1123 subdomain length limit.
+const maxRuntimeClassNameLen = 253
+
+// EffectiveRuntimeClassName is SandboxJobRuntimeClassEnv when getenv returns
+// a non-empty value for it, else RuntimeClassName; both trimmed.
+func (j SandboxJobConfig) EffectiveRuntimeClassName(getenv func(string) string) string {
+	if getenv != nil {
+		if v := strings.TrimSpace(getenv(SandboxJobRuntimeClassEnv)); v != "" {
+			return v
+		}
+	}
+	return strings.TrimSpace(j.RuntimeClassName)
+}
+
+// ValidateRuntimeClassName rejects a runtime class that is not a Kubernetes
+// object name; empty is valid and means the cluster default.
+func ValidateRuntimeClassName(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	if len(name) > maxRuntimeClassNameLen || !runtimeClassName.MatchString(name) {
+		return fmt.Errorf("job.runtime_class_name must be a Kubernetes object name such as kata, got %q", name)
+	}
+	return nil
 }
 
 // Job workspace transports, SandboxJobConfig.WorkspaceTransport.
@@ -88,8 +128,8 @@ var sizeQuantity = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?(Ki|Mi|Gi|Ti|Pi|Ei|k|M|
 
 // ValidateSandboxJobTransport rejects a workspace_transport other than
 // "claim" or "copy" (a typo such as "Copy" would otherwise read as the claim
-// transport and fail only when a kick runs) and a workspace_size_limit that
-// is not a quantity.
+// transport and fail only when a kick runs), a workspace_size_limit that is
+// not a quantity and a runtime_class_name that is not an object name.
 func ValidateSandboxJobTransport(job *SandboxJobConfig) error {
 	if job == nil {
 		return nil
@@ -102,7 +142,7 @@ func ValidateSandboxJobTransport(job *SandboxJobConfig) error {
 	if l := strings.TrimSpace(job.WorkspaceSizeLimit); l != "" && !sizeQuantity.MatchString(l) {
 		return fmt.Errorf("job.workspace_size_limit must be a quantity such as 20Gi, got %q", job.WorkspaceSizeLimit)
 	}
-	return nil
+	return ValidateRuntimeClassName(job.RuntimeClassName)
 }
 
 // CopiesWorkspace reports whether the Job uses the copy transport, which
@@ -152,6 +192,11 @@ func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 	}
 	if strings.TrimSpace(out.WorkspaceSizeLimit) == "" {
 		out.WorkspaceSizeLimit = g.WorkspaceSizeLimit
+	}
+	// The runtime class is the spoke's containment, not an agent's choice:
+	// a per-agent block that leaves it empty must not drop it.
+	if strings.TrimSpace(out.RuntimeClassName) == "" {
+		out.RuntimeClassName = g.RuntimeClassName
 	}
 	if out.TTLSeconds == 0 {
 		out.TTLSeconds = g.TTLSeconds

@@ -40,8 +40,8 @@ const (
 	NetworkHost = "host"
 )
 
-// deleteQuiet deletes the object at path (a per-Job NetworkPolicy or token
-// Secret), ignoring errors; an empty path means none was created.
+// deleteQuiet deletes the object at path (the claim transport's per-Job
+// NetworkPolicy), ignoring errors; an empty path means none was created.
 func (l *Launcher) deleteQuiet(ctx context.Context, path string) {
 	if path != "" {
 		_ = l.delete(ctx, path)

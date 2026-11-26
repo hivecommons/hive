@@ -2957,9 +2957,11 @@ subjects:
 # hive-sandbox-jobs-copy below. The hub does not know a spoke's sandbox
 # config, so it cannot grant it only to spokes that use the copy transport;
 # it emits the Role and binds nothing, and the operator binds it on a spoke
-# that does (kubectl create rolebinding). Its secrets and networkpolicies
-# rules cover every Secret and NetworkPolicy in the namespace: see
-# docs/sandbox-isolation.md.
+# that does (kubectl create rolebinding). It grants only create on secrets
+# and networkpolicies (no delete: both are owned by their Job and garbage-
+# collected with it) and patch on jobs. RBAC cannot scope create by name, so
+# bind it only with the enforcing admission policy in
+# deploy/k8s/sandbox-job-copy-admission.yaml: see docs/sandbox-isolation.md.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -2987,10 +2989,10 @@ rules:
   verbs: ["patch"]
 - apiGroups: [""]
   resources: ["secrets"]
-  verbs: ["create", "delete"]
+  verbs: ["create"]
 - apiGroups: ["networking.k8s.io"]
   resources: ["networkpolicies"]
-  verbs: ["create", "delete"]
+  verbs: ["create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
