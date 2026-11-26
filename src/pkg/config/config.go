@@ -6421,7 +6421,15 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// is logged and kept for the next save instead of costing the whole
 	// overlay. A file that is not YAML at all falls back to the seed, as
 	// before, but is no longer overwritten by the next save.
-	decoded, derr := decodeDashboardOverlay(data)
+	// The config file as loadWithOverrides read it: the overlay is expanded
+	// with its resolver policy and compared against it. A read failure here
+	// (the file vanished since) leaves nothing to compare, so nothing is
+	// carried generically on this load.
+	primaryData, perr := os.ReadFile(path)
+	if perr != nil {
+		primaryData = nil
+	}
+	decoded, derr := decodeDashboardOverlay(data, primaryData)
 	if derr != nil {
 		logOverlayOnce("file", data, "[config] WARNING: dashboard overlay %s is not valid YAML (%v); none of it is loaded, and saves leave the file as it is until it is fixed", DashboardOverlayFile, derr)
 		cfg.overlayCarry = &overlayCarryState{keepWhole: &overlayFileSum}
@@ -6491,7 +6499,10 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// next persist (#19740). BEFORE the fullness guard, like the blocks
 	// above. Env and config.env overrides are re-applied afterwards so they
 	// still win over an adopted block, as they win over the config file.
-	if adoptOverlayBlocksGeneric(cfg, path, decoded) {
+	if primaryData != nil && adoptOverlayBlocksGeneric(cfg, path, primaryData, decoded, validateOpts) {
+		// Adopted blocks replace the loaded ones whole; fill their defaults
+		// the way the load filled the config file's.
+		cfg.applyDefaults()
 		if envPath := findConfigEnv(path); envPath != "" {
 			if err := cfg.applyConfigEnv(envPath); err != nil {
 				return nil, fmt.Errorf("applying config.env %s: %w", envPath, err)

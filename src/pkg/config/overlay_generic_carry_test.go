@@ -186,17 +186,23 @@ func TestReloadCarriesOverlayBlocksForHubLoader(t *testing.T) {
 	assertCarriedBlocks(t, "hub reload", cfg)
 }
 
-// TestReloadCarriesOverlayBlockMissingFromConfigFileEvenWhenOlder: a block
-// the config file does not have has nothing to lose, so it is carried even
-// when the config file was written later (a read-only seed mount, a
-// ConfigMap remount).
-func TestReloadCarriesOverlayBlockMissingFromConfigFileEvenWhenOlder(t *testing.T) {
+// TestReloadTreatsBlockMissingFromNewerConfigFileAsRemoved: every save
+// writes the overlay first and the config file second, so a newer config
+// file without a block means the block was removed there. The overlay's copy
+// is not resurrected, and the log names it.
+func TestReloadTreatsBlockMissingFromNewerConfigFileAsRemoved(t *testing.T) {
 	f := setupOverlayCarry(t, overlayCarrySeed, overlayCarryOverlay, false)
+	logs := captureConfigLog(t)
 	cfg, err := LoadWithDashboardOverlay(f.seed)
 	if err != nil {
 		t.Fatalf("LoadWithDashboardOverlay: %v", err)
 	}
-	assertCarriedBlocks(t, "reload with older overlay", cfg)
+	if cfg.Ask.Enabled != nil || cfg.Ask.Mode != "" {
+		t.Errorf("ask removed from the newer config file came back from the overlay: enabled=%s mode=%q", boolPtrValue(cfg.Ask.Enabled), cfg.Ask.Mode)
+	}
+	if !strings.Contains(logs.String(), `block "ask" differs`) || !strings.Contains(logs.String(), "counts as removed") {
+		t.Errorf("no log line for the overlay block that was not adopted; log:\n%s", logs.String())
+	}
 }
 
 // TestReloadKeepsNewerConfigFileBlockAndSaysSo: when both files carry a
@@ -216,15 +222,15 @@ func TestReloadKeepsNewerConfigFileBlockAndSaysSo(t *testing.T) {
 	if !strings.Contains(logs.String(), `block "ask" differs`) {
 		t.Errorf("no log line for the overlay ask block that was not adopted; log:\n%s", logs.String())
 	}
-	// customers is not in the config file, so it is still carried.
-	if cfg.Customers.Enabled == nil || *cfg.Customers.Enabled {
-		t.Errorf("customers.enabled = %s, want false", boolPtrValue(cfg.Customers.Enabled))
+	if cfg.Ask.Mode == "direct" {
+		t.Error("older overlay's ask.mode adopted over the newer config file")
 	}
 }
 
-// TestReloadMergesPartialOverlayBlockOntoConfigFileBlock: a partial hand edit
-// (`ask: {enabled: false}`) changes only what it names.
-func TestReloadMergesPartialOverlayBlockOntoConfigFileBlock(t *testing.T) {
+// TestReloadAdoptsOverlayBlockWhole: the overlay block replaces the config
+// file's block whole (the review and agent_sandbox rule), so a key removed in
+// the overlay stays removed.
+func TestReloadAdoptsOverlayBlockWhole(t *testing.T) {
 	seed := overlayCarrySeed + "ask:\n  mode: hub\n"
 	overlay := overlayCarrySeed + "ask: {enabled: false}\n"
 	f := setupOverlayCarry(t, seed, overlay, true)
@@ -235,8 +241,80 @@ func TestReloadMergesPartialOverlayBlockOntoConfigFileBlock(t *testing.T) {
 	if cfg.Ask.Enabled == nil || *cfg.Ask.Enabled {
 		t.Errorf("ask.enabled = %s, want false", boolPtrValue(cfg.Ask.Enabled))
 	}
-	if cfg.Ask.Mode != "hub" {
-		t.Errorf("ask.mode = %q, want the config file's hub kept", cfg.Ask.Mode)
+	if cfg.Ask.Mode != "" {
+		t.Errorf("ask.mode = %q, want empty: the overlay block, which has no mode, wins whole", cfg.Ask.Mode)
+	}
+}
+
+// TestReloadRefusesOverlayBlockThatDoesNotValidate: an overlay edit must not
+// get past the validation the config file gets, or the next persist writes a
+// config file the next boot rejects. The block is left out, loudly, and the
+// other blocks are still adopted.
+func TestReloadRefusesOverlayBlockThatDoesNotValidate(t *testing.T) {
+	overlay := overlayCarryOverlay + "ioscan:\n  classifier:\n    fail_mode: bogus\n"
+	f := setupOverlayCarry(t, overlayCarrySeed, overlay, true)
+	logs := captureConfigLog(t)
+	cfg, err := LoadWithDashboardOverlay(f.seed)
+	if err != nil {
+		t.Fatalf("LoadWithDashboardOverlay: %v", err)
+	}
+	if cfg.Ioscan.Classifier.FailMode == "bogus" {
+		t.Error("ioscan.classifier.fail_mode: bogus adopted from the overlay without validation")
+	}
+	if !strings.Contains(logs.String(), `block "ioscan" is not adopted: it does not validate`) {
+		t.Errorf("no loud log for the invalid overlay block; log:\n%s", logs.String())
+	}
+	assertCarriedBlocks(t, "valid blocks next to an invalid one", cfg)
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := Load(f.seed); err != nil {
+		t.Errorf("config file written after the reload does not load: %v", err)
+	}
+}
+
+// TestReloadReappliesEnvOverAdoptedBlock: env still beats a block adopted
+// from the overlay, as it beats the config file. The overlay leaves the
+// dashboard token out when it came from env.
+func TestReloadReappliesEnvOverAdoptedBlock(t *testing.T) {
+	const envToken = "env-dashboard-token"
+	t.Setenv("DASHBOARD_AUTH_TOKEN", envToken)
+	seed := overlayCarrySeed + "dashboard:\n  port: 3001\n"
+	overlay := overlayCarrySeed + "dashboard:\n  port: 3002\n  auth_token: \"\"\n"
+	f := setupOverlayCarry(t, seed, overlay, true)
+	cfg, err := LoadWithDashboardOverlay(f.seed)
+	if err != nil {
+		t.Fatalf("LoadWithDashboardOverlay: %v", err)
+	}
+	if cfg.Dashboard.Port != 3002 {
+		t.Errorf("dashboard.port = %d, want the overlay's 3002", cfg.Dashboard.Port)
+	}
+	if cfg.Dashboard.AuthToken != envToken {
+		t.Errorf("dashboard.auth_token = %q, want the env token re-applied over the adopted block", cfg.Dashboard.AuthToken)
+	}
+}
+
+// TestOverlayExpansionIgnoresOverlayVariables: the overlay is expanded with
+// the config file's resolver policy, never its own variables block.
+func TestOverlayExpansionIgnoresOverlayVariables(t *testing.T) {
+	overlay := overlayCarrySeed + `
+variables:
+  security:
+    allow_exec: true
+  defs:
+    LEAKED:
+      type: script
+      command: [echo, from-overlay-exec]
+      scope: both
+ask:
+  mode: ${LEAKED}
+`
+	decoded, err := decodeDashboardOverlay([]byte(overlay), []byte(overlayCarrySeed))
+	if err != nil {
+		t.Fatalf("decodeDashboardOverlay: %v", err)
+	}
+	if strings.Contains(decoded.cfg.Ask.Mode, "from-overlay-exec") {
+		t.Errorf("overlay variables resolver ran while expanding the overlay: ask.mode = %q", decoded.cfg.Ask.Mode)
 	}
 }
 

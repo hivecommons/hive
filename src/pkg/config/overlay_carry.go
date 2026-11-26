@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hivecommons/hive/pkg/resolve"
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,10 +30,10 @@ import (
 //   - Reload: every top-level overlay key the schema knows is carried, except
 //     the keys dedicated code above already adopts (overlayHandledKeys) and
 //     the keys the overlay must never override (overlaySeedOwnedKeys). A block
-//     is adopted when the config file has no such key (there is nothing to
-//     lose), or when the overlay file is newer than the config file (it holds
-//     the latest edit). When the config file is newer and says something
-//     different, the config file wins and the log says so.
+//     that differs from the config file's is adopted, whole, when the overlay
+//     file is newer than the config file (it holds the latest edit) and the
+//     result still validates. Otherwise the config file wins and the log
+//     names the block, so nothing is dropped without a word.
 //   - Persist: an overlay key the schema does not know, or one that fails to
 //     decode, is kept verbatim (pre-expansion text) and written back into the
 //     overlay on every save instead of being erased. An overlay that is not
@@ -192,12 +194,19 @@ func decodeEntry(key, value *yaml.Node) (Config, error) {
 // that is unknown or does not decode is logged and preserved; it no longer
 // throws away the rest of the overlay. err is non-nil only when the file is
 // not a YAML mapping at all.
-func decodeDashboardOverlay(data []byte) (*decodedOverlay, error) {
+//
+// The overlay text is expanded with the CONFIG FILE's resolver registry
+// (primaryData), never one built from the overlay's own variables block: the
+// overlay is user-writable, and its resolver policy must not decide what
+// runs while it is expanded (the security invariant at the end of
+// loadWithDashboardOverlay).
+func decodeDashboardOverlay(data, primaryData []byte) (*decodedOverlay, error) {
 	var rawDoc, expDoc yaml.Node
 	if err := yaml.Unmarshal(data, &rawDoc); err != nil {
 		return nil, err
 	}
-	if err := yaml.Unmarshal([]byte(expandEnvVars(string(data))), &expDoc); err != nil {
+	expanded := configRegistryFromText(string(primaryData)).Expand(context.Background(), string(data), resolve.ScopeConfig, nil)
+	if err := yaml.Unmarshal([]byte(expanded), &expDoc); err != nil {
 		return nil, err
 	}
 	rawRoot, err := topLevelMapping(&rawDoc)
@@ -282,25 +291,25 @@ func fileNewer(a, b string) bool {
 }
 
 // adoptOverlayBlocksGeneric carries every overlay block not covered by the
-// dedicated adoptions onto cfg (see the file comment for the rule). It
-// reports whether anything was adopted.
-func adoptOverlayBlocksGeneric(cfg *Config, path string, ov *decodedOverlay) bool {
+// dedicated adoptions onto cfg (see the file comment for the rule).
+// primaryData is the config file content loadWithOverrides read; it is
+// parsed without expansion, so no resolver runs a second time. Each adopted
+// block is validated with the rest of the config and left out, loudly, when
+// it does not validate, so an overlay edit can never make the hive persist a
+// config file its next boot rejects. It reports whether anything was
+// adopted.
+func adoptOverlayBlocksGeneric(cfg *Config, path string, primaryData []byte, ov *decodedOverlay, opts ValidateOptions) bool {
 	var primaryVals map[string]*yaml.Node
-	if data, err := os.ReadFile(path); err == nil {
-		var doc yaml.Node
-		if yaml.Unmarshal([]byte(expandEnvVars(string(data))), &doc) == nil {
-			if root, rerr := topLevelMapping(&doc); rerr == nil {
-				primaryVals = mappingValues(root)
-			}
+	var doc yaml.Node
+	if yaml.Unmarshal(primaryData, &doc) == nil {
+		if root, rerr := topLevelMapping(&doc); rerr == nil {
+			primaryVals = mappingValues(root)
 		}
 	}
 	overlayNewer := fileNewer(DashboardOverlayFile, path)
 	var adopted []string
 	for _, e := range ov.valid {
 		key := e.key.Value
-		if overlayHandledKeys[key] {
-			continue
-		}
 		index, ok := configTopLevelKeys()[key]
 		if !ok {
 			continue
@@ -312,32 +321,39 @@ func adoptOverlayBlocksGeneric(cfg *Config, path string, ov *decodedOverlay) boo
 			// would only blank the loaded block's values.
 			continue
 		}
-		pv, inPrimary := primaryVals[key]
-		if inPrimary {
+		if pv, inPrimary := primaryVals[key]; inPrimary {
 			if po, perr := decodeEntry(e.key, pv); perr == nil && reflect.DeepEqual(po, oo) {
 				continue
 			}
 		}
+		content, _ := yaml.Marshal(e.expanded)
+		if overlayHandledKeys[key] {
+			if overlayNewer {
+				logOverlayOnce("handled:"+key, content, "[config] dashboard overlay %s block %q differs from %s; only the parts with their own reload rules are adopted from it (see loadWithDashboardOverlay), other changes in this block are not", DashboardOverlayFile, key, path)
+			}
+			continue
+		}
 		if why, owned := overlaySeedOwnedKeys[key]; owned {
-			b, _ := yaml.Marshal(e.expanded)
-			logOverlayOnce("owned:"+key, b, "[config] dashboard overlay %s block %q differs from %s and is not adopted: %s", DashboardOverlayFile, key, path, why)
+			logOverlayOnce("owned:"+key, content, "[config] dashboard overlay %s block %q differs from %s and is not adopted: %s", DashboardOverlayFile, key, path, why)
 			continue
 		}
-		if inPrimary && !overlayNewer {
-			b, _ := yaml.Marshal(e.expanded)
-			logOverlayOnce("older:"+key, b, "[config] dashboard overlay %s block %q differs from %s, which is newer; keeping the config file's block (the next save writes it to the overlay)", DashboardOverlayFile, key, path)
+		if !overlayNewer {
+			// Every save writes the overlay first and the config file second,
+			// so a newer config file holds the latest edit, including the
+			// removal of a block.
+			logOverlayOnce("older:"+key, content, "[config] dashboard overlay %s block %q differs from %s, which is newer; keeping the config file's version (a block missing there counts as removed), and the next save writes it to the overlay", DashboardOverlayFile, key, path)
 			continue
 		}
-		// Decoded onto the loaded block, not into a fresh one: keys the
-		// overlay block leaves out keep the config file's value (and any
-		// default), the way a partial hand edit such as `ask: {enabled:
-		// false}` means it. Config's own UnmarshalYAML replaces the whole
-		// struct, so the field is addressed directly.
+		// The overlay block wins whole, the same rule as review and
+		// agent_sandbox above: a key or map entry removed in the overlay
+		// stays removed. Defaults are applied again by the caller.
 		field := reflect.ValueOf(cfg).Elem().FieldByIndex(index)
-		if err := e.expanded.Decode(field.Addr().Interface()); err != nil {
-			// decodeDashboardOverlay already decoded this entry, so this is
-			// not expected; say so rather than drop it quietly.
-			log.Printf("[config] WARNING: dashboard overlay %s block %q could not be applied: %v", DashboardOverlayFile, key, err)
+		orig := reflect.New(field.Type()).Elem()
+		orig.Set(field)
+		field.Set(reflect.ValueOf(oo).FieldByIndex(index))
+		if err := cfg.validateWithOptions(opts); err != nil {
+			field.Set(orig)
+			logOverlayOnce("invalid:"+key, content, "[config] WARNING: dashboard overlay %s block %q is not adopted: it does not validate (%v); the config file's version is kept and the next save writes it to the overlay", DashboardOverlayFile, key, err)
 			continue
 		}
 		adopted = append(adopted, key)
@@ -346,7 +362,7 @@ func adoptOverlayBlocksGeneric(cfg *Config, path string, ov *decodedOverlay) boo
 		return false
 	}
 	sort.Strings(adopted)
-	log.Printf("[config] reload: adopted dashboard overlay blocks %v (hivecommons/hive#19740)", adopted)
+	logOverlayOnce("adopted", []byte(strings.Join(adopted, ",")), "[config] reload: adopted dashboard overlay blocks %v (hivecommons/hive#19740)", adopted)
 	return true
 }
 
