@@ -41,8 +41,15 @@ func TestNativeMergeQueueGraphQL(t *testing.T) {
 					if err := json.Unmarshal(body.Variables["input"], &input); err != nil {
 						t.Error(err)
 					}
-					if input["pullRequestId"] != "PR_7" {
-						t.Errorf("input=%v", input)
+					// GitHub's EnqueuePullRequestInput names the PR pullRequestId,
+					// but DequeuePullRequestInput names it id and rejects
+					// pullRequestId as an undefined field (#20020).
+					idField, badField := "pullRequestId", "id"
+					if mode == "dequeue" {
+						idField, badField = "id", "pullRequestId"
+					}
+					if _, ok := input[badField]; ok || input[idField] != "PR_7" || len(input) > 2 {
+						t.Errorf("mode=%s input=%v", mode, input)
 					}
 					if mode == "enqueue" {
 						if !strings.Contains(body.Query, "enqueuePullRequest") || input["expectedHeadOid"] != "validated" {
