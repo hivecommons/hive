@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -31,7 +32,7 @@ func (f *fakeInferenceRelay) Enroll(agentName string) (string, string, []byte, f
 }
 
 func TestSandboxInferenceEnvCarriesOnlyTheKickKey(t *testing.T) {
-	env := sandboxInferenceEnv("https://hive-inference.ns.svc:18446", inferenceTestKickKey, "/workspace/.hive/inference-ca.pem", nil)
+	env := sandboxInferenceEnv("https://hive-inference.ns.svc:18446", inferenceTestKickKey, "/workspace/.hive/inference-ca.pem")
 	if env["ANTHROPIC_BASE_URL"] != "https://hive-inference.ns.svc:18446" || env["ANTHROPIC_API_KEY"] != inferenceTestKickKey {
 		t.Fatalf("env = %v", env)
 	}
@@ -90,33 +91,44 @@ func TestEnrollInferenceRelayJobKick(t *testing.T) {
 	}
 }
 
-func TestEnrollInferenceRelayCarriesContextSettings(t *testing.T) {
+func TestSandboxJobCarriesContextSettings(t *testing.T) {
 	t.Setenv(inferencePassContextWindowEnv, "")
 	t.Setenv(inferenceAutoCompactPercentEnv, "80")
-	for _, window := range []int{0, 160000} {
-		t.Run(strconv.Itoa(window), func(t *testing.T) {
-			cfg := config.AgentConfig{Backend: "litellm", Model: "vllm/Qwen", AutoCompactWindowTokens: window}
-			m := NewManager(map[string]config.AgentConfig{"scanner": cfg}, discardLogger(), ProjectContext{})
-			m.SetInferenceContextWindowLookup(func(string) (int, string) { return 262144, cfg.Model })
-			agent := &AgentProcess{Name: "scanner", Config: cfg}
-			e := &SandboxExecutor{InferenceRelay: &fakeInferenceRelay{}}
-			env, release := e.enrollInferenceRelay(SandboxKickSpec{
-				Agent: "scanner", Runtime: config.SandboxRuntimeJob, InferenceRouted: true,
-				ClaudeContextEnv: m.claudeContextEnv(agent, cfg.Backend, cfg.Model),
-			}, t.TempDir())
-			defer release()
-			got := sandbox.SanitizedEnv(nil, nil, env)
-			if !slices.Contains(got, claudeMaxContextTokensEnv+"=262144") {
-				t.Fatalf("context window missing from job env: %v", got)
-			}
-			if window == 0 {
-				if !slices.Contains(got, claudeAutoCompactPercentEnv+"=80") {
-					t.Fatalf("compaction percentage missing from job env: %v", got)
+	for _, relayFails := range []bool{false, true} {
+		for _, window := range []int{0, 160000} {
+			t.Run(strconv.FormatBool(relayFails)+"/"+strconv.Itoa(window), func(t *testing.T) {
+				cfg := config.AgentConfig{Backend: "litellm", Model: "vllm/Qwen", AutoCompactWindowTokens: window}
+				m := NewManager(map[string]config.AgentConfig{"scanner": cfg}, discardLogger(), ProjectContext{})
+				m.SetInferenceContextWindowLookup(func(string) (int, string) { return 262144, cfg.Model })
+				agent := &AgentProcess{Name: "scanner", Config: cfg}
+				relay := &fakeInferenceRelay{}
+				if relayFails {
+					relay.err = errors.New("enrollment failed")
 				}
-			} else if !slices.Contains(got, claudeAutoCompactWindowEnv+"=160000") || slices.Contains(got, claudeAutoCompactPercentEnv+"=80") {
-				t.Fatalf("explicit compaction window must override percentage: %v", got)
-			}
-		})
+				launcher, env, _ := spoolProbe("")
+				e := &SandboxExecutor{Runner: &sandboxFakeRunner{}, Launcher: launcher, InferenceRelay: relay}
+				_, err := e.Run(context.Background(), SandboxKickSpec{
+					Agent: "scanner", AgentConfig: configSnapshot{Backend: "claude"}, Message: "test",
+					Org: "example", Repo: "repo", WorkspaceDir: t.TempDir(), Image: "agent-image",
+					Runtime: config.SandboxRuntimeJob, InferenceRouted: true,
+					ClaudeContextEnv: m.claudeContextEnv(agent, cfg.Backend, cfg.Model),
+				})
+				if err != nil {
+					t.Fatalf("Run: %v", err)
+				}
+				got := sandbox.SanitizedEnv(nil, nil, *env)
+				if !slices.Contains(got, claudeMaxContextTokensEnv+"=262144") {
+					t.Fatalf("context window missing from job env: %v", got)
+				}
+				if window == 0 {
+					if !slices.Contains(got, claudeAutoCompactPercentEnv+"=80") {
+						t.Fatalf("compaction percentage missing from job env: %v", got)
+					}
+				} else if !slices.Contains(got, claudeAutoCompactWindowEnv+"=160000") || slices.Contains(got, claudeAutoCompactPercentEnv+"=80") {
+					t.Fatalf("explicit compaction window must override percentage: %v", got)
+				}
+			})
+		}
 	}
 }
 

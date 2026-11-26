@@ -97,6 +97,7 @@ func TestAgentEnvPairs_AutoCompact(t *testing.T) {
 		explicit, discovered                                                   int
 	}{
 		{name: "direct claude", backend: "claude", model: "sonnet", explicit: 150000, wantWindow: "150000"},
+		{name: "default claude", model: "sonnet", explicit: 150000, wantWindow: "150000"},
 		{name: "routed claude", backend: "litellm", model: "anthropic/claude-sonnet-5-5", explicit: 150000, wantWindow: "150000"},
 		{name: "known window", backend: "litellm", model: "vllm/Qwen", discovered: 262144, percent: "80", wantPercent: "80"},
 		{name: "explicit wins", backend: "litellm", model: "vllm/Qwen", discovered: 262144, explicit: 150000, percent: "80", wantWindow: "150000"},

@@ -284,9 +284,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	defer releaseRelay()
 	inferenceEnv, releaseInference := e.enrollInferenceRelay(spec, workspace)
 	defer releaseInference()
-	if !spec.InferenceRouted {
-		inferenceEnv = mergeSandboxEnv(inferenceEnv, spec.ClaudeContextEnv)
-	}
+	inferenceEnv = mergeSandboxEnv(inferenceEnv, spec.ClaudeContextEnv)
 	runCtx, cancel := context.WithTimeout(ctx, spec.Timeout)
 	defer cancel()
 	sres, runErr := e.launcher().Run(runCtx, sandbox.LaunchSpec{

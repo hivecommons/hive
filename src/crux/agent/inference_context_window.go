@@ -85,7 +85,7 @@ func inferenceContextWindowEnv(window int) map[string]string {
 // and Job launches. An explicit window describes only the configured model.
 func (m *Manager) claudeContextEnv(agent *AgentProcess, backend, model string) map[string]string {
 	routed := m.routableBackend(backend)
-	if backend != "claude" && !routed {
+	if backend != "" && backend != "claude" && !routed {
 		return nil
 	}
 	window := 0
