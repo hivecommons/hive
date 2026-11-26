@@ -30,6 +30,10 @@ type fakeAPI struct {
 	labelErr  error
 	perms     map[string]string
 	permErr   error
+	// permErrFor fails Permission for one login only; permCalls counts
+	// Permission calls per login.
+	permErrFor map[string]error
+	permCalls  map[string]int
 	status    map[string][2]any // sha -> {state, total}
 	statusErr error
 	mergeErr  error
@@ -65,6 +69,13 @@ func (f *fakeAPI) LabelLastAdded(_ context.Context, _ string, n int, _ string) (
 	return forge.LabelAdd{Login: l, PushedAfter: f.pushed[n]}, ok, f.labelErr
 }
 func (f *fakeAPI) Permission(_ context.Context, _, login string) (string, error) {
+	if f.permCalls == nil {
+		f.permCalls = map[string]int{}
+	}
+	f.permCalls[login]++
+	if err := f.permErrFor[login]; err != nil {
+		return "", err
+	}
 	return f.perms[login], f.permErr
 }
 func (f *fakeAPI) CombinedStatus(_ context.Context, _, sha string) (string, int, error) {
@@ -337,7 +348,10 @@ func TestCloseOnMergeSkips(t *testing.T) {
 		{"no closing keyword", func(a *fakeAPI) { a.merged[0].Body = "Refs #5" }, ""},
 		{"no author", func(a *fakeAPI) { a.merged[0].Author = "" }, ""},
 		{"untrusted author", func(a *fakeAPI) { a.merged[0].Author = "drive-by"; a.perms["drive-by"] = "read" }, ""},
-		{"author permission error", func(a *fakeAPI) { a.merged[0].Author = "drive-by"; a.permErr = errBoom }, ""},
+		{"author permission error", func(a *fakeAPI) {
+			a.merged[0].Author = "drive-by"
+			a.permErrFor = map[string]error{"drive-by": errBoom}
+		}, ""},
 		// Only on the assignee list (#19914): not enough to honour an
 		// author's closing keywords.
 		{"author only assignable", func(a *fakeAPI) {
@@ -423,6 +437,33 @@ func TestCloseOnMergeRetriesAFailedCloseWithoutASecondComment(t *testing.T) {
 	got := closeSweeper(api).CloseOnMerge(context.Background())
 	if len(got) != 1 || !got[0].Closed || len(api.posted) != 0 {
 		t.Errorf("CloseOnMerge = %+v posted %v", got, api.posted)
+	}
+}
+
+// TestCloseOnMergeChecksItsOwnUserOncePerRepo: the hive's own user is
+// checked for write once per repo, however many pull requests would close
+// something, and a failed check skips every pull request on that repo,
+// including one by another writer (#19994).
+func TestCloseOnMergeChecksItsOwnUserOncePerRepo(t *testing.T) {
+	api := closeAPI()
+	api.merged = append(api.merged, forge.MergedPull{Number: 31, Author: "hive-bot", Body: "Fixes #6", Base: "release", MergedAt: sweepNow.Add(-time.Hour)})
+	api.issues[6] = "open"
+	if got := closeSweeper(api).CloseOnMerge(context.Background()); len(got) != 2 || !got[0].Closed || !got[1].Closed {
+		t.Fatalf("CloseOnMerge = %+v, want both issues closed", got)
+	}
+	if api.permCalls["hive-bot"] != 1 {
+		t.Errorf("own user checked %d times, want once per repo", api.permCalls["hive-bot"])
+	}
+
+	refused := closeAPI()
+	refused.merged[0].Author = "maintainer"
+	refused.perms["maintainer"] = "admin"
+	refused.permErrFor = map[string]error{"hive-bot": errBoom}
+	if got := closeSweeper(refused).CloseOnMerge(context.Background()); len(got) != 0 || len(refused.closed) != 0 {
+		t.Errorf("own user unverified: CloseOnMerge = %+v closed %v, want nothing", got, refused.closed)
+	}
+	if refused.permCalls["maintainer"] != 0 {
+		t.Errorf("another writer's pull request was still weighed after the own-user check failed")
 	}
 }
 
