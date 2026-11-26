@@ -2,14 +2,14 @@ package dashboard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/defsrc"
@@ -114,6 +114,8 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 	if _, exists := s.deps.Config.Agents[body.Name]; exists {
 		jsonError(w, "agent already exists", http.StatusConflict)
 		return
@@ -195,6 +197,8 @@ func (s *Server) handleAgentDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 	name := r.PathValue("name")
 	agentCfg, ok := s.deps.Config.Agents[name]
 	if !ok {
@@ -396,7 +400,20 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	name := strings.ToLower(strings.ReplaceAll(def.Metadata.Name, " ", "-"))
 	if body.Preview {
+		if err := validateDefinitionAgentName(name); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := validateImportedCadences(name, def.Spec.Cadences); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.deps.Config.ValidateImportedAgent(name, agentConfigFromDefinition(def)); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		jsonResponse(w, map[string]any{
 			"ok":     true,
 			"parsed": def,
@@ -407,12 +424,6 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 				"keepLinked": body.KeepLinked,
 			},
 		})
-		return
-	}
-
-	name := strings.ToLower(strings.ReplaceAll(def.Metadata.Name, " ", "-"))
-	if status, err := s.checkNewAgentName(name); err != nil {
-		jsonError(w, err.Error(), status)
 		return
 	}
 
@@ -442,7 +453,7 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 		agentCfg.DefinitionSource = defSrc
 	}
 
-	if status, err := s.registerDefinedAgent(name, agentCfg, def.Spec.PromptTemplate); err != nil {
+	if status, err := s.registerDefinedAgent(name, agentCfg, def.Spec); err != nil {
 		jsonError(w, err.Error(), status)
 		return
 	}
@@ -454,67 +465,45 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 // maxAgentNameLen bounds an imported or discovered agent's key.
 const maxAgentNameLen = 64
 
-// checkNewAgentName validates the key a definition-created agent (import or
-// an approved repo discovery) will get, and that it can be saved. It returns
-// the HTTP status to answer with alongside the error.
-func (s *Server) checkNewAgentName(name string) (int, error) {
+func validateDefinitionAgentName(name string) error {
 	if name == "" || strings.ContainsAny(name, " ./\\") || !kickTemplatePattern.MatchString(name+".md") {
-		return http.StatusBadRequest, fmt.Errorf("agent name contains invalid characters")
+		return fmt.Errorf("agent name contains invalid characters")
 	}
 	if len(name) > maxAgentNameLen {
-		return http.StatusBadRequest, fmt.Errorf("agent name must be at most %d characters", maxAgentNameLen)
+		return fmt.Errorf("agent name must be at most %d characters", maxAgentNameLen)
 	}
-	if _, exists := s.deps.Config.Agents[name]; exists {
-		return http.StatusConflict, fmt.Errorf("agent already exists: %s", name)
-	}
-	if s.deps.Config.Data.AgentsDir == "" {
-		return http.StatusInternalServerError, fmt.Errorf("agents_dir not configured")
-	}
-	return http.StatusOK, nil
+	return config.ValidateAgentConfigKey(name)
 }
 
 // registerDefinedAgent saves a definition-created agent's overlay (and its
 // prompt template, when the definition carries one), adds it to the live
 // config and starts it. Shared by the import handler and the approval of a
 // repo-discovered agent so both create agents identically.
-func (s *Server) registerDefinedAgent(name string, agentCfg config.AgentConfig, promptTemplate string) (int, error) {
-	agentsDir := s.deps.Config.Data.AgentsDir
-	if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
-		s.logger.Error("failed to save imported agent file", "agent", name, "error", err)
-		return http.StatusInternalServerError, fmt.Errorf("failed to save agent: %w", err)
-	}
-
-	// Save prompt template if provided
-	if promptTemplate != "" {
-		templateFileName := name + ".md"
-		agentCfg.KickTemplate = templateFileName
-
-		if err := os.MkdirAll(promptTemplateSaveDir, 0o755); err != nil {
-			s.logger.Error("failed to create policies dir for import", "error", err)
-		} else {
-			savePath := filepath.Join(promptTemplateSaveDir, templateFileName)
-			if err := os.WriteFile(savePath, []byte(promptTemplate), 0o644); err != nil {
-				s.logger.Error("failed to save imported prompt template", "agent", name, "error", err)
-			}
-		}
-
-		// Re-save agent with updated KickTemplate
-		if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
-			s.logger.Error("failed to re-save agent with template", "agent", name, "error", err)
-		}
-	}
-
-	// Importing an agent under a previously-deleted name is an explicit
-	// re-add — lift the tombstone so the import is not pruned on reload.
-	if s.deps.Config.ClearAgentRemoved(name) {
-		s.logger.Info("agent deletion tombstone lifted by import", "agent", name)
-	}
-	s.deps.Config.Agents[name] = agentCfg
-	s.deps.Config.ApplyAgentDefaults(name)
-
-	if err := s.deps.Config.ExpandAgentReplicas(); err != nil {
+func (s *Server) registerDefinedAgent(name string, agentCfg config.AgentConfig, spec agentDefinitionSpec) (int, error) {
+	if err := validateDefinitionAgentName(name); err != nil {
 		return http.StatusBadRequest, err
 	}
+	if err := validateImportedCadences(name, spec.Cadences); err != nil {
+		return http.StatusBadRequest, err
+	}
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
+	cfg := s.deps.Config
+	// Imported prompts are operator overrides. This is also the writable
+	// location when the shipped policies are mounted read-only.
+	if err := cfg.SaveImportedAgent(name, agentCfg, spec.Cadences, promptTemplateOverrideDir, spec.PromptTemplate); err != nil {
+		switch {
+		case errors.Is(err, config.ErrImportAgentExists), errors.Is(err, config.ErrImportAgentNoSource),
+			errors.Is(err, config.ErrImportAgentOverlay), errors.Is(err, config.ErrConfigChangedOnDisk):
+			return http.StatusConflict, err
+		case errors.Is(err, config.ErrImportAgentInvalid):
+			return http.StatusBadRequest, err
+		default:
+			s.logger.Error("failed to save imported agent", "agent", name, "error", err)
+			return http.StatusInternalServerError, err
+		}
+	}
+
 	addedAgents := s.deps.AgentMgr.ReconcileAgents(s.deps.Config.EnabledAgents())
 	for _, added := range addedAgents {
 		if ac, ok := s.deps.Config.Agents[added]; ok && !ac.OnDemand {
@@ -524,12 +513,42 @@ func (s *Server) registerDefinedAgent(name string, agentCfg config.AgentConfig, 
 		}
 	}
 	if s.deps.Governor != nil {
+		if len(spec.Cadences) > 0 {
+			s.deps.Governor.UpdateConfig(cfg.Governor)
+		}
 		s.deps.Governor.UpdateAgents(s.deps.Config.EnabledAgents())
 	}
 
 	s.reInitSubsystems()
 	s.refreshAndPersist()
 	return http.StatusOK, nil
+}
+
+// Imported intervals keep their literal value: the governor treats "off"
+// (omit the agent) differently from "pause" (keep a paused schedule).
+func validateImportedCadences(name string, cadences map[string]config.Cadence) error {
+	if len(cadences) == 0 {
+		return nil
+	}
+	if err := config.ValidateCadenceAgentName(name); err != nil {
+		return err
+	}
+	for mode, cadence := range cadences {
+		switch mode {
+		case "idle", "quiet", "busy", "surge":
+		default:
+			return fmt.Errorf("unknown governor mode %q", mode)
+		}
+		if err := cadence.Validate(); err != nil {
+			return fmt.Errorf("invalid cadence for %s: %w", mode, err)
+		}
+		if cadence.Mode() == config.CadenceModeInterval && !cadence.IsPaused() {
+			if duration, err := time.ParseDuration(cadence.Interval()); err != nil || duration <= 0 {
+				return fmt.Errorf("invalid cadence for %s: expected a positive duration, got %q", mode, cadence.Interval())
+			}
+		}
+	}
+	return nil
 }
 
 // promptSourceFetcher returns the GitHub client as a promptsrc.Fetcher, or nil
@@ -569,11 +588,8 @@ func (s *Server) bakePromptSource(ctx context.Context, name string, agent *confi
 	}
 
 	templateFileName := name + ".md"
-	if err := os.MkdirAll(promptTemplateSaveDir, 0o755); err != nil {
-		return fmt.Errorf("failed to create policies directory: %w", err)
-	}
-	savePath := filepath.Join(promptTemplateSaveDir, templateFileName)
-	if err := os.WriteFile(savePath, []byte(body), 0o644); err != nil {
+	savePath, _, err := writePromptTemplate(templateFileName, []byte(body))
+	if err != nil {
 		return fmt.Errorf("failed to write baked prompt: %w", err)
 	}
 	agent.KickTemplate = templateFileName

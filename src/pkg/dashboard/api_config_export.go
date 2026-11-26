@@ -381,8 +381,15 @@ func (s *Server) configExportSideFiles() configExportSideFiles {
 			agentNames = append(agentNames, name)
 		}
 	}
+	prompts := promptTemplateSnapshots(promptTemplateSaveDir)
+	// The scheduler uses a readable override before the default template.
+	for name, snapshot := range promptTemplateSnapshots(promptTemplateOverrideDir) {
+		if snapshot.Present {
+			prompts[name] = snapshot
+		}
+	}
 	return configExportSideFiles{
-		PromptTemplates:    promptTemplateSnapshots(promptTemplateSaveDir),
+		PromptTemplates:    prompts,
 		GlobalRestrictions: textFileSnapshot(configExportRestrictionsFile),
 		AgentRestrictions:  agentRestrictionSnapshots(configExportAgentsDataDir, agentNames),
 		Sidebar:            jsonFileSnapshot(sidebarFile),
@@ -397,11 +404,11 @@ func promptTemplateSnapshots(dir string) map[string]configFileSnapshot {
 		return out
 	}
 	for _, entry := range entries {
-		if entry.IsDir() {
+		name := entry.Name()
+		if entry.IsDir() || (strings.HasPrefix(name, ".") && strings.Contains(name, ".tmp-")) {
 			continue
 		}
-		path := filepath.Join(dir, entry.Name())
-		out[entry.Name()] = textFileSnapshot(path)
+		out[name] = textFileSnapshot(filepath.Join(dir, name))
 	}
 	return out
 }

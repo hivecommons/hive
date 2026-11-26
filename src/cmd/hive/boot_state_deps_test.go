@@ -102,6 +102,10 @@ func TestBootStateWithLoadErrorIsWarningOnly(t *testing.T) {
 
 func TestBootStateWithRestoresGovernorAndAgents(t *testing.T) {
 	cfg := bootStateConfig()
+	busy := cfg.Governor.Modes["BUSY"]
+	busy.Cadences = map[string]config.Cadence{"fixer": "2h"}
+	cfg.Governor.Modes["BUSY"] = busy
+	cfg.Governor.ClaimCadenceOwnership("BUSY", "fixer")
 	b := newBootStateBoot(t, cfg)
 	kickAt := time.Now().Add(-time.Hour).Truncate(time.Second)
 	evalAt := time.Now().Add(-time.Minute).Truncate(time.Second)
@@ -123,7 +127,7 @@ func TestBootStateWithRestoresGovernorAndAgents(t *testing.T) {
 		BudgetByAgent:   map[string]int64{"scanner": 1200},
 		BudgetResetAt:   kickAt,
 		CadenceOverrides: map[string]map[string]config.Cadence{
-			"BUSY":    {"scanner": config.Cadence("10m")},
+			"BUSY":    {"scanner": config.Cadence("10m"), "fixer": config.Cadence("1m")},
 			"UNKNOWN": {"scanner": config.Cadence("1m")},
 		},
 		LastKicks:   map[string]time.Time{"scanner": kickAt},
@@ -163,6 +167,9 @@ func TestBootStateWithRestoresGovernorAndAgents(t *testing.T) {
 	}
 	if got := cfg.Governor.Modes["BUSY"].Cadences["scanner"]; got != config.Cadence("10m") {
 		t.Fatalf("cadence override = %q", got)
+	}
+	if got := cfg.Governor.Modes["BUSY"].Cadences["fixer"]; got != config.Cadence("2h") {
+		t.Fatalf("operator-owned cadence = %q, want 2h from config", got)
 	}
 	if _, ok := cfg.Governor.Modes["UNKNOWN"]; ok {
 		t.Fatal("override for an unconfigured mode must be dropped")

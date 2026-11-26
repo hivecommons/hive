@@ -150,6 +150,12 @@ func TestConfigExportDeterministicOrdering(t *testing.T) {
 
 func TestConfigExportIncludesLayersAndMissingReasons(t *testing.T) {
 	srv, dir := configExportFixture(t)
+	pinPromptTemplateDirs(t, promptTemplateSaveDir, t.TempDir())
+	for _, name := range []string{"scanner.md", "imported.md"} {
+		if err := os.WriteFile(filepath.Join(promptTemplateOverrideDir, name), []byte("active "+name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	req := httptest.NewRequest(http.MethodGet, "/api/config/export", nil)
 	markOwnerRequest(req)
 	rec := httptest.NewRecorder()
@@ -173,6 +179,12 @@ func TestConfigExportIncludesLayersAndMissingReasons(t *testing.T) {
 		t.Fatal("config.env layer not present")
 	}
 	side := body["side_files"].(map[string]any)
+	prompts := side["prompt_templates"].(map[string]any)
+	for _, name := range []string{"scanner.md", "imported.md"} {
+		if snapshot, ok := prompts[name].(map[string]any); !ok || snapshot["content"] != "active "+name {
+			t.Errorf("prompt snapshot for %s = %#v", name, prompts[name])
+		}
+	}
 	if !side["global_restrictions"].(map[string]any)["present"].(bool) {
 		t.Fatal("global restrictions not present")
 	}

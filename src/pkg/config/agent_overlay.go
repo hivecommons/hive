@@ -17,6 +17,10 @@ import (
 // of agent name → AgentConfig. Each file should contain a single agent config
 // with the filename (minus extension) used as the agent name.
 func LoadAgentOverrides(dir string) (map[string]AgentConfig, error) {
+	return loadAgentOverrides(dir, nil)
+}
+
+func loadAgentOverrides(dir string, committed *Config) (map[string]AgentConfig, error) {
 	if dir == "" {
 		return nil, nil
 	}
@@ -29,11 +33,17 @@ func LoadAgentOverrides(dir string) (map[string]AgentConfig, error) {
 	}
 
 	agents := make(map[string]AgentConfig)
+	if committed != nil {
+		committed.recoverStagedAgentOverlays(dir, entries, agents)
+	}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
 			continue
 		}
 		name := strings.TrimSuffix(entry.Name(), ".yaml")
+		if _, recovered := agents[name]; recovered {
+			continue
+		}
 		path := filepath.Join(dir, entry.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -49,6 +59,36 @@ func LoadAgentOverrides(dir string) (map[string]AgentConfig, error) {
 		agents[name] = agent
 	}
 	return agents, nil
+}
+
+// recoverStagedAgentOverlays handles a restart between saving the combined
+// config and publishing its agent file. Use the committed entry so it remains
+// managed and can pick up later edits to hive.yaml. A newer regular overlay
+// takes precedence if the operator has since saved one.
+func (c *Config) recoverStagedAgentOverlays(dir string, entries []os.DirEntry, agents map[string]AgentConfig) {
+	const suffix = ".yaml" + agentImportPendingSuffix
+	for _, entry := range entries {
+		name, staged := strings.CutSuffix(entry.Name(), suffix)
+		if !staged || !entry.Type().IsRegular() {
+			continue
+		}
+		agent, configured := c.Agents[name]
+		if !configured || c.IsAgentRemoved(name) || !agent.PauseIsOperatorOwned() {
+			continue
+		}
+		path := filepath.Join(dir, name+".yaml")
+		if fileNewer(path, filepath.Join(dir, entry.Name())) {
+			continue
+		}
+		for modeName, mode := range c.Governor.Modes {
+			if _, ok := mode.Cadences[name]; ok && c.Governor.CadenceIsOperatorOwned(modeName, name) {
+				agent.Managed = true
+				agent.SetLoadState(name, path)
+				agents[name] = agent
+				break
+			}
+		}
+	}
 }
 
 // RejectInvalidAgentOverlays drops every overlay entry that cannot pass
@@ -229,10 +269,7 @@ func (c *Config) validateAgentOverlay(name string, agent AgentConfig) error {
 	if err := ValidateKickTemplateName(agent.KickTemplate); err != nil {
 		return err
 	}
-	if err := ValidateBobDisplayName(agent.BobDisplayName); err != nil {
-		return err
-	}
-	if err := ValidateBobSessionLabel("bob.session_label", strings.TrimSpace(agent.Bob.SessionLabel)); err != nil {
+	if err := c.validateAgentBobSessionLabel(name, agent); err != nil {
 		return err
 	}
 	if err := validateChannels(name, agent.Channels); err != nil {
@@ -341,6 +378,10 @@ func (c *Config) ClearAgentRemoved(name string) bool {
 // (id, beads_dir) restored to the base's. A review head cannot be routed —
 // its backend and model differ from the base by design — so it is refused.
 func SaveAgentFile(dir, name string, agent AgentConfig) error {
+	return saveAgentFile(dir, name, agent, nil, false)
+}
+
+func saveAgentFile(dir, name string, agent AgentConfig, files *agentImportFiles, staged bool) error {
 	if strings.Contains(name, "..") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
 		return fmt.Errorf("invalid agent name %q", name)
 	}
@@ -380,6 +421,16 @@ func SaveAgentFile(dir, name string, agent AgentConfig) error {
 	}
 
 	path := filepath.Join(dir, name+".yaml")
+	if staged {
+		path += agentImportPendingSuffix
+	}
+	if files != nil {
+		previous, err := files.backup(path)
+		if err != nil {
+			return err
+		}
+		return writeFileAtomicTracked(path, data, 0o644, previous.record)
+	}
 	tmpPath := path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
 		return fmt.Errorf("writing agent file %s: %w", tmpPath, err)
@@ -396,8 +447,10 @@ func RemoveAgentFile(dir, name string) error {
 		return fmt.Errorf("invalid agent name %q", name)
 	}
 	path := filepath.Join(dir, name+".yaml")
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing agent file %s: %w", path, err)
+	for _, target := range []string{path + agentImportPendingSuffix, path} {
+		if err := os.Remove(target); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("removing agent file %s: %w", target, err)
+		}
 	}
 	return nil
 }

@@ -2550,6 +2550,12 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 					mode.Cadences = make(map[string]config.Cadence)
 				}
 				for agentName, cadence := range agentCadences {
+					// Explicit YAML cadences may have been saved after this
+					// snapshot. Only restore the legacy value when YAML has
+					// no operator-owned value for this agent and mode.
+					if _, present := mode.Cadences[agentName]; present && b.cfg.Governor.CadenceIsOperatorOwned(modeName, agentName) {
+						continue
+					}
 					mode.Cadences[agentName] = cadence
 				}
 				b.cfg.Governor.Modes[modeName] = mode
@@ -4065,8 +4071,13 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		// tell whether the reload changed it.
 		prevGitHub := b.cfg.GitHub
 
-		// Swap the in-memory config pointer contents
-		b.cfg.ReplaceFromReload(newCfg)
+		if !b.cfg.ReplaceFromReload(newCfg) {
+			b.logger.Debug("config reload superseded by a completed agent import")
+			if b.configWatcher != nil {
+				b.configWatcher.Trigger()
+			}
+			return prevACMMLevel, prevACMMLevel
+		}
 		nextACMMLevel = b.cfg.ACMMLevelOrZero()
 
 		// Re-sync subsystems that cache config values

@@ -101,13 +101,8 @@ func (s *Server) handleDiscoveredAgentApprove(w http.ResponseWriter, r *http.Req
 	if name == "" {
 		name = repoagents.AgentName(def.Metadata.Name)
 	}
-	if status, err := s.checkNewAgentName(name); err != nil {
-		jsonError(w, err.Error(), status)
-		return
-	}
-
 	agentCfg := discoveredAgentConfig(def, entry, body.Backend, body.Model, body.Mode)
-	if status, err := s.registerDefinedAgent(name, agentCfg, def.Spec.PromptTemplate); err != nil {
+	if status, err := s.registerDefinedAgent(name, agentCfg, def.Spec); err != nil {
 		jsonError(w, err.Error(), status)
 		return
 	}

@@ -296,6 +296,8 @@ type Config struct {
 	RemovedAgents []string `yaml:"removed_agents,omitempty" json:"removed_agents,omitempty"`
 
 	SourcePath string `yaml:"-" json:"-"`
+	// agentImportGeneration is the latest import reflected in this config.
+	agentImportGeneration uint64
 	// disk is the content hash of each layer file this config was loaded
 	// from or last saved to; Save refuses to overwrite a file whose content
 	// changed since (hivecommons/hive#19561). See disk_state.go.
@@ -396,6 +398,21 @@ func (c *Config) MarketplaceURL() string {
 	return strings.TrimRight(strings.TrimSpace(c.Hub.URL), "/")
 }
 
+const (
+	agentGitHubAPICapKey   = "github_api_hourly_cap"
+	agentSessionRecycleKey = "session_recycle"
+	agentCLIMemoryKey      = "cli_memory"
+)
+
+// ValidateAgentConfigKey checks that an agent name can be persisted under agents.
+func ValidateAgentConfigKey(name string) error {
+	switch name {
+	case agentGitHubAPICapKey, agentSessionRecycleKey, agentCLIMemoryKey:
+		return fmt.Errorf("agent name %q is reserved in hive config", name)
+	}
+	return nil
+}
+
 // UnmarshalYAML accepts the operator-facing agents.github_api_hourly_cap
 // scalar alongside the existing agents.<name> map entries. The Agents field
 // remains a plain map everywhere else in the codebase.
@@ -407,7 +424,7 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 	if agents := mappingValueNode(&node, "agents"); agents != nil && agents.Kind == yaml.MappingNode {
 		for i := 0; i < len(agents.Content)-1; {
 			switch agents.Content[i].Value {
-			case "github_api_hourly_cap":
+			case agentGitHubAPICapKey:
 				var cap int
 				if err := agents.Content[i+1].Decode(&cap); err != nil {
 					return fmt.Errorf("agents.github_api_hourly_cap: %w", err)
@@ -415,12 +432,12 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 				c.AgentsGitHubAPIHourlyCap = cap
 				c.AgentsGitHubAPIHourlyCapSet = true
 				agents.Content = append(agents.Content[:i], agents.Content[i+2:]...)
-			case "session_recycle":
+			case agentSessionRecycleKey:
 				if err := agents.Content[i+1].Decode(&recycle); err != nil {
 					return fmt.Errorf("agents.session_recycle: %w", err)
 				}
 				agents.Content = append(agents.Content[:i], agents.Content[i+2:]...)
-			case "cli_memory":
+			case agentCLIMemoryKey:
 				if err := agents.Content[i+1].Decode(&cliMemory); err != nil {
 					return fmt.Errorf("agents.cli_memory: %w", err)
 				}
@@ -3907,6 +3924,16 @@ type ModeConfig struct {
 	Cadences  map[string]Cadence `yaml:"cadences"`
 }
 
+const governorThresholdKey = "threshold"
+
+// ValidateCadenceAgentName checks that a name can be used as a key in a mode.
+func ValidateCadenceAgentName(name string) error {
+	if name == governorThresholdKey {
+		return fmt.Errorf("agent name %q is reserved in governor modes", name)
+	}
+	return nil
+}
+
 // UnmarshalYAML implements custom unmarshaling for ModeConfig.
 // The YAML format has threshold and agent cadences as sibling keys:
 //
@@ -3925,8 +3952,7 @@ func (m *ModeConfig) UnmarshalYAML(value *yaml.Node) error {
 
 	m.Cadences = make(map[string]Cadence)
 
-	const thresholdKey = "threshold"
-	if v, ok := raw[thresholdKey]; ok {
+	if v, ok := raw[governorThresholdKey]; ok {
 		var t int
 		if _, err := fmt.Sscanf(v.Interval(), "%d", &t); err != nil {
 			return fmt.Errorf("invalid threshold value %q: %w", v.Interval(), err)
@@ -3935,7 +3961,7 @@ func (m *ModeConfig) UnmarshalYAML(value *yaml.Node) error {
 	}
 
 	for k, v := range raw {
-		if k == thresholdKey {
+		if k == governorThresholdKey {
 			continue
 		}
 		m.Cadences[k] = v
@@ -3948,7 +3974,7 @@ func (m *ModeConfig) UnmarshalYAML(value *yaml.Node) error {
 // threshold as a sibling key alongside agent cadences.
 func (m ModeConfig) MarshalYAML() (interface{}, error) {
 	out := make(map[string]interface{})
-	out["threshold"] = m.Threshold
+	out[governorThresholdKey] = m.Threshold
 	for k, v := range m.Cadences {
 		out[k] = v
 	}
@@ -6343,7 +6369,7 @@ func loadWithOverrides(path, envPath string, validateOpts ValidateOptions) (*Con
 
 	// Merge per-agent overlay files from the agents directory.
 	if cfg.Data.AgentsDir != "" {
-		overlays, err := LoadAgentOverrides(cfg.Data.AgentsDir)
+		overlays, err := loadAgentOverrides(cfg.Data.AgentsDir, &cfg)
 		if err != nil {
 			return nil, fmt.Errorf("loading agent overlays: %w", err)
 		}
@@ -6400,10 +6426,16 @@ func LoadWithDashboardOverlayForHub(path string) (*Config, error) {
 }
 
 func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Config, error) {
+	// An agent import writes several files before publishing its config. A
+	// watcher reload must read either the saved import or the restored files.
+	agentImportMu.RLock()
+	defer agentImportMu.RUnlock()
+
 	cfg, err := loadWithOverrides(path, "", validateOpts)
 	if err != nil {
 		return nil, err
 	}
+	cfg.agentImportGeneration = completedAgentImports
 	if !IsKubernetesPod() {
 		return cfg, nil
 	}
@@ -6510,7 +6542,9 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 		}
 		cfg.applyBootstrapEnv()
 	}
-	if len(overlay.RemovedAgents) > 0 {
+	// An explicit empty list clears the last tombstone even when Kubernetes
+	// remounts an old seed. An omitted list leaves the primary list in force.
+	if overlay.RemovedAgents != nil {
 		cfg.RemovedAgents = overlay.RemovedAgents
 		cfg.PruneRemovedAgents()
 		// Observability (#2439): this runs on boot AND on every ~2-min config reload,
@@ -6566,7 +6600,7 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// in a file is indistinguishable from unset, so only a pause is carried;
 	// unpause through the dashboard, which writes both layers.
 	if cfg.Data.AgentsDir != "" {
-		if files, ferr := LoadAgentOverrides(cfg.Data.AgentsDir); ferr == nil {
+		if files, ferr := loadAgentOverrides(cfg.Data.AgentsDir, cfg); ferr == nil {
 			for name, fa := range files {
 				a, ok := cfg.Agents[name]
 				if !ok || cfg.IsAgentRemoved(name) {
@@ -8012,6 +8046,11 @@ func (c Config) MarshalYAML() (interface{}, error) {
 	if root == nil {
 		return out, nil
 	}
+	if c.RemovedAgents != nil && len(c.RemovedAgents) == 0 {
+		root.Content = append(root.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "removed_agents"},
+			&yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"})
+	}
 	if c.Governor.mergeTrainStallWarnSet && c.Governor.MergeTrainStallWarnS == 0 {
 		if governor := mappingValueNode(root, "governor"); governor != nil {
 			governor.Content = append(governor.Content,
@@ -8026,7 +8065,7 @@ func (c Config) MarshalYAML() (interface{}, error) {
 	}
 	if c.AgentsGitHubAPIHourlyCapSet && agents.Kind == yaml.MappingNode {
 		agents.Content = append([]*yaml.Node{
-			{Kind: yaml.ScalarNode, Value: "github_api_hourly_cap"},
+			{Kind: yaml.ScalarNode, Value: agentGitHubAPICapKey},
 			{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(c.AgentsGitHubAPIHourlyCap)},
 		}, agents.Content...)
 	}
@@ -8036,7 +8075,7 @@ func (c Config) MarshalYAML() (interface{}, error) {
 			return nil, err
 		}
 		agents.Content = append(agents.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: "session_recycle"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: agentSessionRecycleKey},
 			&recycleNode)
 	}
 	if !c.AgentsCLIMemory.IsZero() && agents.Kind == yaml.MappingNode {
@@ -8045,7 +8084,7 @@ func (c Config) MarshalYAML() (interface{}, error) {
 			return nil, err
 		}
 		agents.Content = append(agents.Content,
-			&yaml.Node{Kind: yaml.ScalarNode, Value: "cli_memory"},
+			&yaml.Node{Kind: yaml.ScalarNode, Value: agentCLIMemoryKey},
 			&memNode)
 	}
 	return &node, nil
@@ -8206,6 +8245,10 @@ func (c *Config) ReconcilePausedAndSave(livePaused map[string]bool) error {
 
 // saveLocked performs the actual marshal-and-write. Callers MUST hold saveMu.
 func (c *Config) saveLocked() error {
+	return c.saveLockedWithImportFiles(nil)
+}
+
+func (c *Config) saveLockedWithImportFiles(files *agentImportFiles) error {
 	if c.SourcePath == "" {
 		return fmt.Errorf("config has no source path")
 	}
@@ -8235,7 +8278,13 @@ func (c *Config) saveLocked() error {
 	// freshly reconciled in-memory config. Installing the atomic overlay first
 	// means any reload triggered by the primary write observes the same agent
 	// layer this Save is about to persist.
-	overlayErr := c.saveDashboardOverlay()
+	overlayErr := c.saveDashboardOverlayWithImportFiles(files)
+	if files != nil && overlayErr != nil {
+		return fmt.Errorf("writing dashboard overlay: %w", overlayErr)
+	}
+	// A stale boot file can take precedence over a successful primary write.
+	runtimeRequired := files != nil && (IsKubernetesPod() ||
+		PersistedConfigPath(c.SourcePath) != ResolvedConfigPath(c.SourcePath))
 
 	// Replace the primary config atomically (temp file + fsync + rename onto
 	// the resolved target) — see writeFileAtomic for why that is safe on the
@@ -8263,7 +8312,7 @@ func (c *Config) saveLocked() error {
 	dataSum := sumBytes(data)
 	recordProcessWrite(c.SourcePath, dataSum)
 	var srcErr error
-	if err := writeFileAtomic(c.SourcePath, data, sourceConfigMode(c.SourcePath)); err != nil {
+	if err := files.write(c.SourcePath, data, sourceConfigMode(c.SourcePath)); err != nil {
 		srcErr = fmt.Errorf("writing config: %w", err)
 	} else {
 		c.recordLayerSum(c.SourcePath, dataSum)
@@ -8291,20 +8340,27 @@ func (c *Config) saveLocked() error {
 	if guardLivePVCPathUnderTest(runtimePath, defaultRuntimeConfigFile, "RuntimeConfigFile") {
 		// Not written, so not persisted: keep the primary-path error visible.
 		runtimeErr = errLivePVCPathGuarded
-	} else if err := writeFileAtomic(runtimePath, data, 0o600); err != nil {
-		// Common cause: init container created the file as root, runtime user
-		// can't overwrite. Remove and retry so runtime state is not silently lost.
-		_ = os.Remove(runtimePath) // best-effort; the retry's own error is what's recorded below
-		if retryErr := writeFileAtomic(runtimePath, data, 0o600); retryErr != nil {
-			runtimeErr = retryErr
-			log.Printf("[config] warning: failed to write PVC runtime config to %s (even after remove): %v", runtimePath, retryErr)
+	} else if err := files.write(runtimePath, data, 0o600); err != nil {
+		if files != nil {
+			runtimeErr = err
 		} else {
-			log.Printf("[config] PVC runtime config written to %s (recovered from permission error)", runtimePath)
+			// Common cause: init container created the file as root, runtime user
+			// can't overwrite. Remove and retry so runtime state is not silently lost.
+			_ = os.Remove(runtimePath) // best-effort; the retry's own error is what's recorded below
+			if retryErr := writeFileAtomic(runtimePath, data, 0o600); retryErr != nil {
+				runtimeErr = retryErr
+				log.Printf("[config] warning: failed to write PVC runtime config to %s (even after remove): %v", runtimePath, retryErr)
+			} else {
+				log.Printf("[config] PVC runtime config written to %s (recovered from permission error)", runtimePath)
+			}
 		}
 	} else {
 		log.Printf("[config] PVC runtime config written to %s", runtimePath)
 	}
 
+	if runtimeRequired && runtimeErr != nil {
+		return errors.Join(srcErr, fmt.Errorf("writing boot runtime config: %w", runtimeErr))
+	}
 	if srcErr == nil {
 		return nil
 	}
@@ -8490,6 +8546,10 @@ func IsKubernetesPod() bool {
 // placeholder ConfigMap seed on the next restart — exactly the durability bug
 // this atomic write prevents.
 func (c *Config) saveDashboardOverlay() error {
+	return c.saveDashboardOverlayWithImportFiles(nil)
+}
+
+func (c *Config) saveDashboardOverlayWithImportFiles(files *agentImportFiles) error {
 	if !IsKubernetesPod() {
 		// Docker/LXC mode: RuntimeConfigFile is already the boot-time
 		// source of truth there, so dashboard saves persist without an
@@ -8505,15 +8565,33 @@ func (c *Config) saveDashboardOverlay() error {
 	// the #19561 guard then reloads it). The runtime config still carries
 	// this save, and it is the boot input whenever it exists.
 	if c.overlayKeptWhole() {
+		if files != nil {
+			return fmt.Errorf("%w: repair the malformed file %s", ErrImportAgentOverlay, DashboardOverlayFile)
+		}
 		if data, rerr := os.ReadFile(DashboardOverlayFile); rerr == nil {
 			logOverlayOnce("file-save", data, "[config] WARNING: dashboard overlay %s is not valid YAML; this save leaves it as it is (fix or remove the file to let saves update it)", DashboardOverlayFile)
 		}
 		return nil
 	}
+	if files != nil && c.overlayCarry != nil {
+		for _, block := range c.overlayCarry.preserved {
+			switch block.key {
+			case "agents", "governor", "removed_agents":
+				return fmt.Errorf("%w: repair the %s block in %s", ErrImportAgentOverlay, block.key, DashboardOverlayFile)
+			}
+		}
+	}
 	data, err := c.dashboardOverlayBytes()
 	if err != nil {
 		log.Printf("[config] warning: failed to marshal dashboard overlay: %v", err)
 		return err
+	}
+	var previous *importFile
+	if files != nil {
+		previous, err = files.backup(DashboardOverlayFile)
+		if err != nil {
+			return err
+		}
 	}
 	tmpPath := DashboardOverlayFile + ".tmp"
 	// 0600, not 0644: dashboardOverlayBytes only folds the dashboard auth
@@ -8550,6 +8628,7 @@ func (c *Config) saveDashboardOverlay() error {
 		log.Printf("[config] warning: failed to rename dashboard overlay into place %s (dashboard saves will not survive pod restarts): %v", DashboardOverlayFile, err)
 		return err
 	}
+	previous.record(data)
 	c.recordLayerSum(DashboardOverlayFile, overlaySum)
 	log.Printf("[config] dashboard overlay written to %s (merged over the ConfigMap seed at next boot)", DashboardOverlayFile)
 	return nil

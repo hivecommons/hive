@@ -1,0 +1,1 @@
+- Importing an agent definition now applies its per-mode schedules to the governor and preserves them across restarts.

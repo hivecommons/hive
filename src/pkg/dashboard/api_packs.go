@@ -122,6 +122,8 @@ func (s *Server) applyPack(level int, forceGovernor bool) (*ApplyPackResult, err
 		return nil, err
 	}
 
+	s.agentConfigMu.Lock()
+	defer s.agentConfigMu.Unlock()
 	agentsDir := s.deps.Config.Data.AgentsDir
 	if agentsDir == "" {
 		return nil, fmt.Errorf("agents_dir not configured")
@@ -775,6 +777,7 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.levelMu.Lock()
+	s.agentConfigMu.Lock()
 
 	level := body.Level
 	packAgents := config.ACMMPackManagedAgentNames()
@@ -801,6 +804,7 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to save ACMM level to hive.yaml", "error", err)
 	}
+	s.agentConfigMu.Unlock()
 
 	s.deps.AgentMgr.SetACMMLevel(level)
 	s.deps.AgentMgr.ClearModeOverrides(packAgents)
@@ -842,6 +846,7 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 	// (#5492).
 	floor := s.refreshAfterMutationSeq()
 
+	s.agentConfigMu.Lock()
 	pack, packLookupErr := config.ACMMPackByLevel(level)
 	var packAgentNames []string
 	if packLookupErr == nil {
@@ -892,6 +897,7 @@ func (s *Server) handlePackSetLevel(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("failed to persist config after pack cadence update", "error", err)
 		}
 	}
+	s.agentConfigMu.Unlock()
 
 	var packUpdated []string
 	if packResult != nil {
