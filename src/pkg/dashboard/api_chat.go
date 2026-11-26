@@ -35,6 +35,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 		return m
 	}
+	// Config assist proposals (#19978): a verified owner's config-shaped
+	// message, with chat.config_assist on, gets at most one proposal card
+	// and never reaches the grounded or responder paths.
+	if resp, ok := s.chatConfigProposalReply(r, route, body.Query); ok {
+		jsonResponse(w, resp)
+		return
+	}
 	if answer, ok := s.chatRouteLocalAnswer(r, route); ok {
 		jsonResponse(w, withHint(map[string]interface{}{
 			"answer": answer,

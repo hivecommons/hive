@@ -113,6 +113,7 @@ func resetOverlayWarnings(t *testing.T) {
 		overlayWarnedMu.Lock()
 		overlayWarned = map[string]contentSum{}
 		overlayWarnedMu.Unlock()
+		clearOverlayHeldWrites()
 	}
 	reset()
 	t.Cleanup(reset)
@@ -435,13 +436,13 @@ func TestPersistLeavesUnparseableOverlayFileAlone(t *testing.T) {
 		t.Errorf("runtime config not written while the overlay was kept: %v", err)
 	}
 
-	// Once fixed (the operator keeps the header line, which names the config
-	// file the save above wrote), the overlay loads and saves normally again.
-	seedNow, err := os.ReadFile(f.seed)
-	if err != nil {
-		t.Fatal(err)
+	// Once fixed, the overlay loads and saves normally again. The operator
+	// edits the file as it is, so its header still names the config file
+	// from before the save above, which no longer matches (#20066 review).
+	fixed := strings.Replace(string(written), "ask: {enabled: false\n", "ask: {enabled: false}\n", 1)
+	if fixed == string(written) {
+		t.Fatal("setup: broken ask line not found")
 	}
-	fixed := string(overlayBaseHeader(sumBytes(seedNow))) + overlayCarrySeed + "ask: {enabled: false}\n"
 	if err := os.WriteFile(f.overlay, []byte(fixed), 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -3,8 +3,8 @@
 #
 # Publishes a key list made by `hive forge key-list` from nginx over https
 # with a private CA, starts Forgejo trusting only that host, creates a
-# read-only, a write and a claim-free authorized integration, and runs the
-# forgejo_jwt_live test.
+# read-only, a write, a claim-free and a REST (sub=hive:rest) authorized
+# integration, and runs the forgejo_jwt_live test.
 # Run from anywhere: bash src/crux/forgejwt/testdata/forgejo-live.sh
 #
 #   RUNTIME=podman|docker  container runtime (default podman)
@@ -115,6 +115,20 @@ fj admin user create --username bot --password 'B0t-pass-xyz' \
 ADMIN=$(fj admin user generate-access-token --username fjadmin --token-name seed --scopes all --raw)
 rt exec "$FJ" curl -sf -o /dev/null -H "Authorization: token $ADMIN" -H 'Content-Type: application/json' \
 	-X POST "http://localhost:3000/api/v1/admin/users/bot/repos" -d '{"name":"probe","private":true,"auto_init":true}'
+# For the REST endpoints the sweeps read (#19920): a write collaborator whose
+# permission the hive's user asks about, and an issue that was closed and
+# reopened so its timeline has a reopen event.
+fj admin user create --username writer --password 'Wr1ter-pass-xyz' \
+	--email writer@example.invalid --must-change-password=false >/dev/null
+api() { # method path [json]: an admin API call, prints the response body
+	rt exec "$FJ" curl -sf -H "Authorization: token $ADMIN" -H 'Content-Type: application/json' \
+		-X "$1" "http://localhost:3000/api/v1$2" ${3:+-d "$3"}
+}
+api PUT /repos/bot/probe/collaborators/writer '{"permission":"write"}' >/dev/null
+ISSUE=$(api POST /repos/bot/probe/issues '{"title":"jwt live"}' | sed -n 's/.*"number":\([0-9]*\).*/\1/p')
+[ -n "$ISSUE" ] || { echo "no issue number from the issue create" >&2; exit 1; }
+api PATCH "/repos/bot/probe/issues/$ISSUE" '{"state":"closed"}' >/dev/null
+api PATCH "/repos/bot/probe/issues/$ISSUE" '{"state":"open"}' >/dev/null
 
 SUBJECT=hive:advisor
 set -x
@@ -124,11 +138,23 @@ fj admin user create-authorized-integration --username bot --name hive-bare --is
 	--scope read:repository --repo bot/probe >"$STATE/bare.json"
 fj admin user create-authorized-integration --username bot --name hive-contributor --issuer "$ISSUER" \
 	--scope write:repository --repo bot/probe >"$STATE/write.json"
+# The hive's own REST integration as forge-app-setup.md documents it. If
+# Forgejo refuses read:user and read:organization on a repo-limited
+# integration, retry without them; the test logs which scopes it got.
+REST_SCOPES=write:repository,write:issue,read:user,read:organization
+if ! fj admin user create-authorized-integration --username bot --name hive-rest --issuer "$ISSUER" \
+	--scope "$REST_SCOPES" --repo bot/probe --claim-eq "sub=hive:rest" >"$STATE/rest.json"; then
+	echo "create-authorized-integration refused $REST_SCOPES; retrying without the user and organization scopes" >&2
+	REST_SCOPES=write:repository,write:issue
+	fj admin user create-authorized-integration --username bot --name hive-rest --issuer "$ISSUER" \
+		--scope "$REST_SCOPES" --repo bot/probe --claim-eq "sub=hive:rest" >"$STATE/rest.json"
+fi
 set +x
 cat "$STATE/advisor.json"
 audience() { sed -n 's/^ *"audience": *"\([^"]*\)".*/\1/p' "$1"; }
 AUDIENCE=$(audience "$STATE/advisor.json") BARE=$(audience "$STATE/bare.json") WRITE=$(audience "$STATE/write.json")
-[ -n "$AUDIENCE" ] && [ -n "$BARE" ] && [ -n "$WRITE" ] || { echo "no audience in the integration output" >&2; exit 1; }
+REST=$(audience "$STATE/rest.json")
+[ -n "$AUDIENCE" ] && [ -n "$BARE" ] && [ -n "$WRITE" ] && [ -n "$REST" ] || { echo "no audience in the integration output" >&2; exit 1; }
 
 if [ "$HOST_GO" = 1 ]; then
 	PORT=$(rt port "$FJ" 3000/tcp | head -1)
@@ -139,4 +165,6 @@ fi
 gorun FORGEJO_URL="$URL" FORGEJO_REPO=bot/probe FORGEJO_JWT_ISSUER="$ISSUER" \
 	FORGEJO_JWT_KEY="$SD/jwt-signing.pem" FORGEJO_JWT_AUDIENCE="$AUDIENCE" FORGEJO_JWT_SUBJECT="$SUBJECT" \
 	FORGEJO_JWT_BARE_AUDIENCE="$BARE" FORGEJO_JWT_WRITE_AUDIENCE="$WRITE" \
+	FORGEJO_JWT_REST_AUDIENCE="$REST" FORGEJO_JWT_REST_SCOPES="$REST_SCOPES" \
+	FORGEJO_ISSUE="$ISSUE" FORGEJO_COLLABORATOR=writer FORGEJO_OWNER=bot \
 	-- go test -tags forgejo_jwt_live -run '^TestForgejoAcceptsMintedTokens$' -count=1 -v ./crux/forgejwt

@@ -339,7 +339,38 @@ func parseOverlayBase(data []byte) (base contentSum, ok bool) {
 // is the one the overlay was written against, i.e. the config file has not
 // been edited since the overlay was saved.
 func overlayReconciledWith(ov *decodedOverlay, primaryData []byte) bool {
-	return ov.base != nil && *ov.base == sumBytes(primaryData)
+	sum := sumBytes(primaryData)
+	return (ov.base != nil && *ov.base == sum) || overlayHeldWrite(sum)
+}
+
+// overlayHeldWrites are the config file contents this process saved while it
+// left an unparseable overlay alone (saveDashboardOverlayFor). Those saves
+// could not refresh the overlay's header, so once the operator fixes the
+// overlay, a config file still holding one of them was changed only by this
+// process: the overlay is still the latest edit. Cleared when an overlay is
+// written normally again. Process memory only; after a restart the header
+// rule alone applies.
+var (
+	overlayHeldMu     sync.Mutex
+	overlayHeldWrites = map[contentSum]bool{}
+)
+
+func recordOverlayHeldWrite(sum contentSum) {
+	overlayHeldMu.Lock()
+	defer overlayHeldMu.Unlock()
+	overlayHeldWrites[sum] = true
+}
+
+func overlayHeldWrite(sum contentSum) bool {
+	overlayHeldMu.Lock()
+	defer overlayHeldMu.Unlock()
+	return overlayHeldWrites[sum]
+}
+
+func clearOverlayHeldWrites() {
+	overlayHeldMu.Lock()
+	defer overlayHeldMu.Unlock()
+	overlayHeldWrites = map[contentSum]bool{}
 }
 
 // adoptOverlayBlocksGeneric carries every overlay block not covered by the
