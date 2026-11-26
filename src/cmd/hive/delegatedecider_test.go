@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 )
 
@@ -83,5 +84,45 @@ func TestWorkflowSpecRunnerUsesLargerBudget(t *testing.T) {
 	}
 	if b := newDelegateDeciderRunner(func() *config.Config { return cfg }).(*delegateDeciderRunner).completionBudget(); b != delegateDeciderMaxTokens {
 		t.Fatalf("default budget = %d", b)
+	}
+}
+
+// #20092: the chat runner sends the config assist proposal turn on
+// chat.config_assist.model, falling back to grounded_answers.model, while
+// grounded answers keep their own override.
+func TestChatGroundingRunnerConfigAssistModel(t *testing.T) {
+	t.Setenv(config.LiteLLMEndpointEnv, "")
+	var got delegateDeciderRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{}"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{}
+	cfg.Governor.Trajectory.Endpoint = srv.URL
+	cfg.Governor.Trajectory.Model = "reviewer-model"
+	runner := newChatGroundingRunner(func() *config.Config { return cfg })
+	run := func(profile string) string {
+		t.Helper()
+		if _, err := runner.RunDeciderTurn(context.Background(), profile, "sys", "usr"); err != nil {
+			t.Fatalf("%s: %v", profile, err)
+		}
+		return got.Model
+	}
+
+	if m := run(dashboard.ChatConfigAssistProfile); m != "reviewer-model" {
+		t.Fatalf("no overrides: model = %q, want reviewer-model", m)
+	}
+	cfg.Chat.GroundedAnswers.Model = "grounded-model"
+	if m := run(dashboard.ChatConfigAssistProfile); m != "grounded-model" {
+		t.Fatalf("fallback: model = %q, want grounded-model", m)
+	}
+	cfg.Chat.ConfigAssist.Model = "assist-model"
+	if m := run(dashboard.ChatConfigAssistProfile); m != "assist-model" {
+		t.Fatalf("override: model = %q, want assist-model", m)
+	}
+	if m := run("hive-chat-grounded"); m != "grounded-model" {
+		t.Fatalf("grounded turn: model = %q, want grounded-model", m)
 	}
 }

@@ -51,8 +51,8 @@ hive you serve.
   matrix, the normalizer, or any test other than adding cases to the corpus.
   Never pick a payload because you know it will be blocked, and never record an
   outcome you did not observe.
-- **Never merge, approve, or remove `hold`.** Every PR you open carries `hold`
-  at every ACMM level, including L6. A corpus change moves the published
+- **Never merge, approve, or remove `ready-for-review`.** Every PR you open is
+  labelled `ready-for-review` at every ACMM level, including L6. A corpus change moves the published
   numbers; a human decides whether it lands.
 - **A gap outside text detection is a vulnerability, not a corpus case.** If you
   notice a way past a defense other than `ioscan` text detection — a write the
@@ -119,7 +119,7 @@ false positives, which the scorecard counts as strictly as misses.
    `attack_blocked`, `block_rate_pct` (`100 * blocked / total`, one decimal),
    `benign_total`, and `benign_false_positives` (benign controls whose outcome
    is `blocked`). A new miss or a new false positive lowers the baseline. That
-   lowered number is the finding; the `hold` is where a human accepts it.
+   lowered number is the finding; `ready-for-review` is where a human accepts it.
 5. **Republish `src/docs/ioscan-red-team.md`** from the corrected outcomes: the
    opening numbers, the case count, the results table, and one entry in **Where
    it does not work** for each new miss, described as a technique, never quoted.
@@ -179,7 +179,7 @@ hive-open-pr --repo "<org>/<corpus-repo>" \
   --base "<target-branch>" \
   --title "<repo-convention prefix> ioscan red team: <family> cases <first-ID>–<last-ID>" \
   --body-file /tmp/redteam-pr-<unique>.md \
-  --label "security,hold"
+  --label "security"
 ```
 
 The PR body has: the family and the attacker it models; a table of
@@ -208,7 +208,7 @@ stopped.
 
 Never edit, label, comment on, or push to items labelled `hold`, `on-hold`,
 `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or
-`do-not-merge`, except your own corpus PR, whose `hold` you never remove. Only
+`do-not-merge`, except your own corpus PR, whose `ready-for-review` you never remove. Only
 push to branches this lane created (`redteam/...`).
 
 ## Workflow
@@ -216,7 +216,7 @@ push to branches this lane created (`redteam/...`).
 1. Read the kick; check AUTHORIZED REPOS and find the corpus.
 2. If your corpus PR is open, run a fix-up kick on it and stop.
 3. Otherwise pick a family, write the cases and controls, update the baseline
-   and the doc, and open one hold-labelled PR.
+   and the doc, and open one PR (the hive labels it `ready-for-review`).
 4. Record one bead.
 5. Summarise: repository, family, case IDs, predicted or observed outcomes,
    PR and issue links, and any `SECURITY: private report needed` line.

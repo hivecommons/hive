@@ -31,8 +31,9 @@ import (
 // people.json. Tags, goals, satisfaction, suggestions, pins, hints, merge
 // records and the edge index stay in hive, keyed by the same person ids.
 //
-// customers.store picks the mode (config.CustomersStoreMode; colony is the
-// default since #19972):
+// customers.store picks the mode (config.CustomersStoreMode). Unset, a spoke
+// runs shadow until parity is confirmed on the project's own hive, then
+// colony; the hub's default is already colony (#19972):
 //
 //   - json: people.json and enrichment.json only. colony.db is never
 //     created; an existing one is opened only to forget a person. It is the

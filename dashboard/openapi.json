@@ -31526,7 +31526,7 @@
           "System"
         ],
         "summary": "Get chat config assist toggle",
-        "description": "Returns chat.config_assist.enabled (default off, RFC #19788 phase 1) and whether a grounded-answers runner is attached.",
+        "description": "Returns chat.config_assist.enabled (default off, RFC #19788 phase 1), chat.config_assist.model, the chat.grounded_answers.model it falls back to, and whether a grounded-answers runner is attached. Requires owner role.",
         "responses": {
           "200": {
             "description": "Chat config assist state",
@@ -31538,6 +31538,12 @@
                     "enabled": {
                       "type": "boolean"
                     },
+                    "model": {
+                      "type": "string"
+                    },
+                    "fallback_model": {
+                      "type": "string"
+                    },
                     "runner_attached": {
                       "type": "boolean"
                     }
@@ -31545,6 +31551,9 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "Owner role required"
           },
           "503": {
             "description": "Config unavailable"
@@ -31556,7 +31565,7 @@
           "System"
         ],
         "summary": "Set chat config assist toggle",
-        "description": "Sets chat.config_assist.enabled. An absent enabled key changes nothing. Persisted and audited as config_chat_assist with before/after values. Requires owner role.",
+        "description": "Sets chat.config_assist.enabled and chat.config_assist.model (an empty model clears the override, falling back to chat.grounded_answers.model, then the reviewer model). An absent key changes nothing; a model id with whitespace or over 200 characters is a 400. Persisted and audited as config_chat_assist with before/after values. Requires owner role.",
         "requestBody": {
           "required": true,
           "content": {
@@ -31566,6 +31575,9 @@
                 "properties": {
                   "enabled": {
                     "type": "boolean"
+                  },
+                  "model": {
+                    "type": "string"
                   }
                 }
               }
@@ -31582,6 +31594,9 @@
                   "properties": {
                     "enabled": {
                       "type": "boolean"
+                    },
+                    "model": {
+                      "type": "string"
                     },
                     "changed": {
                       "type": "boolean"

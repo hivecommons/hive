@@ -13,18 +13,30 @@ type ChatConfig struct {
 }
 
 // ChatConfigAssistConfig (`chat.config_assist:`) is the master switch for
-// Hive Chat config assist. Phase 1 only carries the flag; the model knob and
-// proposals arrive in later phases.
+// Hive Chat config assist, plus the model its proposal turn runs on.
 type ChatConfigAssistConfig struct {
 	// Enabled turns config assist on. nil = false: the opposite default of
 	// grounded_answers, so the feature is opt-in.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Model overrides the model for the proposal turn. Empty falls back to
+	// grounded_answers.model, then the reviewer model (RFC #19788 section 1).
+	Model string `yaml:"model,omitempty" json:"model,omitempty"`
 }
 
 // ConfigAssistEnabled reports whether chat config assist is on. It is true
 // only when config_assist.enabled is explicitly true.
 func (c ChatConfig) ConfigAssistEnabled() bool {
 	return c.ConfigAssist.Enabled != nil && *c.ConfigAssist.Enabled
+}
+
+// ConfigAssistModel is the model override for the config assist proposal
+// turn: config_assist.model, else grounded_answers.model, "" when neither is
+// set (the reviewer model then applies).
+func (c ChatConfig) ConfigAssistModel() string {
+	if m := strings.TrimSpace(c.ConfigAssist.Model); m != "" {
+		return m
+	}
+	return c.GroundedAnswersModel()
 }
 
 // ChatGroundedAnswersConfig (`chat.grounded_answers:`) gates grounded chat

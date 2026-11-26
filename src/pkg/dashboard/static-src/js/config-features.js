@@ -1146,7 +1146,7 @@
 
         ${featuresSectionHtml('chat', `
         <div class="settings-subsection">
-          <div class="settings-subsection-title">Config assist ${yamlHint('chat.config_assist')} ${settingHelpMark('settings', 'features', 'Config assist', `Lets Hive Chat propose config changes (model, reasoning effort, cadence) for an owner to confirm, instead of only answering questions. Owner-only; persisted and audited as config_chat_assist.`)}</div>
+          <div class="settings-subsection-title">Config assist ${yamlHint('chat.config_assist')} ${settingHelpMark('settings', 'features', 'Config assist', `Lets Hive Chat propose config changes (model, reasoning effort, cadence) for an owner to confirm, instead of only answering questions, and picks the model for the proposal turn. Owner-only; persisted and audited as config_chat_assist.`)}</div>
           <div id="cfg-chat-assist-host"><div class="fs-sm text-muted">Loading…</div></div>
         </div>
         `)}

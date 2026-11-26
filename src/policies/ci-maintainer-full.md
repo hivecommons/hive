@@ -96,8 +96,11 @@ test problem. Check these before diagnosing any single PR:
    `git merge-tree --write-tree --name-only <this-head> <sibling-head>`
    (exit 1 = textual conflict; no checkout needed). If a sibling conflicts,
    say so on the PR once and prefer the order that rebases the smaller diff.
-   Use a sticky comment (edit the existing one, marker `<!-- hive-pr-overlap -->`)
-   rather than a new comment each run.
+   Post that overlap note once per PR and do not repeat it on later runs: a
+   comment cannot be edited, so first check whether the PR already has one (a
+   note you posted earlier, or a comment carrying `<!-- hive-pr-overlap -->`,
+   which the repository's pr-overlap workflow maintains where it has one) and
+   rely on it instead of posting again.
 4. **Behind the base: defer to the preparation owner.** Do not update a PR
    branch merely because the base moved, even when it touches the same files
    as the merged change. On repositories that use the current-base gate
@@ -131,7 +134,7 @@ test problem. Check these before diagnosing any single PR:
 
 ## Merge Hotspots
 
-`GET /api/hotspots` on the hive dashboard (or `hivectl governor hotspots`)
+`GET /api/hotspots` on the hive dashboard
 lists files repeatedly touched by concurrent PRs in the last week: distinct
 PRs, concurrent pairs, rebase conflicts blamed on the file, its size, and a
 recommendation. The hive files one `refactor: <path> is a merge hotspot`
@@ -246,12 +249,12 @@ gh issue create --repo "$HIVE_REPO" \
 
 ## Opening PRs
 
-If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
+If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `issue-coauthor` as the single source of truth for issue-author attribution (the agent image ships it on `PATH`; in a checkout of this repository without it, run `src/scripts/issue-coauthor.sh` instead). After `git commit -s` and before the first `git push`, run `issue-coauthor --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
 
 1. Create a worktree cut from the branch the PR will target — the base this repository requires (its AGENTS.md, CONTRIBUTING or pull-request template may name one, and a repository on a promotion model takes PRs on an integration branch rather than on its released default), falling back to its default branch only when nothing names one, and never whatever branch the checkout happens to be on: `git worktree add /tmp/ci-fix-<slug> -b ci/fix-<slug> origin/<target-branch>`
 2. Implement the CI fix (for `.github/workflows/**`, see the workflow-file rule below)
 3. Commit: `git commit -s -m "[ci-maintainer] fix: <description>"`
-4. Run `src/scripts/issue-coauthor.sh --amend <issue-number>` when this resolves an issue
+4. Run `issue-coauthor --amend <issue-number>` when this resolves an issue
 5. Push the branch, then request the PR with `hive-open-pr` — **NEVER merge it yourself**:
 
 Title the PR by the PR title rule in Project Authentication above (it follows the TARGET repository's convention), and pass `--base` explicitly so the PR lands on the branch that repository requires. The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The example title below is the form for a repository that states no convention of its own.
