@@ -112,6 +112,7 @@ func (p *GitHubProxy) translatorAgentName(r *http.Request) (string, bool) {
 // max-context-len only feeds token capping and defaults gracefully to 0
 // (no cap) until the async probe fills it in.
 func (p *GitHubProxy) SetInferenceRoute(agentName string, route *InferenceRoute) {
+	route, needProbe := p.inference.seedContextWindow(route) // hivecommons/hive#19913
 	p.inference.Set(agentName, route)
 	keySHA256 := config.APIKeySHA256(route.APIKey)
 	if keySHA256 != "" {
@@ -120,7 +121,7 @@ func (p *GitHubProxy) SetInferenceRoute(agentName string, route *InferenceRoute)
 		p.logger.Info("inference route set", "agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "model", route.Model, "maxContextLen", route.MaxContextLen, "api_key_sha256", "")
 	}
 
-	if route.MaxContextLen == 0 {
+	if needProbe {
 		endpoint, model, apiKey, caBundle := route.Endpoint, route.Model, route.APIKey, route.CABundle
 		go func() {
 			if maxLen := queryMaxModelLen(endpoint, model, apiKey, caBundle); maxLen > 0 {
