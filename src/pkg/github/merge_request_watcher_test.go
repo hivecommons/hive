@@ -625,3 +625,160 @@ func TestIsMergeQueueRequiredMergeBlocker(t *testing.T) {
 		}
 	}
 }
+
+// alreadyQueuedMergeServer fails PUT /merge with the 405 message *msg holds
+// (GitHub's "Pull Request is in the merge queue." by default) and merges
+// once *msg is empty.
+func alreadyQueuedMergeServer(t *testing.T, msg *atomic.Value, puts *atomic.Int32) *httptest.Server {
+	t.Helper()
+	green := greenFixture()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if green.serveCI(w, r) {
+			return
+		}
+		if r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/merge") {
+			puts.Add(1)
+			w.Header().Set("Content-Type", "application/json")
+			if m, _ := msg.Load().(string); m != "" {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				b, _ := json.Marshal(map[string]string{"message": m})
+				_, _ = w.Write(b)
+				return
+			}
+			_, _ = io.WriteString(w, `{"sha":"deadbeef","merged":true,"message":"Pull Request successfully merged"}`)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+}
+
+// A 405 "Pull Request is in the merge queue." means GitHub's merge queue
+// already holds the PR and will merge it: the request is satisfied on the
+// first refusal. No attempt is counted, nothing is set aside as .exhausted,
+// no operator alert or fix-loop re-engagement fires, nothing is logged at
+// WARN, and a later request for the same PR is processed normally.
+func TestMergeRequestWatcher_AlreadyInMergeQueueIsSatisfied(t *testing.T) {
+	var msg atomic.Value
+	msg.Store("Pull Request is in the merge queue.")
+	var puts atomic.Int32
+	srv := alreadyQueuedMergeServer(t, &msg, &puts)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+	var logs strings.Builder
+	c.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	var reEngaged int
+	c.SetMergeReEngageHook(func(string, int) bool { reEngaged++; return true })
+	sink := &recordingMergeAlertSink{}
+	c.SetMergeFailureAlertSink(sink)
+
+	dir := t.TempDir()
+	mergeRequestDirForTest = dir
+	defer func() { mergeRequestDirForTest = "" }()
+
+	reqPath, _ := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 1585, ExpectSHA: "abc", Agent: "scanner"})
+	c.ProcessMergeRequestsOnce(context.Background())
+	c.ProcessMergeRequestsOnce(context.Background())
+
+	if got := puts.Load(); got != 1 {
+		t.Fatalf("PUT /merge calls = %d, want 1 (no retry of a queued PR)", got)
+	}
+	if _, err := os.Stat(reqPath); !os.IsNotExist(err) {
+		t.Fatalf("request file should be consumed once the PR is known to be queued: %v", err)
+	}
+	if _, err := os.Stat(reqPath + ".exhausted"); !os.IsNotExist(err) {
+		t.Fatalf("a queued PR must not be set aside as .exhausted: %v", err)
+	}
+	resp := readMergeResult(t, reqPath)
+	if !resp.OK || !resp.Queued || resp.Attempts != 0 || resp.SHA != "" || resp.Error != "" || resp.Note != mergeRequestAlreadyQueuedNote {
+		t.Fatalf("result = %+v, want ok queued with no attempt, no sha and the queued note", resp)
+	}
+	if _, tracked := c.mergeRequestState("o/r", 1585, "abc"); tracked {
+		t.Fatal("a queued PR must leave no per-PR state that could block a later request")
+	}
+	if len(sink.adds) != 0 {
+		t.Fatalf("a queued PR must raise no operator alert, got %+v", sink.adds)
+	}
+	if reEngaged != 0 {
+		t.Fatalf("a queued PR needs no fix; re-engage hook called %d times", reEngaged)
+	}
+	out := logs.String()
+	if strings.Contains(out, "giving up") || strings.Contains(out, "will retry") {
+		t.Fatalf("a queued PR must not log a failed merge:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "level=WARN") && (strings.Contains(line, "merge queue") || strings.Contains(line, "merge failed")) {
+			t.Fatalf("a queued PR must not log at WARN:\n%s", out)
+		}
+	}
+	if n := strings.Count(out, "already in the merge queue"); n != 1 {
+		t.Fatalf("queued outcome logged %d times, want once:\n%s", n, out)
+	}
+
+	// The PR left the queue unmerged; a new request for the same head merges
+	// as usual.
+	msg.Store("")
+	again, _ := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 1585, ExpectSHA: "abc", Agent: "scanner"})
+	c.ProcessMergeRequestsOnce(context.Background())
+	if got := puts.Load(); got != 2 {
+		t.Fatalf("later request should PUT /merge once more, got %d calls in all", got)
+	}
+	if resp := readMergeResult(t, again); !resp.OK || resp.Queued || resp.SHA != "deadbeef" || resp.Attempts != 1 {
+		t.Fatalf("later request result = %+v, want an ordinary merge on attempt 1", resp)
+	}
+}
+
+// A request that already failed once and then finds the PR queued keeps its
+// earlier attempt in the record but spends none on the queued refusal, and
+// is not set aside.
+func TestMergeRequestWatcher_AlreadyInMergeQueueAfterFailureCountsNoAttempt(t *testing.T) {
+	var msg atomic.Value
+	msg.Store("Pull Request is not mergeable")
+	var puts atomic.Int32
+	srv := alreadyQueuedMergeServer(t, &msg, &puts)
+	defer srv.Close()
+	c := testMergeClient(t, srv.URL)
+
+	dir := t.TempDir()
+	mergeRequestDirForTest = dir
+	defer func() { mergeRequestDirForTest = "" }()
+
+	reqPath, _ := WriteMergeRequest(dir, MergeRequest{Repo: "o/r", Number: 1581, ExpectSHA: "abc", Agent: "scanner"})
+	c.ProcessMergeRequestsOnce(context.Background())
+	if resp := readMergeResult(t, reqPath); resp.OK || resp.Attempts != 1 {
+		t.Fatalf("first result = %+v, want a failed attempt 1", resp)
+	}
+
+	msg.Store("Pull Request is in the merge queue.")
+	for i := 0; i < mergeRequestMaxAttempts; i++ {
+		c.ProcessMergeRequestsOnce(context.Background())
+	}
+	if got := puts.Load(); got != 2 {
+		t.Fatalf("PUT /merge calls = %d, want 2", got)
+	}
+	if _, err := os.Stat(reqPath + ".exhausted"); !os.IsNotExist(err) {
+		t.Fatalf("a queued PR must not be set aside as .exhausted: %v", err)
+	}
+	if resp := readMergeResult(t, reqPath); !resp.OK || !resp.Queued || resp.Attempts != 1 {
+		t.Fatalf("result = %+v, want ok queued keeping the one earlier attempt", resp)
+	}
+}
+
+func TestIsAlreadyInMergeQueue(t *testing.T) {
+	queued := "merging PR o/utah#1585 (squash): PUT https://api.github.com/repos/o/utah/pulls/1585/merge: 405 Pull Request is in the merge queue. []"
+	if !isAlreadyInMergeQueue(queued) {
+		t.Errorf("already-queued 405 not recognised: %q", queued)
+	}
+	if isMergeQueueRequiredMergeBlocker(queued) || isConflictMergeBlocker(queued) || isRequiredCheckMergeBlocker(queued) {
+		t.Errorf("already-queued 405 must not match another merge blocker: %q", queued)
+	}
+	for _, msg := range []string{
+		"405 Repository rule violations found\n\nChanges must be made through the merge queue",
+		"405 Pull Request is not mergeable",
+		`405 Required status check "build" is expected.`,
+		"merge conflict between base and head",
+	} {
+		if isAlreadyInMergeQueue(msg) {
+			t.Errorf("%q misclassified as already in the merge queue", msg)
+		}
+	}
+}
