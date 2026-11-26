@@ -556,3 +556,69 @@ func TestColonyShadowWritesAndDropsAnswers(t *testing.T) {
 		t.Error("dropping one source removed another's answer")
 	}
 }
+
+// A fresh hive in colony-only never creates people.json, and its first
+// person survives a restart.
+func TestColonyOnlyFreshHive(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "customers")
+	clk := newClock()
+	b := bootColony(t, dir, StoreColonyOnly, clk)
+	if len(b.store.People()) != 0 {
+		t.Fatal("a fresh store holds people")
+	}
+	p, err := b.store.Add("Fixture Person", []Identity{{Kind: KindGitHub, Value: "fixture-fresh"}}, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustNotExist(t, filepath.Join(dir, FileName))
+	if par, err := b.store.ColonyParity(); err != nil || par.ColonyPeople != 1 || par.Mismatches != 0 {
+		t.Errorf("colony-only parity = %+v, %v", par, err)
+	}
+	if err := b.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+	again := bootColony(t, dir, StoreColonyOnly, clk)
+	if got, err := again.store.Get(p.ID); err != nil || got.Name != "Fixture Person" {
+		t.Errorf("after restart = %+v, %v", got, err)
+	}
+	if err := again.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+	e, err := OpenEnrichment(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.SetColony(again.colony); err == nil {
+		t.Error("reading enrichment from a closed colony store succeeded")
+	}
+}
+
+// A document written by a newer release is never read.
+func TestColonyOnlyRefusesNewerDocument(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "customers")
+	if err := os.MkdirAll(dir, storeDirMode); err != nil {
+		t.Fatal(err)
+	}
+	db, err := cstore.Open(filepath.Join(dir, ColonyFileName), cstore.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := json.Marshal(colonyDoc{Version: colonyOnlyVersion + 1})
+	if err := db.SetStoreAttachment(colonyAttachDoc, doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir, newClock().now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, err := AttachColony(s, StoreColonyOnly, nil); err == nil {
+		_ = c.Close()
+		t.Fatal("colony-only read a document from a newer release")
+	}
+	if _, err := ExportColony(dir, t.TempDir(), false); err == nil {
+		t.Error("export read a document from a newer release")
+	}
+}
