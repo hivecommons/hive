@@ -277,9 +277,10 @@ authorized integration for the hive's own identity and put its audience under
 `rest_audience`:
 
 ```sh
-forgejo admin user create-authorized-integration --issuer https://keys.example.com \
+forgejo admin user create-authorized-integration --username <hive user> --name hive-rest \
+  --issuer https://keys.example.com \
   --scope write:repository,write:issue,read:user,read:organization \
-  --repo <owner/repo> --claim-eq sub=hive:rest
+  --repo <owner/repo1> --repo <owner/repo2> --claim-eq sub=hive:rest
 ```
 
 ```yaml
@@ -300,10 +301,11 @@ for example an unreadable key file, builds no REST client and names
   it must cover every repository the hive works on, as each tier's
   integration does.
 - Forgejo acts on a JWT as the user that owns the integration. The
-  close-on-merge sweep reads that user through `GET /user` and trusts closing
-  keywords from it, and the hive's issues, comments and merges are made as
-  it. Create the REST integration under the hive's own Forgejo user, the
-  same user the access token belonged to, and keep `read:user` in its scope.
+  close-on-merge sweep reads that user through `GET /user`, or takes it from
+  `forgejo.login`, and trusts closing keywords from it, and the hive's
+  issues, comments and merges are made as it. Pass the hive's own Forgejo
+  user, the same user the access token belonged to, as `--username`, and
+  keep `read:user` in the scope unless `forgejo.login` is set.
 - `rest_audience` is set beside at least one tier audience, and it must
   differ from every tier audience; `hive validate` refuses a repeated one.
 - The REST token is reused until shortly before it expires, but a change to
