@@ -88,7 +88,10 @@ type chatConfigProposalStore struct {
 
 func (st *chatConfigProposalStore) sweepLocked(now time.Time) {
 	for id, p := range st.byID {
-		if !now.Before(p.Expires) {
+		// An in-flight proposal is settled by its Apply (markApplied or
+		// release), never swept mid-Apply: a slow save would otherwise lose
+		// the applied record Undo needs.
+		if p.State != chatConfigInFlight && !now.Before(p.Expires) {
 			delete(st.byID, id)
 		}
 	}

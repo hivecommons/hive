@@ -60,6 +60,7 @@ var auditSensitiveActions = map[string]bool{
 	"claude_credential_rebridged":           true,
 	"claude_token_missing":                  true,
 	"chat_config_apply_failed":              true,
+	"chat_config_applied":                   true,
 	"chat_config_declined":                  true,
 	"chat_config_proposed":                  true,
 	"chat_config_rejected":                  true,

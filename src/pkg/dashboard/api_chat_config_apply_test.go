@@ -305,7 +305,7 @@ func TestChatConfigUndo_FromAuditAfterRestart(t *testing.T) {
 }
 
 func TestChatConfigApply_AuditActionsSensitive(t *testing.T) {
-	for _, a := range []string{"chat_config_apply_failed", "chat_config_undo"} {
+	for _, a := range []string{"chat_config_apply_failed", "chat_config_applied", "chat_config_undo"} {
 		if !auditSensitiveActions[a] {
 			t.Errorf("%s must be a sensitive audit action", a)
 		}

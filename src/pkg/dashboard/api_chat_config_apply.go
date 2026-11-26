@@ -2,12 +2,18 @@ package dashboard
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Chat config assist, phase 3b (RFC #19788 §4, issue #19985): the proposal
@@ -184,12 +190,22 @@ func (s *Server) chatConfigApplyBegin(w http.ResponseWriter, r *http.Request, ag
 		jsonError(w, reason, status)
 		return nil, false
 	}
-	if !s.deps.Config.Chat.ConfigAssistEnabled() || !chatRequestIsVerifiedOwner(r) {
+	if !s.deps.Config.Chat.ConfigAssistEnabled() {
 		return fail(http.StatusForbidden, "chat config assist is off")
+	}
+	if !chatRequestIsVerifiedOwner(r) {
+		return fail(http.StatusForbidden, "only the hive owner can apply a chat config proposal")
 	}
 	p, err := s.chatConfigProposals.claim(id, requestUser(r), time.Now())
 	if err != nil {
 		return fail(http.StatusConflict, err.Error())
+	}
+	// Defense in depth: the proposal was allowlisted when it was made, but
+	// the Apply re-checks it so a seed-owned or secret key can never be
+	// written through this path, whatever ended up in the store.
+	if err := s.chatConfigApplyFieldAllowed(p.Section, p.Field, p.Body); err != nil {
+		s.chatConfigProposals.drop(p.ID)
+		return fail(http.StatusForbidden, err.Error())
 	}
 	reason := ""
 	hash, _ := s.chatConfigCurrentHash(agent)
@@ -224,11 +240,14 @@ func (a *chatConfigApply) finish() {
 			s.chatConfigProposals.drop(p.Reverses)
 			s.auditFromRequest(a.r, "chat_config_undo", auditDetail(
 				"proposal", p.ID, "reverses", p.Reverses, "section", p.Section, "field", p.Field,
-				p.Field, auditChange(p.Before, p.After)), p.Agent)
+				"before_fp", chatConfigValueFingerprint(p.Before), "after_fp", chatConfigValueFingerprint(p.After)), p.Agent)
 			return
 		}
 		hash, _ := s.chatConfigCurrentHash(p.Agent)
 		s.chatConfigProposals.markApplied(p.ID, hash, time.Now())
+		s.auditFromRequest(a.r, "chat_config_applied", auditDetail(
+			"proposal", p.ID, "section", p.Section, "field", p.Field,
+			"before_fp", chatConfigValueFingerprint(p.Before), "after_fp", chatConfigValueFingerprint(p.After)), p.Agent)
 		return
 	}
 	s.chatConfigProposals.release(p.ID)
@@ -241,6 +260,60 @@ func (a *chatConfigApply) finish() {
 	}
 	s.auditFromRequest(a.r, "chat_config_apply_failed", auditDetail(
 		"proposal", p.ID, "section", p.Section, "status", strconv.Itoa(status), "reason", chatTruncate(reason, 200)), p.Agent)
+}
+
+// chatConfigFingerprintLen is the hex length of a value fingerprint in the
+// Apply and Undo audit lines.
+const chatConfigFingerprintLen = 12
+
+// chatConfigValueFingerprint identifies a value in an audit line without
+// writing the value itself: a truncated SHA-256, or auditUnset when unset.
+func chatConfigValueFingerprint(v string) string {
+	if v == "" {
+		return auditUnset
+	}
+	sum := sha256.Sum256([]byte(v))
+	return "sha256:" + hex.EncodeToString(sum[:])[:chatConfigFingerprintLen]
+}
+
+// chatConfigSecretFieldRE matches field names that carry credentials. No
+// chat proposal may write one, allowlisted or not.
+var chatConfigSecretFieldRE = regexp.MustCompile(`(?i)(secret|token|password|passwd|credential|api_?key|private_?key)`)
+
+// chatConfigApplyFieldAllowed is the Apply's own allowlist: one field of the
+// models, cadences or general section, set by a body with exactly that one
+// key, and never a seed-owned config key or a secret.
+func (s *Server) chatConfigApplyFieldAllowed(section, field string, body map[string]any) error {
+	for k := range body {
+		if config.IsSeedOwnedKey(k) {
+			return fmt.Errorf("%q is owned by the config file or the hub and cannot be changed from chat", chatTruncate(k, 64))
+		}
+		if chatConfigSecretFieldRE.MatchString(k) {
+			return fmt.Errorf("%q is a secret and cannot be changed from chat", chatTruncate(k, 64))
+		}
+	}
+	if config.IsSeedOwnedKey(field) || config.IsSeedOwnedKey(section) {
+		return fmt.Errorf("%q is owned by the config file or the hub and cannot be changed from chat", chatTruncate(field, 64))
+	}
+	if chatConfigSecretFieldRE.MatchString(field) {
+		return fmt.Errorf("%q is a secret and cannot be changed from chat", chatTruncate(field, 64))
+	}
+	if _, ok := body[field]; !ok || len(body) != 1 {
+		return errors.New("a chat proposal must set exactly its one field")
+	}
+	allowed := false
+	switch section {
+	case "models":
+		allowed = field == "model" || field == "reasoning_effort"
+	case "cadences":
+		_, allowed = s.deps.Config.Governor.Modes[field]
+	case "general":
+		allowed = field == "enabled"
+	}
+	if !allowed {
+		return fmt.Errorf("field %q of section %q cannot be changed from chat", chatTruncate(field, 64), chatTruncate(section, 32))
+	}
+	return nil
 }
 
 // chatConfigFieldValue is the current value of one allowlisted field, in the
@@ -312,17 +385,21 @@ func chatConfigAuditFields(detail string) map[string]string {
 }
 
 // chatConfigAppliedFromAudit rebuilds an applied proposal of user from the
-// audit log after a restart dropped the store: the chat_config_proposed line
-// gives the agent, section, field and before/after values, and a section
-// line attributed via=chat to the same proposal proves it was applied. A
-// proposal already undone is not returned.
-func (s *Server) chatConfigAppliedFromAudit(id, user string) (chatConfigProposal, bool) {
+// audit log after a restart (or the store's TTL) dropped it: the
+// chat_config_proposed line gives the agent, section, field and before/after
+// values, and a section line attributed via=chat to the same proposal proves
+// it was applied. A proposal already undone is not returned. stale reports
+// that a later write to the same agent section (by anyone) is logged after
+// the Apply, so an Undo would overwrite a newer change even when the field
+// reads the same again.
+func (s *Server) chatConfigAppliedFromAudit(id, user string) (p chatConfigProposal, stale, ok bool) {
 	if s.audit == nil || id == "" {
-		return chatConfigProposal{}, false
+		return chatConfigProposal{}, false, false
 	}
+	entries := s.audit.Recent(0) // newest first
 	var proposed map[string]string
-	applied, undone := false, false
-	for _, e := range s.audit.Recent(0) {
+	appliedAt, undone := -1, false
+	for i, e := range entries {
 		if e.User != user {
 			continue
 		}
@@ -335,19 +412,26 @@ func (s *Server) chatConfigAppliedFromAudit(id, user string) (chatConfigProposal
 			if chatConfigAuditFields(e.Detail)["reverses"] == id {
 				undone = true
 			}
-		case strings.HasPrefix(e.Action, "config_agent_"):
+		case strings.HasPrefix(e.Action, "config_agent_") && appliedAt < 0:
 			if strings.Contains(e.Detail+",", ", via=chat, proposal="+id+",") {
-				applied = true
+				appliedAt = i
 			}
 		}
 	}
-	if proposed == nil || !applied || undone {
-		return chatConfigProposal{}, false
+	if proposed == nil || appliedAt < 0 || undone {
+		return chatConfigProposal{}, false, false
 	}
 	field := proposed["field"]
-	before, after, ok := strings.Cut(proposed[field], " -> ")
-	if !ok {
-		return chatConfigProposal{}, false
+	before, after, cut := strings.Cut(proposed[field], " -> ")
+	if !cut {
+		return chatConfigProposal{}, false, false
+	}
+	agent, section := proposed["agent"], proposed["section"]
+	for _, e := range entries[:appliedAt] {
+		if e.Agent == agent && e.Action == "config_agent_"+section {
+			stale = true
+			break
+		}
 	}
 	unset := func(v string) string {
 		if v == auditUnset {
@@ -356,9 +440,9 @@ func (s *Server) chatConfigAppliedFromAudit(id, user string) (chatConfigProposal
 		return v
 	}
 	return chatConfigProposal{
-		ID: id, User: user, Agent: proposed["agent"], Section: proposed["section"], Field: field,
+		ID: id, User: user, Agent: agent, Section: section, Field: field,
 		Before: unset(before), After: unset(after), State: chatConfigApplied,
-	}, true
+	}, stale, true
 }
 
 // handleChatConfigProposalUndo serves POST
@@ -378,10 +462,16 @@ func (s *Server) handleChatConfigProposalUndo(w http.ResponseWriter, r *http.Req
 	defer s.agentConfigMu.Unlock()
 
 	id, user, now := r.PathValue("id"), requestUser(r), time.Now()
+	staleMsg := "the agent's settings changed since the change was applied; undo it in the agent config dialog"
 	orig, ok := s.chatConfigProposals.applied(id, user, now)
 	if !ok {
-		if orig, ok = s.chatConfigAppliedFromAudit(id, user); !ok {
+		var stale bool
+		if orig, stale, ok = s.chatConfigAppliedFromAudit(id, user); !ok {
 			jsonError(w, "no applied proposal with that id to undo", http.StatusNotFound)
+			return
+		}
+		if stale {
+			jsonError(w, staleMsg, http.StatusConflict)
 			return
 		}
 	}
@@ -396,12 +486,16 @@ func (s *Server) handleChatConfigProposalUndo(w http.ResponseWriter, r *http.Req
 	// Undo. From the audit log only the field itself can be compared.
 	if (orig.AppliedHash != "" && hash != orig.AppliedHash) ||
 		(orig.AppliedHash == "" && chatConfigFieldValue(row, orig.Section, orig.Field) != orig.After) {
-		jsonError(w, "the agent's settings changed since the change was applied; undo it in the agent config dialog", http.StatusConflict)
+		jsonError(w, staleMsg, http.StatusConflict)
 		return
 	}
 	body, err := s.chatConfigUndoBody(orig.Section, orig.Field, orig.Before)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if err := s.chatConfigApplyFieldAllowed(orig.Section, orig.Field, body); err != nil {
+		jsonError(w, err.Error(), http.StatusForbidden)
 		return
 	}
 	activeMode := ""
