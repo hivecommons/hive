@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v6.64.2)
+
+### Fixed
+
+- Remove pull requests from the native merge queue again: the dequeue mutation now sends the pull request as `id`, the field GitHub's `DequeuePullRequestInput` expects. Before this, every dequeue failed, so a gate that turned on after the hive queued a PR (such as `needs-human` or a hold) never took it back out, and the queue merged it anyway.
+
 ## 2026-11-26 (v6.64.1)
 
 ### Fixed
