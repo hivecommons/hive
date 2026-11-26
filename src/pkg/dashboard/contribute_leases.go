@@ -65,6 +65,12 @@ type taskLease struct {
 	// diagnostic — it says where a lease came from, not what it does.
 	restored  bool
 	expiresAt time.Time
+	// issuedAt is when the hub first issued this task to the identity. Kept
+	// across re-records of the same task and persisted, so a resume after a
+	// reconnect or hub restart still knows when the task began: a completion
+	// PR created before it, and naming no issue, is not the task's work
+	// (contribute_pr_relevance.go, #19985).
+	issuedAt time.Time
 	// claimedBy / claimExpiresAt / claimPosted record the issue claim the hub
 	// asserted for this task (hivecommons/hive#8380): who, until when, and
 	// whether the claim comment reached the forge or lives on this lease only
@@ -255,6 +261,10 @@ func (h *ContributeWSHub) recordLeaseForKeyStage(identity, taskID, repo string, 
 		triageVerdict:   triageVerdict,
 		triageRationale: triageRationale,
 		expiresAt:       now.Add(leaseTTL),
+		issuedAt:        now,
+	}
+	if prev != nil && !prev.issuedAt.IsZero() && prev.taskID == taskID {
+		h.leases[k].issuedAt = prev.issuedAt
 	}
 	// #5681: a lease the hub issued must outlive the process that issued it.
 	if h.server != nil {
@@ -805,6 +815,7 @@ type persistedLease struct {
 	TriageVerdict   string    `json:"triage_verdict,omitempty"`
 	TriageRationale string    `json:"triage_rationale,omitempty"`
 	ExpiresAt       time.Time `json:"expires_at"`
+	IssuedAt        time.Time `json:"issued_at,omitzero"`
 	// Claim fields (#8380); all omitempty so a registry written with claims
 	// off is byte-for-byte what it was.
 	ClaimedBy      string     `json:"claimed_by,omitempty"`
@@ -911,6 +922,7 @@ func (h *ContributeWSHub) saveLeasesLocked() error {
 			TriageVerdict:   l.triageVerdict,
 			TriageRationale: l.triageRationale,
 			ExpiresAt:       l.expiresAt,
+			IssuedAt:        l.issuedAt,
 			ClaimedBy:       l.claimedBy,
 			ClaimPosted:     l.claimPosted,
 		}
@@ -1056,6 +1068,7 @@ func (h *ContributeWSHub) loadLeases() {
 			triageRationale: rec.TriageRationale,
 			restored:        true,
 			expiresAt:       rec.ExpiresAt,
+			issuedAt:        rec.IssuedAt,
 			claimedBy:       rec.ClaimedBy,
 			claimPosted:     rec.ClaimPosted,
 		}

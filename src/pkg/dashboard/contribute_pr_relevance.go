@@ -3,6 +3,7 @@ package dashboard
 import (
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
@@ -50,20 +51,42 @@ func unrelatedReportedPR(pr ghpkg.PRVerification, task *WSTaskAssign, assignedAt
 	if !pr.CreatedAt.Before(assignedAt.Add(-reportedPRAssignmentSkew)) {
 		return false
 	}
-	return !prTextReferencesIssue(pr, task.Number)
+	return !prTextReferencesIssue(pr, task.Repo, task.Number)
 }
 
+// prIssueRefRE matches `#N`, `owner/repo#N` and `.../owner/repo/issues/N`
+// references, capturing the optional owner/repo and the number.
+var prIssueRefRE = regexp.MustCompile(`(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#|(?:^|[^A-Za-z0-9_./-])#|([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/issues/)([0-9]+)`)
+
+// prBranchNumberRE matches whole numbers in a head branch name.
+var prBranchNumberRE = regexp.MustCompile(`[0-9]+`)
+
 // prTextReferencesIssue reports whether the PR's title or body names issue n
-// as `#n` or an `/issues/n` URL, or its head branch carries n as a whole
-// number (`scanner/fix-19985`).
-func prTextReferencesIssue(pr ghpkg.PRVerification, n int) bool {
+// of repo as `#n`, `repo#n` or a `repo/issues/n` URL, or its head branch
+// carries n as a whole number (`scanner/fix-19985`). A reference that names
+// another repository does not count.
+func prTextReferencesIssue(pr ghpkg.PRVerification, repo string, n int) bool {
 	num := strconv.Itoa(n)
-	textRE := regexp.MustCompile(`(?:#|/issues/)` + num + `(?:[^0-9]|$)`)
-	if textRE.MatchString(pr.Title) || textRE.MatchString(pr.Body) {
-		return true
+	for _, text := range []string{pr.Title, pr.Body} {
+		for _, m := range prIssueRefRE.FindAllStringSubmatch(text, -1) {
+			if m[3] != num {
+				continue
+			}
+			named := m[1]
+			if named == "" {
+				named = m[2]
+			}
+			if named == "" || repo == "" || strings.EqualFold(named, repo) {
+				return true
+			}
+		}
 	}
-	branchRE := regexp.MustCompile(`(?:^|[^0-9])` + num + `(?:[^0-9]|$)`)
-	return branchRE.MatchString(pr.HeadRef)
+	for _, m := range prBranchNumberRE.FindAllString(pr.HeadRef, -1) {
+		if m == num {
+			return true
+		}
+	}
+	return false
 }
 
 // dropUnrelatedReportedPR downgrades a verified completion PR that
