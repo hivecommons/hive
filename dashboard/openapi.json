@@ -31177,6 +31177,59 @@
         }
       }
     },
+    "/api/chat/config-proposals/{id}/undo": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Undo an applied chat config proposal",
+        "description": "Builds the reverse of an applied Hive Chat config assist proposal (RFC #19788 phase 3b) from its stored before value, or from its chat_config_proposed audit line after a restart, bound to the agent's section as it is now. The card then applies it through the section endpoint with X-Hive-Chat-Proposal, like any proposal; that Apply is audited as chat_config_undo. Only the owner who applied it can undo it. Requires owner role and chat.config_assist.enabled.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Id of the applied proposal"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Reverse proposal created; nothing is written until it is applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "config_proposal": {
+                      "type": "object",
+                      "description": "The reverse proposal; reverses names the proposal it undoes"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required, or config assist is off"
+          },
+          "404": {
+            "description": "No applied proposal of this user with that id (unknown, expired from the audit log, never applied, or already undone)"
+          },
+          "409": {
+            "description": "The agent's section changed since the Apply, or the before value cannot be restored from chat"
+          },
+          "429": {
+            "description": "Too many pending proposals"
+          }
+        }
+      }
+    },
     "/api/config/authorized-users": {
       "get": {
         "tags": [

@@ -23,10 +23,11 @@ import (
 // Chat config assist, phase 3a (RFC #19788, issue #19978): an owner's
 // config-shaped chat message becomes at most one proposal (one agent, one
 // section, one field). The proposal is checked against a fixed allowlist,
-// stored server-side, and rendered as a card from the stored copy. The card's
-// only action opens the existing agent config dialog with the value filled
-// in; the owner's click on the dialog's own Save is the only write. The model
-// never writes, and chat text never applies anything.
+// stored server-side, and rendered as a card from the stored copy. The card
+// opens the existing agent config dialog with the value filled in, or (phase
+// 3b, issue #19985, api_chat_config_apply.go) applies the stored body through
+// the same section endpoint on the owner's click. The model never writes, and
+// chat text never applies anything.
 
 const (
 	// chatConfigProfile names the proposal turn in runner errors.
@@ -67,6 +68,14 @@ type chatConfigProposal struct {
 	Body    map[string]any `json:"body"`
 	Hash    string         `json:"-"`
 	Expires time.Time      `json:"expires_at"`
+	// Reverses names the applied proposal an Undo proposal reverses (3b).
+	Reverses string `json:"reverses,omitempty"`
+	// State is "" while pending, then chatConfigInFlight during an Apply
+	// and chatConfigApplied after one succeeded (3b).
+	State string `json:"-"`
+	// AppliedHash is the section hash right after a successful Apply, so an
+	// Undo can refuse a section that changed since (3b).
+	AppliedHash string `json:"-"`
 }
 
 // chatConfigProposalStore is the bounded in-memory store. A restart drops
@@ -118,12 +127,18 @@ func (st *chatConfigProposalStore) allowTurn(user string, now time.Time) error {
 }
 
 func (st *chatConfigProposalStore) capLocked(user string) error {
-	if len(st.byID) >= chatConfigProposalTotal {
+	total := 0
+	for _, p := range st.byID {
+		if p.State != chatConfigApplied {
+			total++
+		}
+	}
+	if total >= chatConfigProposalTotal {
 		return errChatConfigCap
 	}
 	mine := 0
 	for _, p := range st.byID {
-		if p.User == user {
+		if p.User == user && p.State != chatConfigApplied {
 			mine++
 		}
 	}
@@ -147,22 +162,27 @@ func (st *chatConfigProposalStore) add(p *chatConfigProposal, now time.Time) err
 	return nil
 }
 
-// lookup returns a copy of the unexpired proposal id when it belongs to user.
+// lookup returns a copy of the unexpired pending proposal id when it belongs
+// to user. A proposal that is being applied or was applied is not pending.
 func (st *chatConfigProposalStore) lookup(id, user string, now time.Time) (chatConfigProposal, bool) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	st.sweepLocked(now)
 	p, ok := st.byID[id]
-	if !ok || p.User != user {
+	if !ok || p.User != user || p.State != "" {
 		return chatConfigProposal{}, false
 	}
 	return *p, true
 }
 
+// remove deletes a pending proposal. A proposal in flight or applied is left
+// to the Apply path (api_chat_config_apply.go), which settles it.
 func (st *chatConfigProposalStore) remove(id string) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	delete(st.byID, id)
+	if p, ok := st.byID[id]; ok && p.State == "" {
+		delete(st.byID, id)
+	}
 }
 
 // chatRequestIsVerifiedOwner is the owner check chat applies before any
@@ -193,7 +213,10 @@ type chatConfigInput struct {
 	Agents []chatConfigAgentRow `json:"agents"`
 }
 
-func (s *Server) chatConfigAgentRow(name string, a config.AgentConfig) chatConfigAgentRow {
+// chatConfigAgentValues is an agent's current allowlisted values, live
+// overrides included, without the allowed-value lists. The section hash is
+// computed from it.
+func (s *Server) chatConfigAgentValues(name string, a config.AgentConfig) chatConfigAgentRow {
 	row := chatConfigAgentRow{Name: name, Enabled: a.Enabled, Backend: a.Backend, Model: a.Model, ReasoningEffort: a.ReasoningEffort, Cadences: map[string]string{}}
 	if s.deps.AgentMgr != nil {
 		if proc, err := s.deps.AgentMgr.GetStatusFast(name); err == nil && proc != nil {
@@ -205,6 +228,16 @@ func (s *Server) chatConfigAgentRow(name string, a config.AgentConfig) chatConfi
 			}
 		}
 	}
+	for mode, mc := range s.deps.Config.Governor.Modes {
+		if c, ok := mc.Cadences[name]; ok {
+			row.Cadences[mode] = string(c)
+		}
+	}
+	return row
+}
+
+func (s *Server) chatConfigAgentRow(name string, a config.AgentConfig) chatConfigAgentRow {
+	row := s.chatConfigAgentValues(name, a)
 	row.Models = s.modelIDsForBackend(row.Backend)
 	if len(row.Models) == 0 {
 		row.Models = append([]string(nil), cliStaticFallback(row.Backend)...)
@@ -213,11 +246,6 @@ func (s *Server) chatConfigAgentRow(name string, a config.AgentConfig) chatConfi
 		row.Efforts = s.ompReasoningEffortsForModel(row.Model)
 	} else {
 		row.Efforts = append([]string(nil), config.ReasoningEffortsByBackend[row.Backend]...)
-	}
-	for mode, mc := range s.deps.Config.Governor.Modes {
-		if c, ok := mc.Cadences[name]; ok {
-			row.Cadences[mode] = string(c)
-		}
 	}
 	return row
 }
@@ -387,18 +415,7 @@ func (s *Server) checkChatConfigReply(rep chatConfigReply, input chatConfigInput
 		c := cadences[field]
 		p.Before = row.Cadences[field]
 		p.After = string(c)
-		// The dialog's cadence field holds seconds for an interval (0 for
-		// pause) and the cadence itself otherwise, as GET /api/config/agent
-		// serves it.
-		var v any = string(c)
-		if c.Mode() == config.CadenceModeInterval {
-			if c.IsPaused() {
-				v = int64(0)
-			} else {
-				v = int64(parseCadenceDuration(c.Interval()).Seconds())
-			}
-		}
-		p.Body = map[string]any{field: v}
+		p.Body = map[string]any{field: chatConfigCadenceBodyValue(c)}
 	case "general":
 		if field != "enabled" {
 			return nil, fmt.Errorf("field %q is not allowed in section general", chatTruncate(field, 64))
@@ -427,6 +444,19 @@ func (s *Server) checkChatConfigReply(rep chatConfigReply, input chatConfigInput
 	p.Why = chatTruncate(strings.Join(strings.Fields(rep.Why), " "), chatConfigMaxWhy)
 	p.Hash = chatConfigRowHash(*row)
 	return p, nil
+}
+
+// chatConfigCadenceBodyValue is a cadence as the dialog's cadence field holds
+// it: seconds for an interval (0 for pause) and the cadence itself otherwise,
+// as GET /api/config/agent serves it.
+func chatConfigCadenceBodyValue(c config.Cadence) any {
+	if c.Mode() == config.CadenceModeInterval {
+		if c.IsPaused() {
+			return int64(0)
+		}
+		return int64(parseCadenceDuration(c.Interval()).Seconds())
+	}
+	return string(c)
 }
 
 func newChatConfigProposalID() string {
@@ -506,7 +536,7 @@ func (s *Server) chatConfigProposalReply(r *http.Request, route chatRoute, query
 		"proposal", p.ID, "agent", p.Agent, "section", p.Section, "field", p.Field,
 		p.Field, auditChange(p.Before, p.After), "question", question), p.Agent)
 	return map[string]any{
-		"answer":          "Proposed change for " + p.Agent + ". Open it in the agent config dialog to review, then click Save there to apply it.",
+		"answer":          "Proposed change for " + p.Agent + ". Click Apply on the card to save it, or open it in the agent config dialog to review it first.",
 		"status":          "ok",
 		"config_proposal": p,
 	}, true
