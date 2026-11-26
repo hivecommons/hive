@@ -67,6 +67,18 @@ func (in Input) Facts() []Fact {
 			add("CI", "green", FactOK)
 		case in.CIPending:
 			add("CI", "still running, nothing failed", FactInfo)
+		case len(in.ForkGuarded()) > 0:
+			// A fork-guarded check is a maintainer's step (hivecommons/hive#14273).
+			guarded, others := in.forkGuard()
+			value := "red only on fork-guarded " + checkNames(guarded) + ": a maintainer's step"
+			if len(others) > 0 {
+				verb := " is"
+				if len(guarded) > 1 {
+					verb = " are"
+				}
+				value = "not green: " + checkNames(others) + " red, and fork-guarded " + checkNames(guarded) + verb + " a maintainer's step"
+			}
+			add("CI", value, FactBlocks)
 		default:
 			add("CI", "not green", FactBlocks)
 		}

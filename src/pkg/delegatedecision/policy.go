@@ -347,6 +347,16 @@ type Input struct {
 	// The fixer cannot carry out a direction then (projectbluefin/utah#919,
 	// projectbluefin/testsuite#1037).
 	AdoptedPushRefused string
+	// ForkGuardChecks are the head's red checks that refuse the PR only
+	// because it is from a fork (hivecommons/hive#14273): a maintainer's
+	// step, never part of a fix list, since neither the author nor an
+	// in-place adoption can turn them green. A `fork-guard:<checks>` park
+	// reason in Reasons names guarded checks too. RedChecks are the checks
+	// red on this head by name: a guard counts only for a check named
+	// there (park reasons are not tied to a head, so with none named there
+	// is no guard), and a red check the guard does not name is still owed.
+	ForkGuardChecks []string
+	RedChecks       []string
 	// ReviewerRequiresHuman: the recorded park reason is the reviewer
 	// swarm's requires_human on the current head; ReviewerFinding is what
 	// the review found ("the reviewer marked this change high-risk"), and
@@ -822,6 +832,12 @@ func decidePR(in Input) Decision {
 	if d, ok := decideAbandoned(in, ref); ok {
 		return d
 	}
+	// A head whose only blocker left is a fork-guarded check: neither the
+	// fixer nor the author can turn it green, so the maintainer's step is
+	// recommended and the park kept (hivecommons/hive#14273).
+	if d, ok := decideForkGuard(in, ref); ok {
+		return d
+	}
 	// A PR the hive adopted in place is the hive's own to fix: the
 	// reviewer's finding and the head's blockers go to the fixer, never
 	// "back to the author" (hivecommons/hive#15722).
@@ -858,7 +874,7 @@ func decidePR(in Input) Decision {
 		return d
 	}
 	if fix := fixList(in); len(fix) > 0 {
-		return fixThenMerge(fix)
+		return fixThenMerge(in, fix)
 	}
 	// CIRed is false while checks are merely pending, so fixList above names
 	// nothing for a head still running its checks; without this the two
@@ -866,6 +882,12 @@ func decidePR(in Input) Decision {
 	// (hivecommons/hive#18889).
 	if in.CIPending {
 		return ciPendingDecision(ref)
+	}
+	// The approvals below are for a green head. fixList names every red
+	// check someone can fix, so a red head still here is red only on a fork
+	// guard: the maintainer's step, never an approval (hivecommons/hive#14273).
+	if in.CIRed() {
+		return forkGuardDecision(in, ref)
 	}
 	if in.IsSmall() || in.LowRiskPaths {
 		return releasePR("small-low-risk", "approve "+ref+": small, necessary, low-risk change on a green head", "small low-risk changes (CI pins, read-only RBAC, warning text, workflow hygiene) are approved once checked")
@@ -921,7 +943,7 @@ func decideAdoptedByHive(in Input, ref string) (Decision, bool) {
 	if why := strings.TrimSpace(in.AdoptedPushRefused); why != "" {
 		return decideAdoptedPushRefused(in, ref, why, fix), true
 	}
-	text := "hive's fixer: " + strings.Join(fix, ", ") + " on " + ref + "; then it merges"
+	text := "hive's fixer: " + strings.Join(fix, ", ") + " on " + ref + "; " + in.thenMerges()
 	return Decision{
 		Verdict: VerdictDirection, Rule: RuleAdoptedFixer, Text: text,
 		Rationale: "the hive adopted " + ref + " in place and owns its branch, so the reviewer's finding is the hive's own fixer's to address — not the contributor's and not a person's (hivecommons/hive#15722)",
@@ -936,16 +958,20 @@ func decideAdoptedByHive(in Input, ref string) (Decision, bool) {
 func decideAdoptedPushRefused(in Input, ref, why string, fix []string) Decision {
 	if in.ContributorOnline || in.ReworkPickedUp {
 		who := in.AuthorWord()
-		text := who + " is connected and the hive cannot push " + ref + " (" + why + "): " + strings.Join(fix, ", ") + " on " + ref + "; then it merges"
+		text := who + " is connected and the hive cannot push " + ref + " (" + why + "): " + strings.Join(fix, ", ") + " on " + ref + "; " + in.thenMerges()
 		return Decision{
 			Verdict: VerdictDirection, Rule: RuleReturnToContributor, Text: text,
 			Rationale: "the hive adopted " + ref + " but cannot push its branch — " + why + " — and " + who + " is connected, so the fix list goes back to them",
 			Actions:   []Action{decisionComment(text)},
 		}
 	}
+	step := ""
+	if guarded := in.ForkGuarded(); len(guarded) > 0 {
+		step = ", then acts on " + forkGuardCheckWords(guarded) + ","
+	}
 	return recommendOnly(RuleAdoptedPushRefused,
 		"the hive adopted "+ref+" but cannot push its branch — "+why+" — so its fixer cannot carry out a direction, and "+in.OfflineWording(),
-		"a maintainer pushes the fix to "+ref+" ("+strings.Join(fix, ", ")+") or closes it; the hive cannot")
+		"a maintainer pushes the fix to "+ref+" ("+strings.Join(fix, ", ")+")"+step+" or closes it; the hive cannot")
 }
 
 // RuleAbandonedStale: a contributor PR the idle clock flagged abandoned
@@ -1134,12 +1160,22 @@ func decideReturnToAuthor(in Input, ref string) (Decision, bool) {
 	}
 	var parts []string
 	if len(fix) > 0 {
-		parts = append(parts, who+": "+strings.Join(fix, ", ")+" on "+ref+"; then it merges")
+		parts = append(parts, who+": "+strings.Join(fix, ", ")+" on "+ref+"; "+in.thenMerges())
 	}
 	if question != "" {
 		parts = append(parts, who+", the reviewer asked: "+question)
 	}
 	text := strings.Join(parts, " — ")
+	if len(fix) == 0 && len(in.ForkGuarded()) > 0 {
+		// Only the reviewer's question is the author's; the fork guard
+		// is a maintainer's step after it (hivecommons/hive#14273).
+		tail := in.thenMerges()
+		if strings.HasSuffix(text, "?") || strings.HasSuffix(text, ".") {
+			text += " " + strings.ToUpper(tail[:1]) + tail[1:]
+		} else {
+			text += "; " + tail
+		}
+	}
 	return Decision{
 		Verdict: VerdictDirection, Rule: RuleReturnToAuthor, Text: text,
 		Rationale: "a person pushed this PR themselves, so the hive asks that person instead of adopting the work (hivecommons/hive#15202)",
@@ -1149,8 +1185,8 @@ func decideReturnToAuthor(in Input, ref string) (Decision, bool) {
 
 // fixThenMerge is the direction for a head that is not mergeable yet: it
 // names the fix and nothing else.
-func fixThenMerge(fix []string) Decision {
-	text := strings.Join(fix, ", ") + "; keep the smallest reversible change, then it merges"
+func fixThenMerge(in Input, fix []string) Decision {
+	text := strings.Join(fix, ", ") + "; keep the smallest reversible change, " + in.thenMerges()
 	return Decision{
 		Verdict: VerdictDirection, Rule: "fix-then-merge", Text: text,
 		Rationale: "the head is not mergeable yet; the direction names the fix and nothing else",
