@@ -1,6 +1,7 @@
 package spokebackup
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -332,6 +333,48 @@ func TestRestoreHardensSecretModes(t *testing.T) {
 	}
 }
 
+func TestRestoreRejectsUnreadableHiveID(t *testing.T) {
+	t.Run("destination", func(t *testing.T) {
+		sealed, _ := sealedBackupOf(t, "hive-abc123")
+		dest := t.TempDir()
+		if err := os.Mkdir(filepath.Join(dest, hiveIDFile), restoreDirMode); err != nil {
+			t.Fatal(err)
+		}
+
+		_, err := Restore(testKey(), sealed, RestoreOptions{DataDir: dest}, testLogger())
+		if err == nil || !strings.Contains(err.Error(), "read destination "+hiveIDFile) {
+			t.Fatalf("expected an error reading the destination identity, got %v", err)
+		}
+	})
+
+	t.Run("archive", func(t *testing.T) {
+		dest := t.TempDir()
+		probe := filepath.Join(dest, "unreadable")
+		if err := os.WriteFile(probe, nil, 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.ReadFile(probe); err == nil {
+			t.Skip("filesystem allows reading a file without read permissions")
+		} else if !errors.Is(err, os.ErrPermission) {
+			t.Fatal(err)
+		}
+
+		builder := hubbackup.NewBuilder()
+		if err := builder.AddBytes(filepath.Join(spokePrefix, hiveIDFile), 0, []byte("hive-abc123")); err != nil {
+			t.Fatal(err)
+		}
+		sealed, err := builder.Finish(testKey(), &hubbackup.Manifest{FormatVersion: hubbackup.FormatVersion()}, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		_, err = Restore(testKey(), sealed, RestoreOptions{DataDir: dest}, testLogger())
+		if !errors.Is(err, os.ErrPermission) || !strings.Contains(err.Error(), "read archive "+hiveIDFile) {
+			t.Fatalf("expected an error reading the staged identity, got %v", err)
+		}
+	})
+}
+
 // TestRestoreRejectsHubArchive proves a hub disaster-recovery archive pointed at
 // this command fails loudly instead of "succeeding" with nothing restored.
 func TestRestoreRejectsHubArchive(t *testing.T) {
@@ -500,17 +543,56 @@ func TestRestoreReportsStagingCreationFailure(t *testing.T) {
 func TestRestoreFailsWhenBeadParentIsAFile(t *testing.T) {
 	sealed, _ := sealedBackupOf(t, "hive-abc123")
 	dest := t.TempDir()
-	mustWrite(t, filepath.Join(dest, beadsSubdir, "scanner"), "not a directory")
+	blocked := filepath.Join(dest, beadsSubdir, "scanner")
+	mustWrite(t, blocked, "not a directory")
+	earlier := filepath.Join(dest, beadsSubdir, "quality", "beads.json")
+	mustWrite(t, earlier, "existing bead ledger")
 
-	_, err := Restore(testKey(), sealed, RestoreOptions{DataDir: dest}, testLogger())
-	if err == nil {
-		t.Fatal("Restore succeeded even though beads/scanner is a file")
+	for _, dryRun := range []bool{true, false} {
+		_, err := Restore(testKey(), sealed, RestoreOptions{DataDir: dest, DryRun: dryRun}, testLogger())
+		if err == nil || !strings.Contains(err.Error(), filepath.Join(beadsSubdir, "scanner")+": path is not a directory") {
+			t.Fatalf("dry run=%t: bead parent conflict should name %s, got %v", dryRun, blocked, err)
+		}
+		if got := mustRead(t, blocked); got != "not a directory" {
+			t.Fatalf("dry run=%t: restore modified the conflicting bead path: %q", dryRun, got)
+		}
+		if got := mustRead(t, earlier); got != "existing bead ledger" {
+			t.Fatalf("dry run=%t: restore modified an earlier bead file: %q", dryRun, got)
+		}
 	}
-	if !strings.Contains(err.Error(), "create") || !strings.Contains(err.Error(), filepath.Join(beadsSubdir, "scanner")) {
-		t.Fatalf("bead parent conflict should name the path creation failure, got %v", err)
-	}
-	if got := mustRead(t, filepath.Join(dest, beadsSubdir, "scanner")); got != "not a directory" {
-		t.Fatalf("restore modified the conflicting bead path: %q", got)
+}
+
+func TestRestoreRejectsUnusableBeadParentSymlinks(t *testing.T) {
+	sealed, _ := sealedBackupOf(t, "hive-abc123")
+	for _, tc := range []struct {
+		target, want string
+		file         bool
+	}{
+		{target: "missing", want: "check parent directory"},
+		{target: "regular-file", want: "path is not a directory", file: true},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			dest := t.TempDir()
+			earlier := filepath.Join(dest, beadsSubdir, "quality", "beads.json")
+			mustWrite(t, earlier, "existing ledger")
+			if tc.file {
+				mustWrite(t, filepath.Join(dest, beadsSubdir, tc.target), "existing file")
+			}
+			link := filepath.Join(dest, beadsSubdir, "scanner")
+			if err := os.Symlink(tc.target, link); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, dryRun := range []bool{true, false} {
+				_, err := Restore(testKey(), sealed, RestoreOptions{DataDir: dest, DryRun: dryRun}, testLogger())
+				if err == nil || !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("dry run=%t: expected a parent symlink error, got %v", dryRun, err)
+				}
+				if got := mustRead(t, earlier); got != "existing ledger" {
+					t.Fatalf("dry run=%t: restore replaced an earlier bead file: %q", dryRun, got)
+				}
+			}
+		})
 	}
 }
 
@@ -525,15 +607,450 @@ func TestRestoreReportsFileDirectoryConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := Restore(testKey(), sealed, RestoreOptions{DataDir: dest}, testLogger())
+	earlier := filepath.Join(dest, beadsSubdir, "scanner", "beads.json")
+	mustWrite(t, earlier, "existing bead ledger")
+
+	for _, mode := range []struct {
+		name   string
+		dryRun bool
+	}{
+		{name: "dry run", dryRun: true},
+		{name: "apply"},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			_, err := Restore(testKey(), sealed, RestoreOptions{DataDir: dest, DryRun: mode.dryRun}, testLogger())
+			if err == nil || !strings.Contains(err.Error(), "restore "+stateFile) {
+				t.Fatalf("file/directory conflict should name the restore target, got %v", err)
+			}
+			if info, err := os.Stat(filepath.Join(dest, stateFile)); err != nil || !info.IsDir() {
+				t.Fatalf("destination directory was not preserved; info=%v err=%v", info, err)
+			}
+			if got := mustRead(t, earlier); got != "existing bead ledger" {
+				t.Fatalf("restore modified an earlier bead file: %q", got)
+			}
+		})
+	}
+}
+
+func TestRestoreRejectsReplacingDirectorySymlinkUsedByAnotherPath(t *testing.T) {
+	for _, tc := range []struct {
+		name, leaf, spelling string
+	}{
+		{name: "exact path", leaf: configRuntimeFile, spelling: configRuntimeFile},
+		{name: "case alias", leaf: configRuntimeFile, spelling: strings.ToUpper(configRuntimeFile)},
+		{name: "normalized leaf", leaf: filepath.Join(beadsSubdir, "quality", "Caf\u00e9"), spelling: filepath.Join(beadsSubdir, "quality", "Cafe\u0301")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := seedSpoke(t)
+			fact := filepath.Join(vaultsSubdir, beadSynthPrefix, "stable-fact.md")
+			mustWrite(t, filepath.Join(src, fact), "archived fact")
+			if tc.leaf != configRuntimeFile {
+				mustWrite(t, filepath.Join(src, tc.leaf), "archived custom bead")
+			}
+			t.Setenv(EnvDataDir, src)
+			archive, err := Build(testKey(), "hive-abc123", testLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			dest := t.TempDir()
+			target := t.TempDir()
+			mustWrite(t, filepath.Join(target, beadSynthPrefix, "stable-fact.md"), "existing fact")
+			leaf := filepath.Join(dest, tc.leaf)
+			if err := os.MkdirAll(filepath.Dir(leaf), restoreDirMode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, leaf); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(filepath.Join(dest, tc.spelling)); err != nil {
+				if tc.spelling != tc.leaf && os.IsNotExist(err) {
+					t.Skip("destination filesystem does not alias these spellings")
+				}
+				t.Fatal(err)
+			}
+			links := filepath.Join(dest, "links")
+			if err := os.Mkdir(links, restoreDirMode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join("..", tc.spelling), filepath.Join(links, "vault")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join("links", "vault"), filepath.Join(dest, vaultsSubdir)); err != nil {
+				t.Fatal(err)
+			}
+			earlier := filepath.Join(dest, beadsSubdir, "ci-maintainer", "beads.json")
+			mustWrite(t, earlier, "existing bead ledger")
+
+			for _, dryRun := range []bool{true, false} {
+				_, err := Restore(testKey(), archive.Sealed, RestoreOptions{DataDir: dest, DryRun: dryRun}, testLogger())
+				if err == nil || !strings.Contains(err.Error(), "archive also restores a file there") ||
+					(!strings.Contains(err.Error(), tc.leaf) && !strings.Contains(err.Error(), tc.spelling)) {
+					t.Fatalf("dry run=%t: expected a directory conflict at %s, got %v", dryRun, tc.leaf, err)
+				}
+				if got := mustRead(t, earlier); got != "existing bead ledger" {
+					t.Fatalf("dry run=%t: restore modified an earlier bead file: %q", dryRun, got)
+				}
+				if got := mustRead(t, filepath.Join(dest, fact)); got != "existing fact" {
+					t.Fatalf("dry run=%t: restore modified the linked vault: %q", dryRun, got)
+				}
+			}
+		})
+	}
+}
+
+func TestRestoreRejectsReplacingDestinationDirectorySymlink(t *testing.T) {
+	sealed, _ := sealedBackupOf(t, "hive-abc123")
+	dest := t.TempDir()
+	link := filepath.Join(dest, configRuntimeFile)
+	if err := os.Symlink(".", link); err != nil {
+		t.Fatal(err)
+	}
+	earlier := filepath.Join(dest, beadsSubdir, "quality", "beads.json")
+	mustWrite(t, earlier, "existing ledger")
+
+	for _, dryRun := range []bool{true, false} {
+		_, err := Restore(testKey(), sealed, RestoreOptions{DataDir: link, DryRun: dryRun}, testLogger())
+		if err == nil || !strings.Contains(err.Error(), configRuntimeFile+": archive also restores a file there") {
+			t.Fatalf("dry run=%t: expected a conflict at the destination symlink, got %v", dryRun, err)
+		}
+		if target, err := os.Readlink(link); err != nil || target != "." {
+			t.Fatalf("dry run=%t: destination symlink changed: target=%q err=%v", dryRun, target, err)
+		}
+		if got := mustRead(t, earlier); got != "existing ledger" {
+			t.Fatalf("dry run=%t: restore replaced an earlier bead file: %q", dryRun, got)
+		}
+	}
+}
+
+func TestRestoreReplacesStandaloneSymlinkToDirectory(t *testing.T) {
+	sealed, src := sealedBackupOf(t, "hive-abc123")
+	dest := t.TempDir()
+	target := t.TempDir()
+	marker := filepath.Join(target, "keep")
+	mustWrite(t, marker, "existing directory contents")
+	runtime := filepath.Join(dest, configRuntimeFile)
+	if err := os.Symlink(target, runtime); err != nil {
+		t.Fatal(err)
+	}
+
+	restoreInto(t, sealed, dest, RestoreOptions{DryRun: true})
+	restoreInto(t, sealed, dest, RestoreOptions{})
+	if got, want := mustRead(t, runtime), mustRead(t, filepath.Join(src, configRuntimeFile)); got != want {
+		t.Fatalf("restored runtime config = %q, want %q", got, want)
+	}
+	if got := mustRead(t, marker); got != "existing directory contents" {
+		t.Fatalf("restore changed the symlink target: %q", got)
+	}
+}
+
+func TestRestoreChecksAliasOfMissingFileAndDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name, beadAgent, vaultAgent, file string
+	}{
+		{name: "case-only suffix", beadAgent: "scanner", vaultAgent: "scanner", file: "Bead-Synth-Wiki"},
+		{name: "normalized parent", beadAgent: "Caf\u00e9", vaultAgent: "Cafe\u0301", file: beadSynthPrefix},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := seedSpoke(t)
+			bead := filepath.Join(beadsSubdir, tc.beadAgent, tc.file)
+			fact := filepath.Join(vaultsSubdir, beadSynthPrefix, "stable-fact.md")
+			mustWrite(t, filepath.Join(src, bead), "archived bead")
+			mustWrite(t, filepath.Join(src, fact), "archived fact")
+			t.Setenv(EnvDataDir, src)
+			archive, err := Build(testKey(), "hive-abc123", testLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			dest := t.TempDir()
+			beadParent := filepath.Join(beadsSubdir, tc.beadAgent)
+			vaultParent := filepath.Join(beadsSubdir, tc.vaultAgent)
+			mustWrite(t, filepath.Join(dest, beadParent, "case-probe"), "probe")
+			probe := filepath.Join(dest, vaultParent, "case-probe")
+			if tc.beadAgent == tc.vaultAgent {
+				probe = filepath.Join(dest, vaultParent, "CASE-PROBE")
+			}
+			_, err = os.Lstat(probe)
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			aliases := err == nil
+			if err := os.MkdirAll(filepath.Join(dest, vaultParent), restoreDirMode); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(vaultParent, filepath.Join(dest, vaultsSubdir)); err != nil {
+				t.Fatal(err)
+			}
+			earlier := filepath.Join(dest, beadsSubdir, "quality", "beads.json")
+			mustWrite(t, earlier, "existing quality ledger")
+
+			for _, dryRun := range []bool{true, false} {
+				_, err := Restore(testKey(), archive.Sealed, RestoreOptions{DataDir: dest, DryRun: dryRun}, testLogger())
+				if aliases {
+					if err == nil || !strings.Contains(err.Error(), "archive also restores a file there") {
+						t.Fatalf("dry run=%t: expected a path alias conflict, got %v", dryRun, err)
+					}
+					if got := mustRead(t, earlier); got != "existing quality ledger" {
+						t.Fatalf("dry run=%t: restore modified an earlier bead file: %q", dryRun, got)
+					}
+				} else if err != nil {
+					t.Fatalf("dry run=%t: destination rejected distinct paths: %v", dryRun, err)
+				}
+			}
+			if !aliases {
+				if got := mustRead(t, filepath.Join(dest, bead)); got != "archived bead" {
+					t.Fatalf("restored bead = %q", got)
+				}
+				if got := mustRead(t, filepath.Join(dest, fact)); got != "archived fact" {
+					t.Fatalf("restored fact = %q", got)
+				}
+			}
+		})
+	}
+}
+
+func TestRestoreChecksArchiveMemberCollisions(t *testing.T) {
+	for _, tc := range []struct {
+		name, first, second string
+	}{
+		{name: "duplicate name", first: "Notes.md", second: "Notes.md"},
+		{name: "case variants", first: "Notes.md", second: "notes.md"},
+		{name: "Unicode variants", first: "Caf\u00e9.md", second: "Cafe\u0301.md"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			beadDir := filepath.Join(beadsPrefix, "quality")
+			secondContent := "second archived note"
+			if tc.first == tc.second {
+				secondContent = "first archived note" // Both digests must verify.
+			}
+			builder := hubbackup.NewBuilder()
+			if err := builder.AddBytes(filepath.Join(beadDir, tc.first), 0o600, []byte("first archived note")); err != nil {
+				t.Fatal(err)
+			}
+			if err := builder.AddBytes(filepath.Join(beadDir, tc.second), 0o600, []byte(secondContent)); err != nil {
+				t.Fatal(err)
+			}
+			sealed, err := builder.Finish(testKey(), &hubbackup.Manifest{FormatVersion: hubbackup.FormatVersion()}, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			dest := t.TempDir()
+			first := filepath.Join(dest, beadsSubdir, "quality", tc.first)
+			second := filepath.Join(dest, beadsSubdir, "quality", tc.second)
+			mustWrite(t, first, "existing note")
+			_, err = os.Lstat(second)
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			aliases := err == nil
+
+			for _, dryRun := range []bool{true, false} {
+				_, err := Restore(testKey(), sealed, RestoreOptions{DataDir: dest, DryRun: dryRun}, testLogger())
+				if aliases {
+					if !errors.Is(err, os.ErrExist) {
+						t.Fatalf("dry run=%t: expected a staging collision, got %v", dryRun, err)
+					}
+					if got := mustRead(t, first); got != "existing note" {
+						t.Fatalf("dry run=%t: restore replaced an existing note: %q", dryRun, got)
+					}
+				} else if err != nil {
+					t.Fatalf("dry run=%t: restore rejected distinct archive members: %v", dryRun, err)
+				}
+			}
+			if !aliases {
+				if got := mustRead(t, first); got != "first archived note" {
+					t.Errorf("first restored note = %q", got)
+				}
+				if got := mustRead(t, second); got != secondContent {
+					t.Errorf("second restored note = %q", got)
+				}
+			}
+		})
+	}
+}
+
+func TestRestoreChecksCollidingFileDestinations(t *testing.T) {
+	for _, tc := range []struct {
+		name, first, second string
+		existing            bool
+	}{
+		{name: "same missing file", first: "beads.json", second: "beads.json"},
+		{name: "same existing file", first: "beads.json", second: "beads.json", existing: true},
+		{name: "case variants", first: "Notes.md", second: "notes.md"},
+		{name: "Unicode variants", first: "Caf\u00e9.md", second: "Cafe\u0301.md", existing: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			earlierRel := filepath.Join(beadsSubdir, "ci-maintainer", "beads.json")
+			firstRel := filepath.Join(beadsSubdir, "quality", tc.first)
+			secondRel := filepath.Join(beadsSubdir, "scanner", tc.second)
+			src := t.TempDir()
+			mustWrite(t, filepath.Join(src, earlierRel), "archived ledger")
+			mustWrite(t, filepath.Join(src, firstRel), "first archived note")
+			mustWrite(t, filepath.Join(src, secondRel), "second archived note")
+			t.Setenv(EnvDataDir, src)
+			archive, err := Build(testKey(), "hive-abc123", testLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			dest := t.TempDir()
+			earlier := filepath.Join(dest, earlierRel)
+			first := filepath.Join(dest, firstRel)
+			second := filepath.Join(dest, secondRel)
+			mustWrite(t, earlier, "existing ledger")
+			mustWrite(t, first, "existing note")
+			if err := os.Symlink("quality", filepath.Dir(second)); err != nil {
+				t.Fatal(err)
+			}
+			_, err = os.Lstat(second)
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			aliases := err == nil
+			if !tc.existing {
+				if err := os.Remove(first); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			for _, dryRun := range []bool{true, false} {
+				_, err := Restore(testKey(), archive.Sealed, RestoreOptions{DataDir: dest, DryRun: dryRun}, testLogger())
+				if !aliases {
+					if err != nil {
+						t.Fatalf("dry run=%t: restore rejected distinct destinations: %v", dryRun, err)
+					}
+					continue
+				}
+				if err == nil || !strings.Contains(err.Error(), "same destination file") ||
+					!strings.Contains(err.Error(), firstRel) || !strings.Contains(err.Error(), secondRel) {
+					t.Fatalf("dry run=%t: expected a conflict naming both moves, got %v", dryRun, err)
+				}
+				if got := mustRead(t, earlier); got != "existing ledger" {
+					t.Fatalf("dry run=%t: restore replaced an earlier bead file: %q", dryRun, got)
+				}
+				if tc.existing {
+					if got := mustRead(t, first); got != "existing note" {
+						t.Fatalf("dry run=%t: restore replaced the conflicting file: %q", dryRun, got)
+					}
+				} else if _, err := os.Lstat(first); !os.IsNotExist(err) {
+					t.Fatalf("dry run=%t: conflicting file should remain absent, got %v", dryRun, err)
+				}
+			}
+			if !aliases {
+				if got := mustRead(t, first); got != "first archived note" {
+					t.Errorf("first restored note = %q", got)
+				}
+				if got := mustRead(t, second); got != "second archived note" {
+					t.Errorf("second restored note = %q", got)
+				}
+			}
+		})
+	}
+}
+
+func TestRestoreReportsUnwritablePathProbe(t *testing.T) {
+	earlierRel := filepath.Join(beadsSubdir, "ci-maintainer", "beads.json")
+	src := t.TempDir()
+	mustWrite(t, filepath.Join(src, earlierRel), "archived ledger")
+	mustWrite(t, filepath.Join(src, beadsSubdir, "quality", "Notes.md"), "archived note")
+	mustWrite(t, filepath.Join(src, beadsSubdir, "scanner", "notes.md"), "other archived note")
+	t.Setenv(EnvDataDir, src)
+	archive, err := Build(testKey(), "hive-abc123", testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dest := t.TempDir()
+	earlier := filepath.Join(dest, earlierRel)
+	mustWrite(t, earlier, "existing ledger")
+	beads := filepath.Join(dest, beadsSubdir)
+	shared := filepath.Join(beads, "quality")
+	if err := os.Mkdir(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("quality", filepath.Join(beads, "scanner")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o500); err != nil {
+		t.Skipf("cannot make probe parent unwritable: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(shared, 0o700) })
+	probe, err := os.MkdirTemp(shared, "write-check-")
 	if err == nil {
-		t.Fatal("Restore replaced a destination directory with hive-state.json")
+		if err := os.Remove(probe); err != nil {
+			t.Fatal(err)
+		}
+		t.Skip("probe parent remained writable despite chmod")
 	}
-	if !strings.Contains(err.Error(), "restore "+stateFile) {
-		t.Fatalf("file/directory conflict should name the restore target, got %v", err)
+	if !errors.Is(err, os.ErrPermission) {
+		t.Fatal(err)
 	}
-	if info, statErr := os.Stat(filepath.Join(dest, stateFile)); statErr != nil || !info.IsDir() {
-		t.Fatalf("destination directory was not preserved; info=%v err=%v", info, statErr)
+
+	for _, dryRun := range []bool{true, false} {
+		_, err := Restore(testKey(), archive.Sealed, RestoreOptions{DataDir: dest, DryRun: dryRun}, testLogger())
+		if !errors.Is(err, os.ErrPermission) || !strings.Contains(err.Error(), "create path probe") {
+			t.Fatalf("dry run=%t: expected a probe creation error, got %v", dryRun, err)
+		}
+		if got := mustRead(t, earlier); got != "existing ledger" {
+			t.Fatalf("dry run=%t: restore replaced an earlier bead file: %q", dryRun, got)
+		}
+	}
+}
+
+func TestRestorePathAliasProbeCleansUp(t *testing.T) {
+	parent := t.TempDir()
+	path := filepath.Join("nested", "Notes.md")
+	match, err := probeRestorePathAlias(parent, path, path)
+	if err != nil || !match {
+		t.Fatalf("expected a path to alias itself, got %t, %v", match, err)
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("probe left entries behind: %v, %v", entries, err)
+	}
+}
+
+func TestRestoreNameKeyMatchesUnicodeAliases(t *testing.T) {
+	for _, names := range [][2]string{
+		{"Caf\u00e9", "Cafe\u0301"},
+		{"Maße", "MASSE"},
+	} {
+		if restoreNameKey(names[0]) != restoreNameKey(names[1]) {
+			t.Errorf("%q and %q should share a candidate key", names[0], names[1])
+		}
+	}
+}
+
+func TestRestorePlanRejectsFileAtPlannedDirectory(t *testing.T) {
+	for _, spelling := range []string{beadsSubdir, strings.ToUpper(beadsSubdir)} {
+		t.Run(spelling, func(t *testing.T) {
+			dest := t.TempDir()
+			staging, err := os.MkdirTemp(dest, restoreStagingPrefix)
+			if err != nil {
+				t.Fatal(err)
+			}
+			mustWrite(t, filepath.Join(staging, spokePrefix, spelling), "file")
+			mustWrite(t, filepath.Join(staging, beadsPrefix, "scanner", "beads.json"), "contents")
+			plan, err := planRestore(staging, dest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = os.Lstat(filepath.Join(dest, strings.ToUpper(filepath.Base(staging))))
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			foldsCase := err == nil
+			err = plan.checkDestinations(dest, staging)
+			if spelling == beadsSubdir || foldsCase {
+				if err == nil || !strings.Contains(err.Error(), "archive also restores a file there") {
+					t.Fatalf("expected a planned file/directory conflict, got %v", err)
+				}
+			} else if err != nil {
+				t.Fatalf("case-sensitive destination rejected distinct names: %v", err)
+			}
+		})
 	}
 }
 
