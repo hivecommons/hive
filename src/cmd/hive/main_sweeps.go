@@ -344,7 +344,7 @@ const redPRFixOwnSignoffExec = stagelabels.OwnSignoffRebaseExec
 // delivers. It names ONE PR — the stuck one — with its evidence, so the kick is
 // answerable on its own rather than relying on the owner's next cadence kick
 // happening to carry the ci-failing.json block.
-func redPRFixKick(o escalation.Observation, rerouted bool) string {
+func redPRFixKick(o escalation.Observation, rerouted bool, level int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "🔴 FIX-BEFORE-NEW — %s#%d is red and has not moved\n\n", o.Repo, o.Number)
 	if rerouted {
@@ -363,8 +363,12 @@ func redPRFixKick(o escalation.Observation, rerouted bool) string {
 	b.WriteString("  If the PR's author is a person, not the hive App or a bot: " + stagelabels.PersonPRAgentCommitRule + "\n")
 	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR.\n")
 	b.WriteString("After the push, STOP: do not watch, poll, or sleep on CI (no gh run watch/view loops).\n")
-	b.WriteString("The automerge sweep merges the PR once it is green; if the failure is infrastructure\n")
-	b.WriteString("(runner lost, no space left, checks still queued) leave one comment and end the turn.\n")
+	if level >= 3 && level <= 5 {
+		b.WriteString("Agent-opened PRs carry ready-for-review; green checks alone do not merge them. A maintainer must review and remove the label.\n")
+	} else {
+		b.WriteString("The automerge sweep merges the PR once it is green.\n")
+	}
+	b.WriteString("If the failure is infrastructure (runner lost, no space left, checks still queued) leave one comment and end the turn.\n")
 	if o.HeadSHA != "" {
 		fmt.Fprintf(&b, "\nhead: %s\n", o.HeadSHA)
 	}
@@ -455,7 +459,11 @@ func deliverReEngagement(
 	if kicker == nil {
 		return false
 	}
-	if err := kicker.Kick(fixer, redPRFixKick(o, fixer != redPRFixOwner(o.Agent))); err != nil {
+	level := cfg.ACMMLevelOrZero()
+	if live, ok := kicker.(interface{ GetACMMLevel() int }); ok {
+		level = live.GetACMMLevel()
+	}
+	if err := kicker.Kick(fixer, redPRFixKick(o, fixer != redPRFixOwner(o.Agent), level)); err != nil {
 		if logger != nil {
 			level := slog.LevelWarn
 			// Pool contention is expected backpressure: retry on a later sweep.

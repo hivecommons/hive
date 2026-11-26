@@ -50,6 +50,28 @@ func TestReviewerLaneTemplate_ByteIdenticalToBuilder(t *testing.T) {
 	}
 }
 
+func TestReviewerLaneMergeGateByLevel(t *testing.T) {
+	for _, level := range []int{4, 6} {
+		s := reviewerTestScheduler(t, level, reviewerFixture)
+		workList := s.buildReviewerWorkList()
+		for name, got := range map[string]string{
+			"fallback": s.buildReviewerMessageHardcoded("adjudicator", level, workList),
+			"template": s.renderReviewerLaneTemplate("adjudicator", &github.ActionableResult{}, level, workList),
+		} {
+			if !strings.Contains(got, "Never watch, poll, or sleep on") {
+				t.Errorf("L%d %s: missing no-poll instruction", level, name)
+			}
+			if level == 4 {
+				if !strings.Contains(got, "ready-for-review") || !strings.Contains(got, "maintainer") || strings.Contains(got, "merges it the moment its checks are green") {
+					t.Errorf("L%d %s: missing maintainer hold gate", level, name)
+				}
+			} else if !strings.Contains(got, "merges it the moment its checks are green") {
+				t.Errorf("L%d %s: missing existing sweep instruction", level, name)
+			}
+		}
+	}
+}
+
 // firstDifference reports the first line where two renderings diverge, because a
 // raw dump of two 60-line prompts is unreadable in a test failure.
 func firstDifference(want, got string) string {

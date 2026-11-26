@@ -161,6 +161,10 @@ func (k agentKicker) Kick(agent, message string) error {
 	return k.mgr.SendKick(agent, message)
 }
 
+func (k agentKicker) GetACMMLevel() int {
+	return k.mgr.GetACMMLevel()
+}
+
 // planFromLabeledIssues is Phase 4 Part B: for each actionable issue carrying a
 // `plan`/`epic` label, mint an epic (idempotent) and hand it to the architect,
 // RESPECTING the architect's pause. It is a plain synchronous call on the eval

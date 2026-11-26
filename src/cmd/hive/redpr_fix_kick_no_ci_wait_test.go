@@ -12,7 +12,7 @@ import (
 // so it must state the no-CI-wait rule itself (#9673): a scanner spent a full
 // turn in `gh run watch` after pushing the repair.
 func TestRedPRFixKickForbidsCIPolling(t *testing.T) {
-	got := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 9688, HeadSHA: "69773dc"}, false)
+	got := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 9688, HeadSHA: "69773dc"}, false, 6)
 	for _, want := range []string{
 		"Do NOT open a replacement PR.",
 		"do not watch, poll, or sleep on CI",
@@ -25,10 +25,22 @@ func TestRedPRFixKickForbidsCIPolling(t *testing.T) {
 	}
 }
 
+func TestRedPRFixKickHoldGated(t *testing.T) {
+	got := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 20044}, false, 4)
+	for _, want := range []string{"ready-for-review", "maintainer", "do not watch, poll, or sleep on CI"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("hold-gated kick missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "automerge sweep merges the PR once it is green") {
+		t.Errorf("hold-gated kick promises an automatic merge:\n%s", got)
+	}
+}
+
 // An adopted PR that inherited unsigned commits is labelled no-dco; its fix
 // kick must name the DCO re-sign first, not only the CI failures (#14666).
 func TestRedPRFixKickNamesDCORehomeFirstForNoDCO(t *testing.T) {
-	got := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 14618, Labels: []string{"no-dco"}, FailingChecks: []string{"DCO"}}, false)
+	got := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 14618, Labels: []string{"no-dco"}, FailingChecks: []string{"DCO"}}, false, 6)
 	first := strings.Index(got, "FIRST (required)")
 	if first < 0 || !strings.Contains(got, "--exec "+redPRFixOwnSignoffExec) {
 		t.Fatalf("no-dco kick lacks the DCO re-sign action:\n%s", got)
@@ -36,7 +48,7 @@ func TestRedPRFixKickNamesDCORehomeFirstForNoDCO(t *testing.T) {
 	if first > strings.Index(got, "→ fix → git commit -s") {
 		t.Errorf("DCO re-sign must come before the generic fix step:\n%s", got)
 	}
-	plain := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 1}, false)
+	plain := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 1}, false, 6)
 	if strings.Contains(plain, "FIRST (required)") || strings.Contains(plain, "--signoff") {
 		t.Errorf("DCO action leaked into a signed PR's kick:\n%s", plain)
 	}
@@ -47,7 +59,7 @@ func TestRedPRFixKickNamesDCORehomeFirstForNoDCO(t *testing.T) {
 // the squash" check. The no-dco advice signs off only the agent's own
 // commits and tells it to leave everyone else's alone.
 func TestRedPRFixKickSignsOffOnlyOwnCommits(t *testing.T) {
-	got := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 19102, Labels: []string{"no-dco"}}, false)
+	got := redPRFixKick(escalation.Observation{Repo: "hivecommons/hive", Number: 19102, Labels: []string{"no-dco"}}, false, 6)
 	if strings.Contains(got, "git rebase --signoff <base>") {
 		t.Errorf("no-dco kick still tells the agent to rebase --signoff every commit:\n%s", got)
 	}
@@ -73,7 +85,7 @@ func TestRedPRFixKickCarriesPersonPRRule(t *testing.T) {
 		{Repo: "hivecommons/hive", Number: 19110},
 		{Repo: "hivecommons/hive", Number: 19110, Labels: []string{"no-dco"}},
 	} {
-		got := redPRFixKick(o, false)
+		got := redPRFixKick(o, false, 6)
 		if !strings.Contains(got, "author is a person") || !strings.Contains(got, stagelabels.PersonPRAgentCommitRule) {
 			t.Errorf("kick for %v lacks the person's-PR rule:\n%s", o.Labels, got)
 		}

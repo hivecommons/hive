@@ -142,3 +142,32 @@ func TestAddRedPRFixFirst_Injection(t *testing.T) {
 		t.Error("empty (fail-closed) message must stay empty")
 	}
 }
+
+func TestRedPRFixSection_MergeGateByLevel(t *testing.T) {
+	orig := ciFailingPath
+	ciFailingPath = filepath.Join(t.TempDir(), "ci-failing.json")
+	t.Cleanup(func() { ciFailingPath = orig })
+	if err := os.WriteFile(ciFailingPath, []byte(redPRFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, level := range []int{4, 6} {
+		cfg := &config.Config{
+			ACMMLevel: &level,
+			AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{
+				"scanner": {Mode: "ISSUES_AND_PRS"},
+			}},
+		}
+		s := New(cfg, slog.New(slog.NewTextHandler(os.Stderr, nil)))
+		got := s.redPRFixSection("scanner")
+		if !strings.Contains(got, "do NOT watch, poll, or sleep on CI") {
+			t.Errorf("L%d: missing no-poll instruction: %s", level, got)
+		}
+		if level == 4 {
+			if !strings.Contains(got, "ready-for-review") || !strings.Contains(got, "maintainer") || strings.Contains(got, "the sweep merges green PRs") {
+				t.Errorf("L%d: missing maintainer hold gate: %s", level, got)
+			}
+		} else if !strings.Contains(got, "the sweep merges green PRs") {
+			t.Errorf("L%d: missing existing sweep instruction: %s", level, got)
+		}
+	}
+}

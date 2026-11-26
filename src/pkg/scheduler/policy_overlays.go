@@ -210,7 +210,12 @@ func (s *Scheduler) redPRFixSection(agentName string) string {
 	if err != nil {
 		data = nil
 	}
-	return formatRedPRFixDataWithTopics(data, base, github.CIFailureSignals().ForAgent(base), s.busyBranchChecker(base), s.topicClaimsFor(agentName))
+	section := formatRedPRFixDataWithTopics(data, base, github.CIFailureSignals().ForAgent(base), s.busyBranchChecker(base), s.topicClaimsFor(agentName))
+	if s.isHoldGatedPRAgent(agentName) {
+		section = strings.Replace(section, "the sweep merges green PRs; infrastructure failures get one comment and a DEFER.",
+			"PRs with the ready-for-review label require maintainer review and label removal before merge; infrastructure failures get one comment and a DEFER.", 1)
+	}
+	return section
 }
 
 // CIFailureKickMessage is the targeted kick a webhook CI-failure signal

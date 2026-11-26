@@ -1,0 +1,1 @@
+- Correct agent guidance about maintainer review before hold-gated pull requests can merge.

@@ -278,8 +278,8 @@ ${PR_LIST}
 Opening or updating a PR ends your work on that item for this kick. **Never
 watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
 "checking again in 10 minutes". A turn spent waiting is a turn the rest of the
-work list did not get. The hive's automerge sweep merges your PR the moment its
-checks are green — waiting buys nothing.
+work list did not get. The `ready-for-review` label blocks merging until a
+maintainer removes it; do not wait for CI or remove the label yourself.
 
 - Pushed the branch and opened/updated the PR → **move to the next item**.
 - A check on your PR is red → triage once. Your diff's fault: fix and push once.

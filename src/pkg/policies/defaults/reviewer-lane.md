@@ -45,8 +45,7 @@ MANDATORY AUDIT — complete BOTH records for EVERY verdict before relabeling or
 Reading a PR's checks once to judge it is fine. **Never watch, poll, or sleep on
 CI** — no `gh run watch`, no `gh run view` loops, no repeated `gh pr checks`,
 `gh pr view --json statusCheckRollup`, or `gh pr status`. If you repaired or
-pushed to a PR, that ends your work on it for this kick; the automerge sweep
-merges it the moment its checks are green. The budget is per KICK, not per PR:
+${REVIEWER_MERGE_AFTER_PUSH}
 at most **two** CI-status commands in total across every PR on the list, and
 none once the kick is ten minutes old — the harness nudges you past either
 line. Move to the next PR instead.

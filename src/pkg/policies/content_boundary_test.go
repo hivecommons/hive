@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 func TestPRCapablePoliciesProtectPublishableContent(t *testing.T) {
@@ -56,5 +58,29 @@ func TestPRCapablePoliciesProtectPublishableContent(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestL3ToL5PoliciesDoNotPromiseImmediateMerge(t *testing.T) {
+	for level := 3; level <= 5; level++ {
+		pack, err := config.ACMMPackByLevel(level)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, agent := range pack.Agents {
+			if agent.KickTemplate == "" {
+				continue
+			}
+			t.Run(agent.KickTemplate, func(t *testing.T) {
+				body, err := DefaultPolicies.ReadFile("defaults/" + agent.KickTemplate)
+				if err != nil {
+					t.Fatal(err)
+				}
+				normalized := strings.Join(strings.Fields(string(body)), " ")
+				if strings.Contains(normalized, "merges your PR the moment its checks are green") {
+					t.Errorf("L%d policy promises an unconditional merge on green checks", level)
+				}
+			})
+		}
 	}
 }

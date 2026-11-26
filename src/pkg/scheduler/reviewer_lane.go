@@ -252,6 +252,7 @@ func (s *Scheduler) renderReviewerLaneTemplate(agentName string, actionable *git
 		"REVIEWER_PASSED_LABEL":          func() string { return ReviewerPassedLabel },
 		"REVIEWER_RECOMMEND_CLOSE_LABEL": func() string { return ReviewerRecommendCloseLabel },
 		"REVIEWER_CLOSE_AUTHORITY":       func() string { return reviewerCloseAuthority(level) },
+		"REVIEWER_MERGE_AFTER_PUSH":       func() string { return reviewerMergeAfterPush(level) },
 	}
 	body, failClosed := s.substituteTemplateWithVars(tmpl, actionable, agentName, nil, extra)
 	if failClosed || strings.TrimSpace(body) == "" {
@@ -272,6 +273,13 @@ func reviewerCloseAuthority(level int) string {
 	}
 	return fmt.Sprintf("     ⛔ NEVER close the PR yourself: closing is operator-only below ACMM level %d.\n", reviewerCloseACMMLevel) +
 		"     The audited recommendation is your entire verdict; leave needs-human in place."
+}
+
+func reviewerMergeAfterPush(level int) string {
+	if level >= holdGatedACMMMinLevel && level <= holdGatedACMMMaxLevel {
+		return "pushed to a PR, that ends your work on it for this kick. PRs with the\nready-for-review label require maintainer review and label removal before merge. The budget is per KICK, not per PR:"
+	}
+	return "pushed to a PR, that ends your work on it for this kick; the automerge sweep\nmerges it the moment its checks are green. The budget is per KICK, not per PR:"
 }
 
 // buildReviewerMessageHardcoded is the compiled-in contract the template was
@@ -332,8 +340,7 @@ func (s *Scheduler) buildReviewerMessageHardcoded(agentName string, level int, w
 	b.WriteString("Reading a PR's checks once to judge it is fine. **Never watch, poll, or sleep on\n")
 	b.WriteString("CI** — no `gh run watch`, no `gh run view` loops, no repeated `gh pr checks`,\n")
 	b.WriteString("`gh pr view --json statusCheckRollup`, or `gh pr status`. If you repaired or\n")
-	b.WriteString("pushed to a PR, that ends your work on it for this kick; the automerge sweep\n")
-	b.WriteString("merges it the moment its checks are green. The budget is per KICK, not per PR:\n")
+	b.WriteString(reviewerMergeAfterPush(level) + "\n")
 	b.WriteString("at most **two** CI-status commands in total across every PR on the list, and\n")
 	b.WriteString("none once the kick is ten minutes old — the harness nudges you past either\n")
 	b.WriteString("line. Move to the next PR instead.\n")
