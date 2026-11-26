@@ -93,5 +93,5 @@ func (m *Manager) linearRefreshTmuxArgs(a *AgentProcess) [][]string {
 // maps to.
 const (
 	linearAccessTokenEnvVar = "LINEAR_ACCESS_TOKEN"
-	linearAPIKeyEnvVar      = "LINEAR_API_KEY"
+	linearAPIKeyEnvVar      = "LINEAR_API_KEY" // #nosec G101 -- env var name, not a secret value
 )

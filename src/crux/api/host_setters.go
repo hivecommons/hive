@@ -35,9 +35,9 @@ type HostSetter struct {
 const (
 	hostViaPolicy          = "GET /v1/policy"
 	hostViaRepoAutoMerge   = "POST /v1/policy/repo-auto-merge"
-	hostViaTokens          = "POST /v1/tokens"
+	hostViaTokens          = "POST /v1/tokens" // #nosec G101 -- route name of the host API, not a credential
 	hostViaMint            = "POST /v1/tokens/mint"
-	hostViaBobCredential   = "GET /v1/bob/credential"
+	hostViaBobCredential   = "GET /v1/bob/credential" // #nosec G101 -- route name of the host API, not a credential
 	hostViaLinear          = "GET /v1/linear/credential"
 	hostViaPulls           = "POST /v1/pulls"
 	hostViaInferenceRoutes = "PUT|DELETE /v1/inference/routes/{agent}"

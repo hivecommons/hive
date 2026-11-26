@@ -526,7 +526,7 @@ func readDashboardAuthTokenFile() string {
 	if path == "" {
 		path = dashboardAuthTokenFile
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G703 -- DASHBOARD_AUTH_TOKEN_FILE is operator deployment config, read once at load
 	if err != nil {
 		return ""
 	}

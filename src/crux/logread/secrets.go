@@ -210,7 +210,7 @@ func secretFileValues(root string, files *int) []string {
 		if serr != nil || !st.Mode().IsRegular() || st.Size() > maxSecretFileBytes {
 			return nil
 		}
-		data, rerr := os.ReadFile(path)
+		data, rerr := os.ReadFile(path) // #nosec G122 -- walks the hive's own secret mounts to collect values for log redaction; a swapped symlink can only add redactions, the content is never emitted
 		if rerr != nil {
 			return nil
 		}

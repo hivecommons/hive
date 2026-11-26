@@ -49,7 +49,7 @@ const (
 // TokenRejectedMessage is what an operator sees when Claude answers 401 while
 // agents run on the long-lived token. `/login` cannot fix that: the token
 // itself was revoked or has expired, so the fix is a new one.
-const TokenRejectedMessage = "Claude token rejected: generate a new one with claude setup-token"
+const TokenRejectedMessage = "Claude token rejected: generate a new one with claude setup-token" // #nosec G101 -- operator-facing error message, no token value
 
 // AuthMode reports which Claude auth mode is active: the operator's
 // long-lived token when one is configured, otherwise the dashboard sign-in.

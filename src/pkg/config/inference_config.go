@@ -7,10 +7,10 @@ package config
 const (
 	// DefaultVLLMAPIKeyEnv is the env var consulted for the vLLM model
 	// discovery API key when governor.vllm.api_key_env is not set.
-	DefaultVLLMAPIKeyEnv = "HIVE_VLLM_API_KEY"
+	DefaultVLLMAPIKeyEnv = "HIVE_VLLM_API_KEY" // #nosec G101 -- env var name, not a secret value
 	// DefaultLLMDAPIKeyEnv is the env var consulted for the llm-d model
 	// discovery API key when governor.llm-d.api_key_env is not set.
-	DefaultLLMDAPIKeyEnv = "HIVE_LLMD_API_KEY"
+	DefaultLLMDAPIKeyEnv = "HIVE_LLMD_API_KEY" // #nosec G101 -- env var name, not a secret value
 )
 
 type LoggingConfig struct {

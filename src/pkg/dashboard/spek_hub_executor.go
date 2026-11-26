@@ -45,7 +45,7 @@ const (
 	spekHubLeaseRenewInterval = 5 * time.Minute
 	// SpekHubCloneCredentialFilePrefix names the per-clone git credential
 	// store files written beside the shared clones.
-	SpekHubCloneCredentialFilePrefix = ".hive-git-credentials-"
+	SpekHubCloneCredentialFilePrefix = ".hive-git-credentials-" // #nosec G101 -- temp file name prefix, not a credential
 	// spekHubCloneCredentialMaxAge matches the lifetime of the installation
 	// token a credential file holds; an older file is never in use.
 	spekHubCloneCredentialMaxAge = time.Hour

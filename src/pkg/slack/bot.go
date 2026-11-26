@@ -288,7 +288,7 @@ func (b *slackBackend) Listen(ctx context.Context, deliver func(chat.Message)) {
 
 // jitterBackoff spreads d uniformly across ±socketBackoffJitter.
 func jitterBackoff(d time.Duration) time.Duration {
-	spread := (rand.Float64()*2 - 1) * socketBackoffJitter
+	spread := (rand.Float64()*2 - 1) * socketBackoffJitter // #nosec G404 -- reconnect backoff jitter; not a security value
 	return d + time.Duration(spread*float64(d))
 }
 

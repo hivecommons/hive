@@ -71,13 +71,13 @@ const (
 // webhookReasonNoSecret*Text are the plain-words mode_reason for
 // WebhookReasonNoSecret: with deliveries arriving, and with none yet.
 const (
-	webhookReasonNoSecretRejectedText = "no GITHUB_WEBHOOK_SECRET on this spoke; relayed deliveries are rejected with 503"
-	webhookReasonNoSecretIdleText     = "no GITHUB_WEBHOOK_SECRET on this spoke; webhooks are off"
+	webhookReasonNoSecretRejectedText = "no GITHUB_WEBHOOK_SECRET on this spoke; relayed deliveries are rejected with 503" // #nosec G101 -- status message naming the env var; no secret value
+	webhookReasonNoSecretIdleText     = "no GITHUB_WEBHOOK_SECRET on this spoke; webhooks are off"                         // #nosec G101 -- status message naming the env var; no secret value
 )
 
 // WebhookSecretEnvVar names the GitHub App webhook HMAC secret a spoke
 // verifies /api/webhook/github deliveries with.
-const WebhookSecretEnvVar = "GITHUB_WEBHOOK_SECRET"
+const WebhookSecretEnvVar = "GITHUB_WEBHOOK_SECRET" // #nosec G101 -- env var name, not a secret value
 
 // WebhookSecretConfigured reports whether GITHUB_WEBHOOK_SECRET is set (non-blank)
 // in this process. Only the yes/no ever leaves this function: the value, its

@@ -279,7 +279,7 @@ func appendLine(path, what string, line []byte) error {
 
 func writeAtomic(path string, data []byte) error {
 	tmp := path + tmpSuffix
-	if err := os.WriteFile(tmp, data, fileMode); err != nil {
+	if err := os.WriteFile(tmp, data, fileMode); err != nil { // #nosec G703 -- path comes from the store Layout under the hive's own data root, never from request input
 		return fmt.Errorf("write %s: %w", tmp, err)
 	}
 	if err := rename(tmp, path); err != nil {

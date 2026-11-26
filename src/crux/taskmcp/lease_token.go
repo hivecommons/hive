@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const LeaseTokenPrefix = "hive_mcp_v1"
+const LeaseTokenPrefix = "hive_mcp_v1" // #nosec G101 -- public prefix marking lease tokens; the secret part is generated per lease
 
 var (
 	ErrLeaseTokenInvalid = errors.New("invalid task MCP lease token")

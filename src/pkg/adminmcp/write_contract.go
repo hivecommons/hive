@@ -270,7 +270,7 @@ func (s *FilePendingStore) loadLocked(ctx context.Context) (map[string]PendingCo
 	if strings.TrimSpace(s.path) == "" {
 		return items, false, fmt.Errorf("pending confirmation store path is empty")
 	}
-	data, err := os.ReadFile(s.path)
+	data, err := os.ReadFile(s.path) // #nosec G703 -- store path is operator config (HIVE_ADMIN_MCP_PENDING_FILE or the built-in default), not request input
 	if errors.Is(err, os.ErrNotExist) {
 		return items, false, nil
 	}
@@ -294,7 +294,7 @@ func (s *FilePendingStore) loadLocked(ctx context.Context) (map[string]PendingCo
 
 func (s *FilePendingStore) quarantineLocked(cause error) error {
 	dest := fmt.Sprintf("%s.corrupt-%s", s.path, time.Now().UTC().Format("20060102T150405.000000000Z"))
-	if err := os.Rename(s.path, dest); err != nil {
+	if err := os.Rename(s.path, dest); err != nil { // #nosec G703 -- renames the operator-configured store file beside itself
 		return err
 	}
 	slog.Warn("admin MCP pending confirmation store was unreadable; moved aside and started empty", "path", s.path, "moved_to", dest, "err", cause)
@@ -303,7 +303,7 @@ func (s *FilePendingStore) quarantineLocked(cause error) error {
 
 func (s *FilePendingStore) saveLocked(items map[string]PendingConfirmation) error {
 	prunePendingConfirmations(items, time.Now().UTC())
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil { // #nosec G703 -- creates the operator-configured store's own directory
 		return err
 	}
 	data, err := json.MarshalIndent(items, "", "  ")
@@ -324,7 +324,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 	defer func() {
 		if err != nil {
 			_ = tmp.Close()
-			_ = os.Remove(tmp.Name())
+			_ = os.Remove(tmp.Name()) // #nosec G703 -- removes the temp file os.CreateTemp made in the store's directory
 		}
 	}()
 	if err = tmp.Chmod(perm); err != nil {
@@ -339,7 +339,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) (err error) {
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	return os.Rename(tmp.Name(), path) // #nosec G703 -- renames the temp file onto the operator-configured store path
 }
 
 func prunePendingConfirmations(items map[string]PendingConfirmation, now time.Time) bool {

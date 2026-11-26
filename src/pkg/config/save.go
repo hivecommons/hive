@@ -448,7 +448,7 @@ func setOverlayPausedNode(doc *yaml.Node, paused bool) (bool, error) {
 // probes. It is a var (not a const) only so tests can point it at a
 // non-existent path and stay hermetic on hosts that really are pods;
 // production always uses the fixed in-cluster path.
-var saTokenFile = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+var saTokenFile = "/var/run/secrets/kubernetes.io/serviceaccount/token" // #nosec G101 -- path of the Kubernetes service account token file, not a token
 
 // SetSATokenFileForTest points IsKubernetesPod's serviceaccount-token probe
 // at path and returns a restore func. Out-of-package tests that need the

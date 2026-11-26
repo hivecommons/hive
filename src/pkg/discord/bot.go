@@ -695,7 +695,7 @@ func backoffDelay(interval time.Duration, failures int) time.Duration {
 	if delay > max || delay <= 0 {
 		delay = max
 	}
-	jitter := time.Duration(rand.Int63n(int64(float64(delay) * pollBackoffJitterFrac)))
+	jitter := time.Duration(rand.Int63n(int64(float64(delay) * pollBackoffJitterFrac))) // #nosec G404 -- poll backoff jitter; not a security value
 	return delay + jitter
 }
 

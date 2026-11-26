@@ -1138,7 +1138,7 @@ const (
 	DefaultBobUSDPerCoin    = 0.50
 	DefaultBobCoinLabel     = "BC"
 
-	BobTokensPerCoinEnvVar = "HIVE_BOB_TOKENS_PER_COIN"
+	BobTokensPerCoinEnvVar = "HIVE_BOB_TOKENS_PER_COIN" // #nosec G101 -- env var name of a pricing knob, not a secret
 	BobUSDPerCoinEnvVar    = "HIVE_BOB_USD_PER_COIN"
 	BobCoinBudgetEnvVar    = "HIVE_BOB_COIN_BUDGET"
 	BobUSDBudgetEnvVar     = "HIVE_BOB_USD_BUDGET"

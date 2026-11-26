@@ -173,7 +173,7 @@ type Recorder struct {
 func NewID() string {
 	b := make([]byte, idBytes)
 	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("%08x", uint32(time.Now().UnixNano()))
+		return fmt.Sprintf("%08x", uint32(time.Now().UnixNano())) // #nosec G115 -- fallback start id when crypto/rand fails; keeping the low 32 bits of the clock is the intended truncation
 	}
 	return hex.EncodeToString(b)
 }

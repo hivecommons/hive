@@ -100,7 +100,7 @@ func numberedDecisionOptions(text string) []delegatedecision.Option {
 		for ; j < len(lines); j++ {
 			l := lines[j]
 			if im := numberedOptionItemRE.FindStringSubmatch(l); im != nil {
-				if im[1] != string(rune('1'+len(opts))) {
+				if im[1] != string(rune('1'+len(opts))) { // #nosec G115 -- len(opts) counts option lines parsed from one comment; the rune is only compared with the captured digit
 					break
 				}
 				opts = append(opts, delegatedecision.Option{Label: im[1], Summary: unparkCleanOptionSummary(strings.ReplaceAll(im[2], "**", ""))})

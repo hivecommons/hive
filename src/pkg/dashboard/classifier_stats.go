@@ -11,7 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-const defaultJevDashboardAPIKeyEnv = "JEV_API_KEY"
+const defaultJevDashboardAPIKeyEnv = "JEV_API_KEY" // #nosec G101 -- env var name, not a secret value
 
 func (s *Server) handleClassifierStats(w http.ResponseWriter, r *http.Request) {
 	stats := classify.CurrentStats()

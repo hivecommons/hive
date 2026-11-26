@@ -104,7 +104,7 @@ func (s *Service) sseLoop(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(delay + time.Duration(rand.Int64N(int64(delay)/2+1))):
+		case <-time.After(delay + time.Duration(rand.Int64N(int64(delay)/2+1))): // #nosec G404 -- retry backoff jitter; not a security value
 		}
 		if !connected {
 			delay = min(delay*2, maxDelay)

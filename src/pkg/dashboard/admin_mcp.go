@@ -493,7 +493,7 @@ func (r *discardingWriteRecorder) bytesWritten() int { return r.bytes }
 // Settings → Channels tab next to the admin_mcp.writes_enabled switch.
 const (
 	adminMCPEndpointPath  = "/api/admin/mcp"
-	adminMCPWritesEnvName = "HIVE_ADMIN_MCP_ENABLE_WRITES"
+	adminMCPWritesEnvName = "HIVE_ADMIN_MCP_ENABLE_WRITES" // #nosec G101 -- env var name of an on/off switch, not a secret
 )
 
 // Where the HTTP endpoint's writes setting comes from, as reported in the

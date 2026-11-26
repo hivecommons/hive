@@ -220,14 +220,14 @@ func callAdvise(endpoint string, req Request, timeout time.Duration) (Response, 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+	hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, // #nosec G704 -- endpoint is the hive's loopback advise URL from the --endpoint flag or its env default, set by the hive, not by request input
 		strings.TrimRight(endpoint, "/")+AdvisePath, bytes.NewReader(body))
 	if err != nil {
 		return Response{}, err
 	}
 	hreq.Header.Set("Content-Type", "application/json")
 	client := &http.Client{Transport: &http.Transport{Proxy: nil}}
-	resp, err := client.Do(hreq)
+	resp, err := client.Do(hreq) // #nosec G704 -- request built above for the hive's own loopback advise endpoint
 	if err != nil {
 		return Response{}, fmt.Errorf("advise endpoint unreachable: %w", err)
 	}
