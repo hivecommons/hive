@@ -1,0 +1,1 @@
+- docs(forgejo): correct the key-host rules and the quadlet hosted-signal comment (#20063)
