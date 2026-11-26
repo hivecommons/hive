@@ -86,7 +86,9 @@ func TestHubCustomerStoreColonyConsentPageAndIndex(t *testing.T) {
 	h := newMatchHarness(t)
 	t.Setenv(customersTrustedHivesEnv, "own")
 	users := fixtureUsers(t)
-	gus := saveMatchUser(t, &SaaSUser{GitHubUsername: "gus-example", Hives: map[string]string{"own": "viewer"},
+	// gus holds no grant on "own", so only his consent record can put him in
+	// the index (grant holders are indexed without one, #19306).
+	gus := saveMatchUser(t, &SaaSUser{GitHubUsername: "gus-example", Hives: map[string]string{},
 		FullName: "Gus Example", FullNameSource: countrySourceUser})
 	writeMatchConsent(t, gus, "own", func(c *customerConsent) { c.Fields = customerConsentFields{RealName: true} })
 	st := useHubCustomerStore(t, hubCustomerStoreColony)
