@@ -70,7 +70,15 @@ func wireCustomersAtMode(dataDir, graphDir string, mode customers.StoreMode, res
 	if mode != customers.StoreColonyOnly {
 		// A hive set back from colony-only finds no people.json: it is
 		// written back from colony.db first (#19972).
-		if _, err := customers.RestoreFromColony(dataDir, logger); err != nil {
+		if _, err := customers.RestoreFromColony(dataDir, logger); err != nil && mode == customers.StoreJSON {
+			// json is the rollback that needs no colony: it starts without
+			// the restore (a colony-only boot later sets any new
+			// people.json aside rather than taking it as the truth).
+			if logger != nil {
+				logger.Warn("[customers] people.json could not be restored from the colony-only store; starting json without it",
+					"error", err)
+			}
+		} else if err != nil {
 			if logger != nil {
 				logger.Error("[customers] people.json could not be restored from the colony-only store; the Customers section is off",
 					"error", err)

@@ -421,12 +421,20 @@ compares identity provenance.
   A restart reads everything from `colony.db`. A `colony.db` that cannot be
   opened in colony-only keeps the Customers section off rather than starting
   an empty `people.json`.
+- **A `people.json` beside a migrated `colony.db`** (an older binary read
+  `colony-only` as `json` and started a new one, or a stale copy was put
+  back) is never taken as the truth, which would forget everyone it lacks:
+  it is renamed `people.json.stray` (with `enrichment.json`), kept, and the
+  store is read from `colony.db`. A migration that does not verify removes
+  the colony-only document and attachments it wrote, and the renames go
+  `enrichment.json` first, so an interrupted migration only repeats.
 - **Forget** erases the person inside that transaction, compacts the file,
   and scrubs them from the `.pre-colony` and `.migrated` files too.
 - **Rollback** is a mode change: a boot in `colony`, `shadow` or `json` that
   finds no `people.json` beside a colony-only `colony.db` writes both files
-  back from it first, and a `colony` or `shadow` boot drops the colony-only
-  document so a later restore can never go back in time. By hand: stop the
+  back from it first and drops the colony-only document, so a later restore
+  can never go back in time. In `json` mode a restore that fails is logged
+  and the hive starts without it. By hand: stop the
   hive and run `hive colony export --format hive-people-json [--dir
   /data/customers] [--out DIR] [--force]`; it refuses to overwrite a file
   without `--force`.

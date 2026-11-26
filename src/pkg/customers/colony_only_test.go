@@ -448,6 +448,21 @@ func TestColonyOnlyFailedWriteChangesNothing(t *testing.T) {
 	if err := b.enrich.SetSource(fixBea, EnrichSourceGitdm, nil, nil, clk.now()); err == nil {
 		t.Error("an enrichment write with colony.db closed succeeded")
 	}
+	if _, ok := b.enrich.Get(fixBea); ok {
+		t.Error("a failed enrichment write is shown in memory")
+	}
+	if err := b.enrich.Delete(fixAda); err == nil {
+		t.Error("an enrichment delete with colony.db closed succeeded")
+	}
+	if _, ok := b.enrich.Get(fixAda); !ok {
+		t.Error("a failed enrichment delete dropped the entry in memory")
+	}
+	if n, err := b.enrich.DropSource(EnrichSourceGitdm); err == nil || n == 0 {
+		t.Errorf("DropSource with colony.db closed = %d, %v", n, err)
+	}
+	if pe, _ := b.enrich.Get(fixAda); len(pe.Affiliations) != 2 {
+		t.Error("a failed DropSource dropped the entries in memory")
+	}
 	mustNotExist(t, filepath.Join(dir, FileName))
 	mustNotExist(t, filepath.Join(dir, EnrichmentFileName))
 }
@@ -620,5 +635,104 @@ func TestColonyOnlyRefusesNewerDocument(t *testing.T) {
 	}
 	if _, err := ExportColony(dir, t.TempDir(), false); err == nil {
 		t.Error("export read a document from a newer release")
+	}
+}
+
+// A people.json that appears beside a migrated colony.db (an older binary
+// read colony-only as json and started a new one, or a stale copy was put
+// back) is set aside, never taken as the truth: nobody is forgotten, and
+// the migrated files keep everyone.
+func TestColonyOnlyStrayJSONIsSetAside(t *testing.T) {
+	dir := fixtureDir(t)
+	clk := newClock()
+	b := bootColony(t, dir, StoreColonyOnly, clk)
+	if err := b.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// What an older binary in json mode would write: a store with only one
+	// of the three people.
+	partial := `{"version":1,"salt":"ffeeddccbbaa99887766554433221100","people":[{"id":"` + fixBea +
+		`","name":"Bea Sample","status":"customer","origin":"accepted","satisfaction":{"level":"unknown"},"created_at":"2026-01-02T03:04:05Z","updated_at":"2026-01-02T03:04:05Z"}]}`
+	if err := os.WriteFile(filepath.Join(dir, FileName), []byte(partial), storeFileMode); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, EnrichmentFileName), []byte(`{"people":{}}`), storeFileMode); err != nil {
+		t.Fatal(err)
+	}
+	again := bootColony(t, dir, StoreColonyOnly, clk)
+	if again.colony.Mode() != StoreColonyOnly || len(again.store.People()) != 3 {
+		t.Fatalf("mode %s with %d people, want colony-only with all 3", again.colony.Mode(), len(again.store.People()))
+	}
+	if _, err := again.store.Get(fixAda); err != nil {
+		t.Fatalf("a person the stray file lacked was lost: %v", err)
+	}
+	mustNotExist(t, filepath.Join(dir, FileName))
+	mustNotExist(t, filepath.Join(dir, EnrichmentFileName))
+	if got := readFile(t, filepath.Join(dir, FileName+colonyStraySuffix)); string(got) != partial {
+		t.Error("the stray people.json was not kept as it was")
+	}
+	if ids := backupIDsIn(t, filepath.Join(dir, FileName+MigratedSuffix)); !slices.Contains(ids, fixAda) {
+		t.Error("the migrated file lost a person")
+	}
+	if pe, ok := again.enrich.Get(fixAda); !ok || len(pe.Affiliations) != 2 {
+		t.Errorf("enrichment after the stray file = %+v", pe)
+	}
+}
+
+// A restore drops the colony-only document, so a later missing people.json
+// is never filled from the old snapshot again.
+func TestColonyOnlyRestoreIsOneShot(t *testing.T) {
+	dir := fixtureDir(t)
+	clk := newClock()
+	b := bootColony(t, dir, StoreColonyOnly, clk)
+	if err := b.colony.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := RestoreFromColony(dir, nil); err != nil || !ok {
+		t.Fatalf("RestoreFromColony = %v, %v", ok, err)
+	}
+	if has, err := colonyHasDoc(dir, clk.now); err != nil || has {
+		t.Fatalf("after a restore the document is still there: %v, %v", has, err)
+	}
+	if err := os.Remove(filepath.Join(dir, FileName)); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := RestoreFromColony(dir, nil); err != nil || ok {
+		t.Errorf("a second restore = %v, %v; want nothing restored", ok, err)
+	}
+}
+
+// A migration that does not verify leaves nothing a later boot could take
+// for a migrated store, and the JSON is untouched.
+func TestColonyOnlyClearsAfterAFailedVerify(t *testing.T) {
+	dir := fixtureDir(t)
+	clk := newClock()
+	b := bootColony(t, dir, StoreColony, clk)
+	b.colony.mu.Lock()
+	err := b.colony.db.SetStoreAttachment(colonyAttachDoc, json.RawMessage(`{"version":1}`))
+	if err == nil {
+		err = b.colony.db.SetAttachment(fixAda, colonyAttachPerson, json.RawMessage(`{"version":1}`))
+	}
+	if err == nil {
+		err = b.colony.clearColonyOnlyLocked()
+	}
+	ada, _ := b.colony.db.Get(fixAda)
+	b.colony.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ada.Attachments) != 0 {
+		t.Errorf("attachments left: %v", ada.Attachments)
+	}
+	if has, _ := func() (bool, error) {
+		b.colony.mu.Lock()
+		defer b.colony.mu.Unlock()
+		_, ok, err := b.colony.db.StoreAttachment(colonyAttachDoc)
+		return ok, err
+	}(); has {
+		t.Error("the colony-only document was left behind")
+	}
+	if _, err := os.Stat(filepath.Join(dir, FileName)); err != nil {
+		t.Errorf("people.json touched: %v", err)
 	}
 }
