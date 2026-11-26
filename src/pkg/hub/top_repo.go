@@ -230,7 +230,11 @@ func topRepoProfileLogin(u *SaaSUser) string {
 	if u == nil {
 		return ""
 	}
-	if login := strings.TrimSpace(u.LinkedGitHubLogin); login != "" {
+	// A link proven by the hub's GitHub OAuth step (#19992) names a
+	// github.com account, which is a different namespace from the GHE API
+	// this profile may query, so only an unproven (operator-set) value is
+	// used here.
+	if login := strings.TrimSpace(u.LinkedGitHubLogin); login != "" && u.LinkedGitHubProvenAt.IsZero() {
 		return login
 	}
 	provider, subject, ok := parseCanonical(userCanonicalID(u))

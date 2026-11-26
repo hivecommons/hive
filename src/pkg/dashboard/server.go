@@ -452,6 +452,9 @@ type Server struct {
 	// sessionStorePath, when non-empty, persists userSessions across restarts
 	// (see EnableSessionPersistence). Guarded by sessionMu.
 	sessionStorePath string
+	// githubLinkRevokes is the owner's GitHub login link revocation list
+	// (github_link.go, #19992).
+	githubLinkRevokes githubLinkRevocations
 
 	// Sessions (api_sessions.go): lazily opened metadata store and the mutex
 	// serialising create/resume so the per-spoke and per-user caps hold.

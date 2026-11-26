@@ -273,7 +273,8 @@ func crmSecondaryIdentities(u *SaaSUser) []store.Identity {
 	var out []store.Identity
 	storable := func(v string) bool { return crmStorableText(v, crmMaxIdentityBytes) && !strings.ContainsAny(v, "\n\t") }
 	if login := strings.TrimSpace(u.LinkedGitHubLogin); login != "" && storable(login) {
-		// No hub flow proves a linked login (customerMatchLogin), so it is
+		// A linked login is not used for customer matching
+		// (customerMatchLogin), even when the link step proved it, so it is
 		// recorded unverified and local_only.
 		out = append(out, store.Identity{Kind: store.KindGitHub, Value: login,
 			Locality: store.LocalityLocalOnly, Source: crmIdentitySourceLinked})
