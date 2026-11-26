@@ -344,8 +344,8 @@ Hive **refuses to start** without it unless the hive is hub-hosted:
 
 ```
 [SECURITY] HIVE_DASHBOARD_TOKEN is not set and this hive is not hub-hosted
-(no HIVE_SESSION_KEY / HIVE_HUB_SECRET) — all mutation endpoints would be
-unauthenticated. Refusing to start. Set HIVE_DASHBOARD_TOKEN.
+(no HIVE_SESSION_PUBLIC_KEY / HIVE_SESSION_KEY / HIVE_HUB_SECRET) — all
+mutation endpoints would be unauthenticated. Refusing to start. Set HIVE_DASHBOARD_TOKEN.
 ```
 
 With `Notify=healthy` that refusal surfaces the way it should: the unit stays
