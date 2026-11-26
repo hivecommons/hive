@@ -443,7 +443,7 @@ func humanizeStageReason(reason string) string {
 		return decisionHeldRunsWords(ids) + " held for a maintainer's approval on GitHub — no required check can report until someone clicks Approve and run"
 	}
 	if rest, ok := strings.CutPrefix(r, "fork-guard:"); ok {
-		return "check " + strings.ReplaceAll(rest, ",", ", ") + " refuses fork PRs — a maintainer must push this branch to the repository"
+		return "check " + strings.ReplaceAll(rest, ",", ", ") + " refuses fork PRs: a maintainer must act on it as its own message asks (run or admit it for this head, or push this branch to the repository)"
 	}
 	if rest, ok := strings.CutPrefix(r, "shared-ci-incident:"); ok {
 		return "deferred to shared-CI incident #" + rest + " — not this PR's fault"
