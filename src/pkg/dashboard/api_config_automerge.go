@@ -184,6 +184,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// DependencyBotAdoptEnabled is auto_merge.dependency_bot_adopt.enabled;
 		// flat for the same reason.
 		DependencyBotAdoptEnabled *bool `json:"dependency_bot_adopt_enabled"`
+		// DependencyBotRedIssueEnabled is
+		// auto_merge.dependency_bot_red_issue.enabled; flat for the same
+		// reason.
+		DependencyBotRedIssueEnabled *bool `json:"dependency_bot_red_issue_enabled"`
 		// RequireCurrentBaseDefault is auto_merge.require_current_base_default,
 		// the Features toggle "Merge only on current base" (#15335). Per-repo
 		// overrides travel on PUT /api/config/governor/repos.
@@ -459,6 +463,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	if body.DependencyBotAdoptEnabled != nil {
 		cfg.AutoMerge.DependencyBotAdopt.Enabled = *body.DependencyBotAdoptEnabled
 	}
+	if body.DependencyBotRedIssueEnabled != nil {
+		cfg.AutoMerge.DependencyBotRedIssue.Enabled = *body.DependencyBotRedIssueEnabled
+	}
 	if body.RequireCurrentBaseDefault != nil {
 		v := *body.RequireCurrentBaseDefault
 		cfg.AutoMerge.RequireCurrentBaseDefault = &v
@@ -630,27 +637,28 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		contributorLaneFenceScopeRepos = append(contributorLaneFenceScopeRepos, map[string]interface{}{"repo": o.Repo, "workflow_fence_scope": o.Scope})
 	}
 	return map[string]interface{}{
-		"self_authored":                selfAuthored,
-		"self_authored_set":            am.SelfAuthored != nil,
-		"max_merges":                   am.MaxMerges,
-		"min_head_age":                 am.EffectiveMinHeadAge().String(),
-		"required_checks":              checks,
-		"allow_unprotected_base":       allowUnprotected,
-		"no_ci_ok":                     noCIOK,
-		"squash_only":                  squashOnly,
-		"require_current_base":         requireCurrentBase,
-		"human_merge_paths":            humanMergePaths,
-		"human_merge_pin_only":         humanMergePinOnly,
-		"human_merge_owner_approval":   humanMergeOwnerApproval,
-		"pin_only_kinds":               config.PinOnlyKinds,
-		"project_repos":                projectRepos,
-		"trusted_bot_authors":          trustedBots,
-		"trusted_bot_authors_set":      am.TrustedBotAuthors != nil,
-		"trusted_bot_skip_review":      am.TrustedBotSkipsReview(),
-		"bot_takeover_enabled":         am.BotTakeover.IsEnabled(),
-		"dependency_bot_adopt_enabled": am.DependencyBotAdopt.IsEnabled(),
-		"require_current_base_default": am.CurrentBaseDefaultEnabled(),
-		"skip_current_base":            emptyIfNilStrings(am.SkipCurrentBase),
+		"self_authored":                    selfAuthored,
+		"self_authored_set":                am.SelfAuthored != nil,
+		"max_merges":                       am.MaxMerges,
+		"min_head_age":                     am.EffectiveMinHeadAge().String(),
+		"required_checks":                  checks,
+		"allow_unprotected_base":           allowUnprotected,
+		"no_ci_ok":                         noCIOK,
+		"squash_only":                      squashOnly,
+		"require_current_base":             requireCurrentBase,
+		"human_merge_paths":                humanMergePaths,
+		"human_merge_pin_only":             humanMergePinOnly,
+		"human_merge_owner_approval":       humanMergeOwnerApproval,
+		"pin_only_kinds":                   config.PinOnlyKinds,
+		"project_repos":                    projectRepos,
+		"trusted_bot_authors":              trustedBots,
+		"trusted_bot_authors_set":          am.TrustedBotAuthors != nil,
+		"trusted_bot_skip_review":          am.TrustedBotSkipsReview(),
+		"bot_takeover_enabled":             am.BotTakeover.IsEnabled(),
+		"dependency_bot_adopt_enabled":     am.DependencyBotAdopt.IsEnabled(),
+		"dependency_bot_red_issue_enabled": am.DependencyBotRedIssue.IsEnabled(),
+		"require_current_base_default":     am.CurrentBaseDefaultEnabled(),
+		"skip_current_base":                emptyIfNilStrings(am.SkipCurrentBase),
 		"merge_train": map[string]interface{}{
 			"enabled":             am.MergeTrain.IsEnabled(),
 			"max_rebase_attempts": am.MergeTrain.EffectiveMaxRebaseAttempts(),

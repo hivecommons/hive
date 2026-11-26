@@ -31,10 +31,11 @@ on:
   # KEEP THE FLOORS IN SYNC: PKG_THRESHOLD below is duplicated in
   # v2-tests.yml's coverage job; a floor change must land in both.
 
+# Read-only by default; create-issue-on-coverage-drop grants itself
+# issues: write, the only job that files or comments on issues.
 permissions:
   actions: read
   contents: read
-  issues: write
 
 jobs:
   gate:

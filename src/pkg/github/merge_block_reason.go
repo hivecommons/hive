@@ -67,6 +67,17 @@ type ProtectionFacts struct {
 	// required context reported as a commit status is invisible to the
 	// check-run listing. PullRequest.OnlyNonRequiredChecksFailing reads it.
 	RequiredChecksAllReported bool `json:"required_checks_all_reported,omitempty"`
+	// RequiredChecksPassed records that the known required set is non-empty
+	// and every check in it has at least one observation on the head commit
+	// (a check run, or a commit status when those were read) and every such
+	// observation completed with conclusion success, neutral or skipped. A
+	// required check still queued or running, one that was cancelled, timed
+	// out, went stale, asks for action or failed, one with no observation,
+	// and one whose producer the policy cannot attribute all leave it false.
+	// It is stricter than RequiredChecksAllReported, which also counts a
+	// running or cancelled check as reported. The escalation ledger reads it
+	// to lift its own needs-human from a head red only on non-required checks.
+	RequiredChecksPassed bool `json:"required_checks_passed,omitempty"`
 	// MissingRequiredChecks are required checks for which NO check run exists
 	// on the head commit. It is only ever populated when at least one OTHER
 	// required check WAS observed as a check run: on a repository that

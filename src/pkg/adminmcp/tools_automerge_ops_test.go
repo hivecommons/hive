@@ -47,24 +47,25 @@ func (p *autoMergeProvider) ExecuteWrite(_ context.Context, req WriteRequest) (a
 // project repositories, two of them squash-only and with human-merge paths.
 func autoMergeFixture() map[string]any {
 	return map[string]any{
-		"self_authored":                true,
-		"max_merges":                   0,
-		"min_head_age":                 "3m0s",
-		"required_checks":              []string{"build"},
-		"allow_unprotected_base":       []string{},
-		"no_ci_ok":                     []string{},
-		"squash_only":                  []string{"org/a", "org/b"},
-		"require_current_base":         []string{},
-		"human_merge_paths":            map[string][]string{"org/a": {".github/workflows/**", ".claude/hooks/**"}, "org/b": {"CODEOWNERS"}},
-		"human_merge_owner_approval":   []string{"org/b"},
-		"project_repos":                []string{"org/a", "org/b", "org/c"},
-		"trusted_bot_authors":          []string{"dependabot[bot]"},
-		"bot_takeover_enabled":         false,
-		"dependency_bot_adopt_enabled": false,
-		"require_current_base_default": false,
-		"merge_train":                  map[string]any{"enabled": true, "max_rebase_attempts": 2},
-		"native_merge_queue":           map[string]any{"enabled": true, "repos": []string{"org/a"}, "bases": []string{"org/a#main"}, "skip_current_base_gate": false, "probe_ttl": "30m0s"},
-		"trusted_authors":              map[string]any{"enabled": false, "repos": []string{}, "require_role": "owner", "require_github_permission": true, "exclude_labels": []string{"hold"}},
+		"self_authored":                    true,
+		"max_merges":                       0,
+		"min_head_age":                     "3m0s",
+		"required_checks":                  []string{"build"},
+		"allow_unprotected_base":           []string{},
+		"no_ci_ok":                         []string{},
+		"squash_only":                      []string{"org/a", "org/b"},
+		"require_current_base":             []string{},
+		"human_merge_paths":                map[string][]string{"org/a": {".github/workflows/**", ".claude/hooks/**"}, "org/b": {"CODEOWNERS"}},
+		"human_merge_owner_approval":       []string{"org/b"},
+		"project_repos":                    []string{"org/a", "org/b", "org/c"},
+		"trusted_bot_authors":              []string{"dependabot[bot]"},
+		"bot_takeover_enabled":             false,
+		"dependency_bot_adopt_enabled":     false,
+		"dependency_bot_red_issue_enabled": false,
+		"require_current_base_default":     false,
+		"merge_train":                      map[string]any{"enabled": true, "max_rebase_attempts": 2},
+		"native_merge_queue":               map[string]any{"enabled": true, "repos": []string{"org/a"}, "bases": []string{"org/a#main"}, "skip_current_base_gate": false, "probe_ttl": "30m0s"},
+		"trusted_authors":                  map[string]any{"enabled": false, "repos": []string{}, "require_role": "owner", "require_github_permission": true, "exclude_labels": []string{"hold"}},
 		"contributor_lane": map[string]any{
 			"enabled": true, "soak_minutes": 30, "require_reviewer_verdict": true, "repos": []string{"org/a"},
 			"exclude_labels": []string{"hold"}, "require_tiers": []string{"merger", "trusted"}, "registry_tiers_sufficient": true,
@@ -167,6 +168,28 @@ func TestAutoMergeUpdateDependencyBotAdoptEnabled(t *testing.T) {
 	}
 	if !strings.HasPrefix(preview.WideningDisclosure, "Widening:") {
 		t.Fatalf("turning dependency_bot_adopt_enabled on must be widening: %s", preview.WideningDisclosure)
+	}
+	if _, err := h.ConfirmWrite(context.Background(), map[string]any{"confirmation_id": id}); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if len(p.requests) != 1 || compactJSON(p.requests[0].Body) != want {
+		t.Fatalf("executed %+v, want body %s", p.requests, want)
+	}
+}
+
+// auto_merge.dependency_bot_red_issue.enabled travels as the endpoint's flat
+// dependency_bot_red_issue_enabled field. Turning it on files issues and
+// merges nothing, so it is not widening.
+func TestAutoMergeUpdateDependencyBotRedIssueEnabled(t *testing.T) {
+	p := &autoMergeProvider{settings: autoMergeFixture()}
+	h := autoMergeHandler(p)
+	preview, id := autoMergePreview(t, h, map[string]any{"dependency_bot_red_issue_enabled": true})
+	want := `{"dependency_bot_red_issue_enabled":true}`
+	if got := compactJSON(preview.Request.Body); got != want {
+		t.Fatalf("body = %s, want %s", got, want)
+	}
+	if strings.HasPrefix(preview.WideningDisclosure, "Widening:") {
+		t.Fatalf("turning dependency_bot_red_issue_enabled on must not be widening: %s", preview.WideningDisclosure)
 	}
 	if _, err := h.ConfirmWrite(context.Background(), map[string]any{"confirmation_id": id}); err != nil {
 		t.Fatalf("confirm: %v", err)

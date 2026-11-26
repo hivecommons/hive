@@ -85,6 +85,39 @@ does not consume one. An escalation is un-parked automatically —
 `needs-human` removed, ledger reset, one comment saying why — when the head
 goes green or when the shared breakage it escalated over clears.
 
+An escalation the hive raised itself (the ledger records that when it posts
+the escalation comment) is also un-parked on a head red only on optional
+checks, when all of these hold:
+
+- the required set the hive resolved for the base branch (rulesets, classic
+  branch protection, or a declared `auto_merge.required_checks`) is known and
+  non-empty, none of the failing checks is in it, every check in it completed
+  on the head with success, neutral or skipped, and no check is still running;
+- GitHub reports the PR mergeable, with `mergeable_state` `unstable`
+  (mergeable, only checks it does not require failing);
+- the PR carries neither `reviewer-recommend-close` nor `reviewer-handoff`,
+  the reviewer verdicts that leave `needs-human` in place on purpose;
+- the newest `needs-human` label event on the PR is the hive App's own
+  `labeled`. This is one read of the PR's issue events, made only when every
+  other condition holds; a read error holds the un-park for that pass, and a
+  label a person put back last is theirs from then on and is never lifted.
+
+Such a head draws no re-dispatch from the stuck-red reaper and counts no
+attempt. The PR merges through the lane, which gates on the same resolved set.
+Where `auto_merge.required_checks` is declared, the merge-eligible classifier
+also files it as merge-eligible. In a repository with no declared set that
+classifier (which reads the declared set only) still lists the PR as CI
+failing, so its owner may still get a FIX-BEFORE-NEW nudge for the optional
+red check, exactly as when a person removes the label. The PR follow-up router
+may likewise send the owner one CI-failure follow-up for that head, as it does
+for any settled red head that is not escalated.
+Without this lift the label stayed on a PR GitHub would merge as it stands
+until a person removed it (Danathar/tududi#658). A `needs-human` a person
+applied, or one the ledger only observed, keeps waiting for a fully green head
+or a person. If the hive's own label never landed (the label call failed) and
+the head qualifies, the ledger returns the PR to the automated lane without
+adding the label at all.
+
 ### Hand off after one reviewer pass
 
 A PR escalating for the SECOND time — after the reviewer lane ([#5480]) already

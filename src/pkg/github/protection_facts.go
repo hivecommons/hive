@@ -133,7 +133,7 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 			// A check-run listing alone cannot prove a context is missing:
 			// legacy commit statuses may provide it. Failed status reads
 			// leave absence unknown, including for App-bound policy.
-			observedRequired := 0
+			observedRequired, passedRequired := 0, 0
 			var missing, red []string
 			for name := range req.set {
 				// Canonical facts retain their name-set contract. App-aware
@@ -145,6 +145,9 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 					red = append(red, name)
 				case reported[name] || statusReported:
 					observedRequired++
+					if requiredCheckPassed(pr.CIActivity, name) {
+						passedRequired++
+					}
 				default:
 					if statusesKnown {
 						missing = append(missing, name)
@@ -153,6 +156,7 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 			}
 			f.FailingRequiredChecks = red
 			f.RequiredChecksAllReported = len(req.set) > 0 && observedRequired == len(req.set)
+			f.RequiredChecksPassed = len(req.set) > 0 && passedRequired == len(req.set)
 			if observedRequired > 0 || strings.EqualFold(pr.MergeableState, "blocked") {
 				sort.Strings(missing)
 				f.MissingRequiredChecks = missing
@@ -179,6 +183,34 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 		return
 	}
 	pr.Protection = &f
+}
+
+// requiredCheckPassed reports that the head carries at least one observation
+// of the required check name in a (the check runs listed for the head, plus
+// the commit statuses when attach read them) and that every one of them
+// completed with conclusion success, neutral or skipped. A run still queued
+// or in progress, any other conclusion, no observation at all, and a
+// producer ChecksForRequired cannot attribute (state "unknown") all read as
+// not passed. It reads only data the pass already holds: no API call.
+func requiredCheckPassed(a *PRCIActivity, name string) bool {
+	if a == nil {
+		return false
+	}
+	checks := a.ChecksForRequired(name)
+	if len(checks) == 0 {
+		return false
+	}
+	for _, check := range checks {
+		if check.State != "completed" {
+			return false
+		}
+		switch check.Conclusion {
+		case "success", "neutral", "skipped":
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // attachRequiredChecks stamps the base branch's required-check policy onto

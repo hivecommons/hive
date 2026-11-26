@@ -495,6 +495,11 @@ func humanizeStageReason(reason string) string {
 		// maintainer edits; only adoption (hive re-authoring on its own
 		// branch) moves it (hivecommons/hive#15312).
 		return "fork not editable by hive"
+	case stageengineprstage.AutoMergeReasonForkWorkflowUpdate:
+		// GitHub refused the App's update-branch on a fork head because
+		// the base changed workflow files; the branch needs a merge from
+		// the base by its author (072 for an agent's PR) or a person (085).
+		return "base changed workflow files the hive cannot push to a fork; the branch needs the base merged in"
 	}
 	if rest, ok := strings.CutPrefix(lower, "contributor-lane:"); ok {
 		return strings.ReplaceAll(strings.ReplaceAll(rest, "-", " "), "_", " ")

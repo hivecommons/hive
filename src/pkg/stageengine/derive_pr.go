@@ -239,8 +239,9 @@ func derivePR(f Facts) Decision {
 func passDecision(verdict stageVerdict, role stagelabels.Role, obs stageObservation, f Facts) Decision {
 	pass := f.PR.Pass
 	obs.AuthorKind = pass.AuthorKind
-	if verdict.Stage == stagelabels.NeedsAuthor || verdict.Stage == stagelabels.ReturnedToContributor {
-		verdict.Stage = FixingStage(obs)
+	verdict = SplitByAuthorKind(verdict, obs, pass)
+	if pass.AuthorUpdateLapsed && AuthorUpdateOwed(verdict) {
+		verdict = AuthorUpdateLapsedStage()
 	}
 	obs.LaneReason = obs.Reason
 	if verdict.Reason != "" {

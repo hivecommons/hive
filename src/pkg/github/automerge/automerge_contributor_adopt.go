@@ -613,6 +613,12 @@ func AdoptionWorkflowRefusedComment(obs stageObservation) string {
 // the note named an approval while the 085 entry comment said none helps
 // (projectbluefin/testsuite#1037). An open sentinel alert is named too: its
 // label must be cleared whichever way the head lands.
+//
+// In a squash-only repo (Detail.SquashOnly) a merge commit is not a route,
+// so every refusal but mergeCommitRefusedSquashOnly, which already names the
+// policy, takes squashOnlyMergeAsk instead (projectbluefin/bluefin-bling#200
+// was told to `--merge` where GitHub allows only squash). Elsewhere the
+// text is unchanged.
 func mergeCommitRefusalText(obs stageObservation) string {
 	var b strings.Builder
 	rule := strings.TrimSpace(obs.Detail.ManualMergeRule)
@@ -624,6 +630,8 @@ func mergeCommitRefusalText(obs stageObservation) string {
 			then = "a maintainer still merges it by hand with a merge commit: " + rule
 		}
 		b.WriteString("**Ask (maintainer):** either lift the squash-only policy for this repo (" + then + "), or re-author the hive's commits under a maintainer's own sign-off and push a new head.")
+	case obs.Detail.SquashOnly:
+		squashOnlyMergeAsk(&b, obs, rule)
 	case obs.Detail.MergeCommitRefused == mergeCommitRefusedRole && rule != "":
 		fmt.Fprintf(&b, "The hive will not merge this head itself, approved or not: %s. ", rule)
 		fmt.Fprintf(&b, "**Ask (maintainer):** every commit already carries a sign-off matching its own author, so DCO holds without rewriting history: review the change and merge it by hand with a merge commit (`gh pr merge %d --merge`, not squash); an approving review would not land it.", obs.Number)
@@ -650,13 +658,83 @@ func mergeCommitRefusalText(obs stageObservation) string {
 	return b.String()
 }
 
+// squashOnlyMergeAsk is mergeCommitRefusalText's ask, for a refusal other
+// than mergeCommitRefusedSquashOnly, in a repo that forbids merge commits:
+// each refusal keeps its own context and question, and the routes it names
+// are the ones such a repo has (squashOnlyMergeChoices). The approve route
+// is never offered: an approval would only meet the squash-only refusal.
+func squashOnlyMergeAsk(b *strings.Builder, obs stageObservation, rule string) {
+	policy := fmt.Sprintf("`%s` is squash-only (`auto_merge.squash_only`), so a merge commit is not available", obs.Display)
+	ruleNamed := false
+	switch obs.Detail.MergeCommitRefused {
+	case mergeCommitRefusedRole:
+		if rule != "" {
+			fmt.Fprintf(b, "The hive will not merge this head itself, approved or not: %s. %s. ", rule, policy)
+			b.WriteString("**Ask (maintainer):** review the change and land it by hand (an approving review would not land it), one of these ways: ")
+			ruleNamed = true
+		} else {
+			fmt.Fprintf(b, "The hive selects a merge commit for this shape by itself only on a `%s` PR or a head a trusted maintainer has approved; this one is neither yet, and %s, so an approval would not get one either. ", stagelabels.RoleTrusted.Label(), policy)
+			b.WriteString("**Ask (maintainer):** pick one: ")
+		}
+	case mergeCommitRefusedHiveOnly:
+		fmt.Fprintf(b, "Every non-merge commit on the head is the hive's, so there is no contributor authorship for a merge commit to preserve, and %s. ", policy)
+		b.WriteString("**Ask (maintainer):** close this PR if the hive's change is not wanted; otherwise pick one: ")
+	case mergeCommitRefusedUnsigned:
+		fmt.Fprintf(b, "Some commits on the head carry no sign-off at all, so the hive did not select a merge commit, and %s. ", policy)
+		b.WriteString("**Ask (maintainer):** decide whether those commits need a sign-off before merging; if not, pick one: ")
+	case mergeCommitRefusedLabelsSuppressed:
+		// `merge-method/merge` asks for the merge commit the repo forbids,
+		// so the label step is not offered.
+		fmt.Fprintf(b, "Every commit already carries a sign-off matching its own author, but %s, so `%s` (which the write-back gate also keeps off this PR) would not help. ", policy, stagelabels.MergeCommitLabel)
+		b.WriteString("**Ask (maintainer):** pick one: ")
+	default:
+		fmt.Fprintf(b, "Every commit already carries a sign-off matching its own author, but %s. ", policy)
+		b.WriteString("**Ask (maintainer):** pick one: ")
+	}
+	b.WriteString(squashOnlyMergeChoices(obs))
+	if rule != "" && !ruleNamed {
+		fmt.Fprintf(b, " The hive will not merge this head itself, approved or not: %s, so a maintainer lands it by hand whichever way; an approving review would not land it.", rule)
+	}
+}
+
+// squashOnlyMergeChoices names the routes a squash-only repo has for a head
+// the hive will not squash itself. A maintainer's own squash goes through
+// GitHub's squash message, not the one the hive builds for its merges
+// (MergeCreditor.SquashSignoff): GitHub's default can drop the branch's
+// Signed-off-by lines (hivecommons/hive#18203), `gh pr merge --squash`
+// without a body sends that default, and a merge queue squashes with the
+// repo's default message, so the squash route says how to keep them rather
+// than promising they survive. Where the attribution check runs on the head
+// (squashSignoffGateNote) it must pass or be bypassed first. A hive-only
+// head has no sign-off from the PR author, whom a squash names as the
+// author, so re-authoring leads there. Lifting squash-only also needs
+// GitHub to allow merge commits, which the hive's policy alone does not.
+func squashOnlyMergeChoices(obs stageObservation) string {
+	squash := fmt.Sprintf("accept the squash, which lands the hive's commits under the PR author's name, and squash by hand with a message that keeps each commit's `Signed-off-by` line, edited in the web UI or passed as `gh pr merge %d --squash --body-file FILE` (`gh pr merge %d --squash` alone sends GitHub's default squash message, which can drop those lines, and a merge queue squashes with the repo's default message and no edit, so they may be lost there)", obs.Number, obs.Number)
+	if squashSignoffGateNote(obs) != "" {
+		squash += ", and only once the `" + squashSignoffCheck + "` check passes or an admin bypasses it"
+	}
+	reauthor := "re-author the hive's commits under a maintainer's own sign-off and push a new head"
+	lift := "lift the squash-only policy for this repo (`auto_merge.squash_only`, and allow merge commits on GitHub, in the repo settings and the branch ruleset), then a maintainer merges with a merge commit"
+	if obs.Detail.MergeCommitRefused == mergeCommitRefusedHiveOnly {
+		squash += " (not recommended here: no commit carries the PR author's `Signed-off-by`, so the squash fails DCO unless its message carries the PR author's own sign-off)"
+		return "(a) " + reauthor + "; (b) " + squash + "; or (c) " + lift + "."
+	}
+	return "(a) " + squash + "; (b) " + reauthor + "; or (c) " + lift + "."
+}
+
 // withMergeAskFacts fills the Detail facts mergeCommitRefusalText reads:
-// the absolute manual-merge rule for the head and the sentinel alert. It
-// runs only right before a note is posted, once per head, so the diff read
-// the rule may need is one cached files read per head (headDiffFence), not
-// a call per sweep.
+// the absolute manual-merge rule for the head, the sentinel alert, and
+// whether the repo is squash-only (the auto_merge.squash_only policy
+// mergeCommitElection reads, for the same "owner/repo"). It runs only right
+// before a note is posted, once per head, so the diff read the rule may
+// need is one cached files read per head (headDiffFence), not a call per
+// sweep; the squash-only read is config only.
 func (c *Engine) withMergeAskFacts(ctx context.Context, key string, obs stageObservation) stageObservation {
 	obs.Detail.ManualMergeRule = c.headManualMergeRule(ctx, key, obs)
+	if policy := c.stagePolicy(); policy.SquashOnly != nil {
+		obs.Detail.SquashOnly = policy.SquashOnly(stageRepoFullName(obs))
+	}
 	sentinel := c.sentinelLabelName()
 	if sentinel == "" {
 		sentinel = defaultSentinelLabel

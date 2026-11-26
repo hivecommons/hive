@@ -617,22 +617,37 @@ func relayRefusalReason(refusal string) (string, bool) {
 
 // relayRefusalNoLaneMerges reports a relay refusal no Hive lane will ever
 // clear on its own: one that needs a maintainer (relayRefusalNeedsMaintainer),
-// or the lane switched off (automerge.RelayLaneReasonDisabled) or scoped to
-// other repos (automerge.RelayLaneReasonRepoNotAllowed). A soak, a head too
-// new or a pending verdict clears by itself, so it is not one.
+// the lane switched off (automerge.RelayLaneReasonDisabled) or scoped to
+// other repos (automerge.RelayLaneReasonRepoNotAllowed), or a diff fence the
+// lane never lifts by itself: a change to workflow files
+// (prstage.ContributorLaneReasonWorkflowPath, released only by a person's
+// approval of the head or merged by a person) or one that removes tests
+// (prstage.ContributorLaneReasonTestsRemoved, which no approval overrides).
+// Left out, a stage 090 PR fenced that way reached no one and fell through to
+// the Overview card's "No rule matched". A soak, a head too new or a pending
+// verdict clears by itself, so it is not one.
 func relayRefusalNoLaneMerges(refusal string) bool {
 	if relayRefusalNeedsMaintainer(refusal) {
 		return true
 	}
 	reason, ok := relayRefusalReason(refusal)
-	return ok && (reason == automerge.RelayLaneReasonDisabled || reason == automerge.RelayLaneReasonRepoNotAllowed)
+	if !ok {
+		return false
+	}
+	switch reason {
+	case automerge.RelayLaneReasonDisabled, automerge.RelayLaneReasonRepoNotAllowed,
+		prstage.ContributorLaneReasonWorkflowPath, prstage.ContributorLaneReasonTestsRemoved:
+		return true
+	}
+	return false
 }
 
 // relayRefusalVerdict is the merge verdict of a PR that passed every merge
 // gate but whose merge relay the contributor-lane gate refuses. It is
 // outstanding with the refusal as its reason. A refusal no Hive lane will
-// clear (relayRefusalNoLaneMerges: a trust or admission reason, or the lane
-// off or scoped to other repos) is also a hand merge in a repo whose
+// clear (relayRefusalNoLaneMerges: a trust or admission reason, the lane off
+// or scoped to other repos, or a workflow-file or tests-removed fence) is
+// also a hand merge in a repo whose
 // auto-merge is on: only a person can land that PR, and without HandMerge it
 // reached no one (a trust refusal is listed under needs_maintainer_merge for
 // the scheduler, which the dashboard does not read). In a repo whose
