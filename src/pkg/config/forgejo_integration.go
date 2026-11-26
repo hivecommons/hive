@@ -35,6 +35,12 @@ type ForgejoIntegrationConfig struct {
 	// Audiences maps a token tier (agentmode.KnownTokenTiers) to the aud
 	// Forgejo generated for that tier's integration.
 	Audiences map[string]string `yaml:"audiences"`
+	// RESTAudience is the aud of the integration for the hive's own Forgejo
+	// REST calls (work discovery, the relays, merges and the sweeps). When
+	// set, those calls send a JWT with sub hive:rest instead of the forgejo
+	// block's access token; when empty they keep using the access token
+	// (hivecommons/hive#19920).
+	RESTAudience string `yaml:"rest_audience,omitempty"`
 }
 
 // Validate checks the block. A nil block (the default) is valid: the
@@ -53,6 +59,9 @@ func (c *ForgejoIntegrationConfig) Validate() error {
 	}
 	if len(c.Audiences) == 0 {
 		return fmt.Errorf("%s.audiences: at least one token tier needs the audience of its Forgejo integration", field)
+	}
+	if c.RESTAudience != "" && strings.TrimSpace(c.RESTAudience) == "" {
+		return fmt.Errorf("%s.rest_audience: audience is blank", field)
 	}
 	for _, tier := range c.tiers() {
 		if !slices.Contains(agentmode.KnownTokenTiers, agentmode.TokenTier(tier)) {

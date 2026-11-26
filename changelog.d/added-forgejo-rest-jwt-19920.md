@@ -1,0 +1,1 @@
+- Forgejo REST calls (work discovery, the relays, merges and both sweeps) can now authenticate with a short-lived JWT: set `forgejo.integration.rest_audience` to the audience of an authorized integration with `sub=hive:rest`, and the long-lived `forgejo.token_env` token is no longer needed. Without it, REST keeps using the access token (#19920).

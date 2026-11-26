@@ -247,13 +247,11 @@ group-readable key under any other group, because agent UIDs share group
 afterwards. `hive validate` reports a `key_file` that does not exist or
 cannot be read.
 
-`forgejo.integration` covers git clone and push only. Work discovery, the
-issue and pull request relays, merges and both sweeps still call the Forgejo
-REST API with the access token from `forgejo.token_env` or
-`forgejo.token_file`, so keep that token set
-([#19920](https://github.com/hivecommons/hive/issues/19920) tracks moving
-REST to the JWTs too). The hive writes labels, comments and merges with it,
-so it needs `write:repository` and `write:issue`; the live end-to-end run in
+By default `forgejo.integration` covers git clone and push only. Work
+discovery, the issue and pull request relays, merges and both sweeps call the
+Forgejo REST API with the access token from `forgejo.token_env` or
+`forgejo.token_file`. The hive writes labels, comments and merges with it, so
+it needs `write:repository` and `write:issue`; the live end-to-end run in
 [#19909](https://github.com/hivecommons/hive/issues/19909) used
 `write:repository,write:issue,read:user,read:organization`. An unset
 `token_env` variable fails with an error that names it.
@@ -273,6 +271,33 @@ forgejo:
   forgejo_url: https://forgejo.example.com
   login: hive-bot
 ```
+
+To move the REST calls to a short-lived token as well, create one more
+authorized integration for the hive's own identity and put its audience under
+`rest_audience`:
+
+```sh
+forgejo admin user create-authorized-integration --issuer https://keys.example.com \
+  --scope write:repository,write:issue,read:user,read:organization \
+  --repo <owner/repo> --claim-eq sub=hive:rest
+```
+
+```yaml
+forgejo:
+  integration:
+    rest_audience: "<audience>"   # REST integration, sub=hive:rest
+```
+
+With `rest_audience` set, every REST client the hive builds sends a one-hour
+JWT with `sub` `hive:rest` for that integration, minted again 10 minutes
+before it expires, and the access token is no longer read. Without it, REST
+keeps using the access token, so existing configs are unchanged
+([#19920](https://github.com/hivecommons/hive/issues/19920)). The REST
+integration needs the same scopes as the access token above. The Forgejo
+automerge sweep also reads the collaborator permission endpoint, and the
+sweeps read the issue timeline; neither has been verified against an
+integration JWT yet
+([#19914](https://github.com/hivecommons/hive/issues/19914)).
 
 #### Rotate the signing key
 

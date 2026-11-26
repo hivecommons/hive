@@ -46,8 +46,7 @@ func forgejoSweepAPIForRepo(cfg *config.Config, repo string) (forge.SweepAPI, er
 	if err := cfg.CheckForgeTokenHost(repo); err != nil {
 		return nil, err
 	}
-	gov := cfg.Forgejo.Credentials().Governor()
-	token, source, err := gov.Resolve()
+	token, source, err := forgejoRESTToken(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("forgejo token: %w", err)
 	}

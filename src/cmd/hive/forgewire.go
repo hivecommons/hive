@@ -99,7 +99,7 @@ func forgeForRepo(cfg *config.Config, repo string, ghClient *github.Client, logg
 	// message names the real problem. Forgejo answers a private repo with a
 	// 404 instead, so an empty Forgejo token builds no writer
 	// (requireForgeToken), and does not fall back to GitHub either.
-	token, tokenSource, err := gov.Resolve()
+	token, tokenSource, err := resolveForgeRESTToken(cfg, kind, gov)
 	if err != nil {
 		logger.Error("forge token unavailable; no writer built", "forge", kind, "repo", repo, "error", err)
 		return nil
@@ -194,7 +194,7 @@ func forgeMergerForRepo(cfg *config.Config, repo string) (forge.Merger, error) {
 	if err := cfg.CheckForgeTokenHost(repo); err != nil {
 		return nil, err
 	}
-	token, source, err := gov.Resolve()
+	token, source, err := resolveForgeRESTToken(cfg, kind, gov)
 	if err != nil {
 		return nil, fmt.Errorf("forge %s: %w", kind, err)
 	}
