@@ -447,6 +447,39 @@ compares identity provenance.
   /data/customers] [--out DIR] [--force]`; it refuses to overwrite a file
   without `--force`.
 
+**Hub (`HIVE_HUB_CUSTOMER_STORE=colony-only`, `src/pkg/hub/customer_store_only.go`):**
+
+- `shadow` and `colony` now also write the consent delivery bookkeeping
+  (first and last delivery, the delivered field sets, the rev, the update
+  time), delete a pruned consent from colony instead of emptying it, store
+  long notes under colony's own limits, and keep a linked login or email
+  another user owns as a held identity. The boot log counts `held`.
+- In `colony-only` each person's CRM fields and consent records are kept
+  exactly in their `hub.crm` attachment, with colony's typed slots written
+  beside it as in `colony` mode. The user JSON keeps the account data and is
+  written without the CRM fields (`crm_in_colony`), and only after the colony
+  write succeeded; when it fails, the full record is written as before. A
+  read of a stripped record puts the fields back from colony; a save of a
+  record read without that overlay (a sweep that changes account data only)
+  leaves the colony copy alone. Consent reads, writes, delivery stamps, the
+  retention sweep, the counts and the match index all go to colony.
+- **The first colony-only boot** needs a boot sync with parity, then writes
+  every person's attachment in one transaction and compares the read-back
+  with the JSON. Only then does it copy `users` to `users.migrated`, rename
+  `consents` to `consents.migrated` and write the `hub.colony-only` marker.
+  Otherwise it runs in `colony` mode with every file where it was.
+- **Rollback:** a boot in any other mode that finds the marker writes the CRM
+  fields and consent files back from colony first (an existing consents
+  directory is set aside, never overwritten) and drops the marker; a failed
+  restore keeps the hub colony-only. `hive colony export --format
+  hive-hub-json` writes the same files elsewhere by hand.
+- The match answer and the consent paths still gate every answer on
+  `HIVE_HUB_CUSTOMERS_TRUSTED_HIVES` (`customer_trust.go`); colony-only
+  changes where the records live, not who they may reach.
+- The top-repo affiliation cache fields stay on `SaaSUser`: every mode still
+  reads them through the record, and colony-only only moves where they are
+  stored.
+
 **Retention of `*.migrated`:** kept until an operator removes them. They are
 the JSON as it stood when colony-only took over, so they are a backup like
 `*.pre-colony`: a forget scrubs them, and once the hive has run on
