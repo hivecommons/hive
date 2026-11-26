@@ -1,0 +1,1 @@
+- The supervisor policy no longer tells the supervisor to kick agents ([#19891](https://github.com/hivecommons/hive/issues/19891)). Agents have no kick route, so the supervisor searched for one every 5 minutes and found none; it now records stale agents in an advisory bead and leaves kicks to the governor.
