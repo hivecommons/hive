@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.373.2)
+
+### Fixed
+
+- Agent config writes from the dashboard are now serialised, so two saves at once cannot interleave, and the `config_agent_general` and `config_agent_cadences` audit lines record the before and after value of each changed field.
+
 ## 2026-11-26 (v5.373.1)
 
 ### Fixed
