@@ -260,16 +260,133 @@ func TestHubCustomerStoreBootSyncIdempotent(t *testing.T) {
 		}
 		closeHubCustomerStore()
 	}
+	// Unchanged boots write one backup, not one per boot, so they never
+	// rotate distinct backups out.
 	backups, _ := filepath.Glob(hubCustomerStorePath() + hubCustomerStoreBackupPrefix + "*")
+	if len(backups) != 1 {
+		t.Fatalf("%d backups after unchanged boots, want 1", len(backups))
+	}
+	// Each change makes a new backup; only the newest few are kept.
+	for i := 0; i < hubCustomerStoreBackupsKept+1; i++ {
+		st = useHubCustomerStore(t, hubCustomerStoreShadow)
+		u := loadSaaSUser("bob-example")
+		u.Notes = "synthetic note " + strings.Repeat("x", i+1)
+		if err := saveSaaSUser(u); err != nil {
+			t.Fatal(err)
+		}
+		closeHubCustomerStore()
+	}
+	useHubCustomerStore(t, hubCustomerStoreShadow)
+	backups, _ = filepath.Glob(hubCustomerStorePath() + hubCustomerStoreBackupPrefix + "*")
 	if len(backups) != hubCustomerStoreBackupsKept {
 		t.Fatalf("%d backups kept, want %d", len(backups), hubCustomerStoreBackupsKept)
 	}
 	for _, b := range backups {
-		if fi, err := os.Stat(b); err != nil || fi.Mode().Perm() != hubCustomerStoreBackupMode {
-			t.Fatalf("backup %s mode %v err %v", b, fi.Mode().Perm(), err)
+		fi, err := os.Stat(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != hubCustomerStoreBackupMode {
+			t.Fatalf("backup mode %v", fi.Mode().Perm())
 		}
 	}
 	_ = users
+}
+
+// A burst of people without a JSON record is held, not erased.
+func TestHubCustomerStoreBootHoldsMassOrphans(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	var users []*SaaSUser
+	for i := 0; i < hubCustomerStoreOrphanFloor+2; i++ {
+		u := &SaaSUser{GitHubUsername: "orphan-" + strings.Repeat("a", i+1), Hives: map[string]string{}, Company: "Synthetic Co", CompanySource: countrySourceUser}
+		if err := saveSaaSUser(u); err != nil {
+			t.Fatal(err)
+		}
+		users = append(users, u)
+	}
+	useHubCustomerStore(t, hubCustomerStoreShadow)
+	closeHubCustomerStore()
+	for _, u := range users {
+		for _, p := range saaSUserFilePaths(u.GitHubUsername) {
+			_ = os.Remove(p)
+		}
+	}
+	st := useHubCustomerStore(t, hubCustomerStoreShadow)
+	if stats, err := st.Stats(); err != nil || stats.People != len(users) || stats.Tombstones != 0 {
+		t.Fatalf("mass orphan pass erased people: %+v %v", stats, err)
+	}
+	// A missing users directory fails closed to json and erases nobody.
+	closeHubCustomerStore()
+	if err := os.RemoveAll(saasUsersDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(closeHubCustomerStore)
+	if got := openHubCustomerStore(context.Background(), nil, hubCustomerStoreShadow); got != hubCustomerStoreJSON {
+		t.Fatalf("missing users dir: mode %q, want json", got)
+	}
+}
+
+// A person whose colony copy may be behind the JSON reads from the JSON.
+func TestHubCustomerStoreDirtyPersonReadsJSON(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	st := useHubCustomerStore(t, hubCustomerStoreColony)
+	if _, err := st.SetFact(crmPersonID(users[1]), store.Fact{Field: store.FieldOrganization, Value: "Stale Co",
+		Rank: store.RankUser, Source: crmSourceUser, Locality: store.LocalityShareable}); err != nil {
+		t.Fatal(err)
+	}
+	hubCRM.mu.Lock()
+	hubCRM.markCRM(crmPersonID(users[1]), errCRMNotStored)
+	hubCRM.mu.Unlock()
+	if got := loadSaaSUser("bob-example"); got.Company != users[1].Company {
+		t.Fatalf("a dirty person read colony: %q", got.Company)
+	}
+	// The next successful mirror makes colony match the JSON again.
+	u := loadSaaSUser("bob-example")
+	if err := saveSaaSUser(u); err != nil {
+		t.Fatal(err)
+	}
+	if hubCRM.isDirty(crmPersonID(users[1])) {
+		t.Fatal("person still dirty after a successful mirror")
+	}
+	if got := loadSaaSUser("bob-example"); got.Company != users[1].Company {
+		t.Fatalf("colony read after resync = %q", got.Company)
+	}
+}
+
+// Two saves of one person in either mirror order leave colony holding the
+// JSON that is on disk.
+func TestHubCustomerStoreMirrorUsesDiskCopy(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	st := useHubCustomerStore(t, hubCustomerStoreShadow)
+	older := loadSaaSUser("bob-example")
+	newer := loadSaaSUser("bob-example")
+	newer.Company, newer.CompanySource = "Newer Co", countrySourceAdmin
+	if err := saveSaaSUser(newer); err != nil {
+		t.Fatal(err)
+	}
+	older.Company = "Older Co"
+	crmMirrorUser(older) // a late mirror carrying a stale copy
+	if f := effectiveFact(t, colonyPerson(t, st, users[1]), store.FieldOrganization); f.Value != "Newer Co" {
+		t.Fatalf("a stale mirror won: %+v", f)
+	}
+}
+
+// A person who cleared their organization gets no derived affiliation.
+func TestCustomerMatchAffiliationRespectsOrganizationClear(t *testing.T) {
+	u := &SaaSUser{GitHubUsername: "fay-example", Hives: map[string]string{"own": "viewer"},
+		Affiliation: "derived-org", AffiliationSource: affiliationSourceContributions}
+	if e, ok := customerMatchAffiliation(customerMatchEntry{}, u, "own"); !ok || e.Affiliation != "derived-org" {
+		t.Fatalf("public affiliation = %+v %v", e, ok)
+	}
+	u.CompanySource = countrySourceUser
+	if e, ok := customerMatchAffiliation(customerMatchEntry{}, u, "own"); ok || e.Affiliation != "" {
+		t.Fatalf("affiliation sent after an organization clear: %+v", e)
+	}
+	if _, ok := customerMatchAffiliation(customerMatchEntry{}, u, "other"); ok {
+		t.Fatal("affiliation for a non-grant-holder")
+	}
 }
 
 func TestHubCustomerStoreShadowDualWrite(t *testing.T) {

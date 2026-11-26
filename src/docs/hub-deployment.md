@@ -166,7 +166,7 @@ per-user JSON.
 | Mode | Reads | Writes | On boot |
 |---|---|---|---|
 | `json` | JSON | JSON | Nothing. An existing `colony.db` is opened only so a deleted user is erased from it too. |
-| `shadow` | JSON | JSON and colony | Backs up `colony.db`, imports every user on the first boot (one transaction, source fingerprint recorded), reconciles each person, erases people whose JSON record is gone, logs counts. |
+| `shadow` | JSON | JSON and colony | Backs up `colony.db`, imports every user on the first boot (one transaction, source fingerprint recorded), reconciles each person, erases people whose JSON record is gone, logs counts only. A missing users directory fails the boot closed to `json`. |
 | `colony` | colony, then JSON per field and per person | JSON and colony | As `shadow`. |
 
 - **Provenance.** Each field is one colony fact at the rank its JSON source
@@ -179,10 +179,16 @@ per-user JSON.
 - **Precedence** is unchanged: a user-set value is never replaced by an admin
   edit or a login inference.
 - **Migration safety.** The migration never rewrites a JSON file, so the JSON
-  is the backup and the rollback. Each `shadow` or `colony` boot keeps a copy
-  of the previous `colony.db` as `colony.db.bak-<UTC time>` (the newest 3,
-  mode `0600`). Running the boot sync again changes nothing. A value colony
-  refuses (a note over 4096 bytes, a control character) stays JSON-only.
+  is the backup and the rollback. Once a `shadow` or `colony` boot holds the
+  file lock, it writes a full colony snapshot (with its tombstones) as
+  `colony.db.bak-<UTC time>`, mode `0600`, only when it differs from the
+  newest one, and keeps the newest 3. Running the boot sync again changes
+  nothing. A value colony refuses (a note over 4096 bytes, a control
+  character) stays JSON-only. A person whose last mirror failed or was
+  skipped reads from the JSON until a mirror succeeds, so a colony copy that
+  fell behind is never written back. One boot erases at most 10 people, or
+  10% of the store if that is more; a larger burst of missing JSON records is
+  logged and held, never erased.
 - **Rollback.** Set `json` and roll the hub. Nothing is lost, because every
   mode writes the JSON.
 - **Erasure.** Deleting a user erases them from `colony.db` in every mode and
@@ -190,10 +196,18 @@ per-user JSON.
   deleted while `colony.db` was closed is erased on the next `shadow` or
   `colony` boot. bbolt does not zero freed pages, and a boot backup holds what
   it held when taken, so compact the file and remove the backups when an
-  erasure must reach the disk.
+  erasure must reach the disk. In `json` mode an existing `colony.db` is not
+  mirrored, so a value cleared meanwhile stays in it until the next `shadow`
+  or `colony` boot reconciles it, or until the user is deleted.
 - **Consent records** are mirrored as colony Consent records. The match answer
   still reads consent and its delivery bookkeeping from
-  `/data/saas/consents` until phase 5.
+  `/data/saas/consents` until phase 5. When the hub prunes a consent, colony
+  has no delete, so its record is emptied (no fields, text version or times)
+  and only the hive id stays, until the user is deleted.
+- **Affiliation in the answer** is not a delivered field: it is not stamped on
+  a consent record and carries no `cleared` signal, so when it stops crossing
+  the hive drops it at its 72-hour refresh expiry. A person who cleared their
+  organization on the hub gets no derived affiliation either.
 - **Single writer.** bbolt takes a file lock, so the hub stays one replica on
   its PVC. A lock held for more than 5 seconds at boot leaves the hub in `json`.
 

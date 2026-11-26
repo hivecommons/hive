@@ -198,6 +198,11 @@ func customerMatchAffiliation(e customerMatchEntry, u *SaaSUser, hiveID string) 
 	if u == nil || u.Blocked || u.Hives[hiveID] == "" || !crmAffiliationShareable(u) {
 		return e, false
 	}
+	// A person who cleared their organization on the hub gets no derived
+	// one either, under any key (the same rule as customerPublicOrganization).
+	if u.CompanySource != "" && strings.TrimSpace(u.Company) == "" {
+		return e, false
+	}
 	v := truncateRunes(strings.TrimSpace(u.Affiliation), maxContactCompanyLen)
 	if v == "" {
 		return e, false

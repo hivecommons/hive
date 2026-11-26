@@ -33,7 +33,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -69,6 +69,12 @@ const (
 	hubCustomerStoreLockTimeout = 5 * time.Second
 	// hubCustomerStoreBackupMode keeps backups owner-only, like colony.db.
 	hubCustomerStoreBackupMode os.FileMode = 0o600
+	// hubCustomerStoreMaxOrphanPercent and hubCustomerStoreOrphanFloor bound
+	// how many people one boot may erase because their JSON record is gone.
+	// More than that looks like a missing or half-restored users directory,
+	// not deletions, and erasure cannot be undone (it tombstones).
+	hubCustomerStoreMaxOrphanPercent = 10
+	hubCustomerStoreOrphanFloor      = 10
 )
 
 // parseHubCustomerStoreMode reads the mode. An unknown value is json, so a
@@ -102,6 +108,56 @@ type hubCustomerStoreState struct {
 	// usersDir is the saasUsersDir the store was opened for. Hooks do
 	// nothing for any other directory.
 	usersDir string
+	// dirty holds the person ids whose last sync failed or was skipped.
+	// A colony-mode read never overlays them, so a colony copy that fell
+	// behind the JSON can never be written back over it. Guarded by mu.
+	dirty map[string]bool
+}
+
+// markCRM records the outcome of a sync for person id. The caller holds mu.
+func (h *hubCustomerStoreState) markCRM(id string, err error) {
+	if h.dirty == nil {
+		h.dirty = make(map[string]bool)
+	}
+	if err == nil {
+		delete(h.dirty, id)
+		return
+	}
+	h.dirty[id] = true
+}
+
+func (h *hubCustomerStoreState) isDirty(id string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.dirty[id]
+}
+
+// crmErrClass names an error without its text, which can carry a file name
+// and so a login: logs say what failed, never about whom.
+func crmErrClass(err error) string {
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, store.ErrLocked):
+		return "locked"
+	case errors.Is(err, store.ErrSchemaTooNew):
+		return "schema_too_new"
+	case errors.Is(err, store.ErrInvalid):
+		return "invalid_value"
+	case errors.Is(err, store.ErrTombstoned):
+		return "tombstoned"
+	case errors.Is(err, store.ErrIdentityConflict):
+		return "identity_conflict"
+	case errors.Is(err, errCRMNotStored):
+		return "not_stored"
+	case errors.Is(err, fs.ErrPermission):
+		return "permission"
+	case errors.Is(err, fs.ErrNotExist):
+		return "not_exist"
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return "cancelled"
+	}
+	return "io_or_other"
 }
 
 var hubCRM hubCustomerStoreState
@@ -124,6 +180,7 @@ type hubCustomerStoreSyncReport struct {
 	Skipped       int
 	Failed        int
 	Forgotten     int
+	OrphansHeld   int
 	ColonyPeople  int
 	ColonyFacts   map[store.Rank]int
 	ColonyConsent int
@@ -145,15 +202,9 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 	if mode == hubCustomerStoreJSON && !exists {
 		return hubCustomerStoreJSON
 	}
-	if mode != hubCustomerStoreJSON && exists {
-		if err := backupHubCustomerStore(path, time.Now().UTC()); err != nil {
-			logger.Warn("hub customer store: backup failed; staying in json mode", "error", err)
-			return hubCustomerStoreJSON
-		}
-	}
 	if mode != hubCustomerStoreJSON {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			logger.Warn("hub customer store: mkdir failed; staying in json mode", "error", err)
+			logger.Warn("hub customer store: mkdir failed; staying in json mode", "error", crmErrClass(err))
 			return hubCustomerStoreJSON
 		}
 	}
@@ -161,24 +212,34 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 	if err != nil {
 		// ErrSchemaTooNew (an older binary on a newer file), ErrLocked or an
 		// unreadable file: fail closed to json, never rewrite the file.
-		logger.Warn("hub customer store: open failed; json mode", "requested", mode, "error", err)
+		logger.Warn("hub customer store: open failed; json mode", "requested", mode, "error", crmErrClass(err))
 		return hubCustomerStoreJSON
+	}
+	if mode != hubCustomerStoreJSON && exists {
+		// Backed up only once the lock is held, from a consistent read of
+		// the open store, so a boot that fails closed never rotates a good
+		// backup out.
+		if err := backupHubCustomerStore(st, path, time.Now().UTC()); err != nil {
+			_ = st.Close()
+			logger.Warn("hub customer store: backup failed; json mode", "error", crmErrClass(err))
+			return hubCustomerStoreJSON
+		}
 	}
 	if mode != hubCustomerStoreJSON {
 		rep, err := syncHubCustomerStore(ctx, st)
 		if err != nil {
 			_ = st.Close()
-			logger.Warn("hub customer store: boot sync failed; json mode", "requested", mode, "error", err)
+			logger.Warn("hub customer store: boot sync failed; json mode", "requested", mode, "error", crmErrClass(err))
 			return hubCustomerStoreJSON
 		}
 		logger.Info("hub customer store: boot sync", "mode", mode, "imported", rep.Imported,
 			"json_users", rep.JSONUsers, "synced", rep.Synced, "skipped", rep.Skipped, "failed", rep.Failed,
-			"forgotten", rep.Forgotten, "colony_people", rep.ColonyPeople,
+			"forgotten", rep.Forgotten, "orphans_held", rep.OrphansHeld, "colony_people", rep.ColonyPeople,
 			"facts_user", rep.ColonyFacts[store.RankUser], "facts_admin", rep.ColonyFacts[store.RankAdmin],
 			"facts_enrichment", rep.ColonyFacts[store.RankEnrichment], "consents", rep.ColonyConsent,
 			"tombstones", rep.Tombstones, "parity", rep.Parity)
 		if !rep.Parity {
-			logger.Warn("hub customer store: parity mismatch after boot sync; reads fall back to json per person",
+			logger.Warn("hub customer store: parity mismatch after boot sync; people that did not sync read from json",
 				"json_users", rep.JSONUsers, "colony_people", rep.ColonyPeople, "skipped", rep.Skipped, "failed", rep.Failed)
 		}
 	}
@@ -194,6 +255,9 @@ func closeHubCustomerStore() {
 	st := hubCRM.st
 	hubCRM.st, hubCRM.mode, hubCRM.usersDir = nil, hubCustomerStoreJSON, ""
 	hubCRM.rw.Unlock()
+	hubCRM.mu.Lock()
+	hubCRM.dirty = nil
+	hubCRM.mu.Unlock()
 	if st != nil {
 		_ = st.Close()
 	}
@@ -217,32 +281,58 @@ func (s *HubServer) startHubCustomerStore(ctx context.Context) {
 	}
 }
 
-// backupHubCustomerStore copies colony.db aside before a boot touches it and
-// keeps only the newest hubCustomerStoreBackupsKept copies. A backup can
-// hold a person forgotten after it was taken until it rotates out.
-func backupHubCustomerStore(path string, now time.Time) error {
-	src, err := os.Open(path)
+// backupHubCustomerStore writes a full snapshot of the open store (colony's
+// unfiltered Export, which also carries the tombstones and their salt) aside
+// as colony.db.bak-<time>, keeping only the newest hubCustomerStoreBackupsKept.
+// A snapshot identical to the newest backup is not written again, so
+// repeated boots do not rotate distinct backups out. A backup holds a person
+// forgotten after it was taken until it rotates out.
+func backupHubCustomerStore(st *store.Store, path string, now time.Time) error {
+	snap, err := st.Export()
 	if err != nil {
 		return err
 	}
-	defer src.Close()
+	snap.ExportedAt = time.Time{}
+	data, err := json.Marshal(snap)
+	if err != nil {
+		return err
+	}
+	matches, err := filepath.Glob(path + hubCustomerStoreBackupPrefix + "*")
+	if err != nil {
+		return err
+	}
+	sort.Strings(matches)
+	if n := len(matches); n > 0 {
+		if prev, err := os.ReadFile(matches[n-1]); err == nil && sha256.Sum256(prev) == sha256.Sum256(data) {
+			return nil
+		}
+	}
 	dst := path + hubCustomerStoreBackupPrefix + now.Format(hubCustomerStoreBackupStamp)
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, hubCustomerStoreBackupMode)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".colony-backup-*")
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, src); err != nil {
-		_ = out.Close()
-		_ = os.Remove(dst)
+	tmpPath := tmp.Name()
+	fail := func(err error) error {
+		_ = tmp.Close()
+		_ = os.Remove(tmpPath)
 		return err
 	}
-	if err := out.Sync(); err != nil {
-		_ = out.Close()
-		_ = os.Remove(dst)
+	if err := tmp.Chmod(hubCustomerStoreBackupMode); err != nil {
+		return fail(err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return fail(err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fail(err)
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpPath)
 		return err
 	}
-	if err := out.Close(); err != nil {
-		_ = os.Remove(dst)
+	if err := os.Rename(tmpPath, dst); err != nil {
+		_ = os.Remove(tmpPath)
 		return err
 	}
 	return pruneHubCustomerStoreBackups(path)
@@ -273,12 +363,10 @@ type hubUserFile struct {
 }
 
 // listHubUserFiles lists the user records by file name. An error reading
-// the directory is returned, so a caller never mistakes it for "no users".
+// the directory, including a missing one, is returned, so a caller never
+// mistakes it for "no users".
 func listHubUserFiles() ([]hubUserFile, error) {
 	entries, err := os.ReadDir(saasUsersDir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -312,8 +400,12 @@ func readHubUserForSync(path string) (*SaaSUser, error) {
 	return &u, nil
 }
 
-// hubUsersSource is the colony migration Source over /data/saas/users.
-type hubUsersSource struct{}
+// hubUsersSource is the colony migration Source over /data/saas/users. It
+// carries the listing the boot sync works from, so the import and the
+// orphan pass see the same set of files.
+type hubUsersSource struct {
+	files []hubUserFile
+}
 
 // Fingerprint is the SHA-256 over every user and consent file, by name and
 // content, in name order.
@@ -345,11 +437,8 @@ func (hubUsersSource) Fingerprint() (string, error) {
 // Records yields one colony Record per user. An identity another user
 // already holds is dropped from the later user, so one shared email cannot
 // fail the whole import transaction.
-func (hubUsersSource) Records(ctx context.Context, fn func(store.Record) error) error {
-	files, err := listHubUserFiles()
-	if err != nil {
-		return err
-	}
+func (src hubUsersSource) Records(ctx context.Context, fn func(store.Record) error) error {
+	files := src.files
 	seenPerson := make(map[string]bool)
 	seenIdentity := make(map[string]bool)
 	identityKey := func(i store.Identity) string {
@@ -422,17 +511,24 @@ func (hubUsersSource) Records(ctx context.Context, fn func(store.Record) error) 
 // it again changes nothing.
 func syncHubCustomerStore(ctx context.Context, st *store.Store) (hubCustomerStoreSyncReport, error) {
 	rep := hubCustomerStoreSyncReport{}
+	// A missing or unreadable users directory fails the sync (and so the
+	// boot falls back to json): it must never read as "every user deleted".
 	files, err := listHubUserFiles()
+	if errors.Is(err, fs.ErrNotExist) {
+		// A hub with no users directory yet is only fine for an empty store.
+		if stats, serr := st.Stats(); serr == nil && stats.People == 0 {
+			files, err = nil, nil
+		}
+	}
 	if err != nil {
 		return rep, err
 	}
-	rep.JSONUsers = len(files)
-	res, err := st.Migrate(ctx, hubCustomerStoreMigration, hubUsersSource{}, store.MigrateOptions{})
+	res, err := st.Migrate(ctx, hubCustomerStoreMigration, hubUsersSource{files: files}, store.MigrateOptions{})
 	if err != nil {
 		// The import is one transaction, so a failure leaves nothing half
 		// written; the reconcile below still brings each person across, and
 		// the next boot tries the import again.
-		slog.Warn("hub customer store: import transaction failed; reconciling per person", "error", err)
+		slog.Warn("hub customer store: import transaction failed; reconciling per person", "error", crmErrClass(err))
 	} else {
 		rep.Imported = !res.Skipped
 	}
@@ -440,6 +536,7 @@ func syncHubCustomerStore(ctx context.Context, st *store.Store) (hubCustomerStor
 	hubCRM.mu.Lock()
 	defer hubCRM.mu.Unlock()
 	onDisk := make(map[string]bool, len(files))
+	synced := make(map[string]bool, len(files))
 	for _, f := range files {
 		if err := ctx.Err(); err != nil {
 			return rep, err
@@ -447,19 +544,28 @@ func syncHubCustomerStore(ctx context.Context, st *store.Store) (hubCustomerStor
 		onDisk[f.ID] = true
 		u, err := readHubUserForSync(f.Path)
 		if err != nil {
+			hubCRM.markCRM(f.ID, err)
 			rep.Failed++
 			continue
 		}
-		onDisk[crmPersonID(u)] = true
-		switch err := syncPerson(st, u); {
+		id := crmPersonID(u)
+		onDisk[id] = true
+		if synced[id] {
+			continue // a second file for the same person
+		}
+		err = syncPerson(st, u)
+		hubCRM.markCRM(id, err)
+		switch {
 		case err == nil:
-			rep.Synced++
+			synced[id] = true
 		case errors.Is(err, errCRMSkipped):
 			rep.Skipped++
 		default:
 			rep.Failed++
 		}
 	}
+	rep.Synced = len(synced)
+	rep.JSONUsers = len(onDisk)
 
 	// Erase people whose JSON record is gone (deleted while colony.db was
 	// not open). Keyed by file name, so a record that exists but does not
@@ -473,10 +579,24 @@ func syncHubCustomerStore(ctx context.Context, st *store.Store) (hubCustomerStor
 	}); err != nil {
 		return rep, err
 	}
+	// A burst of orphans is held, not erased: it looks like a missing or
+	// half-restored users directory, and erasure tombstones for good.
+	var people int
+	if stats, err := st.Stats(); err == nil {
+		people = stats.People
+	}
+	limit := max(hubCustomerStoreOrphanFloor, people*hubCustomerStoreMaxOrphanPercent/100)
+	if len(orphans) > limit {
+		rep.OrphansHeld = len(orphans)
+		slog.Warn("hub customer store: too many people without a json record; none erased this boot",
+			"orphans", len(orphans), "limit", limit, "colony_people", people)
+		orphans = nil
+	}
 	for _, id := range orphans {
 		if _, err := st.Forget(id); err != nil && !errors.Is(err, store.ErrNotFound) {
 			return rep, err
 		}
+		delete(hubCRM.dirty, id)
 		rep.Forgotten++
 	}
 
@@ -485,13 +605,18 @@ func syncHubCustomerStore(ctx context.Context, st *store.Store) (hubCustomerStor
 		return rep, err
 	}
 	rep.ColonyPeople, rep.ColonyFacts, rep.ColonyConsent, rep.Tombstones = stats.People, stats.Facts, stats.Consents, stats.Tombstones
-	rep.Parity = rep.ColonyPeople == rep.Synced && rep.Failed == 0
+	rep.Parity = rep.ColonyPeople == rep.Synced && rep.Failed == 0 && rep.OrphansHeld == 0
 	return rep, nil
 }
 
 // errCRMSkipped marks a person colony refuses on purpose: a forgotten
 // (tombstoned) identity, or a primary identity another person holds.
 var errCRMSkipped = errors.New("hub customer store: person skipped")
+
+// errCRMNotStored marks a fact colony declined without an error (a stale
+// timestamp after a clock step), so the person is marked dirty rather than
+// silently left behind the JSON.
+var errCRMNotStored = errors.New("hub customer store: fact not stored")
 
 // syncPerson makes colony hold exactly what the JSON record u holds: its
 // identities, one fact per field at the JSON source's rank, and its consent
@@ -555,8 +680,12 @@ func syncPerson(st *store.Store, u *SaaSUser) error {
 		if have, ok := p.FactAt(f.Field, f.Rank); ok && crmFactEqual(have, f) {
 			continue
 		}
-		if _, err := st.SetFact(id, f); err != nil {
+		res, err := st.SetFact(id, f)
+		if err != nil {
 			return err
+		}
+		if !res.Stored {
+			return errCRMNotStored
 		}
 	}
 	for _, have := range p.Facts {
@@ -584,13 +713,19 @@ func syncPerson(st *store.Store, u *SaaSUser) error {
 			return err
 		}
 	}
-	// A consent the hub pruned has no record left; colony has no delete,
-	// so it is withdrawn there and never reads as active.
+	// A consent the hub pruned has no record left. Colony has no delete, so
+	// the record is emptied there: no fields, text version or times, and
+	// never active. Only the hive id stays, until the user is deleted.
 	for _, have := range p.Consents {
-		if !slices.ContainsFunc(consents, func(c store.Consent) bool { return c.Scope == have.Scope }) && have.Active() {
-			if err := st.WithdrawConsent(id, have.Scope); err != nil && !errors.Is(err, store.ErrNoConsent) {
-				return err
-			}
+		if slices.ContainsFunc(consents, func(c store.Consent) bool { return c.Scope == have.Scope }) {
+			continue
+		}
+		empty := store.Consent{Scope: have.Scope, Fields: []string{}}
+		if crmConsentEqual(have, empty) {
+			continue
+		}
+		if err := st.SetConsent(id, empty); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -643,10 +778,20 @@ func crmMirrorUser(u *SaaSUser) {
 		return
 	}
 	hubCRM.mu.Lock()
+	defer hubCRM.mu.Unlock()
+	// Mirror what is on disk now, read under mu, not the caller's copy: two
+	// concurrent saves of one person then always converge on the JSON that
+	// won the rename, whatever order their mirrors run in.
+	id := crmPersonID(u)
+	if path, err := saveSaaSUserPath(u); err == nil {
+		if latest, err := readHubUserForSync(path); err == nil {
+			u = latest
+		}
+	}
 	err := syncPerson(st, u)
-	hubCRM.mu.Unlock()
+	hubCRM.markCRM(id, err)
 	if err != nil && !errors.Is(err, errCRMSkipped) {
-		slog.Warn("hub customer store: mirror write failed; json is unaffected", "error", err)
+		slog.Warn("hub customer store: mirror write failed; json is unaffected", "error", crmErrClass(err))
 	}
 }
 
@@ -687,10 +832,14 @@ func crmOverlayUser(u *SaaSUser) {
 	if st == nil || mode != hubCustomerStoreColony || u == nil {
 		return
 	}
-	p, err := st.Get(crmPersonID(u))
+	id := crmPersonID(u)
+	if hubCRM.isDirty(id) {
+		return // colony may be behind the JSON for this person
+	}
+	p, err := st.Get(id)
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
-			slog.Warn("hub customer store: read failed; using json", "error", err)
+			slog.Warn("hub customer store: read failed; using json", "error", crmErrClass(err))
 		}
 		return
 	}
@@ -709,5 +858,6 @@ func crmForgetUser(u *SaaSUser) error {
 	if _, err := st.Forget(crmPersonID(u)); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
 	}
+	delete(hubCRM.dirty, crmPersonID(u))
 	return nil
 }

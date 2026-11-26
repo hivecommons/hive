@@ -64,8 +64,12 @@ const (
 // the truncated text back on the record.
 const crmMaxFactValueBytes = 4096
 
-// crmMaxIdentityBytes is the colony store's per-identity cap.
-const crmMaxIdentityBytes = 512
+// crmMaxIdentityBytes and crmMaxPersonIDBytes are the colony store's caps
+// on an identity value and a person id.
+const (
+	crmMaxIdentityBytes = 512
+	crmMaxPersonIDBytes = 128
+)
 
 // crmStorableText reports whether colony accepts s as a value: valid UTF-8,
 // within max bytes, and no control character other than newline and tab. A
@@ -241,14 +245,20 @@ func crmPrimaryIdentity(u *SaaSUser) (store.Identity, bool) {
 	if !ok {
 		return store.Identity{}, false
 	}
-	if !crmStorableText(subject, crmMaxIdentityBytes) || strings.ContainsAny(subject, "\n\t") {
+	// The person id is the canonical id, which colony caps at
+	// crmMaxPersonIDBytes; the identity value is capped separately. A
+	// record that would not fit is skipped, never allowed to fail the whole
+	// import transaction.
+	full := provider + canonicalSeparator + subject
+	if !crmStorableText(crmPersonID(u), crmMaxPersonIDBytes) || !crmStorableText(full, crmMaxIdentityBytes) ||
+		strings.ContainsAny(full, "\n\t") {
 		return store.Identity{}, false
 	}
 	if provider == legacyProvider {
 		return store.Identity{Kind: store.KindGitHub, Value: subject, Verified: true,
 			Locality: store.LocalityShareable, Source: crmIdentitySourceLogin}, true
 	}
-	return store.Identity{Kind: store.KindOIDC, Value: provider + canonicalSeparator + subject, Verified: true,
+	return store.Identity{Kind: store.KindOIDC, Value: full, Verified: true,
 		Locality: store.LocalityLocalOnly, Source: crmIdentitySourceLogin}, true
 }
 
