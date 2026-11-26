@@ -252,6 +252,9 @@ func (s *Scheduler) renderReviewerLaneTemplate(agentName string, actionable *git
 		"REVIEWER_PASSED_LABEL":          func() string { return ReviewerPassedLabel },
 		"REVIEWER_RECOMMEND_CLOSE_LABEL": func() string { return ReviewerRecommendCloseLabel },
 		"REVIEWER_CLOSE_AUTHORITY":       func() string { return reviewerCloseAuthority(level) },
+		// What happens to a repaired PR once green depends on the ACMM hold
+		// gate (hivecommons/hive#20044), so the template takes it as a value.
+		"REVIEWER_MERGE_AFTER_GREEN": func() string { return s.reviewerLaneMergeAfterGreen(agentName) },
 	}
 	body, failClosed := s.substituteTemplateWithVars(tmpl, actionable, agentName, nil, extra)
 	if failClosed || strings.TrimSpace(body) == "" {
