@@ -13,7 +13,7 @@ type ChatConfig struct {
 }
 
 // ChatConfigAssistConfig (`chat.config_assist:`) is the master switch for
-// Hive Chat config assist. Phase 1 only carries the flag and the model knob;
+// Hive Chat config assist. Phase 1 only carries the flag; the model knob and
 // proposals arrive in later phases.
 type ChatConfigAssistConfig struct {
 	// Enabled turns config assist on. nil = false: the opposite default of

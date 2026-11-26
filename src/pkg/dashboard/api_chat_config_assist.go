@@ -42,6 +42,7 @@ func (s *Server) handleChatConfigAssistPut(w http.ResponseWriter, r *http.Reques
 	}
 	cfg := s.deps.Config
 	before := cfg.Chat.ConfigAssistEnabled()
+	prevEnabled := cfg.Chat.ConfigAssist.Enabled
 	if body.Enabled == nil {
 		jsonResponse(w, map[string]interface{}{"enabled": before, "changed": false})
 		return
@@ -51,11 +52,16 @@ func (s *Server) handleChatConfigAssistPut(w http.ResponseWriter, r *http.Reques
 	v := after
 	next.ConfigAssist.Enabled = &v
 	cfg.Chat = next
-	if err := s.saveConfig(); err != nil {
-		prev := before
-		cfg.Chat.ConfigAssist.Enabled = &prev
-		s.logger.Error("failed to persist chat config assist toggle", "error", err)
-		jsonError(w, "could not save the setting: "+err.Error(), http.StatusInternalServerError)
+	// saveConfigStrict, not saveConfig: with no config source path the plain
+	// save is an in-memory no-op, and a 200 would claim a change that is
+	// lost on restart (409). Roll back to the original pointer so a failed
+	// save does not leave an explicit false that a later save would persist.
+	if code, err := s.saveConfigStrict(); err != nil {
+		cfg.Chat.ConfigAssist.Enabled = prevEnabled
+		if s.logger != nil {
+			s.logger.Error("failed to persist chat config assist toggle", "error", err)
+		}
+		jsonError(w, "could not save the setting: "+err.Error(), code)
 		return
 	}
 	s.auditFromRequest(r, "config_chat_assist",

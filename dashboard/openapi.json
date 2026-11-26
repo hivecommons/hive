@@ -31498,6 +31498,9 @@
           "403": {
             "description": "Owner role required"
           },
+          "409": {
+            "description": "No config source path: the change could not be persisted"
+          },
           "500": {
             "description": "Failed to persist the setting"
           },

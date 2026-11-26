@@ -2,8 +2,11 @@ package dashboard
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -13,6 +16,7 @@ const chatConfigAssistPath = "/api/config/chat/config-assist"
 
 func TestChatConfigAssistToggleRoundTrip(t *testing.T) {
 	s := covApiServer(t)
+	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
 	if s.deps.Config.Chat.ConfigAssistEnabled() {
 		t.Fatal("must default off")
 	}
@@ -53,9 +57,107 @@ func TestChatConfigAssistToggleOwnerOnly(t *testing.T) {
 	}
 }
 
+func chatAssistAuditEntries(s *Server) []AuditEntry {
+	var out []AuditEntry
+	if s.audit == nil {
+		return out
+	}
+	for _, entry := range s.audit.Recent(100) {
+		if entry.Action == "config_chat_assist" {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
 func TestChatConfigAssistToggleAudited(t *testing.T) {
 	if !auditSensitiveActions["config_chat_assist"] {
 		t.Fatal("config_chat_assist must be a sensitive audit action")
+	}
+	s := covApiServer(t)
+	if s.audit == nil {
+		t.Fatal("test server has no audit log")
+	}
+	s.deps.Config.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	if rec := doPut(s, chatConfigAssistPath, map[string]any{"enabled": true}); rec.Code != http.StatusOK {
+		t.Fatalf("enable: %d %s", rec.Code, rec.Body.String())
+	}
+	entries := chatAssistAuditEntries(s)
+	if len(entries) != 1 || !strings.Contains(entries[0].Detail, "before=false") || !strings.Contains(entries[0].Detail, "after=true") {
+		t.Fatalf("audit entries = %+v, want one before=false after=true", entries)
+	}
+	// An absent key and a refused caller write no audit entry.
+	doPut(s, chatConfigAssistPath, map[string]any{})
+	req := httptest.NewRequest(http.MethodPut, chatConfigAssistPath, bytes.NewBufferString(`{"enabled":false}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("unverified PUT: %d, want 403", rec.Code)
+	}
+	if got := chatAssistAuditEntries(s); len(got) != 1 {
+		t.Fatalf("audit entries after no-op and refused PUTs = %d, want 1", len(got))
+	}
+}
+
+// With no config source path a save is an in-memory no-op, so the toggle
+// must refuse with 409 instead of claiming a change lost on restart.
+func TestChatConfigAssistToggleRefusesWithoutSourcePath(t *testing.T) {
+	s := covApiServer(t)
+	s.deps.Config.SourcePath = ""
+	rec := doPut(s, chatConfigAssistPath, map[string]any{"enabled": true})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409 (%s)", rec.Code, rec.Body.String())
+	}
+	if s.deps.Config.Chat.ConfigAssist.Enabled != nil {
+		t.Fatalf("refused save left Enabled = %v, want nil", *s.deps.Config.Chat.ConfigAssist.Enabled)
+	}
+	if got := chatAssistAuditEntries(s); len(got) != 0 {
+		t.Fatalf("refused save was audited: %+v", got)
+	}
+}
+
+// A failed save restores the original (nil) pointer rather than an explicit
+// false that a later unrelated save would persist.
+func TestChatConfigAssistToggleSaveFailureRollsBack(t *testing.T) {
+	s := covApiServer(t)
+	unwritableConfig(t, s.deps.Config)
+	rec := doPut(s, chatConfigAssistPath, map[string]any{"enabled": true})
+	if rec.Code < 400 {
+		t.Fatalf("status %d, want an error for a failed save", rec.Code)
+	}
+	if s.deps.Config.Chat.ConfigAssist.Enabled != nil {
+		t.Fatalf("failed save left Enabled = %v, want nil", *s.deps.Config.Chat.ConfigAssist.Enabled)
+	}
+}
+
+// The hint rides on /api/chat answers for a verified owner even when no
+// grounded runner or responder is attached, and never for a non-owner.
+func TestChatHandlerCarriesConfigAssistHint(t *testing.T) {
+	s := covApiServer(t)
+	s.deps.ChatResponder = nil
+	ask := func(owner bool) map[string]any {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewBufferString(`{"query":"switch the reviewer model to opus"}`))
+		req.Header.Set("Content-Type", "application/json")
+		if owner {
+			markOwnerRequest(req)
+		} else {
+			req.Header.Set("X-Hive-Role", config.RoleMerger)
+		}
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, req)
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode %d: %v (%s)", rec.Code, err, rec.Body.String())
+		}
+		return body
+	}
+	if hint, _ := ask(true)["config_assist_hint"].(string); hint == "" {
+		t.Fatal("owner answer without a runner or responder has no config_assist_hint")
+	}
+	if _, ok := ask(false)["config_assist_hint"]; ok {
+		t.Fatal("non-owner answer carries config_assist_hint")
 	}
 }
 

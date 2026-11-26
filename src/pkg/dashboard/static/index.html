@@ -85750,6 +85750,13 @@ function burnAreaChart() {
     const CHAT_MAX_TRANSCRIPT = 60;
     const CHAT_MAX_COMMAND_HISTORY = 100;
     const CHAT_CONTEXT_LIMIT = 6;
+    // Owner-only config assist NUX (#19979): the server sends config_assist_hint
+    // on a config-shaped question while the feature is off. Dismissal is a
+    // per-viewer convenience, so it lives in localStorage.
+    const CHAT_CONFIG_ASSIST_HINT_DISMISSED_KEY = 'hive-chat-config-assist-hint-dismissed';
+    function chatConfigAssistHintDismissed() {
+      try { return localStorage.getItem(CHAT_CONFIG_ASSIST_HINT_DISMISSED_KEY) === '1'; } catch (_) { return false; }
+    }
     const CHAT_TRANSCRIPT_KEY = 'hive-chat-transcript-v2';
     const CHAT_LEGACY_STORAGE_KEY = 'hive-chat-history';
     const CHAT_COMMAND_HISTORY_KEY = 'hive-chat-command-history-v1';
@@ -86046,7 +86053,15 @@ function burnAreaChart() {
         let html = formatChatHtml(answer);
         if (data.raw) html += '<details class="chat-raw-details"><summary>Search data</summary><pre>' + escapeHtml(data.raw) + '</pre></details>';
         if (data.sources && data.sources.length) html += '<div class="chat-sources">Sources: ' + data.sources.map(s => '<span>' + escapeHtml(String(s)) + '</span>').join('') + '</div>';
-        chatAddMsg(html, 'system', { html:true, rawText: answer });
+        const showHint = !!data.config_assist_hint && !chatConfigAssistHintDismissed();
+        if (showHint) html += '<div class="chat-config-assist-hint fs-sm text-muted">' + escapeHtml(String(data.config_assist_hint)) + ' <button type="button" class="hv-btn btn-sm chat-config-assist-dismiss">Dismiss</button></div>';
+        const msgEl = chatAddMsg(html, 'system', { html:true, rawText: answer });
+        const dismiss = showHint && msgEl && msgEl.querySelector ? msgEl.querySelector('.chat-config-assist-dismiss') : null;
+        if (dismiss) dismiss.addEventListener('click', () => {
+          try { localStorage.setItem(CHAT_CONFIG_ASSIST_HINT_DISMISSED_KEY, '1'); } catch (_) { /* per-viewer convenience only */ }
+          const hintEl = dismiss.closest('.chat-config-assist-hint');
+          if (hintEl) hintEl.remove();
+        });
         return null;
       } catch (err) {
         thinking.remove();
