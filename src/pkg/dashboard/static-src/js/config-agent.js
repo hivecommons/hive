@@ -134,6 +134,10 @@
           <span class="config-toggle-label">Clear on Kick ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Clear on Kick', `Send /clear before each governor kick to reset conversation context. Prevents stale context buildup across runs. On by default for all agents.`)}</span>
         </div>
         <div class="config-toggle">
+          <div class="config-toggle-switch ${g.headlessTurns ? 'on' : ''}" id="cfg-headless-turns" data-action="toggleConfigSwitch" data-section="general" data-key="headlessTurns"></div>
+          <span class="config-toggle-label">Headless turns ${settingHelpMark('agent-configuration', '', 'Headless turns', `agents.<key>.headless_turns: run one claude -p per kick instead of a resident interactive Claude CLI. Applies only to translator-routed agents (vllm, llm-d, litellm, watsonx or a named gateway) without a launch_cmd. Saving a change restarts the agent.`)}</span>
+        </div>
+        <div class="config-toggle">
           <div class="config-toggle-switch ${onDemand ? 'on' : ''}" id="cfg-on-demand" data-action="toggleConfigSwitch" data-section="general" data-key="onDemand"></div>
           <span class="config-toggle-label">On Demand ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'On Demand', `When on, this agent is never started at boot and never kicked by the governor or by event (CEL) triggers — it only runs when something summons it explicitly. Turn it OFF to make the agent run on its cadence like a normal agent. Note: an agent also needs a cadence entry in the ACTIVE governor mode before it will actually be kicked. On-demand agents are also excluded from review fan-out, so a reviewer left on-demand cannot be dispatched.`)}${g.onDemand === true ? ' ' + statusBadgeHTML('on_demand', 'on demand', '', '') : ''}</span>
         </div>

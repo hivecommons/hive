@@ -6547,12 +6547,29 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// one that outranks this overlay) was dropped on every boot and reload.
 	// Carry the lower layer's value forward when, and only when, the overlay
 	// says nothing; an explicit false still wins.
+	//
+	// headless_turns (#19902) has the same shape: no pack seeds it, and the
+	// dashboard's General section writes it to this overlay, the config file
+	// and the per-agent file together. A hand edit to the config file's
+	// agents.<name> block was dropped on every boot because the overlay's
+	// older entry for the agent, silent on the key, replaced it whole. It is a
+	// plain bool, so only an opt-in is carried; turning it off goes through
+	// the dashboard, which writes false to every layer.
 	for name, oa := range overlay.Agents {
-		if oa.Converse != nil {
+		base, ok := cfg.Agents[name]
+		if !ok {
 			continue
 		}
-		if base, ok := cfg.Agents[name]; ok && base.Converse != nil {
+		changed := false
+		if oa.Converse == nil && base.Converse != nil {
 			oa.Converse = base.Converse
+			changed = true
+		}
+		if !oa.HeadlessTurns && base.HeadlessTurns {
+			oa.HeadlessTurns = true
+			changed = true
+		}
+		if changed {
 			overlay.Agents[name] = oa
 		}
 	}
@@ -6566,11 +6583,14 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// under the overlay's older copy of the same agent, so an operator's
 	// `paused: true` or `sandbox:` block in the agent file never took effect
 	// while the overlay and runtime config still said otherwise (#18804). Carry
-	// those two operator-owned fields forward from the file. Not the whole
-	// entry: an explicit overlay `converse: false` deliberately beats the file
-	// (#7503), and pack-reconciled fields live in the overlay. `paused: false`
-	// in a file is indistinguishable from unset, so only a pause is carried;
-	// unpause through the dashboard, which writes both layers.
+	// those operator-owned fields forward from the file, and `headless_turns`
+	// with them (#19902), which was missing from this list so the documented
+	// per-agent file never switched an agent on a Kubernetes spoke. Not the
+	// whole entry: an explicit overlay `converse: false` deliberately beats
+	// the file (#7503), and pack-reconciled fields live in the overlay.
+	// `paused: false` and `headless_turns: false` in a file are
+	// indistinguishable from unset, so only a pause or an opt-in is carried;
+	// undo either through the dashboard, which writes both layers.
 	if cfg.Data.AgentsDir != "" {
 		if files, ferr := LoadAgentOverrides(cfg.Data.AgentsDir); ferr == nil {
 			for name, fa := range files {
@@ -6584,6 +6604,9 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 				}
 				if fa.Sandbox != nil {
 					a.Sandbox = fa.Sandbox
+				}
+				if fa.HeadlessTurns {
+					a.HeadlessTurns = true
 				}
 				cfg.Agents[name] = a
 			}
