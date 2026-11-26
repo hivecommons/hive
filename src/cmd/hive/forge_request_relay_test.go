@@ -350,6 +350,7 @@ func TestForgeRelayIssueTransientFailureRetries(t *testing.T) {
 }
 
 func TestForgeRelayWriterForRepo(t *testing.T) {
+	t.Setenv(forgejoTestTokenEnv, forgejoTestToken)
 	cfg := forgejoOnlyConfig("https://fj.example")
 	w, err := forgeRelayWriterForRepo(cfg, "widgets")
 	if err != nil || w == nil {

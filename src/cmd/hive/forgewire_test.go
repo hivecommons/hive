@@ -90,10 +90,12 @@ func TestGovernorForgeSelectsAdapters(t *testing.T) {
 	})
 
 	t.Run("forgejo uses the configured instance", func(t *testing.T) {
+		t.Setenv(forgejoTestTokenEnv, forgejoTestToken)
 		cfg := &config.Config{}
 		cfg.Project.Org = "acme"
 		cfg.Project.Forge = config.ForgeForgejo
 		cfg.Forgejo.URL = "https://forgejo.example.com"
+		cfg.Forgejo.TokenEnv = forgejoTestTokenEnv
 
 		if got := forgeKindOf(t, governorForge(cfg, gh, discardLogger())); got != forge.KindForgejo {
 			t.Fatalf("want the Forgejo adapter, got kind %q", got)

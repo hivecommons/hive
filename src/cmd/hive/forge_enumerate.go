@@ -64,7 +64,11 @@ var forgeListerForRepo = func(cfg *config.Config, repo string) (forgeLister, err
 	if err := cfg.CheckForgeTokenHost(repo); err != nil {
 		return nil, err
 	}
-	return forge.NewForge(kind, os.Getenv(tokenID), forge.Options{
+	token := os.Getenv(tokenID)
+	if err := requireForgeToken(kind, tokenID, token); err != nil {
+		return nil, err
+	}
+	return forge.NewForge(kind, token, forge.Options{
 		BaseURL: cfg.ForgeURLForRepo(repo),
 		Org:     cfg.Project.Org,
 	})

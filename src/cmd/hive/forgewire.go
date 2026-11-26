@@ -93,10 +93,16 @@ func forgeForRepo(cfg *config.Config, repo string, ghClient *github.Client, logg
 
 	// The token is read from the environment by name, never from config: the
 	// no-hardcoded-secrets rule is why config carries token_env rather than the
-	// secret itself. An empty value is passed through — the forge will reject it
-	// with a 401 whose message names the real problem, which beats a local error
-	// that cannot distinguish "unset" from "set but wrong".
-	f, err := forge.NewForge(kind, os.Getenv(tokenID), forge.Options{
+	// secret itself. An empty value is passed through on GitLab and Gitea; GitLab
+	// rejects it with a 401 whose message names the real problem. Forgejo answers a
+	// private repo with a 404 instead, so an empty Forgejo token builds no
+	// writer (requireForgeToken), and does not fall back to GitHub either.
+	token := os.Getenv(tokenID)
+	if err := requireForgeToken(kind, tokenID, token); err != nil {
+		logger.Error("forge token unset; no writer built", "forge", kind, "repo", repo, "error", err)
+		return nil
+	}
+	f, err := forge.NewForge(kind, token, forge.Options{
 		BaseURL: baseURL,
 		Org:     cfg.Project.Org,
 	})
@@ -178,7 +184,11 @@ func forgeMergerForRepo(cfg *config.Config, repo string) (forge.Merger, error) {
 	if err := cfg.CheckForgeTokenHost(repo); err != nil {
 		return nil, err
 	}
-	return newForgeMerger(kind, os.Getenv(tokenID), forge.Options{
+	token := os.Getenv(tokenID)
+	if err := requireForgeToken(kind, tokenID, token); err != nil {
+		return nil, err
+	}
+	return newForgeMerger(kind, token, forge.Options{
 		BaseURL: cfg.ForgeURLForRepo(repo),
 		Org:     cfg.Project.Org,
 	})
