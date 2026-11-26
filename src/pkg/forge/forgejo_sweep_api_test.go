@@ -219,6 +219,25 @@ func TestForgejoSweepAPISelfError(t *testing.T) {
 	}
 }
 
+// TestForgejoSweepAPISelfForbiddenNamesLogin: with no forgejo.login, a 403
+// from GET /user (a repo-limited token or a REST integration JWT without
+// read:user, #19920) is an error that names forgejo.login.
+func TestForgejoSweepAPISelfForbiddenNamesLogin(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"token does not have at least one of required scope(s): [read:user]"}`))
+	}))
+	defer srv.Close()
+	api, err := NewForgejoSweepAPI("fj-token", Options{BaseURL: srv.URL, Org: "acme"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.Self(context.Background()); err == nil || !strings.Contains(err.Error(), "forgejo.login") {
+		t.Fatalf("Self = %v, want an error naming forgejo.login", err)
+	}
+}
+
 // TestForgejoSweepAPISelfConfiguredLogin is #19994: a token limited to
 // specific repositories gets 403 from GET /user, and then the configured
 // forgejo.login names the hive's own user. Any other answer does not fall

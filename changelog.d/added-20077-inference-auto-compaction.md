@@ -1,0 +1,1 @@
+- Claude CLI agents can opt into earlier auto-compaction with a per-agent window, including sandbox Job kicks; inference-routed agents with a known context window can instead use a hive-wide percentage ([#20077](https://github.com/hivecommons/hive/issues/20077)).

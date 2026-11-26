@@ -787,6 +787,22 @@ func (s *Server) handleGovernorCoverageTarget(w http.ResponseWriter, r *http.Req
 	okResponse(w, map[string]string{"status": "updated"})
 }
 
+// writeConfigSaveError reports a failed saveConfig to the caller instead of
+// answering 200 for a change that only lives in memory and is lost on the
+// next restart (#20073). A save refused because the file changed on disk
+// (#19561) is a 409 the operator can fix by refreshing; anything else is 500.
+func writeConfigSaveError(w http.ResponseWriter, err error, unchanged string) {
+	if errors.Is(err, config.ErrConfigChangedOnDisk) {
+		jsonError(w, "Configuration changed on disk. Refresh and try again.", http.StatusConflict)
+		return
+	}
+	msg := "failed to save config"
+	if unchanged != "" {
+		msg += "; " + unchanged
+	}
+	jsonError(w, msg, http.StatusInternalServerError)
+}
+
 func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -971,6 +987,14 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Kept so a failed save can put memory back: without this the change
+	// stays live but is lost on restart while the caller is told it was saved
+	// (#20073). Every write below replaces a field, so value copies suffice.
+	prevLabels := s.deps.Config.Governor.Labels
+	prevIssueFilter := s.deps.Config.Project.IssueFilter
+	prevWritingGuide := s.deps.Config.Project.WritingGuide
+	prevNudgeRepeatAfter := s.deps.Config.AutoMerge.NudgeRepeatAfter
+
 	if body.Labels != nil {
 		filtered := make([]string, 0, len(*body.Labels))
 		for _, l := range *body.Labels {
@@ -1082,6 +1106,20 @@ func (s *Server) handleGovernorLabels(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after label update", "error", err)
+		s.deps.Config.Governor.Labels = prevLabels
+		s.deps.Config.Project.IssueFilter = prevIssueFilter
+		s.deps.Config.Project.WritingGuide = prevWritingGuide
+		s.deps.Config.AutoMerge.NudgeRepeatAfter = prevNudgeRepeatAfter
+		if s.deps.GHClient != nil {
+			if body.Labels != nil {
+				s.deps.GHClient.SetExemptLabels(prevLabels.Exempt)
+			}
+			if body.RequireLabels != nil || body.HardSuppressLabels != nil || nextReporterTrust != nil {
+				s.deps.GHClient.SetIssueFilter(prevIssueFilter)
+			}
+		}
+		writeConfigSaveError(w, err, "label settings unchanged")
+		return
 	}
 	s.auditFromRequest(r, "config_governor_labels", auditDetail("section", "labels"), "")
 	s.refreshAndPersist()

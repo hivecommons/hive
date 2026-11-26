@@ -15,13 +15,22 @@
 //	                     claim rules, to show which claims Forgejo itself requires
 //	FORGEJO_JWT_WRITE_AUDIENCE the audience of a third integration with
 //	                     write:repository and no claim rules
+//	FORGEJO_JWT_REST_AUDIENCE the audience of the hive's REST integration
+//	                     (forgejo.integration.rest_audience, sub=hive:rest)
+//	FORGEJO_JWT_REST_SCOPES the scopes that integration was created with
+//	FORGEJO_ISSUE        an issue in FORGEJO_REPO that was closed and reopened
+//	FORGEJO_OWNER        the user that owns the integrations
+//	FORGEJO_COLLABORATOR a user with write access to FORGEJO_REPO
 package forgejwt
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -124,6 +133,10 @@ func TestForgejoAcceptsMintedTokens(t *testing.T) {
 		}
 	})
 
+	t.Run("rest audience", func(t *testing.T) {
+		testRESTEndpoints(t, base, repoPath, mint(Audience(liveEnv(t, "FORGEJO_JWT_REST_AUDIENCE")), SubjectPrefix+"rest"))
+	})
+
 	// Pins: which Authorization schemes Forgejo accepts for a JWT, and which
 	// claims a token must carry. Statuses are from GET repo.
 	full := claims{Iss: iss, Aud: aud, Sub: sub, Iat: time.Now().Add(-Backdate).Unix(), Exp: time.Now().Add(Lifetime).Unix()}
@@ -179,4 +192,116 @@ func basic(user, pass string) string {
 	req, _ := http.NewRequest(http.MethodGet, "http://x", nil)
 	req.SetBasicAuth(user, pass)
 	return req.Header.Get("Authorization")
+}
+
+// testRESTEndpoints calls, with a JWT for the hive's REST integration, the
+// endpoints whose answer to an integration JWT was open in #19914 and #19920,
+// and logs each status. It accepts only answers the hive's Forgejo adapter
+// handles (src/pkg/forge/forgejo_sweep_api.go):
+//
+//   - GET /user: 200 naming the integration's owner, or 403, on which Self
+//     uses forgejo.login and errors without it.
+//   - GET collaborators/{user}/permission: 200, or 403, on which Permission
+//     reads GET assignees; so assignees must answer 200 and list the
+//     collaborator.
+//   - GET issues/{n}/timeline: 200 with the reopen event, as there is no
+//     fallback for it.
+func testRESTEndpoints(t *testing.T, base, repoPath, tok string) {
+	owner := liveEnv(t, "FORGEJO_OWNER")
+	collaborator := liveEnv(t, "FORGEJO_COLLABORATOR")
+	issue := liveEnv(t, "FORGEJO_ISSUE")
+	t.Logf("REST integration scopes: %s", liveEnv(t, "FORGEJO_JWT_REST_SCOPES"))
+	get := func(t *testing.T, path string, out any) int {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, base+"/api/v1"+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.StatusCode == http.StatusOK {
+			if err := json.Unmarshal(body, out); err != nil {
+				t.Fatalf("GET %s: decoding: %v\n%s", path, err, body)
+			}
+		}
+		t.Logf("GET %s = %d %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+		return resp.StatusCode
+	}
+
+	t.Run("get user", func(t *testing.T) {
+		var u struct {
+			Login string `json:"login"`
+		}
+		switch got := get(t, "/user", &u); got {
+		case http.StatusOK:
+			if !strings.EqualFold(u.Login, owner) {
+				t.Errorf("GET /user login = %q, want the integration owner %q", u.Login, owner)
+			}
+		case http.StatusForbidden:
+			t.Logf("GET /user is refused: the close-on-merge sweep needs forgejo.login with rest_audience")
+		default:
+			t.Errorf("GET /user = %d, want 200 or 403", got)
+		}
+	})
+
+	t.Run("collaborator permission", func(t *testing.T) {
+		refused := false
+		for _, c := range []struct {
+			login string
+			want  []string
+		}{{owner, []string{"owner", "admin"}}, {collaborator, []string{"write"}}} {
+			var p struct {
+				Permission string `json:"permission"`
+			}
+			switch got := get(t, repoPath+"/collaborators/"+c.login+"/permission", &p); got {
+			case http.StatusOK:
+				if !slices.Contains(c.want, p.Permission) {
+					t.Errorf("permission of %s = %q, want one of %q", c.login, p.Permission, c.want)
+				}
+			case http.StatusForbidden:
+				refused = true
+			default:
+				t.Errorf("permission of %s = %d, want 200 or 403", c.login, got)
+			}
+		}
+		if refused {
+			t.Logf("the permission API is refused: the automerge sweep reads the assignee list instead")
+		}
+		var assignees []struct {
+			Login string `json:"login"`
+		}
+		if got := get(t, repoPath+"/assignees", &assignees); got != http.StatusOK {
+			t.Fatalf("GET assignees = %d, want 200 (the fallback for a refused permission call)", got)
+		}
+		found := false
+		for _, a := range assignees {
+			found = found || strings.EqualFold(a.Login, collaborator)
+		}
+		if !found {
+			t.Errorf("assignees %v do not list the collaborator %s", assignees, collaborator)
+		}
+	})
+
+	t.Run("issue timeline", func(t *testing.T) {
+		var events []struct {
+			Type string `json:"type"`
+		}
+		if got := get(t, repoPath+"/issues/"+issue+"/timeline", &events); got != http.StatusOK {
+			t.Fatalf("GET timeline = %d, want 200", got)
+		}
+		for _, ev := range events {
+			if ev.Type == "reopen" {
+				return
+			}
+		}
+		t.Errorf("timeline %v has no reopen event", events)
+	})
 }

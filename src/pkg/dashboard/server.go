@@ -123,6 +123,10 @@ type Server struct {
 	// cannot hold HealthSummary past forgeProbeBudget (health_forge_probe.go).
 	forgeProbe forgeProbeState
 
+	// forgejoKeys holds the served forgejo.integration key list and its rate
+	// limiter (forgejo_key_list.go, #19996).
+	forgejoKeys forgejoKeyListState
+
 	// mergeTrains remembers the trains between tracker builds: the hourly
 	// "merge train stalled" activity-log line per train and each member's
 	// first estimate (stage_tracker_merge_train.go).
@@ -132,6 +136,9 @@ type Server struct {
 	// (api_chat_grounded.go); created lazily by chatGroundedSlots.
 	chatGroundedOnce     sync.Once
 	chatGroundedInflight chan struct{}
+	// chatConfigProposals holds pending chat config proposals (#19978).
+	// In memory only: a restart drops them.
+	chatConfigProposals chatConfigProposalStore
 
 	// matrix is the dashboard.matrix line source (matrix_source.go); nil
 	// until MatrixObserver is called with an active config.
@@ -1814,6 +1821,10 @@ func (s *Server) registerCoreRoutes() {
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
 	s.mux.HandleFunc("GET /api/health/deep", s.handleHealthDeep)
 	s.mux.HandleFunc("GET /api/livez", s.handleLivez)
+	// The forgejo.integration key list, anonymous and opt-in
+	// (forgejo.integration.serve_key_list); 404 while off (#19996).
+	s.mux.HandleFunc("GET /.well-known/openid-configuration", s.handleForgejoKeyList) // forgejoDiscoveryRoute
+	s.mux.HandleFunc("GET /jwks.json", s.handleForgejoKeyList)                        // forgejoKeyListRoute
 	// Prometheus scrape endpoint for estimated LLM cost — opt-in via
 	// HIVE_METRICS_ENABLED, and the handler additionally requires the
 	// HIVE_METRICS_TOKEN bearer token (fails closed with 403 when the token is
@@ -2610,6 +2621,14 @@ func (s *Server) isPublicPath(path string) bool {
 		// pod is never restarted (the exact bug this endpoint was added to fix).
 		return true
 	case path == "/api/auth/token":
+		return true
+	case isForgejoKeyListPath(path) && s.forgejoServedIntegration() != nil:
+		// The forgejo.integration discovery document and key list (#19996).
+		// Public only while forgejo.integration.serve_key_list is on; they
+		// hold public keys only, and Forgejo fetches them with no credential
+		// and follows no redirect, so a login gate would break every token.
+		// handleForgejoKeyList re-checks the setting, serves GET only and
+		// rate limits per client address.
 		return true
 	case path == "/auth/return":
 		return true

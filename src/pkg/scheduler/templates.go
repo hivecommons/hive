@@ -362,9 +362,10 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 
 	// Agent-declared skills prefer the hive-host-local registry, then fall back
 	// to definitions in the primary repo's AGENTS.md or adjacent skills/
-	// directory. The registry remains independently useful without a checkout;
-	// the fallback activates only when agentsRepoRoot found one above.
-	skillsSection := s.primeSkills(agentName, repoRoot)
+	// directory. The registry remains independently useful without a checkout.
+	// With no local checkout, declared repo skills are fetched from the repo's
+	// skills/ directory on GitHub (#20009).
+	skillsSection := s.primeSkillsForRepo(agentName, primaryRepo, repoRoot)
 	if skillsSection != "" {
 		knowledgeSection = skillsSection + "\n" + knowledgeSection
 	}
@@ -398,7 +399,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 		"PR_LIST":               lit(prList),
 		"REVIEW_PERSPECTIVES":   lit(s.reviewPerspectivesSection()),
 		"AUTHORIZED_REPOS":      lit(s.buildReposSectionFor(agentName)),
-		"GH_AUTH":               lit(s.ghAuthInstructions()),
+		"GH_AUTH":               lit(s.ghAuthInstructionsFor(agentName)),
 		"WORK_TRACKER":          lit(s.workTrackerSection()),
 		"IN_FLIGHT":             lit(inflightNote(heldInflight)),
 		"TOPIC_CLAIMS":          lit(topicClaimsSection(s.topicClaimsFor(agentName))),

@@ -538,6 +538,14 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// Settings → Compliance framework picker (#11080, api_compliance_settings.go).
 	// Registered last so the api-reference citations above do not shift.
 	s.mux.HandleFunc("PUT /api/config/governor/compliance", s.handleComplianceFrameworksPut)
+	// Settings → Features → Chat → Config assist toggle (#19979, api_chat_config_assist.go).
+	s.mux.HandleFunc("GET /api/config/chat/config-assist", s.handleChatConfigAssistGet)
+	s.mux.HandleFunc("PUT /api/config/chat/config-assist", s.handleChatConfigAssistPut)
+	// Chat config assist card Dismiss (#19978, api_chat_config_proposal.go).
+	s.mux.HandleFunc("POST /api/chat/config-proposals/{id}/decline", s.handleChatConfigProposalDecline)
+	// Chat config assist card Undo (#19985, api_chat_config_apply.go): returns
+	// the reverse proposal the card then applies like any other.
+	s.mux.HandleFunc("POST /api/chat/config-proposals/{id}/undo", s.handleChatConfigProposalUndo)
 	// Write-back containment (api_writeback.go): suppressed-write drill-down
 	// and the sentinel findings held internally, written or not.
 	s.mux.HandleFunc("GET /api/writeback/suppressed", s.handleWritebackSuppressed)

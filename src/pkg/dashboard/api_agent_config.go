@@ -417,6 +417,21 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Chat config assist attribution (#19978): verified against the stored
+	// proposal, never taken from the query string alone.
+	viaProposal, viaClaimed := s.chatConfigVia(r, name, "general", func(f string) bool { _, ok := body[f]; return ok })
+	// A card Apply (#19985) is bound to its stored proposal here, under
+	// agentConfigMu; without the header this is a normal dialog save.
+	apply, applyOK := s.chatConfigApplyBegin(w, r, name, "general", body)
+	if !applyOK {
+		return
+	}
+	if apply != nil {
+		w = apply.w
+		defer apply.finish()
+		viaProposal, viaClaimed = &apply.p, true
+	}
+
 	if err := validateAgentGeneralInput(body); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -924,6 +939,10 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
 		if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
 			s.logger.Error("failed to persist agent overlay after update", "agent", name, "error", err)
+			s.AddSystemAlert("agent-field-save-failed", "error",
+				"Could not save the settings for "+name+" to its agent overlay; they will revert on the next config load: "+err.Error())
+		} else {
+			s.ClearSystemAlert("agent-field-save-failed")
 		}
 	}
 	// Apply model/backend live so the change takes effect immediately and isn't
@@ -946,7 +965,10 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	s.auditFromRequest(r, "config_agent_general", generalAuditDetail(prevAgents[name], agentCfg), name)
+	s.auditFromRequest(r, "config_agent_general", chatConfigViaDetail(generalAuditDetail(prevAgents[name], agentCfg), viaProposal, viaClaimed, "", ""), name)
+	if viaProposal != nil {
+		s.chatConfigProposals.remove(viaProposal.ID)
+	}
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
 }
@@ -1022,6 +1044,19 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	viaProposal, viaClaimed := s.chatConfigVia(r, name, "cadences", func(f string) bool { _, ok := body[f]; return ok })
+	// A card Apply (#19985) is bound to its stored proposal here, under
+	// agentConfigMu; without the header this is a normal dialog save.
+	apply, applyOK := s.chatConfigApplyBegin(w, r, name, "cadences", body)
+	if !applyOK {
+		return
+	}
+	if apply != nil {
+		w = apply.w
+		defer apply.finish()
+		viaProposal, viaClaimed = &apply.p, true
+	}
+
 	gov := &s.deps.Config.Governor
 	cadences, err := validateCadencesBody(gov, body)
 	if err != nil {
@@ -1055,7 +1090,10 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "cadences not saved: "+err.Error(), status)
 		return
 	}
-	s.auditFromRequest(r, "config_agent_cadences", cadencesAuditDetail(name, prevModes, cadences), name)
+	s.auditFromRequest(r, "config_agent_cadences", chatConfigViaDetail(cadencesAuditDetail(name, prevModes, cadences), viaProposal, viaClaimed, "", ""), name)
+	if viaProposal != nil {
+		s.chatConfigProposals.remove(viaProposal.ID)
+	}
 	// The rebuild kicked here is asynchronous, so the browser's post-save
 	// GET /api/status can be served the CACHED pre-mutation snapshot and
 	// repaint the OLD cadence — the operator then waits for a later broadcast
@@ -1261,6 +1299,21 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	viaProposal, viaClaimed := s.chatConfigVia(r, name, "models", func(f string) bool {
+		return (f == "model" && body.Model != "") || (f == "reasoning_effort" && body.ReasoningEffort != nil)
+	})
+	// A card Apply (#19985) is bound to its stored proposal here, under
+	// agentConfigMu; without the header this is a normal dialog save.
+	apply, applyOK := s.chatConfigApplyBegin(w, r, name, "models", chatConfigModelsBodyJSON(body))
+	if !applyOK {
+		return
+	}
+	if apply != nil {
+		w = apply.w
+		defer apply.finish()
+		viaProposal, viaClaimed = &apply.p, true
+	}
+
 	u, err := s.validateModelsBody(name, agentCfg, body)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -1298,7 +1351,19 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 	if err := s.updateAgentProcessConfig(name, agentCfg); err != nil {
 		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
 	}
-	s.auditFromRequest(r, "config_agent_models", auditDetail("backend", agentCfg.Backend, "model", agentCfg.Model, "reasoning_effort", agentCfg.ReasoningEffort), name)
+	viaBefore, viaAfter := "", ""
+	if viaProposal != nil {
+		switch viaProposal.Field {
+		case "model":
+			viaBefore, viaAfter = u.PrevModel, u.EffectiveModel
+		case "reasoning_effort":
+			viaBefore, viaAfter = prevCfg.ReasoningEffort, agentCfg.ReasoningEffort
+		}
+	}
+	s.auditFromRequest(r, "config_agent_models", chatConfigViaDetail(auditDetail("backend", agentCfg.Backend, "model", agentCfg.Model, "reasoning_effort", agentCfg.ReasoningEffort), viaProposal, viaClaimed, viaBefore, viaAfter), name)
+	if viaProposal != nil {
+		s.chatConfigProposals.remove(viaProposal.ID)
+	}
 
 	// Apply the change to the LIVE launch configuration, exactly as
 	// handleAgentConfigGeneral and the card dropdowns (/api/model, /api/switch)

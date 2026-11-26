@@ -888,7 +888,12 @@
             if (!clsRes.ok) throw new Error(await saveErrorMessage(clsRes));
             _configState.data.classifier = await clsRes.json().catch(() => _configState.data.classifier);
           } else {
-            const res = await fetch(`${base}/${section}`, {
+            // Attribution for a save opened from a chat proposal card (#19978).
+            // The server records via=chat only after checking the id against
+            // its stored proposal.
+            const chatProposal = _configState.chatProposal;
+            const viaChat = chatProposal && chatProposal.section === section ? '?via=chat&proposal=' + encodeURIComponent(chatProposal.id) : '';
+            const res = await fetch(`${base}/${section}${viaChat}`, {
               method: 'PUT',
               headers: _inceptionAuthHeaders(),
               body: JSON.stringify(values)

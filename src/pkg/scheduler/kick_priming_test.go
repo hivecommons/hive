@@ -303,12 +303,19 @@ func TestAgentsRepoRoot_RemoteMissAndLastKnownGood(t *testing.T) {
 func TestAgentsRepoRoot_LocalRootBeatsFetch(t *testing.T) {
 	useTempRemoteAgentsMdDir(t)
 	f := &fakeAgentsMdFetcher{body: "x"}
+	checkouts := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(checkouts, "hive"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(checkouts, "hive", "AGENTS.md"), []byte("local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cfg := &config.Config{}
 	cfg.Project.Org = "hivecommons"
-	cfg.Project.CheckoutsDir = "/data/checkouts"
+	cfg.Project.CheckoutsDir = checkouts
 	s := New(cfg, slog.Default())
 	s.SetAgentsMdFetcher(f)
-	if got, want := s.agentsRepoRoot("hive"), filepath.Join("/data/checkouts", "hive"); got != want {
+	if got, want := s.agentsRepoRoot("hive"), filepath.Join(checkouts, "hive"); got != want {
 		t.Errorf("agentsRepoRoot() = %q, want %q", got, want)
 	}
 	if f.calls != 0 {

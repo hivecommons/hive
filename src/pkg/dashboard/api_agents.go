@@ -113,6 +113,10 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "jev_mode must be one of: off, assist (or empty to disable)", http.StatusBadRequest)
 		return
 	}
+	if err := config.ValidateAutoCompactWindowTokens(agent.AutoCompactWindowTokens); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	if _, exists := s.deps.Config.Agents[body.Name]; exists {
 		jsonError(w, "agent already exists", http.StatusConflict)

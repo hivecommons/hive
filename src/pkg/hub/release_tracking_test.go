@@ -116,6 +116,9 @@ func TestReleaseTrackingDisabledValues(t *testing.T) {
 func TestStartBackgroundPollers_ReleaseTrackingDisabled(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
+	// Unset HIVE_HUB_CUSTOMER_STORE is colony (#19972): the boot opens
+	// colony.db in the temp dirs, so close it when the test ends.
+	t.Cleanup(closeHubCustomerStore)
 	resetSHACaches(t)
 	resetImageBranchCache(t)
 	resetChannelTargetCache()

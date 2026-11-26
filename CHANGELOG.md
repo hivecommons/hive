@@ -11,6 +11,82 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.378.0)
+
+### Added
+
+- The owner can now rotate a PAT-mode hive's GitHub token from Settings -> Forge App, in a masked write-only field that shows the token's fingerprint, login and last verification and reports a refused token (422), the retry cooldown (429) or a GitHub App hive (409), and from scripts with `hivectl github token set --stdin` or a no-echo prompt in a terminal (the token is never taken from an argument or flag, token-shaped values are redacted from every hivectl error, and it is sent only over https or to loopback, never along a redirect) and `hivectl github token status` (#19633).
+- **Customers can run on the colony store alone (`customers.store: colony-only`, opt-in).** On colony v0.4.0, which adds slots for identity provenance, second claimants of an identity, full provider answers, consent delivery bookkeeping and long notes, a hive set to `colony-only` writes everything into `/data/customers/colony.db`, reads it all back, and only when it matches renames `people.json` and `enrichment.json` to `*.migrated` (kept, never deleted). Nothing writes the JSON after that. Setting `colony`, `shadow` or `json` again writes the files back from `colony.db` on the next start, and `hive colony export --format hive-people-json` does it by hand. `shadow` and `colony` mode now also write the new fields, and parity counts held identities (#19972).
+- Hive Chat config assist proposal cards now have an Apply button that saves the stored change through the existing agent config endpoint with an `X-Hive-Chat-Proposal` header, checked server-side under the config lock against the proposal's owner, body and section hash (a stale, reused or mismatched proposal gets `409` and changes nothing), and an applied card offers Undo, which restores the previous value through the same check and fails with `409` if the section changed since; failed applies are audited as `chat_config_apply_failed` and undos as `chat_config_undo` (#19985).
+
+### Fixed
+
+- The check that stops an older, unrelated contributor PR from counting as a task's work now also applies after the relay reconnects mid-task (the task lease keeps when the task was issued), and an issue reference that names another repository no longer counts (#19985).
+
+## 2026-11-26 (v5.377.1)
+
+### Changed
+
+- The spoke customer record store (`customers.store` / `HIVE_CUSTOMERS_STORE`) now defaults to `shadow` instead of `colony`: the JSON stays authoritative and colony is written alongside it. The hub default (`HIVE_HUB_CUSTOMER_STORE`) stays `colony`. The spoke default moves to `colony` once parity is confirmed on the project's own hive. An explicit `json`, `shadow` or `colony` keeps working, and a set but unknown value still means `json` (#19972).
+
+### Fixed
+
+- A contributor completion that reports an older PR of theirs which never names the dispatched issue no longer counts as that issue's work, so the hive does not append `Fixes #N` to the wrong PR or mark the issue covered, and a blocked verdict stands (#19985).
+- Keep an operator's fix to a broken dashboard overlay after held saves (#20075)
+
+## 2026-11-26 (v5.377.0)
+
+### Added
+
+- Hive Chat config assist can now propose one agent config change (model, reasoning effort, one-mode cadence, or disable) from an owner's chat message, as a card whose "Open in agent config" button opens the agent dialog pre-filled for the owner to Save; the save is attributed `via=chat` only after the server checks the proposal id against its stored copy (#19978).
+- Forgejo: the spoke can serve its own `forgejo.integration` key list. With `forgejo.integration.serve_key_list: true` (off by default) the dashboard answers `GET /.well-known/openid-configuration` and `GET /jwks.json` anonymously, rendered from `key_file` and the new `previous_key_files`, public keys only, cached and rate limited, so the key host is up whenever the hive that mints the tokens is, and a rotation keeps the old or next key listed without a separate host. `hive validate` checks each previous key, and the issuer rules still apply at config load ([#19996](https://github.com/hivecommons/hive/issues/19996)).
+
+### Changed
+
+- ci: Go file-size ratchet for src/ outside crux (warning-only rollout) (#20064)
+
+### Fixed
+
+- Repo-local skills now reach agents on a spoke with no local checkout. Hive fetches `skills/<name>.md` from the primary repo's default branch for each skill an agent declares that the hive-wide registry lacks, caches it next to the fetched `AGENTS.md`, and removes it when the file is deleted upstream. Repo `skills/` files also load when the repo has no `AGENTS.md`, their YAML front matter is stripped before injection, and symlinked skill files are refused. A configured checkout root that is missing or empty now falls back to GitHub with one warning instead of silently turning injection off. (#20009)
+- Dashboard: saving the Labels or Features settings now reports an error (409 when the config changed on disk, 500 otherwise) when the config save fails, instead of answering 200 for a change that only lived in memory and was lost on restart; a failed Labels save also puts the previous settings back ([#20073](https://github.com/hivecommons/hive/issues/20073)).
+- Forgejo: the close-on-merge sweep's error for a 403 from `GET /user` now names `forgejo.login`, the setting that covers a repo-limited token or a `rest_audience` integration without `read:user` (#19920).
+
+## 2026-11-26 (v5.376.0)
+
+### Added
+
+- Hive Chat config assist, phase 1: a new `chat.config_assist.enabled` flag (default off), an owner-only audited `PUT /api/config/chat/config-assist` toggle (`config_chat_assist`), and a one-line hint to owners who ask chat for a config change while it is off. No proposals yet (#19979, RFC #19788).
+
+### Changed
+
+- The customer record store now defaults to `colony` on the hub (`HIVE_HUB_CUSTOMER_STORE` unset) and on every hive (`customers.store` / `HIVE_CUSTOMERS_STORE` unset). A hub or hive that ran on the old `json` default imports its JSON into `colony.db` on its first boot after the upgrade, keeps its backups (`*.pre-colony` on a hive; the hub's JSON is never rewritten and later boots keep `colony.db.bak-*`), still writes the JSON, and falls back to `json` if the import fails. An explicit `json`, `shadow` or `colony` keeps working, `json` is the rollback, and a set but unknown value still means `json`. To stay on JSON through the upgrade, set the value to `json` first (#19972).
+- docs(forgejo): correct the key-host rules and the quadlet hosted-signal comment (#20063)
+
+### Fixed
+
+- Removed leftover supervisor kick and restart wording: the level-6 pack no longer says the supervisor restarts agents, the fallback supervisor kick message no longer says to check tmux panes, and the supervisor policy and docs now say beads are the only delegation channel and to "do nothing further for that agent" instead of "stop" ([#19945](https://github.com/hivecommons/hive/issues/19945)).
+- **Codex agents are now metered and keep a terminal login across restarts.** The token collector reads each per-agent `CODEX_HOME` rollout (`/data/home/.codex-<agent>/sessions/**/rollout-*.jsonl`), so codex usage reaches the dashboard token card, `/api/tokens`, `/api/cost`, the governor budget and the hub heartbeat. It counts from the moment metering is first enabled, so codex history already on disk is not counted and is not booked as spend in the current budget window. A sessions tree the hive cannot read is reported as `last_codex_scan_error` instead of reading as zero usage ([#20003](https://github.com/hivecommons/hive/issues/20003)). An agent start no longer runs `ln -sfn` over a regular `auth.json` in the agent's `CODEX_HOME`: the shared-login link is made only when the path is absent or already a link, and a kept file is logged, so a login made after a `codex logout` is no longer deleted on the next start ([#20002](https://github.com/hivecommons/hive/issues/20002)).
+- Default prompts and policy templates no longer ask agents for actions their mode, pack or the relays refuse: the claim and closing seams follow the agent's mode, the ADVISORY supervisor gets no GitHub instructions, advisory and issues-only templates record beads instead of filing or pushing, no policy tells an agent to re-run CI, hold-gated templates stop promising a merge on green, `needs-human` is no longer listed as forbidden, and the PR-title rule is stated once in `${GH_AUTH}` (#20036).
+- Dashboard overlay blocks are no longer dropped at every Kubernetes boot. Whether the overlay or the config file holds the latest edit is now decided by a content hash, recorded in the overlay's first line on every save, instead of by file mtime, which the boot chain resets on every restart. A block removed from a hand-edited config file still stays removed (#20066).
+- ACMM now credits Hive's own review-fix loop for `acmm:copilot-review-apply` (a PR that Hive asked to change and then re-reviewed at a new head within 30 days), and its tooltip and gap issue explain that the check only matches four workflow file names and point to the review-fix loop or a `.acmm.yml` waiver instead.
+- Refresh headless contributor model detection during and after each task, record terminal model reports, and count attributed PRs whose trailers are followed by recognized footer lines.
+
+### Security
+
+- The Forgejo close-on-merge sweep no longer trusts `forgejo.login` on its own. It still asks `GET /user`, uses the configured login only when Forgejo answers 403 (a token limited to specific repositories), and refuses a login that differs from the token's user. Before it honours its own pull requests or treats its own issues as hive-authored on a repository, it checks that this user holds write there, so with a token whose user is not a repository or site admin, a `forgejo.login` naming another user closes nothing ([#19994](https://github.com/hivecommons/hive/issues/19994)).
+
+## 2026-11-26 (v5.375.0)
+
+### Added
+
+- Forgejo REST calls (work discovery, the relays, merges and both sweeps) can now authenticate with a short-lived JWT: set `forgejo.integration.rest_audience` to the audience of an authorized integration with `sub=hive:rest`, and REST no longer reads the long-lived `forgejo.token_env` token. A failed mint builds no client and never falls back to the access token, and a replaced key file drops the cached token. Without it, REST keeps using the access token (#19920).
+
+### Fixed
+
+- The Forgejo close-on-merge sweep now accepts an optional `forgejo.login`, the hive's own Forgejo username. A token limited to specific repositories cannot carry `read:user`, so the sweep's `GET /user` identity lookup returned 403 and it skipped every repo; with `login` set it uses the login directly to recognize the hive's own pull requests and issues, and the unknown-user warning names the setting ([#19994](https://github.com/hivecommons/hive/issues/19994)). Reported by sdwilsh.
+- The `forgejo.integration` setup in `src/docs/forge-app-setup.md` now gives a `create-authorized-integration` command that works: it adds the required `--username` and `--name` flags and one `--repo` flag per repository. It also covers Forgejo's `[authorized_integration] ALLOWED_DOMAINS` for an issuer on a private address, says that Forgejo fetches the key list when the integration is created and that `hive validate` never contacts the issuer, ties the rotation wait to Forgejo's `CACHE_TTL`, and adds a "Host the key list" section with Forgejo's fetch rules, an nginx example and a `curl` check ([#19995](https://github.com/hivecommons/hive/issues/19995), [#19996](https://github.com/hivecommons/hive/issues/19996)). `src/docs/env-vars.md` now describes `HIVE_SESSION_KEY` as legacy and no longer provisioned, and the proxy's boot refusal names `HIVE_SESSION_PUBLIC_KEY` as a hub-hosted signal too. The Forgejo integration page no longer says pod-run agents can clone private Forgejo repositories ([#19997](https://github.com/hivecommons/hive/issues/19997)).
+- Reject origin-form HTTP requests sent to the egress proxy with a clear 400 response instead of reporting a failed upstream forward.
+
 ## 2026-11-26 (v5.374.0)
 
 ### Added

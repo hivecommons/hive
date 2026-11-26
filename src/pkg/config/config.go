@@ -7540,7 +7540,10 @@ func applyKnownAgentDefaults(name string, agent *AgentConfig) {
 		"supervisor": {
 			Emoji: "👑", Color: "#e74c3c", Aliases: []string{"su"},
 			DetectKeywords: []string{"supervisor", "sweep", "monitor"},
-			BeadRole:       "supervisor", SortOrder: 10, IncludeRepos: true,
+			// No repo list: the supervisor has no GitHub access and the
+			// AUTHORIZED REPOS block tells its reader to clone and implement
+			// (hivecommons/hive#20038).
+			BeadRole: "supervisor", SortOrder: 10, IncludeRepos: false,
 		},
 		"sec-check": {
 			Emoji: "🛡", Color: "#1abc9c", Aliases: []string{"se"},
@@ -8241,7 +8244,11 @@ func (c *Config) saveLocked() error {
 	// freshly reconciled in-memory config. Installing the atomic overlay first
 	// means any reload triggered by the primary write observes the same agent
 	// layer this Save is about to persist.
-	overlayErr := c.saveDashboardOverlay()
+	// The overlay records the hash of the config file content this save
+	// writes, so a later load can tell an edit of the config file from a
+	// boot-time copy of the same content (hivecommons/hive#20066).
+	dataSum := sumBytes(data)
+	overlayErr := c.saveDashboardOverlayFor(&dataSum)
 
 	// Replace the primary config atomically (temp file + fsync + rename onto
 	// the resolved target) — see writeFileAtomic for why that is safe on the
@@ -8266,7 +8273,6 @@ func (c *Config) saveLocked() error {
 	//
 	// The process write is recorded before the write so the watcher, which
 	// may see the rename before this returns, knows it for our own.
-	dataSum := sumBytes(data)
 	recordProcessWrite(c.SourcePath, dataSum)
 	var srcErr error
 	if err := writeFileAtomic(c.SourcePath, data, sourceConfigMode(c.SourcePath)); err != nil {
@@ -8496,6 +8502,16 @@ func IsKubernetesPod() bool {
 // placeholder ConfigMap seed on the next restart — exactly the durability bug
 // this atomic write prevents.
 func (c *Config) saveDashboardOverlay() error {
+	return c.saveDashboardOverlayFor(nil)
+}
+
+// saveDashboardOverlayFor is saveDashboardOverlay with the hash of the config
+// file content written by the same save. When base is set, the overlay's
+// first line records it (overlayBaseHeader), and the next load lets the
+// overlay's blocks win only while the config file still has that content
+// (hivecommons/hive#20066). A nil base writes no header, so the next load
+// keeps the config file's blocks.
+func (c *Config) saveDashboardOverlayFor(base *contentSum) error {
 	if !IsKubernetesPod() {
 		// Docker/LXC mode: RuntimeConfigFile is already the boot-time
 		// source of truth there, so dashboard saves persist without an
@@ -8511,6 +8527,13 @@ func (c *Config) saveDashboardOverlay() error {
 	// the #19561 guard then reloads it). The runtime config still carries
 	// this save, and it is the boot input whenever it exists.
 	if c.overlayKeptWhole() {
+		// The overlay's header goes stale while it is held, because this
+		// save still writes the config file. Remember the content so the
+		// load after the operator's fix still treats the overlay as the
+		// latest edit (hivecommons/hive#20066).
+		if base != nil {
+			recordOverlayHeldWrite(*base)
+		}
 		if data, rerr := os.ReadFile(DashboardOverlayFile); rerr == nil {
 			logOverlayOnce("file-save", data, "[config] WARNING: dashboard overlay %s is not valid YAML; this save leaves it as it is (fix or remove the file to let saves update it)", DashboardOverlayFile)
 		}
@@ -8520,6 +8543,9 @@ func (c *Config) saveDashboardOverlay() error {
 	if err != nil {
 		log.Printf("[config] warning: failed to marshal dashboard overlay: %v", err)
 		return err
+	}
+	if base != nil {
+		data = append(overlayBaseHeader(*base), data...)
 	}
 	tmpPath := DashboardOverlayFile + ".tmp"
 	// 0600, not 0644: dashboardOverlayBytes only folds the dashboard auth
@@ -8557,6 +8583,7 @@ func (c *Config) saveDashboardOverlay() error {
 		return err
 	}
 	c.recordLayerSum(DashboardOverlayFile, overlaySum)
+	clearOverlayHeldWrites()
 	log.Printf("[config] dashboard overlay written to %s (merged over the ConfigMap seed at next boot)", DashboardOverlayFile)
 	return nil
 }

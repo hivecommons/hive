@@ -3,26 +3,32 @@ package hub
 // The hub CRM fields on the colony store (hivecommons/hive#19856, phase 4 of
 // src/docs/design/colony-customer-data-backend.md).
 //
-// HIVE_HUB_CUSTOMER_STORE picks the mode, read once at boot:
+// HIVE_HUB_CUSTOMER_STORE picks the mode, read once at boot. Unset means
+// colony (the default since #19972); a set but unknown value means json.
 //
-//   - json (the default): today's behaviour. No colony.db is created. If one
-//     exists from an earlier shadow or colony boot, it is opened only so that
-//     deleting a user also erases them from it.
+//   - json: the behaviour before the colony store, and the rollback. No
+//     colony.db is created. If one exists from an earlier shadow or colony
+//     boot, it is opened only so that deleting a user also erases them from
+//     it.
 //   - shadow: on boot, every SaaSUser JSON record is imported into
 //     /data/saas/colony.db (first boot: one transaction, with the source
 //     fingerprint recorded), then reconciled person by person and checked by
 //     counts. Every later write goes to both stores; the JSON stays
 //     authoritative for reads.
-//   - colony: as shadow, and reads of the CRM fields come from colony. A
-//     field or person colony does not hold reads from the JSON (dual-read),
-//     and the JSON is still written, so setting json again loses nothing.
+//   - colony (the default): as shadow, and reads of the CRM fields come from
+//     colony. A field or person colony does not hold reads from the JSON
+//     (dual-read), and the JSON is still written, so setting json again
+//     loses nothing. A hub upgrading from the json default runs the import
+//     on that boot; if it fails, the hub stays on json.
 //
 // The JSON files are never rewritten by the migration. They are the backup
 // and the rollback path. Before each shadow or colony boot opens colony.db,
 // a copy of it is kept as colony.db.bak-<time> (newest few only).
 //
-// Failure never blocks the hub: a file that is locked, unreadable or written
-// by a newer colony release fails closed to json mode and is left untouched.
+// Failure never blocks the hub: a file that is unreadable, written by a newer
+// colony release, or still locked by another process after the boot retry
+// window (HIVE_HUB_CUSTOMER_STORE_LOCK_WAIT, #20103) fails closed to json mode
+// and is left untouched.
 // A failed mirror write is logged by count and never fails the JSON save.
 // Nothing here logs a value.
 
@@ -64,9 +70,16 @@ const (
 	// hubCustomerStoreBackupStamp is the backup suffix layout (UTC). Fixed
 	// width, so the names sort in time order.
 	hubCustomerStoreBackupStamp = "20060102T150405.000000000Z"
-	// hubCustomerStoreLockTimeout bounds the wait for the bbolt file lock,
-	// so a stuck lock costs a boot seconds, never availability.
-	hubCustomerStoreLockTimeout = 5 * time.Second
+	// hubCustomerStoreLockWaitEnv overrides how long boot keeps retrying a
+	// colony.db that another process holds (#20103). A Go duration; 0 turns
+	// the retry off (one attempt, as before).
+	hubCustomerStoreLockWaitEnv = "HIVE_HUB_CUSTOMER_STORE_LOCK_WAIT"
+	// hubCustomerStoreLockWaitDefault covers a lock that is still held when
+	// the new hub pod boots: the old pod's exit and, on the RWX volume, the
+	// server-side release of its lock, which after an unclean node loss can
+	// take a lock-lease recovery of about 90s. A boot can wait up to this plus
+	// one more hubCustomerStoreLockTimeout attempt.
+	hubCustomerStoreLockWaitDefault = 2 * time.Minute
 	// hubCustomerStoreBackupMode keeps backups owner-only, like colony.db.
 	hubCustomerStoreBackupMode os.FileMode = 0o600
 	// hubCustomerStoreMaxOrphanPercent and hubCustomerStoreOrphanFloor bound
@@ -77,13 +90,80 @@ const (
 	hubCustomerStoreOrphanFloor      = 10
 )
 
-// parseHubCustomerStoreMode reads the mode. An unknown value is json, so a
-// typo can only keep today's behaviour.
+// Lock timing, variables so tests can shrink them.
+var (
+	// hubCustomerStoreLockTimeout bounds each attempt's wait for the bbolt
+	// file lock.
+	hubCustomerStoreLockTimeout = 5 * time.Second
+	// hubCustomerStoreRetryBackoff is the first pause between attempts on a
+	// locked file; it doubles up to hubCustomerStoreRetryBackoffMax.
+	hubCustomerStoreRetryBackoff    = 1 * time.Second
+	hubCustomerStoreRetryBackoffMax = 15 * time.Second
+)
+
+// hubCustomerStoreLockWait reads hubCustomerStoreLockWaitEnv. Unset, invalid
+// or negative values use the default.
+func hubCustomerStoreLockWait(logger *slog.Logger) time.Duration {
+	raw := strings.TrimSpace(os.Getenv(hubCustomerStoreLockWaitEnv))
+	if raw == "" {
+		return hubCustomerStoreLockWaitDefault
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		logger.Warn("hub customer store: invalid lock wait; using default",
+			"env", hubCustomerStoreLockWaitEnv, "default", hubCustomerStoreLockWaitDefault)
+		return hubCustomerStoreLockWaitDefault
+	}
+	return d
+}
+
+// openHubCustomerStoreFile opens colony.db, retrying while another process
+// holds its lock (#20103). During a hub pod handover the old pod keeps the
+// lock until it exits, so one failed attempt must not put the new pod in json
+// mode for its whole life. Only store.ErrLocked is retried, with doubling
+// backoff, until wait has passed; every other error returns at once. Each
+// retry is logged.
+func openHubCustomerStoreFile(ctx context.Context, logger *slog.Logger, path, mode string, wait time.Duration) (*store.Store, error) {
+	deadline := time.Now().Add(wait)
+	backoff := hubCustomerStoreRetryBackoff
+	for attempt := 1; ; attempt++ {
+		st, err := store.Open(path, store.Options{LockTimeout: hubCustomerStoreLockTimeout})
+		if err == nil || !errors.Is(err, store.ErrLocked) {
+			if err == nil && attempt > 1 {
+				logger.Info("hub customer store: lock acquired after retry", "requested", mode, "attempts", attempt)
+			}
+			return st, err
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, err
+		}
+		pause := min(backoff, remaining)
+		logger.Warn("hub customer store: colony.db locked by another process; retrying",
+			"requested", mode, "attempt", attempt, "retry_in", pause, "gives_up_in", remaining.Round(time.Second))
+		timer := time.NewTimer(pause)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+		backoff = min(backoff*2, hubCustomerStoreRetryBackoffMax)
+	}
+}
+
+// hubCustomerStoreDefault is the mode when HIVE_HUB_CUSTOMER_STORE is unset
+// or blank (#19972). json stays a valid value and the rollback.
+const hubCustomerStoreDefault = hubCustomerStoreColony
+
+// parseHubCustomerStoreMode reads the mode. Unset is the colony default; an
+// unknown value is json, so a mistyped rollback can never move the hub onto
+// colony.
 func parseHubCustomerStoreMode(raw string) (string, bool) {
 	switch m := strings.ToLower(strings.TrimSpace(raw)); m {
-	case "", hubCustomerStoreJSON:
-		return hubCustomerStoreJSON, true
-	case hubCustomerStoreShadow, hubCustomerStoreColony:
+	case "":
+		return hubCustomerStoreDefault, true
+	case hubCustomerStoreJSON, hubCustomerStoreShadow, hubCustomerStoreColony:
 		return m, true
 	}
 	return hubCustomerStoreJSON, false
@@ -208,10 +288,11 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 			return hubCustomerStoreJSON
 		}
 	}
-	st, err := store.Open(path, store.Options{LockTimeout: hubCustomerStoreLockTimeout})
+	st, err := openHubCustomerStoreFile(ctx, logger, path, mode, hubCustomerStoreLockWait(logger))
 	if err != nil {
-		// ErrSchemaTooNew (an older binary on a newer file), ErrLocked or an
-		// unreadable file: fail closed to json, never rewrite the file.
+		// ErrSchemaTooNew (an older binary on a newer file), a lock still
+		// held after the retry window, or an unreadable file: fail closed to
+		// json, never rewrite the file.
 		logger.Warn("hub customer store: open failed; json mode", "requested", mode, "error", crmErrClass(err))
 		return hubCustomerStoreJSON
 	}

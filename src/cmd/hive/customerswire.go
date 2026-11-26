@@ -63,10 +63,32 @@ func wireCustomersAt(dataDir, graphDir string, resolvers customers.Resolvers, lo
 }
 
 // wireCustomersAtMode is wireCustomersAt with a customers.store mode
-// (#19855). shadow and colony open /data/customers/colony.db beside
-// people.json; a colony store that cannot be opened or imported leaves the
-// section on json, which is today's behaviour.
+// (#19855). shadow (the spoke default, #19972) and colony open
+// /data/customers/colony.db beside people.json; a colony store that cannot be
+// opened or imported leaves the section on json, people.json untouched.
 func wireCustomersAtMode(dataDir, graphDir string, mode customers.StoreMode, resolvers customers.Resolvers, logger *slog.Logger) (*customersDashboard, func()) {
+	if mode != customers.StoreColonyOnly {
+		// A hive set back from colony-only finds no people.json: it is
+		// written back from colony.db first (#19972).
+		if restored, err := customers.RestoreFromColony(dataDir, logger); err != nil && restored {
+			// people.json was written; only the cleanup after it failed.
+			// A later colony-only boot sees people.json is newer than the
+			// migration and refuses to choose, so nothing is lost.
+			if logger != nil {
+				logger.Warn("[customers] people.json restored from the colony-only store; cleaning up after it failed",
+					"error", err)
+			}
+		} else if err != nil {
+			// No people.json: starting would begin an empty one, which a
+			// colony or shadow boot would take as the truth. Customers
+			// stays off in every mode.
+			if logger != nil {
+				logger.Error("[customers] people.json could not be restored from the colony-only store; the Customers section is off",
+					"error", err)
+			}
+			return nil, nil
+		}
+	}
 	store, err := customers.Open(dataDir, nil)
 	if err != nil {
 		if logger != nil {
@@ -75,6 +97,16 @@ func wireCustomersAtMode(dataDir, graphDir string, mode customers.StoreMode, res
 		return nil, nil
 	}
 	colony, err := customers.AttachColony(store, mode, logger)
+	if err != nil && mode == customers.StoreColonyOnly {
+		// In colony-only there may be no people.json: running on json now
+		// would start an empty one, which the next colony-only boot would
+		// then take as the truth. The section stays off instead.
+		if logger != nil {
+			logger.Error("[customers] colony-only store unavailable; the Customers section is off until it opens",
+				"error", err)
+		}
+		return nil, nil
+	}
 	if err != nil {
 		colony = nil
 		if logger != nil {

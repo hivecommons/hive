@@ -669,7 +669,35 @@ Hive tells the CLI the real window with `CLAUDE_CODE_MAX_CONTEXT_TOKENS` when it
 
 `max_context_tokens` describes the agent's configured `model`. It is not applied while a model override (a dashboard switch or pin) runs another model, and a review head on a different model does not inherit it; those fall back to discovery.
 
-Hive does not export the variable for model IDs that contain `claude` (for example `anthropic/claude-sonnet-5-5`), because the CLI already knows those windows. Set `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` to turn the export off for the whole hive. Sandbox Job kicks do not get the variable yet: the sandbox drops every variable whose name contains `TOKEN`.
+#### Earlier auto-compaction (opt-in)
+
+Claude CLI agents, direct or inference-routed, can opt into an earlier compaction window:
+
+```yaml
+agents:
+  quality:
+    auto_compact_window_tokens: 160000
+```
+
+The per-agent `auto_compact_window_tokens` is a token count; `0` or omission
+leaves it unset, and a nonzero value below `100000` is rejected. It takes
+priority over `HIVE_INFERENCE_AUTO_COMPACT_PERCENT`. The CLI caps the effective
+window at `CLAUDE_CODE_MAX_CONTEXT_TOKENS` when declared, or `1000000` otherwise,
+and floors it at `100000`. It subtracts 33000 tokens from that effective window
+to calculate the compaction trigger.
+
+Alternatively, set `HIVE_INFERENCE_AUTO_COMPACT_PERCENT` to an integer from
+`1` to `100` to opt in hive-wide. The CLI compacts at that percentage of
+`(effective window - 20000)`; the 33000-token adjustment does not apply.
+Unset or invalid values leave this option off. This fallback requires a known
+exported context window, so it inherits the discovery, model-ID, and
+`HIVE_INFERENCE_PASS_CONTEXT_WINDOW` limitations above and below. The explicit
+per-agent setting does not depend on the context-window export and also works
+for Claude model IDs. It describes the configured model and is dropped for a
+review head using a different model. Sandbox Job kicks receive the same context
+and compaction settings as pane launches.
+
+Hive does not export the variable for model IDs that contain `claude` (for example `anthropic/claude-sonnet-5-5`), because the CLI already knows those windows. Set `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` to turn the export off for the whole hive.
 
 ### Per-agent homes: what is shared and what is private
 
@@ -1301,7 +1329,7 @@ One agent reaches its template by **role** rather than by `kick_template`: an ag
 | Is there work? | Go, before any template is read | An empty escalated queue means scheduled kicks are skipped (logged as `nothing to adjudicate`) and a forced kick is a stand-down with no repo-rotation instructions ([#11045](https://github.com/hivecommons/hive/issues/11045), [#11046](https://github.com/hivecommons/hive/issues/11046)). A template must not be able to manufacture a contract with nothing to adjudicate. |
 | May this agent close a PR? | Go, rendered into `${REVIEWER_CLOSE_AUTHORITY}` | Closing is operator-only below ACMM L6. Whether an agent may close a human-queued PR is a trust decision, not wording. |
 
-So the worst an override can do is change the *wording* of a kick that was already going to be sent. The template-specific variables are `${REVIEWER_WORK_LIST}`, `${REVIEWER_MAX_PRS}`, `${REVIEWER_PASSED_LABEL}`, `${REVIEWER_RECOMMEND_CLOSE_LABEL}` and `${REVIEWER_CLOSE_AUTHORITY}`, alongside the usual built-ins.
+So the worst an override can do is change the *wording* of a kick that was already going to be sent. The template-specific variables are `${REVIEWER_WORK_LIST}`, `${REVIEWER_MAX_PRS}`, `${REVIEWER_PASSED_LABEL}`, `${REVIEWER_RECOMMEND_CLOSE_LABEL}`, `${REVIEWER_CLOSE_AUTHORITY}` and `${REVIEWER_MERGE_AFTER_GREEN}` (what happens to a repaired PR once its checks are green: at ACMM L5 it carries `ready-for-review` and waits for a maintainer, at L6 the sweep merges it), alongside the usual built-ins.
 
 Do not confuse it with `reviewer-queue.md`, which belongs to the pack-defined `reviewer` agent in the L5/L6 packs: that agent wakes on a 30-minute cadence, works the open PR queue in advisory mode and routes `requires_human` / `reject` verdicts to a maintainer via the triage label itself. Because a `kick_template` shadows the role-based routing, that agent never reaches this lane; the L5/L6 packs therefore ship a separate template-less `adjudicator` agent (`role: reviewer`, `mode: ISSUES_AND_PRS`, 30-minute cadence) to work escalated PRs ([#9477](https://github.com/hivecommons/hive/issues/9477)). Its work list covers every escalated hive PR the hub lists — the escalated rows of `ci_failing` plus the `escalated` list in `ci-failing.json`, which carries conflicted, green, and pending escalations that have no failing check.
 

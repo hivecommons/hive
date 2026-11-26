@@ -36,7 +36,7 @@ Use ReadWriteMany storage for hosted spoke PVCs. The provisioning template in `p
 | `HIVE_MODE=hub` | Yes | Selects hub mode. |
 | `HIVE_HUB_PORT` | No | Defaults to `3001`. Set to `80` for the published hub image contract if needed. |
 | `HIVE_CONFIG` or `--config` | No | Defaults to `/etc/hive/hive.yaml`; `Dockerfile.hub` passes `--config /etc/hive/hive.yaml`. |
-| `HIVE_HUB_SECRET` | Strongly recommended | Master secret from which heartbeat bearers and per-hive keys derive. If unset, the hub reads `/data/saas/hub-secret.key` when present. The hub additionally maintains a rotation generation set alongside it — see [security-model.md](security-model.md#9-platform-and-supply-chain); rotate via the admin endpoint, never by swapping the master in place. |
+| `HIVE_HUB_SECRET` | Strongly recommended | Master secret from which heartbeat bearers and per-hive keys derive. If unset, the hub reads `/data/saas/hub-secret.key` when present. The hub additionally maintains a rotation generation set alongside it — see [security-model.md](security-model.md#9-platform-and-supply-chain); rotate via the admin endpoint, never by swapping the master in place. Rotation does not reach spokes the hub cannot patch with kubectl; see [Master rotation and spokes that hold only derived keys](#master-rotation-and-spokes-that-hold-only-derived-keys). |
 | `HIVE_HUB_OAUTH_CLIENT_ID` / `HIVE_HUB_OAUTH_CLIENT_SECRET` | Enables **GitHub** login | These two enable the GitHub provider specifically. Human login is multi-provider: Google, IBMid, Red Hat, Microsoft Entra ID, and a generic OIDC slot are each enabled independently via `HIVE_HUB_OIDC_<PROVIDER>_CLIENT_ID` (+ `_CLIENT_SECRET`, `_ISSUER`, `_SCOPES`, `_DISPLAY` — see [env-vars.md](env-vars.md#hub-login-providers)). With two or more providers configured the hub shows a provider picker at `/login`; with exactly one it redirects straight into it; with none it logs OAuth disabled and registers no login routes. A provider with a client id but a missing/invalid issuer is silently skipped (check the `hub login enabled providers=` startup log line). |
 | `HIVE_GITHUB_TOKEN` or GitHub App config | Required for operations that call GitHub | Same GitHub auth rules as a spoke. |
 | `HIVE_HUB_SLACK_BOT_TOKEN`, `HIVE_NTFY_SERVER`, `HIVE_NTFY_TOPIC` | No | Optional hub notifications. |
@@ -87,6 +87,26 @@ env:
 ```
 
 Without `HIVE_HUB_SECRET`, a protected hub returns `401 unauthorized`, the spoke logs `hub heartbeat rejected status=401`, and the hub shows the hive offline. This matches the gotcha in `manual-provisioning.md`.
+
+### Master rotation and spokes that hold only derived keys
+
+A spoke can run without the master: give it the per-hive keys the hub derives (`HIVE_HEARTBEAT_KEY`, `HIVE_SSO_PUBLIC_KEY`, `HIVE_SESSION_PUBLIC_KEY`, `HIVE_TERMINAL_KEY`, `HIVE_INVITE_KEY`, `HIVE_CUSTOMER_MATCH_KEY`) instead of `HIVE_HUB_SECRET`. A [self-service `byo-` hive](#self-service-registration) is different: its heartbeat key is random, not derived from the master, so a master rotation does not change it. This section describes what the code does when the hub master is rotated for such a spoke. In short, **there is no supported rotation procedure for a spoke that the hub cannot reach with kubectl.**
+
+**What a rotation changes.** `POST /api/saas/admin/rotate-master-key` generates a new master and writes the generation set to `/data/saas/hub-generations.json`. It never rewrites `HIVE_HUB_SECRET` or `/data/saas/hub-secret.key`. Once the generations file exists, the hub loads the current master from it, and `HIVE_HUB_SECRET` is used only when the file does not exist. After a rotation, `HIVE_HUB_SECRET` therefore still holds the old master, which is now the previous generation.
+
+- The previous generation keeps verifying for seven days (`verify_until`), and at most two generations are live. When the window ends, the previous generation is retired.
+- A second rotation inside eight hours is refused unless the request sets `force`.
+- A heartbeat key derived from `HIVE_HUB_SECRET` after a rotation is a previous-generation key. The hub checks heartbeat bearers against its generation set, so that key stops verifying when the previous generation retires. `HIVE_TERMINAL_KEY` and `HIVE_INVITE_KEY` are minted and verified on the spoke itself, so hub generations do not apply to them.
+
+**How spokes get the new keys.** The only delivery path is the per-hive env reconcile sweep. Every 15 minutes, it reads the spoke's `hive` Deployment with kubectl and patches the derived keys into its env, at most three spokes per cycle, so a large fleet takes hours to converge. While a previous generation is live it also delivers `HIVE_SSO_PUBLIC_KEY_PREV` and `HIVE_SESSION_PUBLIC_KEY_PREV`, which is how SSO and session verification on a swept spoke accept the previous generation. It covers only hives the hub has a SaaS record for that are not in `provisioning` status, on clusters the hub can reach. Pull-only and unreachable clusters are skipped. A spoke whose keys an operator copied into its environment by hand gets nothing from a rotation.
+
+**Rotation is refused when the sweep cannot see the whole fleet.** The endpoint refuses to rotate unless the last sweep considered at least one hive and reached every hive it considered. `force` does not override this check. A hub with no kubectl access to its spokes, or with no hub-provisioned hives, cannot rotate through the endpoint at all, so its master stays on the current generation.
+
+**Where to read the current keys.** No hub route or CLI returns the master or a key derived from it. `GET /api/saas/admin/key-generations` returns generation IDs, timestamps, status flags, the rotation cooldown and the persist path, and the rotate response carries no key material. (The self-service routes return a `byo-` hive's random key, which is not master-derived.) Do not replace the master in place to get around this; that strands every spoke, as [security-model.md](security-model.md) says.
+
+**`HIVE_HEARTBEAT_KEY_PREVIOUS` covers the keystore only.** The spoke's secrets keystore reads it as previous key material, so secrets sealed under an old heartbeat key stay readable after that key changes. It is decrypt-only when a current key (`HIVE_SECRETS_KEY` or `HIVE_HEARTBEAT_KEY`) is set; with neither set, the keystore uses it as the sealing key. The heartbeat bearer, SSO, session, terminal, invite and customer-match checks do not read it, and the hub never sets it. The previous-key variables for SSO and sessions are the `_PREV` ones above. Copying an old heartbeat key into it does not keep a spoke's heartbeat working.
+
+Delivering a new master to a spoke the hub cannot patch exists only as a design, in [design/master-delivery-wrapped.md](design/master-delivery-wrapped.md). Until it is built, a spoke that holds only derived keys needs its keys updated by hand after a rotation, and an operator has no hub-supported way to obtain them.
 
 ### Customer profile sharing
 
@@ -155,7 +175,9 @@ per request with the hive id and counts.
 
 ### Hub CRM on the colony store
 
-`HIVE_HUB_CUSTOMER_STORE` (default `json`) moves the hub's person and fact data
+`HIVE_HUB_CUSTOMER_STORE` (default `colony` since
+[#19972](https://github.com/hivecommons/hive/issues/19972); before that
+`json`) moves the hub's person and fact data
 onto the [colony](https://github.com/hivecommons/colony) store
 (`/data/saas/colony.db`, next to `/data/saas/users`), phase 4 of the
 [Colony customer-data backend design](design/colony-customer-data-backend.md)
@@ -167,7 +189,23 @@ per-user JSON.
 |---|---|---|---|
 | `json` | JSON | JSON | Nothing. An existing `colony.db` is opened only so a deleted user is erased from it too. |
 | `shadow` | JSON | JSON and colony | Backs up `colony.db`, imports every user on the first boot (one transaction, source fingerprint recorded), reconciles each person, erases people whose JSON record is gone, logs counts only. A missing users directory fails the boot closed to `json`. |
-| `colony` | colony, then JSON per field and per person | JSON and colony | As `shadow`. |
+| `colony` (default) | colony, then JSON per field and per person | JSON and colony | As `shadow`. |
+
+Unset or blank means `colony`. A value that is set but unknown (a typo) means
+`json`, and the boot logs `hub customer store: unknown mode; using json`, so a
+mistyped rollback never moves the hub onto colony.
+
+**Upgrading from the `json` default.** A hub that ran with the variable
+unset and is upgraded to a release with the `colony` default runs the boot
+sync on its first boot: the one-time import, the person-by-person reconcile
+and the count check, exactly as a first `shadow` boot does. The JSON files are
+not rewritten, so they are the backup, and every later boot keeps a
+`colony.db.bak-<UTC time>` copy. If the import cannot run (the users directory
+is missing, `colony.db` is locked, unreadable or from a newer release), the
+boot logs `hub customer store: running in json mode` and the hub keeps working
+on the JSON. Check the first boot's `hub customer store: boot sync` line for
+`parity=true` and `failed=0`. To stay on JSON through the upgrade, set
+`HIVE_HUB_CUSTOMER_STORE=json` before rolling the new image.
 
 - **Provenance.** Each field is one colony fact at the rank its JSON source
   names: `user` (`*_source: user`, `country_set_by_user`), `admin`
@@ -189,8 +227,12 @@ per-user JSON.
   fell behind is never written back. One boot erases at most 10 people, or
   10% of the store if that is more; a larger burst of missing JSON records is
   logged and held, never erased.
-- **Rollback.** Set `json` and roll the hub. Nothing is lost, because every
-  mode writes the JSON.
+- **Rollback.** Set `HIVE_HUB_CUSTOMER_STORE=json` and roll the hub. Nothing
+  is lost, because every mode writes the JSON: the hub reads the per-user
+  files as it did before the colony store, and `colony.db` is opened only to
+  erase a deleted user. Setting `colony` again later reconciles colony from
+  the JSON on the next boot. `shadow` is the half-way step: colony is still
+  written and checked, but reads come from the JSON.
 - **Erasure.** Deleting a user erases them from `colony.db` in every mode and
   tombstones their identities, so a later mirror never re-adds them; a person
   deleted while `colony.db` was closed is erased on the next `shadow` or
@@ -214,7 +256,25 @@ per-user JSON.
   the hive drops it at its 72-hour refresh expiry. A person who cleared their
   organization on the hub gets no derived affiliation either.
 - **Single writer.** bbolt takes a file lock, so the hub stays one replica on
-  its PVC. A lock held for more than 5 seconds at boot leaves the hub in `json`.
+  its PVC. When another process holds the lock at boot, the hub retries the
+  open with doubling backoff for up to `HIVE_HUB_CUSTOMER_STORE_LOCK_WAIT`
+  (default `2m`; `0` means one attempt), logging
+  `hub customer store: colony.db locked by another process; retrying` on each
+  try, and stays in `json` only if the lock is still held after that
+  ([#20103](https://github.com/hivecommons/hive/issues/20103)). A boot can
+  wait up to the setting plus one 5-second attempt. The open runs before the
+  hub serves HTTP, so the pod is not Ready while it waits: give the hub a
+  `startupProbe` whose `failureThreshold` times `periodSeconds` is at least
+  135 seconds with the default, or the kubelet may restart it mid-wait.
+- **Run the hub Deployment with `strategy: Recreate`.** With `RollingUpdate`
+  the new pod starts while the old one still holds the lock, and the old pod
+  only exits once the new one is Ready, so the new pod can never get the lock
+  and runs in `json` for its whole life. `Recreate` stops the old pod before
+  the new one starts. The boot retry covers a lock that is still held after
+  that, such as the server-side release of a lock on the RWX volume after an
+  unclean node loss, or a stray process holding the file. The cost is a short
+  hub outage on every roll, including hub self-upgrades.
+  `src/deploy/check-hub-manifest.py` fails on any other strategy.
 
 ### Ask AI help
 
@@ -593,6 +653,6 @@ The hub's own container is named `hub` and it is the only container in the Deplo
 kubectl -n hive-hub get deploy hive-hub -o yaml | python3 src/deploy/check-hub-manifest.py -
 ```
 
-Cluster-side cleanup that cannot be done from the repo: remove any stray `hive-hub` container from the running Deployment, move the two secrets into a Secret, and rotate both values. The check also rejects a secret env fed from a ConfigMap or field and looks at initContainers.
+Cluster-side cleanup that cannot be done from the repo: remove any stray `hive-hub` container from the running Deployment, move the two secrets into a Secret, and rotate both values. The check also rejects a secret env fed from a ConfigMap or field and looks at initContainers, and it fails a Deployment whose `spec.strategy.type` is not `Recreate` (an unset strategy is Kubernetes' `RollingUpdate`), because a rolling update leaves the new pod unable to take `colony.db`'s lock (see [Hub CRM on the colony store](#hub-crm-on-the-colony-store)). Switching the live Deployment is an operator step: `kubectl -n hive-hub patch deploy hive-hub --type merge -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'`.
 
 The hub also checks itself: before each self-upgrade `set image`, it reads its own Deployment's container names and logs `hub deployment has unexpected containers` (with `unexpected=<names>`) when anything besides `hub` is present. The warning never blocks the upgrade.

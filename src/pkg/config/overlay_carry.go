@@ -2,9 +2,9 @@ package config
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log"
-	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -30,10 +30,12 @@ import (
 //   - Reload: every top-level overlay key the schema knows is carried, except
 //     the keys dedicated code above already adopts (overlayHandledKeys) and
 //     the keys the overlay must never override (overlaySeedOwnedKeys). A block
-//     that differs from the config file's is adopted, whole, when the overlay
-//     file is newer than the config file (it holds the latest edit) and the
-//     result still validates. Otherwise the config file wins and the log
-//     names the block, so nothing is dropped without a word.
+//     that differs from the config file's is adopted, whole, when the config
+//     file has not been edited since the overlay was saved (the overlay then
+//     holds the latest edit; see overlayReconciledWith, which compares content
+//     hashes, not mtimes) and the result still validates. Otherwise the config
+//     file wins and the log names the block, so nothing is dropped without a
+//     word.
 //   - Persist: an overlay key the schema does not know, or one that fails to
 //     decode, is kept verbatim (pre-expansion text) and written back into the
 //     overlay on every save instead of being erased. An overlay that is not
@@ -70,6 +72,14 @@ var overlaySeedOwnedKeys = map[string]string{
 	"hub":        "hub settings are managed by the hub",
 	"acmm_level": "the ACMM level is set by the hub and the pack apply",
 	"hive_id":    "the hive id is assigned at provisioning",
+}
+
+// IsSeedOwnedKey reports whether key is a top-level config key owned by the
+// config file, the hub or provisioning (overlaySeedOwnedKeys), which no
+// dashboard write path may change. The chat config Apply refuses it (#19985).
+func IsSeedOwnedKey(key string) bool {
+	_, owned := overlaySeedOwnedKeys[key]
+	return owned
 }
 
 // preservedOverlayBlock is one top-level overlay entry the in-memory config
@@ -147,6 +157,9 @@ type decodedOverlay struct {
 	// valid lists the known keys that decoded, in file order.
 	valid []overlayEntry
 	carry *overlayCarryState
+	// base is the config file hash from the overlay's header line, nil when
+	// the overlay has none (see parseOverlayBase).
+	base *contentSum
 }
 
 // topLevelMapping returns the top-level mapping of a parsed document, nil for
@@ -243,6 +256,9 @@ func decodeDashboardOverlay(data, primaryData []byte) (*decodedOverlay, error) {
 	if len(out.carry.preserved) == 0 {
 		out.carry = nil
 	}
+	if base, ok := parseOverlayBase(data); ok {
+		out.base = &base
+	}
 	return out, nil
 }
 
@@ -277,17 +293,92 @@ func logOverlayOnce(id string, content []byte, format string, args ...any) {
 	log.Printf(format, args...)
 }
 
-// fileNewer reports whether a's modification time is strictly after b's.
-func fileNewer(a, b string) bool {
-	ai, err := os.Stat(a)
-	if err != nil {
-		return false
+// Which layer holds the latest edit (hivecommons/hive#20066).
+//
+// #19740 first decided this by file mtime: an overlay block won only when the
+// overlay file was newer than the config file. Every save writes the overlay
+// first and the config file second, and on Kubernetes the boot chain (the
+// copy-config init container, the entrypoint's copy of the runtime config)
+// rewrites the config path, so the config file is newer on every boot and
+// after every save, and the mtime said nothing about who edited what.
+//
+// Instead, every save records in the overlay's first line the content hash of
+// the config file it writes in the same save. On load:
+//
+//   - the config file still has exactly that content: nobody changed it since
+//     the overlay was written, so whatever differs in the overlay is the
+//     newer edit (a hand edit of the overlay, #19740). Overlay blocks win.
+//     A boot-time copy of the same content changes the mtime but not the
+//     hash, so it does not count as an edit.
+//   - the config file has other content: someone edited it after the overlay
+//     was written (or the overlay was written by an older version, without
+//     the header). The config file wins, a block missing there counts as
+//     removed, and the next save writes it to the overlay.
+
+// overlayBaseHeaderPrefix starts the overlay's first line. It is a YAML
+// comment, so every reader of the overlay (the loader, the entrypoint's
+// first-boot merge, backups) ignores it.
+const overlayBaseHeaderPrefix = "# hive-overlay-base: sha256:"
+
+// overlayBaseHeader is the first line saveDashboardOverlay writes: the hash of
+// the config file content written by the same save.
+func overlayBaseHeader(base contentSum) []byte {
+	return []byte(fmt.Sprintf("%s%x\n", overlayBaseHeaderPrefix, base[:]))
+}
+
+// parseOverlayBase reads the config file hash from the overlay's first line.
+// ok is false for an overlay without a well-formed header (written by an
+// older version, or by hand from scratch).
+func parseOverlayBase(data []byte) (base contentSum, ok bool) {
+	line, _, _ := strings.Cut(string(data), "\n")
+	hexSum, found := strings.CutPrefix(strings.TrimRight(line, "\r"), overlayBaseHeaderPrefix)
+	if !found {
+		return base, false
 	}
-	bi, err := os.Stat(b)
-	if err != nil {
-		return false
+	decoded, err := hex.DecodeString(strings.TrimSpace(hexSum))
+	if err != nil || len(decoded) != len(base) {
+		return base, false
 	}
-	return ai.ModTime().After(bi.ModTime())
+	copy(base[:], decoded)
+	return base, true
+}
+
+// overlayReconciledWith reports whether the config file content primaryData
+// is the one the overlay was written against, i.e. the config file has not
+// been edited since the overlay was saved.
+func overlayReconciledWith(ov *decodedOverlay, primaryData []byte) bool {
+	sum := sumBytes(primaryData)
+	return (ov.base != nil && *ov.base == sum) || overlayHeldWrite(sum)
+}
+
+// overlayHeldWrites are the config file contents this process saved while it
+// left an unparseable overlay alone (saveDashboardOverlayFor). Those saves
+// could not refresh the overlay's header, so once the operator fixes the
+// overlay, a config file still holding one of them was changed only by this
+// process: the overlay is still the latest edit. Cleared when an overlay is
+// written normally again. Process memory only; after a restart the header
+// rule alone applies.
+var (
+	overlayHeldMu     sync.Mutex
+	overlayHeldWrites = map[contentSum]bool{}
+)
+
+func recordOverlayHeldWrite(sum contentSum) {
+	overlayHeldMu.Lock()
+	defer overlayHeldMu.Unlock()
+	overlayHeldWrites[sum] = true
+}
+
+func overlayHeldWrite(sum contentSum) bool {
+	overlayHeldMu.Lock()
+	defer overlayHeldMu.Unlock()
+	return overlayHeldWrites[sum]
+}
+
+func clearOverlayHeldWrites() {
+	overlayHeldMu.Lock()
+	defer overlayHeldMu.Unlock()
+	overlayHeldWrites = map[contentSum]bool{}
 }
 
 // adoptOverlayBlocksGeneric carries every overlay block not covered by the
@@ -306,7 +397,7 @@ func adoptOverlayBlocksGeneric(cfg *Config, path string, primaryData []byte, ov 
 			primaryVals = mappingValues(root)
 		}
 	}
-	overlayNewer := fileNewer(DashboardOverlayFile, path)
+	overlayCurrent := overlayReconciledWith(ov, primaryData)
 	var adopted []string
 	for _, e := range ov.valid {
 		key := e.key.Value
@@ -328,7 +419,7 @@ func adoptOverlayBlocksGeneric(cfg *Config, path string, primaryData []byte, ov 
 		}
 		content, _ := yaml.Marshal(e.expanded)
 		if overlayHandledKeys[key] {
-			if overlayNewer {
+			if overlayCurrent {
 				logOverlayOnce("handled:"+key, content, "[config] dashboard overlay %s block %q differs from %s; only the parts with their own reload rules are adopted from it (see loadWithDashboardOverlay), other changes in this block are not", DashboardOverlayFile, key, path)
 			}
 			continue
@@ -337,11 +428,11 @@ func adoptOverlayBlocksGeneric(cfg *Config, path string, primaryData []byte, ov 
 			logOverlayOnce("owned:"+key, content, "[config] dashboard overlay %s block %q differs from %s and is not adopted: %s", DashboardOverlayFile, key, path, why)
 			continue
 		}
-		if !overlayNewer {
-			// Every save writes the overlay first and the config file second,
-			// so a newer config file holds the latest edit, including the
-			// removal of a block.
-			logOverlayOnce("older:"+key, content, "[config] dashboard overlay %s block %q differs from %s, which is newer; keeping the config file's version (a block missing there counts as removed), and the next save writes it to the overlay", DashboardOverlayFile, key, path)
+		if !overlayCurrent {
+			// The config file changed since the overlay was written (or the
+			// overlay predates the header), so it holds the latest edit,
+			// including the removal of a block.
+			logOverlayOnce("older:"+key, content, "[config] dashboard overlay %s block %q differs from %s, which changed after the overlay was saved (or the overlay has no hive-overlay-base line); keeping the config file's version (a block missing there counts as removed), and the next save writes it to the overlay", DashboardOverlayFile, key, path)
 			continue
 		}
 		// The overlay block wins whole, the same rule as review and
@@ -351,6 +442,12 @@ func adoptOverlayBlocksGeneric(cfg *Config, path string, primaryData []byte, ov 
 		orig := reflect.New(field.Type()).Elem()
 		orig.Set(field)
 		field.Set(reflect.ValueOf(oo).FieldByIndex(index))
+		// The overlay leaves dashboard.auth_token blank when it came from the
+		// pod env or the token file (dashboardOverlayBytes), so a blank there
+		// is not an edit: keep the token the config file loaded.
+		if loaded, ok := orig.Interface().(DashboardConfig); ok && key == "dashboard" && cfg.Dashboard.AuthToken == "" {
+			cfg.Dashboard.AuthToken = loaded.AuthToken
+		}
 		if err := cfg.validateWithOptions(opts); err != nil {
 			field.Set(orig)
 			logOverlayOnce("invalid:"+key, content, "[config] WARNING: dashboard overlay %s block %q is not adopted: it does not validate (%v); the config file's version is kept and the next save writes it to the overlay", DashboardOverlayFile, key, err)

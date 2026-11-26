@@ -2952,6 +2952,8 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.tokenCollector.SetCopilotSessionsDir(b.cfg.Data.CopilotSessionsDir)
 	b.tokenCollector.SetBobSessionsDir(b.cfg.Data.BobSessionsDir)
 	b.tokenCollector.SetClineHomesRoot("/data/home")
+	// #20003: per-agent CODEX_HOME rollouts (/data/home/.codex-<agent>).
+	b.tokenCollector.SetCodexHomesRoot("/data/home")
 	b.tokenCollector.SetSandboxRunHistoryPath(crux.SandboxRunHistoryPath(crux.WorkDir()))
 	tokenStop := make(chan struct{})
 	deps.startTokenCollector(b.tokenCollector, tokenStop)
@@ -7596,6 +7598,9 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		return true, runAuditVerify(args[1:], stdout, stderr)
 	case forgeSubcommand:
 		return true, runForge(args[1:], stdout, stderr)
+	case colonySubcommand:
+		// Offline colony store tools (#19972); see colony_cmd.go.
+		return true, runColony(args[1:], stdout, stderr)
 	case memoryDrainSubcommand:
 		// Run as the agent by the Claude Code memory hooks Hive seeds; see
 		// memory_drain_cmd.go. Always exits 0.

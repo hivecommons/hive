@@ -44,7 +44,8 @@ func clearCustomersStoreEnv(t *testing.T) {
 	t.Setenv(config.EnvCustomersEnrichmentAutoAccept, "")
 }
 
-// The store mode and the auto-accept policy default to json and off, only
+// The store mode and the auto-accept policy default to shadow (#19972) and
+// off, only
 // an owner can change them, the saved value round-trips with its effective
 // value, an unrelated PUT leaves them alone, and an empty value goes back to
 // the default.
@@ -52,11 +53,11 @@ func TestGovernorFeatures_CustomersStoreAndAutoAcceptRoundTrip(t *testing.T) {
 	clearCustomersStoreEnv(t)
 	s := covApiServer(t)
 	got := readCustomersStoreFeatures(t, s).Features
-	if got.Store != "" || got.StoreEffective != config.CustomersStoreJSON ||
+	if got.Store != "" || got.StoreEffective != config.CustomersStoreShadow ||
 		got.AutoAccept != "" || got.AutoAcceptEffective != config.CustomersAutoAcceptOff {
-		t.Fatalf("default payload = %+v, want unset, json and off", got)
+		t.Fatalf("default payload = %+v, want unset, shadow and off", got)
 	}
-	if got.Defaults.Store != config.CustomersStoreJSON || got.Defaults.AutoAccept != config.CustomersAutoAcceptOff {
+	if got.Defaults.Store != config.CustomersStoreShadow || got.Defaults.AutoAccept != config.CustomersAutoAcceptOff {
 		t.Fatalf("defaults = %+v", got.Defaults)
 	}
 
@@ -116,8 +117,16 @@ func TestGovernorFeatures_CustomersStoreAndAutoAcceptRoundTrip(t *testing.T) {
 	if c := s.deps.Config.Customers; c.Store != "" || c.Enrichment.AutoAccept != "" {
 		t.Fatalf("empty saved store=%q auto_accept=%q, want both unset", c.Store, c.Enrichment.AutoAccept)
 	}
-	if got = readCustomersStoreFeatures(t, s).Features; got.StoreEffective != config.CustomersStoreJSON {
-		t.Fatalf("store effective after clear = %q, want json", got.StoreEffective)
+	if got = readCustomersStoreFeatures(t, s).Features; got.StoreEffective != config.CustomersStoreShadow {
+		t.Fatalf("store effective after clear = %q, want the shadow default", got.StoreEffective)
+	}
+
+	// An explicit json is saved and stays json: it is the rollback.
+	if rec := doPut(s, "/api/config/governor/features", map[string]any{"customersStore": "json"}); rec.Code != http.StatusOK {
+		t.Fatalf("PUT json: %d", rec.Code)
+	}
+	if got = readCustomersStoreFeatures(t, s).Features; got.Store != config.CustomersStoreJSON || got.StoreEffective != config.CustomersStoreJSON {
+		t.Fatalf("explicit json = %+v, want saved and effective json", got)
 	}
 }
 
@@ -127,7 +136,7 @@ func TestGovernorFeatures_CustomersStoreRejectsUnknownValues(t *testing.T) {
 	clearCustomersStoreEnv(t)
 	s := covApiServer(t)
 	for _, body := range []map[string]any{
-		{"customersEnrichmentEnabled": true, "customersStore": "colony-only"},
+		{"customersEnrichmentEnabled": true, "customersStore": "colony_only"},
 		{"customersEnrichmentEnabled": true, "customersStore": "sqlite"},
 		{"customersEnrichmentEnabled": true, "customersEnrichmentAutoAccept": "all"},
 		{"customersEnrichmentEnabled": true, "customersEnrichmentAutoAccept": "gitdm"},
@@ -161,7 +170,11 @@ func TestFeaturesTab_CustomersStoreMarkup(t *testing.T) {
 			t.Errorf("index.html missing %q", want)
 		}
 	}
-	if strings.Contains(html, `'colony-only'`) {
-		t.Error("the Settings select offers colony-only, which no release implements yet")
+	// colony-only (#19972) is offered, after the default and never as it.
+	if !strings.Contains(html, `['json', 'json'], ['colony-only', 'colony-only']]`) {
+		t.Error("the Settings select does not offer colony-only")
+	}
+	if strings.Contains(html, `['', 'default (colony-only)']`) {
+		t.Error("colony-only must never be the default")
 	}
 }

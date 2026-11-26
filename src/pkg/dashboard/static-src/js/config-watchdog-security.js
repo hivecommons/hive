@@ -1470,6 +1470,7 @@
       { id: 'work-intake', title: 'Work intake & issue lifecycle', desc: 'How issues are classified, claimed, closed on merge, de-duplicated, auto-closed and re-planned.' },
       { id: 'agents', title: 'Agents & tooling', desc: 'Agent session supervision and resume, provider rotation, the policy repo, decision models and workload identity.' },
       { id: 'quality', title: 'Quality loops & release health', desc: 'Post-completion feedback lanes, audit publication and release CI repair.' },
+      { id: 'chat', title: 'Chat', desc: 'Hive Chat behavior: grounded answers and the owner-only config assist toggle.' },
       { id: 'integrations', title: 'Integrations & observability', desc: 'OpenTelemetry export plus the Linear, upstream-fork and self-report connections.' },
       { id: 'experimental', title: 'Experimental', desc: 'Pilots and report-only rollouts. Off by default; expect these to move or change.' },
     ];

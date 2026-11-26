@@ -615,6 +615,17 @@ func TestSupervisorMessage_SweepInstructions(t *testing.T) {
 	}
 }
 
+// The fallback supervisor message must not send the supervisor to look at
+// other agents' tmux panes: it never types into or inspects another agent's
+// session (hivecommons/hive#19945).
+func TestSupervisorMessage_NoTmuxInstruction(t *testing.T) {
+	s := newScheduler()
+	msg := s.buildSupervisorMessage(emptyActionable())
+	if strings.Contains(strings.ToLower(msg), "tmux") {
+		t.Errorf("supervisor message still mentions tmux:\n%s", msg)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // buildGenericMessage
 // ---------------------------------------------------------------------------
@@ -898,12 +909,17 @@ func TestBuildKickMessages_ReviewerHasAuthorizedRepos(t *testing.T) {
 	}
 }
 
-func TestBuildKickMessages_SupervisorHasAuthorizedRepos(t *testing.T) {
+// The supervisor has no GitHub access, so the AUTHORIZED REPOS block (clone,
+// implement as the issue scopes it) is never rendered for it, even when an
+// older hive.yaml still says include_repos: true (hivecommons/hive#20038).
+func TestBuildKickMessages_SupervisorHasNoAuthorizedRepos(t *testing.T) {
 	s := newScheduler()
+	yes := true
+	s.cfg.Agents = map[string]config.AgentConfig{"supervisor": {Mode: "ADVISORY", IncludeRepos: &yes}}
 	messages := s.BuildKickMessages(emptyActionable(), []string{"supervisor"})
 	msg := messages[0].Message
-	if !strings.Contains(msg, "AUTHORIZED REPOS") {
-		t.Error("supervisor kick missing AUTHORIZED REPOS section")
+	if strings.Contains(msg, "AUTHORIZED REPOS") {
+		t.Errorf("supervisor kick must not carry AUTHORIZED REPOS:\n%s", msg)
 	}
 }
 

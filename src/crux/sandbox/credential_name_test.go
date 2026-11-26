@@ -15,6 +15,17 @@ func TestIsCredentialNameMatchesInternalRule(t *testing.T) {
 	}
 }
 
+func TestContextWindowIsNotCredential(t *testing.T) {
+	const name = "CLAUDE_CODE_MAX_CONTEXT_TOKENS"
+	if IsCredentialName(name) || !IsCredentialName(name+"_SECRET") || !IsCredentialName("OTHER_TOKEN") {
+		t.Fatal("only the exact context-window name must be exempt from credential filtering")
+	}
+	env := SanitizedEnv(nil, nil, map[string]string{name: "262144", "OTHER_TOKEN": "secret"})
+	if len(env) != 1 || env[0] != name+"=262144" {
+		t.Fatalf("sanitized environment = %v", env)
+	}
+}
+
 func TestClineProviderMaterialNeverEntersPodmanEnvOrArgv(t *testing.T) {
 	const key = "HIVE_CLINE_PROVIDERS_B64"
 	explicit := map[string]string{key: "must-not-copy"}
