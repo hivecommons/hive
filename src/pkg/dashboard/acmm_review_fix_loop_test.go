@@ -26,10 +26,12 @@ func withACMMReviewArtifact(t *testing.T, art review.Artifact) {
 
 func reviewFixLoopAggregate(repo, head string, verdict review.Verdict, at time.Time) review.Aggregate {
 	return review.Aggregate{
-		Repo:    repo,
-		Number:  7,
-		HeadSHA: head,
-		Verdict: verdict,
+		Repo:              repo,
+		Number:            7,
+		HeadSHA:           head,
+		Verdict:           verdict,
+		HiveAuthored:      true,
+		HiveAuthoredKnown: true,
 		ReportReceipts: []review.ReportReceipt{
 			{Perspective: review.PerspectiveCorrectness, ReceivedAt: at},
 		},
@@ -104,12 +106,28 @@ func TestEvaluateAllRepos_ReviewFixLoopNegativeCases(t *testing.T) {
 	now := time.Now()
 	day := 24 * time.Hour
 	a := reviewFixLoopAggregate("myorg/repo1", "head-a", review.VerdictChangesRequested, now.Add(-6*day))
+	contributorA, contributorB := a, reviewFixLoopAggregate("myorg/repo1", "head-b", review.VerdictApprove, now.Add(-5*day))
+	contributorA.HiveAuthored, contributorB.HiveAuthored = false, false
+	unknownA, unknownB := contributorA, contributorB
+	unknownA.HiveAuthoredKnown, unknownB.HiveAuthoredKnown = false, false
+	const fullHead = "0123456789abcdef0123456789abcdef01234567"
+	fullA := reviewFixLoopAggregate("myorg/repo1", fullHead, review.VerdictChangesRequested, now.Add(-6*day))
+	shortB := reviewFixLoopAggregate("myorg/repo1", "0123456", review.VerdictApprove, now.Add(-5*day))
+	// A was reviewed twice; B arrived after A's first report but before its
+	// latest, so B is not a review of a head pushed after the last ask.
+	twiceA := reviewFixLoopAggregate("myorg/repo1", "head-a", review.VerdictChangesRequested, now.Add(-6*day))
+	twiceA.ReportReceipts = append(twiceA.ReportReceipts, review.ReportReceipt{Perspective: review.PerspectiveSecurity, ReceivedAt: now.Add(-4 * day)})
+	betweenB := reviewFixLoopAggregate("myorg/repo1", "head-b", review.VerdictApprove, now.Add(-5*day))
 	cases := map[string][]review.Aggregate{
-		"no head B":             {a},
-		"B received before A":   {a, reviewFixLoopAggregate("myorg/repo1", "head-b", review.VerdictApprove, now.Add(-7*day))},
-		"B outside the window":  {reviewFixLoopAggregate("myorg/repo1", "head-a", review.VerdictChangesRequested, now.Add(-41*day)), reviewFixLoopAggregate("myorg/repo1", "head-b", review.VerdictApprove, now.Add(-40*day))},
-		"A approved":            {reviewFixLoopAggregate("myorg/repo1", "head-a", review.VerdictApprove, now.Add(-6*day)), reviewFixLoopAggregate("myorg/repo1", "head-b", review.VerdictApprove, now.Add(-5*day))},
-		"another repo's review": {reviewFixLoopAggregate("myorg/other", "head-a", review.VerdictChangesRequested, now.Add(-6*day)), reviewFixLoopAggregate("myorg/other", "head-b", review.VerdictApprove, now.Add(-5*day))},
+		"contributor PR":              {contributorA, contributorB},
+		"authorship unknown":          {unknownA, unknownB},
+		"same head in short form":     {fullA, shortB},
+		"B before A's latest receipt": {twiceA, betweenB},
+		"no head B":                   {a},
+		"B received before A":         {a, reviewFixLoopAggregate("myorg/repo1", "head-b", review.VerdictApprove, now.Add(-7*day))},
+		"B outside the window":        {reviewFixLoopAggregate("myorg/repo1", "head-a", review.VerdictChangesRequested, now.Add(-41*day)), reviewFixLoopAggregate("myorg/repo1", "head-b", review.VerdictApprove, now.Add(-40*day))},
+		"A approved":                  {reviewFixLoopAggregate("myorg/repo1", "head-a", review.VerdictApprove, now.Add(-6*day)), reviewFixLoopAggregate("myorg/repo1", "head-b", review.VerdictApprove, now.Add(-5*day))},
+		"another repo's review":       {reviewFixLoopAggregate("myorg/other", "head-a", review.VerdictChangesRequested, now.Add(-6*day)), reviewFixLoopAggregate("myorg/other", "head-b", review.VerdictApprove, now.Add(-5*day))},
 	}
 	for name, items := range cases {
 		t.Run(name, func(t *testing.T) {

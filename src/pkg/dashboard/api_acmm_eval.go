@@ -846,7 +846,9 @@ func hiveAgentLoopCredit(snap collect.ActivitySnapshot, ready bool, fullRepo str
 // asked for changes (changes_requested or reject) at head A, and an aggregate
 // at a different head B whose earliest report arrived after the latest report
 // for head A and within the lookback window. That is, Hive asked for changes,
-// the PR got a new head, and Hive reviewed that head.
+// the PR got a new head, and Hive reviewed that head. Only PRs Hive itself
+// wrote count: on a contributor PR a person may have pushed the fix, which is
+// no evidence that an agent applied review feedback.
 func hiveReviewFixLoopCredit(art review.Artifact, fullRepo string, now time.Time) (bool, string) {
 	if fullRepo == "" {
 		return false, ""
@@ -866,6 +868,9 @@ func hiveReviewFixLoopCredit(art review.Artifact, fullRepo string, now time.Time
 	sort.Ints(numbers)
 	for _, n := range numbers {
 		aggs := byPR[n]
+		if !reviewFixLoopHiveAuthored(aggs) {
+			continue
+		}
 		for _, a := range aggs {
 			if a.Verdict != review.VerdictChangesRequested && a.Verdict != review.VerdictReject {
 				continue
@@ -875,7 +880,7 @@ func hiveReviewFixLoopCredit(art review.Artifact, fullRepo string, now time.Time
 				continue
 			}
 			for _, b := range aggs {
-				if b.HeadSHA == a.HeadSHA {
+				if review.SameHeadSHA(b.HeadSHA, a.HeadSHA) {
 					continue
 				}
 				earliestB, ok := reviewReceiptBound(b.ReportReceipts, false)
@@ -887,6 +892,17 @@ func hiveReviewFixLoopCredit(art review.Artifact, fullRepo string, now time.Time
 		}
 	}
 	return false, ""
+}
+
+// reviewFixLoopHiveAuthored reports whether any recorded aggregate for the PR
+// knows it to be Hive-authored.
+func reviewFixLoopHiveAuthored(aggs []review.Aggregate) bool {
+	for _, a := range aggs {
+		if a.HiveAuthoredKnown && a.HiveAuthored {
+			return true
+		}
+	}
+	return false
 }
 
 // reviewReceiptBound returns the latest (latest=true) or earliest arrival
