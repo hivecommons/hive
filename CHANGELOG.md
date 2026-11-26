@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.373.11)
+
+### Fixed
+
+- **Inference reroute answers the CLI's `GET /v1/models` probe locally.** Agents on an OpenAI-compatible inference backend sent Claude Code's model-list request to the reroute, which treated it as an unknown endpoint: every call logged a `WARN inference reroute: unknown Anthropic API path not forwarded` and returned a 404, enough to trip the `unclassified_error_repeated` self-report. The reroute now answers `GET /v1/models` with an empty Anthropic list page (logged once at DEBUG), like it already does for `count_tokens` and CLI telemetry; the request still never reaches the backend. (#20045)
+
 ## 2026-11-26 (v5.373.10)
 
 ### Fixed
