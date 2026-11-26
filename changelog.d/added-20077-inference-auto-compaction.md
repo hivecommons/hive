@@ -1,0 +1,1 @@
+- Inference-routed Claude CLI agents can opt into earlier auto-compaction with a per-agent window or hive-wide percentage, helping keep conversations within smaller model context limits; sandbox Job kicks receive the same setting ([#20077](https://github.com/hivecommons/hive/issues/20077)).

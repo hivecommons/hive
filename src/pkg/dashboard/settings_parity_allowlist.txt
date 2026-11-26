@@ -91,6 +91,7 @@ agents.<key>.kick_template # TODO #11854
 agents.<key>.lane_keywords[] # TODO #11854
 agents.<key>.launch_cmd # TODO #11854
 agents.<key>.max_context_tokens # TODO #11854
+agents.<key>.auto_compact_window_tokens # TODO #11854
 agents.<key>.max_turn_duration # TODO #11854
 agents.<key>.metrics_collector # TODO #11854
 agents.<key>.mode # TODO #11854

@@ -28,7 +28,7 @@ func (f *fakeInferenceRelay) Enroll(agentName string) (string, string, []byte, f
 }
 
 func TestSandboxInferenceEnvCarriesOnlyTheKickKey(t *testing.T) {
-	env := sandboxInferenceEnv("https://hive-inference.ns.svc:18446", inferenceTestKickKey, "/workspace/.hive/inference-ca.pem")
+	env := sandboxInferenceEnv("https://hive-inference.ns.svc:18446", inferenceTestKickKey, "/workspace/.hive/inference-ca.pem", nil)
 	if env["ANTHROPIC_BASE_URL"] != "https://hive-inference.ns.svc:18446" || env["ANTHROPIC_API_KEY"] != inferenceTestKickKey {
 		t.Fatalf("env = %v", env)
 	}
@@ -84,6 +84,24 @@ func TestEnrollInferenceRelayJobKick(t *testing.T) {
 	release()
 	if relay.released != 1 {
 		t.Fatal("kick key not revoked when the kick ended")
+	}
+}
+
+func TestEnrollInferenceRelayCarriesContextSettings(t *testing.T) {
+	t.Setenv(inferencePassContextWindowEnv, "")
+	t.Setenv(inferenceAutoCompactPercentEnv, "80")
+	cfg := config.AgentConfig{Backend: "litellm", Model: "vllm/Qwen"}
+	m := NewManager(map[string]config.AgentConfig{"scanner": cfg}, discardLogger(), ProjectContext{})
+	m.SetInferenceContextWindowLookup(func(string) (int, string) { return 262144, cfg.Model })
+	agent := &AgentProcess{Name: "scanner", Config: cfg}
+	e := &SandboxExecutor{InferenceRelay: &fakeInferenceRelay{}}
+	env, release := e.enrollInferenceRelay(SandboxKickSpec{
+		Agent: "scanner", Runtime: config.SandboxRuntimeJob, InferenceRouted: true,
+		ClaudeContextEnv: m.claudeContextEnv(agent, cfg.Backend, cfg.Model),
+	}, t.TempDir())
+	defer release()
+	if env[claudeMaxContextTokensEnv] != "262144" || env[claudeAutoCompactPercentEnv] != "80" {
+		t.Fatalf("job context env = %v", env)
 	}
 }
 

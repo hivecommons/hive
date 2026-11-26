@@ -366,11 +366,9 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 			vars = append(vars, agentEnvPair{v, "1", false})
 		}
 		vars = append(vars, agentEnvPair{claudeAutoModeServerEnv, claudeAutoModeServerOff, false})
-		// The model's real context window, so the CLI compacts before the
-		// model server refuses an oversize turn (hivecommons/hive#19913).
-		for k, v := range inferenceContextWindowEnv(m.inferenceContextWindowFor(agent, model)) {
-			vars = append(vars, agentEnvPair{k, v, false})
-		}
+	}
+	for k, v := range m.claudeContextEnv(agent, backend, model) {
+		vars = append(vars, agentEnvPair{k, v, false})
 	}
 	vars = append(vars, cliMemoryEnvPairs(agent, backend)...)
 	if m.copilotAuthToken != "" {

@@ -65,7 +65,7 @@ const sandboxInferenceCARelPath = ".hive/inference-ca.pem"
 // sandboxInferenceEnv points a Job's Claude CLI at the listener. The API key
 // is the per-kick key, which only the listener accepts: no gateway key exists
 // on this path, and TestSandboxInferenceEnvCarriesOnlyTheKickKey pins that.
-func sandboxInferenceEnv(baseURL, kickKey, caPath string) map[string]string {
+func sandboxInferenceEnv(baseURL, kickKey, caPath string, contextEnv map[string]string) map[string]string {
 	env := map[string]string{
 		"ANTHROPIC_BASE_URL":    baseURL,
 		"ANTHROPIC_API_KEY":     kickKey,
@@ -74,6 +74,9 @@ func sandboxInferenceEnv(baseURL, kickKey, caPath string) map[string]string {
 	}
 	for _, v := range inferenceQuietCLIEnv {
 		env[v] = "1"
+	}
+	for k, v := range contextEnv {
+		env[k] = v
 	}
 	return env
 }
@@ -100,7 +103,7 @@ func (e *SandboxExecutor) enrollInferenceRelay(spec SandboxKickSpec, workspace s
 		return nil, noop
 	}
 	caJob := path.Join(sandbox.DefaultWorkspaceMount, sandboxInferenceCARelPath)
-	return sandboxInferenceEnv(baseURL, key, caJob), release
+	return sandboxInferenceEnv(baseURL, key, caJob, spec.ClaudeContextEnv), release
 }
 
 func (e *SandboxExecutor) warnInferenceRelay(agentName, step string, err error) {

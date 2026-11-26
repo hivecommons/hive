@@ -669,6 +669,34 @@ Hive tells the CLI the real window with `CLAUDE_CODE_MAX_CONTEXT_TOKENS` when it
 
 `max_context_tokens` describes the agent's configured `model`. It is not applied while a model override (a dashboard switch or pin) runs another model, and a review head on a different model does not inherit it; those fall back to discovery.
 
+#### Earlier auto-compaction (opt-in)
+
+Inference-routed Claude CLI agents can opt into an earlier compaction window:
+
+```yaml
+agents:
+  quality:
+    auto_compact_window_tokens: 160000
+```
+
+The per-agent `auto_compact_window_tokens` is a token count; `0` or omission
+leaves it unset, and a nonzero value below `100000` is rejected. It takes
+priority over `HIVE_INFERENCE_AUTO_COMPACT_PERCENT`. The CLI caps the effective
+window at `CLAUDE_CODE_MAX_CONTEXT_TOKENS` when declared, or `1000000` otherwise,
+and floors it at `100000`. It subtracts 33000 tokens from that effective window
+to calculate the compaction trigger.
+
+Alternatively, set `HIVE_INFERENCE_AUTO_COMPACT_PERCENT` to an integer from
+`1` to `100` to opt in hive-wide. The CLI compacts at that percentage of
+`(effective window - 20000)`; the 33000-token adjustment does not apply.
+Unset or invalid values leave this option off. This fallback requires a known
+exported context window, so it inherits the discovery, model-ID, and
+`HIVE_INFERENCE_PASS_CONTEXT_WINDOW` limitations above and below. The explicit
+per-agent setting does not depend on the context-window export and also works
+for Claude model IDs. It describes the configured model and is dropped for a
+review head using a different model. The same auto-compaction setting is passed
+to sandbox Job kicks as to ordinary agent launches.
+
 Hive does not export the variable for model IDs that contain `claude` (for example `anthropic/claude-sonnet-5-5`), because the CLI already knows those windows. Set `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` to turn the export off for the whole hive. Sandbox Job kicks do not get the variable yet: the sandbox drops every variable whose name contains `TOKEN`.
 
 ### Per-agent homes: what is shared and what is private

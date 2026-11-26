@@ -21,6 +21,10 @@ const (
 	// agent with a known window gets it.
 	inferencePassContextWindowEnv = "HIVE_INFERENCE_PASS_CONTEXT_WINDOW"
 
+	inferenceAutoCompactPercentEnv = "HIVE_INFERENCE_AUTO_COMPACT_PERCENT"
+	claudeAutoCompactWindowEnv     = "CLAUDE_CODE_AUTO_COMPACT_WINDOW"
+	claudeAutoCompactPercentEnv    = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"
+
 	// claudeModelIDMarker identifies a model ID that names a Claude model
 	// (for example "anthropic/claude-sonnet-5-5" behind a gateway). The CLI
 	// already knows those windows, and the variable does not apply to them
@@ -75,6 +79,32 @@ func inferenceContextWindowEnv(window int) map[string]string {
 		return nil
 	}
 	return map[string]string{claudeMaxContextTokensEnv: strconv.Itoa(window)}
+}
+
+// claudeContextEnv selects the same context and compaction settings for pane
+// and Job launches. An explicit window describes only the configured model.
+func (m *Manager) claudeContextEnv(agent *AgentProcess, backend, model string) map[string]string {
+	routed := m.routableBackend(backend)
+	if backend != "claude" && !routed {
+		return nil
+	}
+	window := 0
+	if routed {
+		window = m.inferenceContextWindowFor(agent, model)
+	}
+	env := inferenceContextWindowEnv(window)
+	if n := agent.Config.AutoCompactWindowTokens; n >= 100000 && !modelOverridden(agent) {
+		if env == nil {
+			env = make(map[string]string)
+		}
+		env[claudeAutoCompactWindowEnv] = strconv.Itoa(n)
+		return env
+	}
+	pct, err := strconv.Atoi(strings.TrimSpace(os.Getenv(inferenceAutoCompactPercentEnv)))
+	if window > 0 && err == nil && pct >= 1 && pct <= 100 {
+		env[claudeAutoCompactPercentEnv] = strconv.Itoa(pct)
+	}
+	return env
 }
 
 // modelOverridden reports whether the agent runs a model other than its
