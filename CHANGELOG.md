@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.369.6)
+
+### Changed
+
+- Forge blocks (gitlab, gitea, forgejo) share one token source and accept an optional `token_file` under /secrets or /data/secrets, also settable in Settings (a single Settings write cannot leave a forge URL and `token_file` both set); configs with only `token_env` behave as before.
+
+### Fixed
+
+- Concurrent workflow saves, confirmations, ingestion and Marketplace imports now preserve each draft by allocating versions without overwriting other saves.
+
 ## 2026-11-26 (v5.369.5)
 
 ### Fixed
