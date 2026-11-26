@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.373.10)
+
+### Fixed
+
+- Preserve the text following a bold bullet title when importing Markdown into Knowledge.
+
 ## 2026-11-26 (v5.373.9)
 
 ### Fixed
