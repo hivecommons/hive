@@ -4886,6 +4886,13 @@
     var _releaseChannels = [];
     var _candidateBypassesSchedule = false;
     var _channelTargets = [];
+    /* HIVE_HUB_RELEASE_TRACKING_DISABLED (#20188), from /api/saas/my-hives.
+       With tracking off the latest image is never resolved, so every
+       "waiting for latest version" affordance (spinner, dimmed Upgrade, auto
+       checkbox, channel block, image-pulls line) would wait forever. When
+       set, those are hidden and RELEASE_TRACKING_OFF_HTML says why. */
+    var _releaseTrackingDisabled = false;
+    var RELEASE_TRACKING_OFF_HTML = '<span class="release-tracking-off" style="font-size:0.7rem;color:var(--muted)" title="HIVE_HUB_RELEASE_TRACKING_DISABLED is set: the hub does not look up the latest release, so it offers no upgrade target to itself or its spokes">Release tracking is off</span>';
     var _stablePromotion = {auto_promote: true, soak_hours: 24, maintained_hives: []};
     /* Parent domain for hosted-tenant URLs, from the server (hub_spoke_domain).
        Empty until the first payload lands, and the link builders below treat
@@ -7988,6 +7995,7 @@
         if (data.latest_shas) _latestSHAs = data.latest_shas;
         if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
         if (data.release_channels) _releaseChannels = data.release_channels;
+        _releaseTrackingDisabled = !!data.release_tracking_disabled;
         _candidateBypassesSchedule = !!data.candidate_bypasses_schedule;
         if (data.channel_targets) _channelTargets = data.channel_targets;
         if (data.stable_promotion) _stablePromotion = data.stable_promotion;
@@ -8139,7 +8147,11 @@
              its own above it, so neither reads as a subheading of the other. */
           if (lines) lines = '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:var(--sp-1)">Latest available images:</div>' + lines;
           lines = chLines + lines;
-          shaEl.innerHTML = lines ? lines :'<div style="display:flex;align-items:center;gap:var(--sp-3);font-size:0.7rem;color:var(--muted)"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite"></span>Resolving latest available images…</div>';
+          /* Tracking off (#20188): the channel and branch rows could only
+             ever read "unknown" and the empty state would spin forever, so
+             one line says why instead. */
+          if (_releaseTrackingDisabled) shaEl.innerHTML = '<div>' + RELEASE_TRACKING_OFF_HTML + '</div>';
+          else shaEl.innerHTML = lines ? lines :'<div style="display:flex;align-items:center;gap:var(--sp-3);font-size:0.7rem;color:var(--muted)"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite"></span>Resolving latest available images…</div>';
         }
         var hubHash = data.hub_git_hash || '';
         var hubBranch = data.hub_git_branch || STABLE_BRANCH_LABEL;
@@ -8147,7 +8159,9 @@
           var el = document.getElementById('hub-version');
           if (el) {
             var hubBranchLatest = _latestSHAs[hubBranch] || _latestSHA;
-            var hubLatestUnknown = !hubBranchLatest;
+            /* Tracking off (#20188): "unknown" is permanent, not a wait, so
+               the waiting spinner and dimmed Upgrade below must not render. */
+            var hubLatestUnknown = !hubBranchLatest && !_releaseTrackingDisabled;
             var isCurrent = hubBranchLatest && sameShaJS(hubHash, hubBranchLatest);
             var hubUpgradeBtn = '';
             // Distinguish two states, matching the per-hive badges:
@@ -8190,7 +8204,9 @@
             if (isCurrent) { _hubUpgrading = false; }
             var hubAutoCheck = '';
             if (_isAdmin) {
-              hubAutoCheck = ' <label style="margin-left:var(--sp-3);font-size:var(--fs-2xs);color:var(--muted);cursor:pointer;white-space:nowrap" title="Auto-upgrade hub when a new image is available"><input type="checkbox" ' + (_hubAutoUpgrade ? 'checked' : '') + ' onchange="toggleHubAutoUpgrade(this.checked)" style="vertical-align:middle;margin-right:var(--sp-1);cursor:pointer">auto</label>';
+              /* Tracking off: hub auto-upgrade has no target to roll to, so
+                 the checkbox would control nothing. */
+              if (!_releaseTrackingDisabled) hubAutoCheck = ' <label style="margin-left:var(--sp-3);font-size:var(--fs-2xs);color:var(--muted);cursor:pointer;white-space:nowrap" title="Auto-upgrade hub when a new image is available"><input type="checkbox" ' + (_hubAutoUpgrade ? 'checked' : '') + ' onchange="toggleHubAutoUpgrade(this.checked)" style="vertical-align:middle;margin-right:var(--sp-1);cursor:pointer">auto</label>';
               /* Upgrade kill switches (admin-only): checked = paused. Titles
                  carry who/when; the dashboard banner repeats it prominently.
                  Rendered as ONE compact bordered column so the pair reads as a
@@ -8204,7 +8220,9 @@
                 'Kill switch: freeze ALL automatic image changes to spokes, fleet-wide, until resumed') +
                 '</span>';
             }
-            var hubStatusIcon = hubLatestUnknown
+            var hubStatusIcon = (_releaseTrackingDisabled && !hubBranchLatest)
+              ? ' ' + RELEASE_TRACKING_OFF_HTML
+              : hubLatestUnknown
               ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
               : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="hub is on latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="hub is behind latest ' + esc(hubBranchLatest) + '">↑</span>';
             var hubBranchPill = '<span style="display:inline-block;padding:1px 6px;border-radius:var(--r-pill);font-size:var(--fs-2xs);background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:var(--sp-2)">' + esc(hubBranch) + '</span>';
@@ -8339,6 +8357,9 @@
     async function loadImagePulls() {
       var host = document.getElementById('image-pulls-spark');
       if (!host) return;
+      /* Tracking off (#20188): no release is ever recorded, so the chart
+         would say "collecting…" forever. Hide it. */
+      if (_releaseTrackingDisabled) { host.style.display = 'none'; return; }
       var data;
       try {
         var resp = await fetch('/api/hub/image-pulls');
@@ -9531,7 +9552,11 @@
             ', which this hive is running; ' + branchName + ' tip ' + branchTipSHA +
             ' is ' + imagePendingCount + ' ahead and its image status is ' + imagePendingStatus +
             '. Upgrade will appear after a newer immutable image is published.' + verificationNote;
-          var status = latestUnknown
+          /* Tracking off (#20188): no latest is ever coming, so neither the
+             "resolving" spinner nor a "behind" arrow is true. */
+          var status = (_releaseTrackingDisabled && !branchLatest)
+            ? ''
+            : latestUnknown
             ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
             : channelImagePending ? '<span style="color:var(--yellow);margin-left:3px" title="' + escAttr(imagePendingTitle) + '">⏳</span>'
             : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="' + escAttr('Current: running commit matches ' + behindRef + ' ' + (branchLatest || '') + stableLagNote) + '">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="' + escAttr('Behind latest reachable image ' + (branchLatest || '') + ' (' + behindRef + ')') + '">↑</span>';
@@ -9613,7 +9638,7 @@
                upgrade, so a button would be a lie, but saying nothing made a
                behind hive read as current. Passive badge, no handler. */
             upgradeIcon = '<span title="' + escAttr('A newer build is available (' + branchLatest + ') — the hive owner or an admin can trigger the upgrade') + '" style="' + UPGRADE_STATE_BADGE_STYLE + '">Update available</span>';
-          } else if (latestUnknown && isHosted && h.role === 'owner') {
+          } else if (latestUnknown && !_releaseTrackingDisabled && isHosted && h.role === 'owner') {
             upgradeIcon = '<span title="Waiting for latest version…" style="font-size:0.7rem;color:var(--muted);white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</span>';
           }
           /* Auto-upgrade control: a single select replaces the old checkbox.
