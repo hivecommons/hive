@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.383.6)
+
+### Fixed
+
+- **Hub dashboard times now show in the viewer's own time zone.** Timestamps on the hub dashboard (user logins, last action, hive last-seen and offline-since, access grants) were always formatted in `America/New_York` with a hardcoded `EDT` suffix, which was wrong for anyone outside New York and wrong for New York itself during standard time. They now use the browser's local zone and print the zone name the browser reports, for example `11/27/2026 4:26p PST` ([#20190](https://github.com/hivecommons/hive/issues/20190)).
+
 ## 2026-11-27 (v5.383.5)
 
 ### Fixed
