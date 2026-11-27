@@ -3357,6 +3357,14 @@ spec:
       # the 0440 mode is doing the right thing there on its own.
       securityContext:
         fsGroup: 1002
+        # #20162: OnRootMismatch, matching src/deploy/k8s/deployment.yaml. The
+        # default (Always) makes kubelet re-group the WHOLE /data PVC to 1002 on
+        # EVERY mount, which undoes the entrypoint's regroup of the agent trees
+        # to node and makes it drop every agent's isolation marker and hold the
+        # agents behind a full background chgrp walk on each restart.
+        # OnRootMismatch re-groups only when the volume root's group is wrong
+        # (first mount); the 0440 secrets projection still gets gid 1002.
+        fsGroupChangePolicy: OnRootMismatch
 {{- end}}
       initContainers:
       - name: copy-config

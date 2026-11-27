@@ -121,9 +121,15 @@ func TestSpokeManifestFsGroupOnlyOffSCC(t *testing.T) {
 	if !strings.Contains(plain, "fsGroup: 1002") {
 		t.Error("non-SCC spoke is missing `fsGroup: 1002`; the 0440 secrets projection would be unreadable by dev")
 	}
+	// #20162: without OnRootMismatch, kubelet re-groups the whole PVC on every
+	// mount, undoing the entrypoint's agent-tree regroup and holding every
+	// agent behind a full chgrp walk on each restart.
+	if !strings.Contains(plain, "fsGroupChangePolicy: OnRootMismatch") {
+		t.Error("non-SCC spoke is missing `fsGroupChangePolicy: OnRootMismatch`; kubelet would re-group the whole PVC on every mount")
+	}
 
 	scc := renderManifest(t, true)
-	if strings.Contains(scc, "fsGroup:") {
+	if strings.Contains(scc, "fsGroup:") || strings.Contains(scc, "fsGroupChangePolicy:") {
 		t.Error("SCC spoke pins an fsGroup; OpenShift's restricted SCC assigns its own and would reject this at admission")
 	}
 	// The SCC lane keeps its own service account — guard against the
