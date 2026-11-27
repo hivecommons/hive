@@ -606,7 +606,7 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 				"current", gitShort,
 				"target", m.TargetSHA,
 				"attempts", m.Attempts,
-				"last_error", m.LastError,
+				"last_error", upgradeLastErrorForLog(m.LastError),
 			)
 		}
 	}
@@ -5251,7 +5251,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 								"current", gitShort,
 								"attempts", m.Attempts,
 								"max_attempts", selfUpgradeMaxAttempts,
-								"last_error", m.LastError,
+								"last_error", upgradeLastErrorForLog(m.LastError),
 								"hint", "the spoke must be able to get/patch its own Deployment; check the hive-self-upgrade Role/RoleBinding in this namespace",
 							)
 							spoke.ReportUpgradeFailure(b.hubURL, b.cfg.HiveID, targetSHA, gitShort,
@@ -5270,7 +5270,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 								"current", gitShort,
 								"attempts", m.Attempts,
 								"retry_in", (backoff - since).Round(time.Second),
-								"last_error", m.LastError,
+								"last_error", upgradeLastErrorForLog(m.LastError),
 							)
 							return
 						}
@@ -5279,7 +5279,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 							"current", gitShort,
 							"attempt", m.Attempts+1,
 							"max_attempts", selfUpgradeMaxAttempts,
-							"last_error", m.LastError,
+							"last_error", upgradeLastErrorForLog(m.LastError),
 						)
 						attemptCount = m.Attempts
 					} else {
