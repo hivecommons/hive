@@ -267,4 +267,7 @@ const (
 var (
 	ValidateSandboxPreflight = cruxconfig.ValidateSandboxPreflight
 	ValidateSandboxSetup     = cruxconfig.ValidateSandboxSetup
+	// Sandbox Job pod label/annotation validation the dashboard's Settings
+	// controls share with config load (hivecommons/hive#20155).
+	ValidateSandboxJobMetadata = cruxconfig.ValidateSandboxJobMetadata
 )
