@@ -178,18 +178,23 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			// The agent's repository scope (#6204), plus the hive's own repo
 			// list so the dialog can offer real choices instead of a free-text
 			// field the operator has to spell from memory.
-			"repos":            agentCfg.Repos,
-			"projectRepos":     s.deps.Config.Project.Repos,
-			"laneKeywords":     agentCfg.LaneKeywords,
-			"detectKeywords":   agentCfg.DetectKeywords,
-			"aliases":          agentCfg.Aliases,
-			"cavemanMode":      agentCfg.CavemanMode,
-			"jevMode":          agentCfg.JevMode,
-			"jevReady":         s.deps.Config.JevReady(),
-			"explainMode":      agentCfg.ExplainMode,
-			"sandboxSubstrate": agentSandboxSubstrateOrEmpty(agentCfg),
-			"sandboxEnabled":   agentCfg.Sandbox != nil && agentCfg.Sandbox.Enabled != nil && *agentCfg.Sandbox.Enabled,
-			"sandboxEffective": agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
+			"repos":          agentCfg.Repos,
+			"projectRepos":   s.deps.Config.Project.Repos,
+			"laneKeywords":   agentCfg.LaneKeywords,
+			"detectKeywords": agentCfg.DetectKeywords,
+			"aliases":        agentCfg.Aliases,
+			"cavemanMode":    agentCfg.CavemanMode,
+			"jevMode":        agentCfg.JevMode,
+			"jevReady":       s.deps.Config.JevReady(),
+			"explainMode":    agentCfg.ExplainMode,
+			"headlessTurns":  agentCfg.HeadlessTurnsEnabled(),
+			// The Claude CLI's context and compaction windows (#19913),
+			// 0 = unset (discover / CLI default).
+			"maxContextTokens":        agentCfg.MaxContextTokens,
+			"autoCompactWindowTokens": agentCfg.AutoCompactWindowTokens,
+			"sandboxSubstrate":        agentSandboxSubstrateOrEmpty(agentCfg),
+			"sandboxEnabled":          agentCfg.Sandbox != nil && agentCfg.Sandbox.Enabled != nil && *agentCfg.Sandbox.Enabled,
+			"sandboxEffective":        agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
 			// What turning the sandbox on would resolve to (#18525): whether
 			// the agent's own fields plus agent_sandbox defaults are a
 			// complete block, and which other agents a block can be copied from.
@@ -415,6 +420,21 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	if err := decodeBody(r, &body); err != nil {
 		jsonError(w, "invalid body", http.StatusBadRequest)
 		return
+	}
+
+	// Chat config assist attribution (#19978): verified against the stored
+	// proposal, never taken from the query string alone.
+	viaProposal, viaClaimed := s.chatConfigVia(r, name, "general", func(f string) bool { _, ok := body[f]; return ok })
+	// A card Apply (#19985) is bound to its stored proposal here, under
+	// agentConfigMu; without the header this is a normal dialog save.
+	apply, applyOK := s.chatConfigApplyBegin(w, r, name, "general", body)
+	if !applyOK {
+		return
+	}
+	if apply != nil {
+		w = apply.w
+		defer apply.finish()
+		viaProposal, viaClaimed = &apply.p, true
 	}
 
 	if err := validateAgentGeneralInput(body); err != nil {
@@ -759,6 +779,54 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			agentCfg.JevMode = s
 		}
 	}
+	// agents.<key>.headless_turns (#19902): one `claude -p` per kick on a
+	// translator route instead of a resident interactive CLI. The pane's
+	// shape is fixed at launch, so a change restarts the agent below like
+	// jev_mode. Saved to the config file, the dashboard overlay and the
+	// per-agent file together, so every reload layer agrees.
+	headlessTurnsChanged := false
+	if v, ok := body["headlessTurns"]; ok {
+		if b, ok := v.(bool); ok {
+			headlessTurnsChanged = agentCfg.HeadlessTurnsEnabled() != b
+			// Stored as an explicit pointer, false included, so an "off"
+			// saved to the overlay beats a seed opt-in on the next load.
+			agentCfg.HeadlessTurns = &b
+		}
+	}
+	// agents.<key>.max_context_tokens and auto_compact_window_tokens (#19913):
+	// the window the Claude CLI compacts against on a translator route whose
+	// gateway reports none, and the CLI's auto-compaction window. Both reach
+	// the CLI as env at launch, so a change restarts the agent below. 0 clears
+	// the key. Saved to every layer together, like headless_turns.
+	contextWindowChanged := false
+	if v, ok := body["maxContextTokens"]; ok {
+		if f, ok := v.(float64); ok {
+			n := int(f)
+			if n < 0 || float64(n) != f {
+				jsonError(w, "max_context_tokens must be a whole number of tokens, 0 or more (0 = discover from the gateway)", http.StatusBadRequest)
+				return
+			}
+			contextWindowChanged = contextWindowChanged || agentCfg.MaxContextTokens != n
+			agentCfg.MaxContextTokens = n
+		}
+	}
+	if v, ok := body["autoCompactWindowTokens"]; ok {
+		if f, ok := v.(float64); ok {
+			n := int(f)
+			if float64(n) != f {
+				jsonError(w, "auto_compact_window_tokens must be a whole number of tokens", http.StatusBadRequest)
+				return
+			}
+			// Same gate as config.Validate, so the write path cannot persist a
+			// value that would fail the next config load.
+			if err := config.ValidateAutoCompactWindowTokens(n); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			contextWindowChanged = contextWindowChanged || agentCfg.AutoCompactWindowTokens != n
+			agentCfg.AutoCompactWindowTokens = n
+		}
+	}
 	if v, ok := body["explainMode"]; ok {
 		if s, ok := v.(string); ok {
 			s = sanitizeString(s)
@@ -924,6 +992,10 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	if agentsDir := s.deps.Config.Data.AgentsDir; agentsDir != "" {
 		if err := config.SaveAgentFile(agentsDir, name, agentCfg); err != nil {
 			s.logger.Error("failed to persist agent overlay after update", "agent", name, "error", err)
+			s.AddSystemAlert("agent-field-save-failed", "error",
+				"Could not save the settings for "+name+" to its agent overlay; they will revert on the next config load: "+err.Error())
+		} else {
+			s.ClearSystemAlert("agent-field-save-failed")
 		}
 	}
 	// Apply model/backend live so the change takes effect immediately and isn't
@@ -940,13 +1012,16 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			s.logger.Warn("failed to apply backend from config dialog", "agent", name, "error", err)
 		}
 	}
-	if modelChanged || backendChanged || jevModeChanged {
+	if modelChanged || backendChanged || jevModeChanged || headlessTurnsChanged || contextWindowChanged {
 		if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
-			s.logger.Warn("restart after config-dialog model/backend/jev_mode change failed", "agent", name, "error", err)
+			s.logger.Warn("restart after config-dialog model/backend/jev_mode/headless_turns/context window change failed", "agent", name, "error", err)
 		}
 	}
 
-	s.auditFromRequest(r, "config_agent_general", generalAuditDetail(prevAgents[name], agentCfg), name)
+	s.auditFromRequest(r, "config_agent_general", chatConfigViaDetail(generalAuditDetail(prevAgents[name], agentCfg), viaProposal, viaClaimed, "", ""), name)
+	if viaProposal != nil {
+		s.chatConfigProposals.remove(viaProposal.ID)
+	}
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated", "agent": name})
 }
@@ -985,6 +1060,9 @@ var agentGeneralAuditFields = []struct {
 	{"cavemanMode", func(a config.AgentConfig) string { return a.CavemanMode }},
 	{"jevMode", func(a config.AgentConfig) string { return a.JevMode }},
 	{"explainMode", func(a config.AgentConfig) string { return a.ExplainMode }},
+	{"headlessTurns", func(a config.AgentConfig) string { return strconv.FormatBool(a.HeadlessTurnsEnabled()) }},
+	{"maxContextTokens", func(a config.AgentConfig) string { return strconv.Itoa(a.MaxContextTokens) }},
+	{"autoCompactWindowTokens", func(a config.AgentConfig) string { return strconv.Itoa(a.AutoCompactWindowTokens) }},
 }
 
 // generalAuditDetail records every listed field the write changed with its
@@ -1022,6 +1100,19 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	viaProposal, viaClaimed := s.chatConfigVia(r, name, "cadences", func(f string) bool { _, ok := body[f]; return ok })
+	// A card Apply (#19985) is bound to its stored proposal here, under
+	// agentConfigMu; without the header this is a normal dialog save.
+	apply, applyOK := s.chatConfigApplyBegin(w, r, name, "cadences", body)
+	if !applyOK {
+		return
+	}
+	if apply != nil {
+		w = apply.w
+		defer apply.finish()
+		viaProposal, viaClaimed = &apply.p, true
+	}
+
 	gov := &s.deps.Config.Governor
 	cadences, err := validateCadencesBody(gov, body)
 	if err != nil {
@@ -1055,7 +1146,10 @@ func (s *Server) handleAgentConfigCadences(w http.ResponseWriter, r *http.Reques
 		jsonError(w, "cadences not saved: "+err.Error(), status)
 		return
 	}
-	s.auditFromRequest(r, "config_agent_cadences", cadencesAuditDetail(name, prevModes, cadences), name)
+	s.auditFromRequest(r, "config_agent_cadences", chatConfigViaDetail(cadencesAuditDetail(name, prevModes, cadences), viaProposal, viaClaimed, "", ""), name)
+	if viaProposal != nil {
+		s.chatConfigProposals.remove(viaProposal.ID)
+	}
 	// The rebuild kicked here is asynchronous, so the browser's post-save
 	// GET /api/status can be served the CACHED pre-mutation snapshot and
 	// repaint the OLD cadence — the operator then waits for a later broadcast
@@ -1261,6 +1355,21 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	viaProposal, viaClaimed := s.chatConfigVia(r, name, "models", func(f string) bool {
+		return (f == "model" && body.Model != "") || (f == "reasoning_effort" && body.ReasoningEffort != nil)
+	})
+	// A card Apply (#19985) is bound to its stored proposal here, under
+	// agentConfigMu; without the header this is a normal dialog save.
+	apply, applyOK := s.chatConfigApplyBegin(w, r, name, "models", chatConfigModelsBodyJSON(body))
+	if !applyOK {
+		return
+	}
+	if apply != nil {
+		w = apply.w
+		defer apply.finish()
+		viaProposal, viaClaimed = &apply.p, true
+	}
+
 	u, err := s.validateModelsBody(name, agentCfg, body)
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -1298,7 +1407,19 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 	if err := s.updateAgentProcessConfig(name, agentCfg); err != nil {
 		s.logger.Warn("failed to sync agent config to process", "agent", name, "error", err)
 	}
-	s.auditFromRequest(r, "config_agent_models", auditDetail("backend", agentCfg.Backend, "model", agentCfg.Model, "reasoning_effort", agentCfg.ReasoningEffort), name)
+	viaBefore, viaAfter := "", ""
+	if viaProposal != nil {
+		switch viaProposal.Field {
+		case "model":
+			viaBefore, viaAfter = u.PrevModel, u.EffectiveModel
+		case "reasoning_effort":
+			viaBefore, viaAfter = prevCfg.ReasoningEffort, agentCfg.ReasoningEffort
+		}
+	}
+	s.auditFromRequest(r, "config_agent_models", chatConfigViaDetail(auditDetail("backend", agentCfg.Backend, "model", agentCfg.Model, "reasoning_effort", agentCfg.ReasoningEffort), viaProposal, viaClaimed, viaBefore, viaAfter), name)
+	if viaProposal != nil {
+		s.chatConfigProposals.remove(viaProposal.ID)
+	}
 
 	// Apply the change to the LIVE launch configuration, exactly as
 	// handleAgentConfigGeneral and the card dropdowns (/api/model, /api/switch)

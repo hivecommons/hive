@@ -37,11 +37,14 @@ type titleArtifactRule struct {
 	name       string
 	titleMatch *regexp.Regexp
 	fileMatch  func(string) bool
+	// patchMatch, when set, also satisfies the claim from a changed file's
+	// patch, for artifacts a path alone cannot identify.
+	patchMatch func(*gh.CommitFile) bool
 }
 
 var titleArtifactRules = []titleArtifactRule{
 	{name: "workflow", titleMatch: regexp.MustCompile(`(?i)\bworkflows?\b`), fileMatch: isWorkflowFile},
-	{name: "test", titleMatch: regexp.MustCompile(`(?i)\btests?\b`), fileMatch: isTestFile},
+	{name: "test", titleMatch: regexp.MustCompile(`(?i)\btests?\b`), fileMatch: isTestFile, patchMatch: isRustInlineTestPatch},
 	{name: "migration", titleMatch: regexp.MustCompile(`(?i)\bmigrations?\b`), fileMatch: isMigrationFile},
 }
 
@@ -210,7 +213,8 @@ func (c *Client) validatePRRequestClaims(ctx context.Context, req PRRequest) (st
 		for _, rule := range claimedArtifacts {
 			matched := false
 			for _, file := range files {
-				if file != nil && rule.fileMatch(file.GetFilename()) {
+				if file != nil && (rule.fileMatch(file.GetFilename()) ||
+					(rule.patchMatch != nil && rule.patchMatch(file))) {
 					matched = true
 					break
 				}
@@ -531,6 +535,31 @@ func isTestFile(filename string) bool {
 	for _, segment := range strings.Split(filename, "/") {
 		if segment == "test" || segment == "tests" || segment == "spec" || segment == "specs" || segment == "__tests__" {
 			return true
+		}
+	}
+	return false
+}
+
+// rustTestAttributes are the attributes that mark Rust test code. Rust's
+// standard unit-test layout is an inline `#[cfg(test)] mod tests { ... }` in
+// the source file itself, so no path rule can see it (hivecommons/hive#20138).
+var rustTestAttributes = []string{"#[test]", "#[cfg(test)]", "#[tokio::test]"}
+
+// isRustInlineTestPatch reports whether file is a Rust source file whose added
+// patch lines carry a test attribute. Only added lines count: a diff that
+// merely touches code near an existing test module is not a test change.
+func isRustInlineTestPatch(file *gh.CommitFile) bool {
+	if !strings.EqualFold(path.Ext(file.GetFilename()), ".rs") {
+		return false
+	}
+	for _, line := range strings.Split(file.GetPatch(), "\n") {
+		if !strings.HasPrefix(line, "+") || strings.HasPrefix(line, "+++") {
+			continue
+		}
+		for _, attr := range rustTestAttributes {
+			if strings.Contains(line, attr) {
+				return true
+			}
 		}
 	}
 	return false

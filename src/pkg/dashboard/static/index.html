@@ -62711,13 +62711,13 @@ function burnAreaChart() {
       'acmm:structural-gates': 'Structural gates in settings that require human approval for risky operations.',
       'acmm:auto-qa-tuning': 'Auto-QA that self-tunes thresholds based on historical pass/fail patterns.',
       'acmm:nightly-compliance': 'Nightly compliance checks that catch drift, stale dependencies, or broken links.',
-      'acmm:copilot-review-apply': 'Automated application of review feedback — agents fix issues flagged in reviews.',
+      'acmm:copilot-review-apply': 'Automated application of review feedback. Detected by file name only: .github/workflows/copilot-review-apply.yml, apply-copilot.yml, ai-fix.yml or auto-review.yml (content is not read). Such a workflow takes reviewer text as model input and needs a token that can push. Hive\'s review-fix loop also passes this item, or declare a .acmm.yml waiver.',
       'acmm:auto-label': 'Automated issue/PR labeling that routes work to the right agents or reviewers.',
       'acmm:ai-fix-workflow': 'An AI-fix-requested workflow that assigns labeled issues to agents for automated resolution.',
       'acmm:tier-classifier': 'Change classification that categorizes PRs by risk level (trivial, standard, critical).',
       'acmm:security-ai-md': 'An AI security policy documenting how agents handle secrets, auth, and sensitive data.',
       'acmm:session-continuity': 'Session continuity files that let agents resume work across multiple sessions.',
-      'acmm:cross-session-knowledge': 'A knowledge base that persists learnings across agent sessions and contributors.',
+      'acmm:cross-session-knowledge': 'A knowledge base that persists learnings across agent sessions and contributors. Hive indexes Markdown facts in docs/knowledge/ at boot when knowledge.git_sources is unset.',
       'acmm:github-actions-ai': 'GitHub Actions integration that triggers AI agents for reviews, fixes, or issue triage.',
       'acmm:auto-qa-self-tuning': 'Auto-QA with self-tuning — thresholds and rules adapt based on project history.',
       'acmm:public-metrics': 'Publicly visible metrics that show agent contribution quality and project health.',
@@ -66327,6 +66327,9 @@ function burnAreaChart() {
             document.querySelector('.config-title').textContent = `${dn} Configuration`;
           }
           try {
+            // A chat config proposal (#19978) fills its value in before the
+            // first tab renders, so the form shows it.
+            if (type === 'agent' && typeof applyChatConfigProposal === 'function') applyChatConfigProposal();
             switchConfigTab(initialTab);
             if (type === 'governor' && _configState.initialSearch) settingsSearchPrefill(_configState.initialSearch);
           } catch (err) {
@@ -66346,6 +66349,8 @@ function burnAreaChart() {
       _configLoadSeq++;
       if (_configLoadAbort) { _configLoadAbort.abort(); _configLoadAbort = null; }
       _configState = { type: null, agent: null, tab: null, data: {}, dirty: {}, promptTemplateDirty: false, promptTemplateValue: '' };
+      const chatProposalBanner = document.getElementById('config-chat-proposal-banner');
+      if (chatProposalBanner) chatProposalBanner.remove();
       setupSettingsSearchControls(null);
       document.getElementById('config-overlay').classList.add('hidden');
       if (location.hash.startsWith('#config/')) history.replaceState(null, '', window.hiveURLWithHash ? window.hiveURLWithHash('') : location.pathname);
@@ -68815,6 +68820,101 @@ function burnAreaChart() {
       }
     }
 
+    /* GitHub PAT rotation (#19633): a masked, write-only field over the
+       owner-only /api/github-token routes. The token is typed into a password
+       input, sent once and cleared; the page only ever learns the fingerprint,
+       the login and when the hive last verified it. A GitHub App hive has no
+       PAT to rotate, so the panel is not drawn. Built from DOM nodes and
+       textContent so nothing from the server is parsed as markup. */
+    async function loadGitHubTokenPanel() {
+      const host = document.getElementById('forge-pat-host');
+      if (!host) return;
+      try {
+        const res = await fetch('/api/github-token', { headers: _inceptionAuthHeaders() });
+        if (res.status === 403) {
+          /* Not the owner, or the owner proof is missing: say so instead of
+             leaving a silent gap, with the server's reason when it gives one. */
+          host.textContent = '';
+          host.appendChild(referenceRepoNode('div', 'fs-sm text-muted cfg-github-token-denied', githubTokenForbiddenText(await saveErrorMessage(res))));
+          return;
+        }
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        renderGitHubTokenPanel(host, await res.json(), loadGitHubTokenPanel);
+      } catch (e) {
+        host.textContent = '';
+        host.appendChild(referenceRepoNode('div', 'fs-sm text-danger', 'Failed to load the GitHub token status: ' + e.message));
+      }
+    }
+
+    /* The 403 wording for the PAT panel: who may rotate the token, then the
+       server's own reason (saveErrorMessage falls back to read-only advice). */
+    function githubTokenForbiddenText(reason) {
+      return 'Only the hive owner can view or rotate the GitHub token.' + (reason ? ' ' + reason : '');
+    }
+
+    function renderGitHubTokenPanel(host, st, onDone) {
+      host.textContent = '';
+      if (!st || st.mode === 'app') return; /* App mode: the credential is the App key */
+      const card = referenceRepoNode('div', 'card-inset mt-5 cfg-github-token');
+      card.appendChild(referenceRepoNode('div', 'settings-subsection-title', 'Personal access token'));
+      const state = referenceRepoNode('div', 'fs-sm cfg-github-token-state');
+      if (st.configured) {
+        let line = 'In use: fingerprint ' + st.fingerprint;
+        if (st.login) line += ', signed in as ' + st.login;
+        line += st.verified_at ? ', last verified ' + formatDashboardDateTime(st.verified_at) : ', not verified since this hive started';
+        state.textContent = line;
+      } else {
+        state.className += ' text-muted';
+        state.textContent = 'No personal access token is configured.';
+      }
+      card.appendChild(state);
+      const row = referenceRepoNode('div', 'config-list-item cfg-github-token-row');
+      const input = referenceRepoNode('input', 'cfg-github-token-input');
+      input.type = 'password';
+      /* off, not new-password: a password manager should neither offer to
+         generate a value here nor save the PAT. */
+      input.autocomplete = 'off';
+      input.setAttribute('data-1p-ignore', 'true');
+      input.setAttribute('data-lpignore', 'true');
+      input.placeholder = 'New personal access token';
+      input.setAttribute('aria-label', 'New GitHub personal access token');
+      const btn = referenceRepoNode('button', 'hv-btn btn-primary btn-sm', 'Verify and save');
+      btn.title = 'Check the token against GitHub, then replace the current one without a restart.';
+      const status = referenceRepoNode('div', 'fs-sm cfg-github-token-status text-muted');
+      const setStatus = (msg, cls) => { status.textContent = msg; status.className = 'fs-sm cfg-github-token-status ' + (cls || 'text-muted'); };
+      btn.addEventListener('click', async () => {
+        const token = (input.value || '').trim();
+        if (!token) { setStatus('Enter the new token first.', 'text-danger'); return; }
+        btn.disabled = true;
+        setStatus('Verifying with GitHub…');
+        try {
+          /* redirect: 'error' so no 3xx can carry the token to another URL. */
+          const res = await fetch('/api/github-token', { method: 'PUT', headers: _inceptionAuthHeaders(), body: JSON.stringify({ token: token }), redirect: 'error' });
+          if (!res.ok) {
+            /* 422 token refused, 429 cooling down after a refusal, 409 on an App-mode install:
+               the server's reason is shown and the current token stays. A 403 says who may
+               rotate it before the reason. */
+            const reason = await saveErrorMessage(res);
+            throw new Error(res.status === 403 ? githubTokenForbiddenText(reason) : reason);
+          }
+          const d = await res.json();
+          input.value = '';
+          showToast('GitHub token rotated' + (d.login ? ' (signed in as ' + d.login + ')' : '') + (d.sealed === false ? '; stored as plaintext because no keystore is available' : ''), 'success');
+          onDone();
+        } catch (e) {
+          btn.disabled = false;
+          setStatus(e.message, 'text-danger');
+        }
+      });
+      row.appendChild(input);
+      row.appendChild(btn);
+      card.appendChild(row);
+      card.appendChild(status);
+      card.appendChild(referenceRepoNode('div', 'config-help',
+        'Write-only: the token is never shown again. It is verified against the configured API URL (sign-in, read access to every project repo and the scopes this hive needs) before it replaces the current one, which keeps working if the check fails. Applies without a restart and is recorded in the audit log by fingerprint. Scripted rotation: hivectl github token set --stdin.'));
+      host.appendChild(card);
+    }
+
     function forgeAppRow(label, valueHtml) {
       return `<div style="display:flex;gap:10px;font-size:0.78rem;padding:3px 0"><span style="min-width:140px;color:var(--muted);flex-shrink:0">${esc(label)}</span><span style="word-break:break-all">${valueHtml}</span></div>`;
     }
@@ -68864,7 +68964,9 @@ function burnAreaChart() {
           </div>`).join('');
       }
       html += renderForgeGitHubSettings(data.settings || {});
+      html += '<div id="forge-pat-host"></div>';
       host.innerHTML = html;
+      loadGitHubTokenPanel();
     }
 
     // renderForgeGitHubSettings shows the rest of the github: block. Identity
@@ -71057,6 +71159,20 @@ function burnAreaChart() {
         <div class="config-toggle">
           <div class="config-toggle-switch ${g.clearOnKick !== false ? 'on' : ''}" id="cfg-clear-on-kick" data-action="toggleConfigSwitch" data-section="general" data-key="clearOnKick"></div>
           <span class="config-toggle-label">Clear on Kick ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'Clear on Kick', `Send /clear before each governor kick to reset conversation context. Prevents stale context buildup across runs. On by default for all agents.`)}</span>
+        </div>
+        <div class="config-toggle">
+          <div class="config-toggle-switch ${g.headlessTurns ? 'on' : ''}" id="cfg-headless-turns" data-action="toggleConfigSwitch" data-section="general" data-key="headlessTurns"></div>
+          <span class="config-toggle-label">Headless turns ${settingHelpMark('agent-configuration', '', 'Headless turns', `agents.<key>.headless_turns: run one claude -p per kick instead of a resident interactive Claude CLI. Applies only to translator-routed agents (vllm, llm-d, litellm, watsonx or a named gateway) without a launch_cmd. Saving a change restarts the agent.`)}</span>
+        </div>
+        <div class="config-field-row">
+          <div class="config-field">
+            <label>Context window (tokens) ${settingHelpMark('agent-configuration', 'context-window-for-inference-routed-agents', 'Context window (tokens)', `agents.<key>.max_context_tokens: the model's context window, passed to the Claude CLI as CLAUDE_CODE_MAX_CONTEXT_TOKENS on a translator-routed agent. Set it when the gateway reports no window (LiteLLM's /v1/models does not), or the CLI assumes its own default and compacts too late. 0 or empty discovers the window from the gateway. Ignored for Claude models and while the governor runs the agent on a different model. Saving a change restarts the agent.`)}</label>
+            <input type="number" id="cfg-max-context-tokens" min="0" step="1" value="${g.maxContextTokens || ''}" placeholder="0 = discover" data-change-action="markDirty" data-arg0="general" data-arg1="maxContextTokens" data-arg-types="s,s,N">
+          </div>
+          <div class="config-field">
+            <label>Auto-compact window (tokens) ${settingHelpMark('agent-configuration', 'context-window-for-inference-routed-agents', 'Auto-compact window (tokens)', `agents.<key>.auto_compact_window_tokens: the window the Claude CLI auto-compacts against, passed as CLAUDE_CODE_AUTO_COMPACT_WINDOW. 0 or empty leaves it unset; any other value must be at least 100000. Ignored while the governor runs the agent on a different model. Saving a change restarts the agent.`)}</label>
+            <input type="number" id="cfg-auto-compact-window-tokens" min="0" step="1" value="${g.autoCompactWindowTokens || ''}" placeholder="0 = unset" data-change-action="markDirty" data-arg0="general" data-arg1="autoCompactWindowTokens" data-arg-types="s,s,N">
+          </div>
         </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${onDemand ? 'on' : ''}" id="cfg-on-demand" data-action="toggleConfigSwitch" data-section="general" data-key="onDemand"></div>
@@ -75155,6 +75271,126 @@ function burnAreaChart() {
           if (!res.ok) throw new Error(await saveErrorMessage(res));
           renderReviewRetryPanel(host, await res.json());
           showToast('Retry settings saved', 'success');
+        } catch (e) {
+          saveBtn.disabled = false;
+          setStatus(e.message, 'text-danger');
+        }
+      });
+    }
+    /* Chat config assist panel (RFC #19788, issues #19979 and #20092):
+       chat.config_assist.enabled and chat.config_assist.model, loaded from
+       and saved to the owner-only /api/config/chat/config-assist endpoint
+       (GET and PUT), so other roles get the owner-only note instead of
+       controls that would 403 on save. Off by default. Rendered with DOM
+       nodes and textContent only. A save persists and is audited
+       (config_chat_assist); nothing is saved on an error. */
+    const CHAT_ASSIST_HOST_ID = 'cfg-chat-assist-host';
+
+    function chatAssistNode(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    async function loadChatConfigAssistSettings() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/chat/config-assist');
+        host = document.getElementById(CHAT_ASSIST_HOST_ID);
+        if (!host) return;
+        if (r.status === 403) {
+          host.textContent = '';
+          host.appendChild(chatAssistNode('div', 'fs-sm text-muted', 'Only the hive owner can view and edit chat config assist.'));
+          return;
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        renderChatConfigAssistPanel(host, await r.json());
+      } catch (e) {
+        host = host || document.getElementById(CHAT_ASSIST_HOST_ID);
+        if (!host) return;
+        host.textContent = '';
+        host.appendChild(chatAssistNode('div', 'fs-sm text-danger', 'Failed to load the chat config assist toggle: ' + e.message));
+      }
+    }
+
+    /* renderChatConfigAssistPanel paints the toggle, the proposal model
+       picker (empty falls back to chat.grounded_answers.model, then the
+       reviewer model) and whether a grounded-answers runner is attached (the
+       panel still saves either way; it just has nothing to propose with
+       until one is). */
+    function renderChatConfigAssistPanel(host, data) {
+      if (!host) return;
+      data = data || {};
+      const state = { enabled: data.enabled === true, model: typeof data.model === 'string' ? data.model : '' };
+
+      host.textContent = '';
+      host.appendChild(chatAssistNode('p', 'config-help',
+        'Lets Hive Chat propose config changes (model, reasoning effort, cadence) for you to confirm, instead of only answering questions. Off by default.'));
+      if (!data.runner_attached) {
+        host.appendChild(chatAssistNode('p', 'fs-sm text-muted', 'No grounded-answers runner is attached yet, so turning this on has nothing to propose with until one is.'));
+      }
+
+      const toggleRow = chatAssistNode('div', 'config-toggle');
+      const switchEl = chatAssistNode('div', 'config-toggle-switch' + (state.enabled ? ' on' : ''));
+      const label = chatAssistNode('span', 'config-toggle-label', 'Chat config assist enabled ');
+      const hint = chatAssistNode('span', 'settings-yaml-hint', 'YAML ');
+      hint.appendChild(chatAssistNode('code', '', 'chat.config_assist.enabled'));
+      label.appendChild(hint);
+      toggleRow.appendChild(switchEl);
+      toggleRow.appendChild(label);
+      host.appendChild(toggleRow);
+
+      const modelField = chatAssistNode('div', 'config-field');
+      const modelLabel = chatAssistNode('label', '', 'Proposal model ');
+      const modelHint = chatAssistNode('span', 'settings-yaml-hint', 'YAML ');
+      modelHint.appendChild(chatAssistNode('code', '', 'chat.config_assist.model'));
+      modelLabel.appendChild(modelHint);
+      const modelInput = chatAssistNode('input');
+      modelInput.type = 'text';
+      modelInput.setAttribute('list', 'security-model-options');
+      modelInput.value = state.model;
+      modelInput.placeholder = data.fallback_model ? 'empty uses ' + data.fallback_model + ' (chat.grounded_answers.model)' : 'empty uses the reviewer model';
+      modelField.appendChild(modelLabel);
+      modelField.appendChild(modelInput);
+      modelField.appendChild(chatAssistNode('div', 'config-help', 'The model the proposal turn runs on. Empty falls back to chat.grounded_answers.model, then the governor reviewer model.'));
+      host.appendChild(modelField);
+
+      const statusEl = chatAssistNode('div', 'fs-sm');
+      const setStatus = (msg, cls) => { statusEl.textContent = msg; statusEl.className = 'fs-sm ' + (cls || 'text-muted'); };
+      const saveBtn = chatAssistNode('button', 'hv-btn btn-primary btn-sm', 'Save');
+      saveBtn.disabled = true;
+
+      switchEl.addEventListener('click', () => {
+        state.enabled = !state.enabled;
+        switchEl.classList.toggle('on', state.enabled);
+        saveBtn.disabled = false;
+        setStatus('');
+      });
+      modelInput.addEventListener('input', () => {
+        state.model = modelInput.value.trim();
+        saveBtn.disabled = false;
+        setStatus('');
+      });
+
+      const actions = chatAssistNode('div', 'config-list-add');
+      actions.appendChild(saveBtn);
+      actions.appendChild(statusEl);
+      host.appendChild(actions);
+
+      saveBtn.addEventListener('click', async () => {
+        saveBtn.disabled = true;
+        setStatus('Saving…');
+        try {
+          const res = await fetch('/api/config/chat/config-assist', {
+            method: 'PUT',
+            headers: _inceptionAuthHeaders(),
+            body: JSON.stringify({ enabled: state.enabled, model: state.model }),
+          });
+          if (!res.ok) throw new Error(await saveErrorMessage(res));
+          await res.json();
+          await loadChatConfigAssistSettings();
+          showToast('Chat config assist ' + (state.enabled ? 'enabled' : 'disabled'), 'success');
         } catch (e) {
           saveBtn.disabled = false;
           setStatus(e.message, 'text-danger');
@@ -80175,6 +80411,7 @@ function burnAreaChart() {
       { id: 'work-intake', title: 'Work intake & issue lifecycle', desc: 'How issues are classified, claimed, closed on merge, de-duplicated, auto-closed and re-planned.' },
       { id: 'agents', title: 'Agents & tooling', desc: 'Agent session supervision and resume, provider rotation, the policy repo, decision models and workload identity.' },
       { id: 'quality', title: 'Quality loops & release health', desc: 'Post-completion feedback lanes, audit publication and release CI repair.' },
+      { id: 'chat', title: 'Chat', desc: 'Hive Chat behavior: grounded answers and the owner-only config assist toggle.' },
       { id: 'integrations', title: 'Integrations & observability', desc: 'OpenTelemetry export plus the Linear, upstream-fork and self-report connections.' },
       { id: 'experimental', title: 'Experimental', desc: 'Pilots and report-only rollouts. Off by default; expect these to move or change.' },
     ];
@@ -80464,6 +80701,7 @@ function burnAreaChart() {
       setTimeout(() => { if (typeof loadReviewRulesSettings === 'function') loadReviewRulesSettings(); }, 0);
       /* Stranded review-feedback retry (#19320): its own owner-only endpoint. */
       setTimeout(() => { if (typeof loadReviewRetrySettings === 'function') loadReviewRetrySettings(); }, 0);
+      setTimeout(() => { if (typeof loadChatConfigAssistSettings === 'function') loadChatConfigAssistSettings(); }, 0);
       // Status line: distinguish ON+running from ON+not-configured from OFF.
       let trajStatus, trajStatusColor;
       if (!trajOn) { trajStatus = 'Off'; trajStatusColor = 'var(--muted)'; }
@@ -81131,7 +81369,7 @@ function burnAreaChart() {
             <div class="config-field"><label>Auto-accept gitdm affiliations ${yamlHint('customers.enrichment.auto_accept')} ${settingHelpMark('settings', 'features', 'Customer enrichment: auto-accept', `off by default: every affiliation a source finds is a suggestion you accept or dismiss. gitdm_high accepts a current gitdm affiliation matched by the person's confirmed GitHub login into an organization that is empty or was filled automatically before. It never replaces a value set by hand, a cleared value, a value shared from the hub or the company on the person's own forge profile, and an email-only match is never accepted. An accepted value is labelled as auto-accepted, and Dismiss clears it and keeps it from coming back. Needs gitdm on. HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT overrides it. See src/docs/customers-enrichment.md.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="customersEnrichmentAutoAccept" data-arg-types="s,s,v">${[['', 'default (off)'], ['off', 'off'], ['gitdm_high', 'gitdm_high']].map(([v, l]) => `<option value="${esc(v)}"${String(f.customersEnrichmentAutoAccept || '').trim().toLowerCase() === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>${(() => { const saved = String(f.customersEnrichmentAutoAccept || '').trim().toLowerCase(); if (saved && !['off', 'gitdm_high'].includes(saved)) return `<div class="config-help">The saved value is not a known policy, so auto-accept is <b>off</b>. Pick one to replace it.</div>`; return f.customersEnrichmentAutoAcceptEffective && f.customersEnrichmentAutoAcceptEffective !== (saved || 'off') ? `<div class="config-help">HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT (or gitdm being off) overrides this setting: auto-accept is currently <b>${esc(f.customersEnrichmentAutoAcceptEffective)}</b>.</div>` : ''; })()}</div>
           </details>
           <details class="settings-subsection-details"><summary class="settings-subsection-summary">Customer record store</summary>
-            <div class="config-field"><label>Store mode ${yamlHint('customers.store')} ${settingHelpMark('settings', 'features', 'Customer record store', `json by default. Where Customers keeps person records and enrichment results while they move onto the embedded colony store. json is today's behaviour, and no colony.db is created. shadow imports people.json and enrichment.json into /data/customers/colony.db once, writes every change to both, keeps reading the JSON, and logs a counts-only parity check at startup and after each discovery sweep. colony reads from colony.db and still writes the JSON, so setting json again loses nothing. A colony.db that cannot be opened falls back to json and is left untouched. Read at startup, so a change applies on the next restart. HIVE_CUSTOMERS_STORE overrides it. See src/docs/design/colony-customer-data-backend.md.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="customersStore" data-arg-types="s,s,v">${[['', 'default (json)'], ['json', 'json'], ['shadow', 'shadow'], ['colony', 'colony']].map(([v, l]) => `<option value="${esc(v)}"${String(f.customersStore || '').trim().toLowerCase() === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>${(() => { const saved = String(f.customersStore || '').trim().toLowerCase(); if (saved && !['json', 'shadow', 'colony'].includes(saved)) return `<div class="config-help">The saved value is not a known store mode, so the store mode is <b>json</b>. Pick one to replace it.</div>`; return f.customersStoreEffective && f.customersStoreEffective !== (saved || 'json') ? `<div class="config-help">HIVE_CUSTOMERS_STORE overrides this setting: the store mode is <b>${esc(f.customersStoreEffective)}</b> from the next restart.</div>` : ''; })()}</div>
+            <div class="config-field"><label>Store mode ${yamlHint('customers.store')} ${settingHelpMark('settings', 'features', 'Customer record store', `shadow by default, until parity is confirmed on the project's own hive; the default then moves to colony. shadow imports people.json and enrichment.json into /data/customers/colony.db once, keeps the JSON authoritative, writes every change to both, and logs a counts-only parity check at startup and after each discovery sweep. colony reads from the embedded colony store, /data/customers/colony.db, and still writes people.json and enrichment.json. json is the behaviour before the colony store and the rollback, and no colony.db is created. colony-only (opt-in) makes colony.db the only store: after a verified full write it renames people.json and enrichment.json to *.migrated and stops writing them; setting colony, shadow or json again writes them back from colony.db on the next start. Setting json again loses nothing. A colony.db that cannot be opened or imported falls back to json and is left untouched. Read at startup, so a change applies on the next restart. HIVE_CUSTOMERS_STORE overrides it. See src/docs/design/colony-customer-data-backend.md.`)}</label><select data-change-action="markDirty" data-arg0="features" data-arg1="customersStore" data-arg-types="s,s,v">${[['', 'default (shadow)'], ['shadow', 'shadow'], ['colony', 'colony'], ['json', 'json'], ['colony-only', 'colony-only']].map(([v, l]) => `<option value="${esc(v)}"${String(f.customersStore || '').trim().toLowerCase() === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>${(() => { const saved = String(f.customersStore || '').trim().toLowerCase(); if (saved && !['json', 'shadow', 'colony', 'colony-only'].includes(saved)) return `<div class="config-help">The saved value is not a known store mode, so the store mode is <b>json</b>. Pick one to replace it.</div>`; return f.customersStoreEffective && f.customersStoreEffective !== (saved || 'shadow') ? `<div class="config-help">HIVE_CUSTOMERS_STORE overrides this setting: the store mode is <b>${esc(f.customersStoreEffective)}</b> from the next restart.</div>` : ''; })()}</div>
           </details>
         </div>
         <div class="settings-subsection">
@@ -81321,6 +81559,13 @@ function burnAreaChart() {
             <div class="config-field"><label>Posture history (days) ${yamlHint('compliance.posture_checks.history_days')} ${settingHelpMark('settings', 'features', 'Posture history', `How long posture-check results are kept, 30 to 1095 days. 0 uses the default (${esc(String(platformDefaults.compliancePostureHistoryDays || 365))}).`)}</label><input type="number" min="0" max="1095" step="1" value="${esc(String(f.compliancePostureHistoryDays || ''))}" placeholder="${esc(String(platformDefaults.compliancePostureHistoryDays || 365))}" data-change-action="markDirty" data-arg0="features" data-arg1="compliancePostureHistoryDays" data-arg-types="s,s,N"></div>
           </div>
           <div class="config-help">Applies on the next posture pass.</div>
+        </div>
+        `)}
+
+        ${featuresSectionHtml('chat', `
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Config assist ${yamlHint('chat.config_assist')} ${settingHelpMark('settings', 'features', 'Config assist', `Lets Hive Chat propose config changes (model, reasoning effort, cadence) for an owner to confirm, instead of only answering questions, and picks the model for the proposal turn. Owner-only; persisted and audited as config_chat_assist.`)}</div>
+          <div id="cfg-chat-assist-host"><div class="fs-sm text-muted">Loading…</div></div>
         </div>
         `)}
 
@@ -85460,7 +85705,12 @@ function burnAreaChart() {
             if (!clsRes.ok) throw new Error(await saveErrorMessage(clsRes));
             _configState.data.classifier = await clsRes.json().catch(() => _configState.data.classifier);
           } else {
-            const res = await fetch(`${base}/${section}`, {
+            // Attribution for a save opened from a chat proposal card (#19978).
+            // The server records via=chat only after checking the id against
+            // its stored proposal.
+            const chatProposal = _configState.chatProposal;
+            const viaChat = chatProposal && chatProposal.section === section ? '?via=chat&proposal=' + encodeURIComponent(chatProposal.id) : '';
+            const res = await fetch(`${base}/${section}${viaChat}`, {
               method: 'PUT',
               headers: _inceptionAuthHeaders(),
               body: JSON.stringify(values)
@@ -85659,6 +85909,146 @@ function burnAreaChart() {
     const CHAT_MAX_TRANSCRIPT = 60;
     const CHAT_MAX_COMMAND_HISTORY = 100;
     const CHAT_CONTEXT_LIMIT = 6;
+    // Owner-only config assist NUX (#19979): the server sends config_assist_hint
+    // on a config-shaped question while the feature is off. Dismissal is a
+    // per-viewer convenience, so it lives in localStorage.
+    const CHAT_CONFIG_ASSIST_HINT_DISMISSED_KEY = 'hive-chat-config-assist-hint-dismissed';
+    function chatConfigAssistHintDismissed() {
+      try { return localStorage.getItem(CHAT_CONFIG_ASSIST_HINT_DISMISSED_KEY) === '1'; } catch (_) { return false; }
+    }
+    // Config assist proposal card (#19978). Everything on it comes from the
+    // server's stored proposal; `why` is model text and is shown escaped, as
+    // plain text. The actions are Apply (#19985: the stored body sent to the
+    // section endpoint with X-Hive-Chat-Proposal, checked server-side), "Open
+    // in agent config" (the existing dialog, pre-filled; the owner's own Save
+    // is the write) and Dismiss. Typing in chat never applies a proposal.
+    function chatConfigProposalCardHtml(p) {
+      const field = p.section === 'cadences' ? 'cadence in ' + String(p.field || '') + ' mode' : String(p.field || '');
+      return '<div class="chat-config-proposal">' +
+        '<div class="chat-config-proposal-title">Proposed change for <strong>' + escapeHtml(String(p.agent || '')) + '</strong>: ' + escapeHtml(field) + '</div>' +
+        '<div class="chat-config-proposal-diff"><code>' + escapeHtml(String(p.before || '(unset)')) + '</code> → <code>' + escapeHtml(String(p.after || '(unset)')) + '</code></div>' +
+        (p.effect ? '<div class="fs-sm text-muted">' + escapeHtml(String(p.effect)) + '</div>' : '') +
+        (p.why ? '<div class="chat-config-proposal-why fs-sm text-muted">' + escapeHtml(String(p.why)) + '</div>' : '') +
+        '<div class="chat-config-proposal-actions"><button type="button" class="hv-btn btn-sm chat-config-proposal-apply">Apply</button> ' +
+        '<button type="button" class="hv-btn btn-sm chat-config-proposal-open">Open in agent config</button> ' +
+        '<button type="button" class="hv-btn btn-sm chat-config-proposal-dismiss">Dismiss</button></div></div>';
+    }
+    // chatApplyConfigProposal is the owner's Apply (or Undo) click: it PUTs the
+    // stored body to the existing section endpoint with the proposal id in
+    // X-Hive-Chat-Proposal. The server checks the id, user, body and section
+    // hash under its config lock and answers 409 for a stale proposal. The card
+    // says "applied" only on a 2xx.
+    async function chatApplyConfigProposal(card, p) {
+      const actions = card.querySelector('.chat-config-proposal-actions');
+      if (!actions) return;
+      actions.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      let res = null;
+      let data = {};
+      try {
+        res = await fetch('/api/config/agent/' + encodeURIComponent(String(p.agent || '')) + '/' + encodeURIComponent(String(p.section || '')), {
+          method: 'PUT',
+          headers: Object.assign({}, _inceptionAuthHeaders(), { 'X-Hive-Chat-Proposal': String(p.id || '') }),
+          body: JSON.stringify((p.body && typeof p.body === 'object') ? p.body : {})
+        });
+        data = await res.json().catch(() => ({}));
+      } catch (err) {
+        data = { error: String((err && err.message) || err) };
+      }
+      const msg = data && data.error ? String(data.error) : (res ? 'HTTP ' + res.status : 'network error');
+      if (!res || !res.ok) {
+        if (res && res.status === 409) {
+          actions.textContent = 'Not applied: ' + msg + '.';
+          return;
+        }
+        actions.querySelectorAll('button').forEach(b => { b.disabled = false; });
+        let err = card.querySelector('.chat-config-proposal-error');
+        if (!err) {
+          err = document.createElement('div');
+          err.className = 'chat-config-proposal-error fs-sm text-muted';
+          card.appendChild(err);
+        }
+        err.textContent = 'Apply failed: ' + msg;
+        return;
+      }
+      const restartFailed = !!(data && data.restart_error);
+      if (p.reverses) {
+        actions.textContent = restartFailed ? 'Undone; saved, but the restart failed. Restart the agent to pick it up.' : 'Undone.';
+        return;
+      }
+      actions.textContent = restartFailed ? 'Saved; restart failed. Restart the agent to pick it up. ' : 'Applied. ';
+      const undo = document.createElement('button');
+      undo.type = 'button';
+      undo.className = 'hv-btn btn-sm chat-config-proposal-undo';
+      undo.textContent = 'Undo';
+      undo.addEventListener('click', () => chatUndoConfigProposal(card, p));
+      actions.appendChild(undo);
+    }
+    // chatUndoConfigProposal asks the server for the reverse proposal of an
+    // applied one (bound to the section as it is now) and applies it through
+    // the same check and endpoint. 409 when the section changed since.
+    async function chatUndoConfigProposal(card, p) {
+      const actions = card.querySelector('.chat-config-proposal-actions');
+      if (!actions) return;
+      actions.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      let res = null;
+      let data = {};
+      try {
+        res = await fetch('/api/chat/config-proposals/' + encodeURIComponent(String(p.id || '')) + '/undo', { method: 'POST', headers: _inceptionAuthHeaders() });
+        data = await res.json().catch(() => ({}));
+      } catch (err) {
+        data = { error: String((err && err.message) || err) };
+      }
+      const rev = data && data.config_proposal && typeof data.config_proposal === 'object' ? data.config_proposal : null;
+      if (!res || !res.ok || !rev) {
+        actions.textContent = 'Not undone: ' + (data && data.error ? String(data.error) : (res ? 'HTTP ' + res.status : 'network error')) + '.';
+        return;
+      }
+      await chatApplyConfigProposal(card, rev);
+    }
+    function chatBindConfigProposalCard(msgEl, p) {
+      const card = msgEl.querySelector('.chat-config-proposal');
+      if (!card) return;
+      const apply = card.querySelector('.chat-config-proposal-apply');
+      const open = card.querySelector('.chat-config-proposal-open');
+      const dismiss = card.querySelector('.chat-config-proposal-dismiss');
+      if (apply) apply.addEventListener('click', () => chatApplyConfigProposal(card, p));
+      if (open) open.addEventListener('click', () => {
+        window._chatConfigProposal = { id: String(p.id || ''), agent: String(p.agent || ''), section: String(p.section || ''), field: String(p.field || ''), before: String(p.before || ''), after: String(p.after || ''), body: (p.body && typeof p.body === 'object') ? p.body : {} };
+        openConfigDialog('agent', String(p.agent || ''), p.section === 'cadences' ? 'Cadences' : 'General');
+      });
+      if (dismiss) dismiss.addEventListener('click', async () => {
+        dismiss.disabled = true;
+        try {
+          await fetch('/api/chat/config-proposals/' + encodeURIComponent(String(p.id || '')) + '/decline', { method: 'POST', headers: _inceptionAuthHeaders() });
+        } catch (_) { /* the proposal expires on its own */ }
+        const actions = card.querySelector('.chat-config-proposal-actions');
+        if (actions) actions.textContent = 'Dismissed.';
+      });
+    }
+    // applyChatConfigProposal pre-fills the agent config dialog from the card
+    // the owner clicked: the proposed value is shown in the form, marked dirty,
+    // and named in a banner. The dialog's own Save sends it with
+    // via=chat&proposal=<id>, which the server checks against its stored copy.
+    function applyChatConfigProposal() {
+      const p = window._chatConfigProposal;
+      window._chatConfigProposal = null;
+      const old = document.getElementById('config-chat-proposal-banner');
+      if (old) old.remove();
+      if (!p || !p.id || _configState.type !== 'agent' || _configState.agent !== p.agent) return;
+      _configState.chatProposal = { id: p.id, section: p.section, field: p.field };
+      const d = _configState.data || {};
+      for (const [k, v] of Object.entries(p.body || {})) markDirty(p.section, k, v);
+      if (p.section === 'cadences') d.cadences = Object.assign({}, d.cadences || {}, p.body);
+      else if (p.section === 'general') d.general = Object.assign({}, d.general || {}, p.body);
+      else if (p.section === 'models' && p.field === 'model') d.general = Object.assign({}, d.general || {}, { model: p.body.model });
+      const body = document.getElementById('config-body');
+      if (!body || !body.parentNode) return;
+      const banner = document.createElement('div');
+      banner.id = 'config-chat-proposal-banner';
+      banner.className = 'chat-config-proposal-banner fs-sm';
+      banner.textContent = 'Proposed by Hive Chat: ' + (p.section === 'cadences' ? 'cadence in ' + p.field + ' mode' : p.field) + ' ' + (p.before || '(unset)') + ' → ' + (p.after || '(unset)') + '. Review it, then click Save to apply, or Cancel to discard.';
+      body.parentNode.insertBefore(banner, body);
+    }
     const CHAT_TRANSCRIPT_KEY = 'hive-chat-transcript-v2';
     const CHAT_LEGACY_STORAGE_KEY = 'hive-chat-history';
     const CHAT_COMMAND_HISTORY_KEY = 'hive-chat-command-history-v1';
@@ -85955,7 +86345,18 @@ function burnAreaChart() {
         let html = formatChatHtml(answer);
         if (data.raw) html += '<details class="chat-raw-details"><summary>Search data</summary><pre>' + escapeHtml(data.raw) + '</pre></details>';
         if (data.sources && data.sources.length) html += '<div class="chat-sources">Sources: ' + data.sources.map(s => '<span>' + escapeHtml(String(s)) + '</span>').join('') + '</div>';
-        chatAddMsg(html, 'system', { html:true, rawText: answer });
+        const showHint = !!data.config_assist_hint && !chatConfigAssistHintDismissed();
+        if (showHint) html += '<div class="chat-config-assist-hint fs-sm text-muted">' + escapeHtml(String(data.config_assist_hint)) + ' <button type="button" class="hv-btn btn-sm chat-config-assist-dismiss">Dismiss</button></div>';
+        const proposal = data.config_proposal && typeof data.config_proposal === 'object' ? data.config_proposal : null;
+        if (proposal) html += chatConfigProposalCardHtml(proposal);
+        const msgEl = chatAddMsg(html, 'system', { html:true, rawText: answer });
+        if (proposal && msgEl && msgEl.querySelector) chatBindConfigProposalCard(msgEl, proposal);
+        const dismiss = showHint && msgEl && msgEl.querySelector ? msgEl.querySelector('.chat-config-assist-dismiss') : null;
+        if (dismiss) dismiss.addEventListener('click', () => {
+          try { localStorage.setItem(CHAT_CONFIG_ASSIST_HINT_DISMISSED_KEY, '1'); } catch (_) { /* per-viewer convenience only */ }
+          const hintEl = dismiss.closest('.chat-config-assist-hint');
+          if (hintEl) hintEl.remove();
+        });
         return null;
       } catch (err) {
         thinking.remove();

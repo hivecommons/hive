@@ -153,7 +153,7 @@ func (r *forgeRequestRelay) ensureQueueDirs() {
 		return
 	}
 	ready := true
-	for kind, dir := range map[string]string{"push": r.pushDir, "review": r.reviewDir, "merge": r.mergeDir} {
+	for kind, dir := range map[string]string{"push": r.pushDir, "review": r.reviewDir, "merge": r.mergeDir, "clone": r.cloneDir} {
 		if dir != "" && !github.EnsureRequestDir(r.logger, kind, dir) {
 			ready = false
 		}

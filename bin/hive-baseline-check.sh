@@ -54,15 +54,16 @@ Exit status:
   2  unknown: invalid input, missing dependency, GitHub/API failure, or
      RERUN_BASELINE — the default-branch green is older than the evidence
      against it and every red sibling is behind base, so a stale-green
-     baseline cannot be told apart from branch drift; re-run the check on
-     the default branch (or diagnose by hand) before repairing PRs
+     baseline cannot be told apart from branch drift; diagnose by hand, or
+     ask a maintainer once to re-run the check on the default branch (agents
+     cannot re-run CI), before repairing PRs
 
 Actions (also in --json as "action"):
   DEFER_TO_INCIDENT  shared: one repository incident, not one failure per PR
   MERGE_BASE         the branch is behind the default branch; merge it first
   FIX_DIFF           PR-local: diagnose this PR's own diff
   NOT_REACHABLE_FORK the head is in a fork; you cannot push — comment only
-  RERUN_BASELINE     the default-branch green is stale; re-run it first
+  RERUN_BASELINE     the default-branch green is stale; ask a maintainer to re-run it first
 EOF
 }
 
@@ -402,7 +403,7 @@ else
         "$SIBLINGS_CURRENT" "$SIBLINGS_SAMPLED" "$BASE_BRANCH" "$BASE_BRANCH"
       ;;
     stale-baseline)
-      printf 'UNKNOWN (%s): check "%s" is red on %s open sibling PR(s) in %s, all sampled (%s) behind "%s", and the green conclusion on "%s" is %sh old (older than %sh). A stale-green baseline cannot be told from branch drift; re-run "%s" on "%s" before repairing any PR.\n' \
+      printf 'UNKNOWN (%s): check "%s" is red on %s open sibling PR(s) in %s, all sampled (%s) behind "%s", and the green conclusion on "%s" is %sh old (older than %sh). A stale-green baseline cannot be told from branch drift; diagnose by hand, or ask a maintainer once to re-run "%s" on "%s" (agents cannot re-run CI), before repairing any PR.\n' \
         "$ACTION" "$CHECK_NAME" "$SIBLING_COUNT" "$REPO" "$SIBLINGS_SAMPLED" "$BASE_BRANCH" "$BASE_BRANCH" \
         "$BASE_AGE_HOURS" "$MAX_AGE_HOURS" "$CHECK_NAME" "$BASE_BRANCH"
       ;;

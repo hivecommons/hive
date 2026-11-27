@@ -171,6 +171,29 @@ func saveSaaSUser(u *SaaSUser) error {
 	if strings.Contains(u.GitHubUsername, "..") || strings.Contains(u.GitHubUsername, "/") || strings.Contains(u.GitHubUsername, "\\") {
 		return fmt.Errorf("invalid username for save: %q", u.GitHubUsername)
 	}
+	// HIVE_HUB_CUSTOMER_STORE=colony-only: colony first, then the JSON
+	// without the CRM fields (customer_store_only.go).
+	if st, ok := crmColonyOnly(); ok {
+		return crmOnlySaveUser(st, u, writeSaaSUserFile)
+	}
+	if u.CRMInColony && crmFieldsOf(u) != (crmFields{}) {
+		// A record stripped in colony-only, saved while colony-only is not
+		// running (a fallback): its CRM fields are in colony.db, which this
+		// write cannot reach, so a change to them is refused rather than
+		// written where colony-only would later read over it.
+		return errCRMHeldInColony
+	}
+	if err := writeSaaSUserFile(u); err != nil {
+		return err
+	}
+	// Shadow and colony modes dual-write the CRM fields to the colony store.
+	// The JSON written above stays the rollback copy (customer_store.go).
+	crmMirrorUser(u)
+	return nil
+}
+
+// writeSaaSUserFile writes u's JSON record atomically.
+func writeSaaSUserFile(u *SaaSUser) error {
 	// Best-effort: a failed mkdir surfaces via the WriteFile error below.
 	_ = os.MkdirAll(saasUsersDir, 0o755)
 	data, err := json.MarshalIndent(u, "", "  ")
@@ -212,9 +235,6 @@ func saveSaaSUser(u *SaaSUser) error {
 		cleanup()
 		return err
 	}
-	// Shadow and colony modes dual-write the CRM fields to the colony store.
-	// The JSON written above stays the rollback copy (customer_store.go).
-	crmMirrorUser(u)
 	return nil
 }
 
@@ -698,6 +718,13 @@ func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 			len(ownedHives), strings.Join(ownedHives, ", ")))
 		return
 	}
+	// A colony.db the hub could not open may hold this person's only CRM
+	// and consent copy: the delete waits for the store, never leaves it.
+	if crmStoreUnavailable() {
+		s.logger.Warn("admin delete user: customer store not open; delete refused", "target", username)
+		writeJSONError(w, http.StatusServiceUnavailable, "customer store unavailable; retry once the hub has opened it")
+		return
+	}
 	// Remove consents first. If storage fails, leave the user in place so a
 	// subsequent deletion can retry; never report deletion with consents left.
 	consentPath, err := customerConsentPath(u)
@@ -715,7 +742,15 @@ func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 	}
 	// Erase the person from the colony store too, in every mode, before the
 	// JSON goes, so a failure leaves the account in place for a retry.
-	if err := crmForgetUser(u); err != nil {
+	if err := crmForgetUser(u); err == nil {
+		// The kept colony-only copies go too (#19972).
+		err = scrubHubMigrated(u)
+		if err != nil {
+			s.logger.Warn("admin delete user: migrated copy removal failed", "target", username, "error", crmErrClass(err))
+			writeJSONError(w, http.StatusInternalServerError, "failed to erase user's customer record")
+			return
+		}
+	} else {
 		s.logger.Warn("admin delete user: customer store erase failed", "target", username, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "failed to erase user's customer record")
 		return

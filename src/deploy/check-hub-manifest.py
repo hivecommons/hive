@@ -10,6 +10,10 @@ Fails (exit 1) when a Deployment named hive-hub:
   - sets a known secret-bearing env name as a literal `value:` or from
     anything other than valueFrom.secretKeyRef (configMapKeyRef, fieldRef,
     or no source at all), in containers or initContainers.
+  - does not use `strategy: {type: Recreate}` (#20103). The hub is the only
+    writer of colony.db on its PVC; under RollingUpdate (also the default when
+    no strategy is set) the new pod starts while the old one still holds the
+    file lock and runs its whole life in json mode.
 
 Keep EXPECTED_CONTAINERS in sync with hubContainerName in
 src/pkg/hub/saas_sha_poller.go.
@@ -19,6 +23,9 @@ import sys
 import yaml
 
 HUB_DEPLOYMENT = "hive-hub"
+REQUIRED_STRATEGY = "Recreate"
+# Kubernetes' default when spec.strategy is unset.
+DEFAULT_STRATEGY = "RollingUpdate"
 EXPECTED_CONTAINERS = {"hub"}
 SECRET_ENV_NAMES = {
     "HIVE_HUB_OAUTH_CLIENT_SECRET",
@@ -35,6 +42,12 @@ def check_doc(doc):
     if (doc.get("metadata") or {}).get("name") != HUB_DEPLOYMENT:
         return []
     problems = []
+    strategy = ((doc.get("spec") or {}).get("strategy") or {}).get("type") or DEFAULT_STRATEGY
+    if strategy != REQUIRED_STRATEGY:
+        problems.append(
+            "strategy %r (want %r: a rolling update cannot take colony.db's lock from the old pod)"
+            % (strategy, REQUIRED_STRATEGY)
+        )
     pod = ((doc.get("spec") or {}).get("template") or {}).get("spec") or {}
     for c in pod.get("containers") or []:
         name = c.get("name")

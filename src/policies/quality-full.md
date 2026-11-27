@@ -27,8 +27,9 @@ merge it and re-check before diagnosing anything), `FIX_DIFF` (the PR's own
 diff is at fault), `NOT_REACHABLE_FORK` (the head is in a fork — you cannot
 push; comment with the finding, never push a branch of that name), or
 `RERUN_BASELINE` (the default branch's green is stale and every red sibling
-is behind it — re-run the check on the default branch, or diagnose by hand;
-do not repair PRs against it).
+is behind it — diagnose by hand, or ask a maintainer once, on the
+`[shared-ci]` incident or the PR, for a fresh default-branch run (you cannot
+re-run CI); do not repair PRs against it).
 
 A shared result is **one repository incident, not one failure per PR**. Stop
 PR-specific retries. Create or reuse the single open issue with the stable title
@@ -75,8 +76,11 @@ test problem. Check these before diagnosing any single PR:
    `git merge-tree --write-tree --name-only <this-head> <sibling-head>`
    (exit 1 = textual conflict; no checkout needed). If a sibling conflicts,
    say so on the PR once and prefer the order that rebases the smaller diff.
-   Use a sticky comment (edit the existing one, marker `<!-- hive-pr-overlap -->`)
-   rather than a new comment each run.
+   Post that overlap note once per PR and do not repeat it on later runs: a
+   comment cannot be edited, so first check whether the PR already has one (a
+   note you posted earlier, or a comment carrying `<!-- hive-pr-overlap -->`,
+   which the repository's pr-overlap workflow maintains where it has one) and
+   rely on it instead of posting again.
 4. **Behind the base: defer to the preparation owner.** Do not update a PR
    branch merely because the base moved, even when it touches the same files
    as the merged change. On repositories that use the current-base gate
@@ -96,7 +100,8 @@ test problem. Check these before diagnosing any single PR:
    the shared-baseline helper on a red check is a repair, not a refresh, and
    still applies.
 5. **Throughput fixes worth a PR.** When a repository's CI is slow, look for
-   and propose, one PR each: a missing `concurrency` group with
+   and propose each one separately, as a PR or, for a workflow file, as an
+   issue under the workflow-file rule below: a missing `concurrency` group with
    `cancel-in-progress` on pull_request workflows; `actions/setup-go` /
    `setup-node` caching that re-downloads on every shard; Docker builds without
    a registry layer cache (`--cache-from type=registry`); matrix shards that
@@ -168,15 +173,15 @@ Issue types: `coverage-gap`, `missing-workflow`, `test-infrastructure`, `coverag
 
 ## Opening PRs
 
-If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `src/scripts/issue-coauthor.sh` as the single source of truth for issue-author attribution. After `git commit -s` and before the first `git push`, run `src/scripts/issue-coauthor.sh --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
+If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `issue-coauthor` as the single source of truth for issue-author attribution (the agent image ships it on `PATH`; in a checkout of this repository without it, run `src/scripts/issue-coauthor.sh` instead). After `git commit -s` and before the first `git push`, run `issue-coauthor --amend <issue-number>` once for each resolved issue. Exit `0` with empty output means no trailer is needed (bot/self issue author); if resolution fails, warn and continue so the fix can still ship. `Co-authored-by:` is attribution only, not DCO; never add `Signed-off-by:` for the issue author.
 
 1. Create a branch: `git checkout -b quality/test-<short-slug>`
-2. Write the test code or CI workflow changes
+2. Write the test code (for `.github/workflows/**`, see the workflow-file rule below)
 3. Commit: `git commit -s -m "[quality] <description>"`
-4. Run `src/scripts/issue-coauthor.sh --amend <issue-number>` when this resolves an issue
+4. Run `issue-coauthor --amend <issue-number>` when this resolves an issue
 5. Push the branch, then request the PR with `hive-open-pr` — **NEVER merge it yourself**:
 
-Title the PR the way the TARGET repository titles PRs, and pass `--base` explicitly so the PR lands on the branch that repository requires. Read its AGENTS.md, CONTRIBUTING and recent merged PR titles first: many repositories enforce Conventional Commits and reject a `[<lane>]` prefix on the first character — that prefix is hive's own house style, and projecting it outward killed projectbluefin/common#1127 and projectbluefin/review#597 on arrival (hivecommons/hive#7159). The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The form below is the default for a repository that states no convention of its own.
+Title the PR by the PR title rule in Project Authentication above (it follows the TARGET repository's convention), and pass `--base` explicitly so the PR lands on the branch that repository requires. The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The example title below is the form for a repository that states no convention of its own.
 
 ```bash
 hive-open-pr --repo "$HIVE_REPO" \
@@ -187,7 +192,8 @@ hive-open-pr --repo "$HIVE_REPO" \
   --label "quality,testing"
 ```
 
-Quality can PR: new unit tests, test fixtures/helpers, CI workflow improvements, coverage reporting config.
+Quality can PR: new unit tests, test fixtures/helpers, coverage reporting config.
+A fix in `.github/workflows/**`: if this kick has a section saying workflow files are out of reach at this mode, follow it and file an issue with the exact replacement text instead of a PR. Otherwise open a PR as usual.
 Quality must NEVER: merge any PR, create PRs for production code or non-testing changes.
 
 ## Writing Beads

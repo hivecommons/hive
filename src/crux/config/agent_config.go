@@ -108,14 +108,15 @@ type AgentConfig struct {
 	// contributor relay) already honor the same choice via
 	// AGENT_REASONING_EFFORT; this field is the in-config analogue for
 	// manager-launched agents.
-	ReasoningEffort  string `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
-	MaxContextTokens int    `yaml:"max_context_tokens,omitempty" json:"max_context_tokens,omitempty"` // inference-routed model's window for the Claude CLI; 0 = discover (see crux/agent/inference_context_window.go)
-	BeadsDir         string `yaml:"beads_dir" json:"beads_dir,omitempty"`
-	Enabled          bool   `yaml:"enabled" json:"enabled,omitempty"`
-	Replicas         int    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
-	ReplicaOf        string `yaml:"-" json:"replicaOf,omitempty"`
-	ReplicaIndex     int    `yaml:"-" json:"replicaIndex,omitempty"`
-	ReplicaCount     int    `yaml:"-" json:"replicaCount,omitempty"`
+	ReasoningEffort         string `yaml:"reasoning_effort,omitempty" json:"reasoning_effort,omitempty"`
+	MaxContextTokens        int    `yaml:"max_context_tokens,omitempty" json:"max_context_tokens,omitempty"`                 // inference-routed model's window for the Claude CLI; 0 = discover (see crux/agent/inference_context_window.go)
+	AutoCompactWindowTokens int    `yaml:"auto_compact_window_tokens,omitempty" json:"auto_compact_window_tokens,omitempty"` // model's auto-compaction window; 0 = unset
+	BeadsDir                string `yaml:"beads_dir" json:"beads_dir,omitempty"`
+	Enabled                 bool   `yaml:"enabled" json:"enabled,omitempty"`
+	Replicas                int    `yaml:"replicas,omitempty" json:"replicas,omitempty"`
+	ReplicaOf               string `yaml:"-" json:"replicaOf,omitempty"`
+	ReplicaIndex            int    `yaml:"-" json:"replicaIndex,omitempty"`
+	ReplicaCount            int    `yaml:"-" json:"replicaCount,omitempty"`
 	// ReviewHeads derives one reviewer agent per entry and replica from this
 	// (base) agent, each with its own backend/model: the swarm's model
 	// "heads" (hivecommons/hive#13542). With split perspectives every
@@ -312,8 +313,14 @@ type AgentConfig struct {
 	// default" (HIVE_EXPLAIN_MODE), while "off" is an explicit per-agent
 	// opt-OUT that survives an operator turning explanation on fleet-wide.
 	// Valid values: "" | off | brief | full — see ExplainMode* constants.
-	ExplainMode   string `yaml:"explain_mode,omitempty" json:"explain_mode,omitempty"`
-	HeadlessTurns bool   `yaml:"headless_turns,omitempty" json:"headless_turns,omitempty"` // one claude -p per kick on translator routes; see agent/claude_headless.go (#19902)
+	ExplainMode string `yaml:"explain_mode,omitempty" json:"explain_mode,omitempty"`
+	// HeadlessTurns runs one `claude -p` per kick on translator routes; see
+	// agent/claude_headless.go (#19902). A pointer, like Converse, so an
+	// explicit `false` written by the dashboard stays distinguishable from
+	// "unset" across the overlay merge and can turn the mode off over a seed
+	// (ConfigMap) opt-in the dashboard cannot rewrite. Read it through
+	// HeadlessTurnsEnabled.
+	HeadlessTurns *bool `yaml:"headless_turns,omitempty" json:"headless_turns,omitempty"`
 	// Sandbox opts this agent into phase-1 sandbox execution when the global
 	// agent_sandbox.enabled gate is also true.
 	Sandbox *AgentSandboxOverride `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
@@ -693,4 +700,10 @@ type ProviderBudgetConfig struct {
 	// of day, not at midnight — #4294), so hive never predicts one; it just
 	// retries cheaply until the provider serves again.
 	ProbeIntervalS int `yaml:"probe_interval_s,omitempty" json:"probe_interval_s,omitempty"`
+}
+
+// HeadlessTurnsEnabled reports whether the agent opted into headless_turns;
+// nil (unset) means off.
+func (a AgentConfig) HeadlessTurnsEnabled() bool {
+	return a.HeadlessTurns != nil && *a.HeadlessTurns
 }

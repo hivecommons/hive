@@ -79,6 +79,146 @@
     const CHAT_MAX_TRANSCRIPT = 60;
     const CHAT_MAX_COMMAND_HISTORY = 100;
     const CHAT_CONTEXT_LIMIT = 6;
+    // Owner-only config assist NUX (#19979): the server sends config_assist_hint
+    // on a config-shaped question while the feature is off. Dismissal is a
+    // per-viewer convenience, so it lives in localStorage.
+    const CHAT_CONFIG_ASSIST_HINT_DISMISSED_KEY = 'hive-chat-config-assist-hint-dismissed';
+    function chatConfigAssistHintDismissed() {
+      try { return localStorage.getItem(CHAT_CONFIG_ASSIST_HINT_DISMISSED_KEY) === '1'; } catch (_) { return false; }
+    }
+    // Config assist proposal card (#19978). Everything on it comes from the
+    // server's stored proposal; `why` is model text and is shown escaped, as
+    // plain text. The actions are Apply (#19985: the stored body sent to the
+    // section endpoint with X-Hive-Chat-Proposal, checked server-side), "Open
+    // in agent config" (the existing dialog, pre-filled; the owner's own Save
+    // is the write) and Dismiss. Typing in chat never applies a proposal.
+    function chatConfigProposalCardHtml(p) {
+      const field = p.section === 'cadences' ? 'cadence in ' + String(p.field || '') + ' mode' : String(p.field || '');
+      return '<div class="chat-config-proposal">' +
+        '<div class="chat-config-proposal-title">Proposed change for <strong>' + escapeHtml(String(p.agent || '')) + '</strong>: ' + escapeHtml(field) + '</div>' +
+        '<div class="chat-config-proposal-diff"><code>' + escapeHtml(String(p.before || '(unset)')) + '</code> → <code>' + escapeHtml(String(p.after || '(unset)')) + '</code></div>' +
+        (p.effect ? '<div class="fs-sm text-muted">' + escapeHtml(String(p.effect)) + '</div>' : '') +
+        (p.why ? '<div class="chat-config-proposal-why fs-sm text-muted">' + escapeHtml(String(p.why)) + '</div>' : '') +
+        '<div class="chat-config-proposal-actions"><button type="button" class="hv-btn btn-sm chat-config-proposal-apply">Apply</button> ' +
+        '<button type="button" class="hv-btn btn-sm chat-config-proposal-open">Open in agent config</button> ' +
+        '<button type="button" class="hv-btn btn-sm chat-config-proposal-dismiss">Dismiss</button></div></div>';
+    }
+    // chatApplyConfigProposal is the owner's Apply (or Undo) click: it PUTs the
+    // stored body to the existing section endpoint with the proposal id in
+    // X-Hive-Chat-Proposal. The server checks the id, user, body and section
+    // hash under its config lock and answers 409 for a stale proposal. The card
+    // says "applied" only on a 2xx.
+    async function chatApplyConfigProposal(card, p) {
+      const actions = card.querySelector('.chat-config-proposal-actions');
+      if (!actions) return;
+      actions.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      let res = null;
+      let data = {};
+      try {
+        res = await fetch('/api/config/agent/' + encodeURIComponent(String(p.agent || '')) + '/' + encodeURIComponent(String(p.section || '')), {
+          method: 'PUT',
+          headers: Object.assign({}, _inceptionAuthHeaders(), { 'X-Hive-Chat-Proposal': String(p.id || '') }),
+          body: JSON.stringify((p.body && typeof p.body === 'object') ? p.body : {})
+        });
+        data = await res.json().catch(() => ({}));
+      } catch (err) {
+        data = { error: String((err && err.message) || err) };
+      }
+      const msg = data && data.error ? String(data.error) : (res ? 'HTTP ' + res.status : 'network error');
+      if (!res || !res.ok) {
+        if (res && res.status === 409) {
+          actions.textContent = 'Not applied: ' + msg + '.';
+          return;
+        }
+        actions.querySelectorAll('button').forEach(b => { b.disabled = false; });
+        let err = card.querySelector('.chat-config-proposal-error');
+        if (!err) {
+          err = document.createElement('div');
+          err.className = 'chat-config-proposal-error fs-sm text-muted';
+          card.appendChild(err);
+        }
+        err.textContent = 'Apply failed: ' + msg;
+        return;
+      }
+      const restartFailed = !!(data && data.restart_error);
+      if (p.reverses) {
+        actions.textContent = restartFailed ? 'Undone; saved, but the restart failed. Restart the agent to pick it up.' : 'Undone.';
+        return;
+      }
+      actions.textContent = restartFailed ? 'Saved; restart failed. Restart the agent to pick it up. ' : 'Applied. ';
+      const undo = document.createElement('button');
+      undo.type = 'button';
+      undo.className = 'hv-btn btn-sm chat-config-proposal-undo';
+      undo.textContent = 'Undo';
+      undo.addEventListener('click', () => chatUndoConfigProposal(card, p));
+      actions.appendChild(undo);
+    }
+    // chatUndoConfigProposal asks the server for the reverse proposal of an
+    // applied one (bound to the section as it is now) and applies it through
+    // the same check and endpoint. 409 when the section changed since.
+    async function chatUndoConfigProposal(card, p) {
+      const actions = card.querySelector('.chat-config-proposal-actions');
+      if (!actions) return;
+      actions.querySelectorAll('button').forEach(b => { b.disabled = true; });
+      let res = null;
+      let data = {};
+      try {
+        res = await fetch('/api/chat/config-proposals/' + encodeURIComponent(String(p.id || '')) + '/undo', { method: 'POST', headers: _inceptionAuthHeaders() });
+        data = await res.json().catch(() => ({}));
+      } catch (err) {
+        data = { error: String((err && err.message) || err) };
+      }
+      const rev = data && data.config_proposal && typeof data.config_proposal === 'object' ? data.config_proposal : null;
+      if (!res || !res.ok || !rev) {
+        actions.textContent = 'Not undone: ' + (data && data.error ? String(data.error) : (res ? 'HTTP ' + res.status : 'network error')) + '.';
+        return;
+      }
+      await chatApplyConfigProposal(card, rev);
+    }
+    function chatBindConfigProposalCard(msgEl, p) {
+      const card = msgEl.querySelector('.chat-config-proposal');
+      if (!card) return;
+      const apply = card.querySelector('.chat-config-proposal-apply');
+      const open = card.querySelector('.chat-config-proposal-open');
+      const dismiss = card.querySelector('.chat-config-proposal-dismiss');
+      if (apply) apply.addEventListener('click', () => chatApplyConfigProposal(card, p));
+      if (open) open.addEventListener('click', () => {
+        window._chatConfigProposal = { id: String(p.id || ''), agent: String(p.agent || ''), section: String(p.section || ''), field: String(p.field || ''), before: String(p.before || ''), after: String(p.after || ''), body: (p.body && typeof p.body === 'object') ? p.body : {} };
+        openConfigDialog('agent', String(p.agent || ''), p.section === 'cadences' ? 'Cadences' : 'General');
+      });
+      if (dismiss) dismiss.addEventListener('click', async () => {
+        dismiss.disabled = true;
+        try {
+          await fetch('/api/chat/config-proposals/' + encodeURIComponent(String(p.id || '')) + '/decline', { method: 'POST', headers: _inceptionAuthHeaders() });
+        } catch (_) { /* the proposal expires on its own */ }
+        const actions = card.querySelector('.chat-config-proposal-actions');
+        if (actions) actions.textContent = 'Dismissed.';
+      });
+    }
+    // applyChatConfigProposal pre-fills the agent config dialog from the card
+    // the owner clicked: the proposed value is shown in the form, marked dirty,
+    // and named in a banner. The dialog's own Save sends it with
+    // via=chat&proposal=<id>, which the server checks against its stored copy.
+    function applyChatConfigProposal() {
+      const p = window._chatConfigProposal;
+      window._chatConfigProposal = null;
+      const old = document.getElementById('config-chat-proposal-banner');
+      if (old) old.remove();
+      if (!p || !p.id || _configState.type !== 'agent' || _configState.agent !== p.agent) return;
+      _configState.chatProposal = { id: p.id, section: p.section, field: p.field };
+      const d = _configState.data || {};
+      for (const [k, v] of Object.entries(p.body || {})) markDirty(p.section, k, v);
+      if (p.section === 'cadences') d.cadences = Object.assign({}, d.cadences || {}, p.body);
+      else if (p.section === 'general') d.general = Object.assign({}, d.general || {}, p.body);
+      else if (p.section === 'models' && p.field === 'model') d.general = Object.assign({}, d.general || {}, { model: p.body.model });
+      const body = document.getElementById('config-body');
+      if (!body || !body.parentNode) return;
+      const banner = document.createElement('div');
+      banner.id = 'config-chat-proposal-banner';
+      banner.className = 'chat-config-proposal-banner fs-sm';
+      banner.textContent = 'Proposed by Hive Chat: ' + (p.section === 'cadences' ? 'cadence in ' + p.field + ' mode' : p.field) + ' ' + (p.before || '(unset)') + ' → ' + (p.after || '(unset)') + '. Review it, then click Save to apply, or Cancel to discard.';
+      body.parentNode.insertBefore(banner, body);
+    }
     const CHAT_TRANSCRIPT_KEY = 'hive-chat-transcript-v2';
     const CHAT_LEGACY_STORAGE_KEY = 'hive-chat-history';
     const CHAT_COMMAND_HISTORY_KEY = 'hive-chat-command-history-v1';
@@ -375,7 +515,18 @@
         let html = formatChatHtml(answer);
         if (data.raw) html += '<details class="chat-raw-details"><summary>Search data</summary><pre>' + escapeHtml(data.raw) + '</pre></details>';
         if (data.sources && data.sources.length) html += '<div class="chat-sources">Sources: ' + data.sources.map(s => '<span>' + escapeHtml(String(s)) + '</span>').join('') + '</div>';
-        chatAddMsg(html, 'system', { html:true, rawText: answer });
+        const showHint = !!data.config_assist_hint && !chatConfigAssistHintDismissed();
+        if (showHint) html += '<div class="chat-config-assist-hint fs-sm text-muted">' + escapeHtml(String(data.config_assist_hint)) + ' <button type="button" class="hv-btn btn-sm chat-config-assist-dismiss">Dismiss</button></div>';
+        const proposal = data.config_proposal && typeof data.config_proposal === 'object' ? data.config_proposal : null;
+        if (proposal) html += chatConfigProposalCardHtml(proposal);
+        const msgEl = chatAddMsg(html, 'system', { html:true, rawText: answer });
+        if (proposal && msgEl && msgEl.querySelector) chatBindConfigProposalCard(msgEl, proposal);
+        const dismiss = showHint && msgEl && msgEl.querySelector ? msgEl.querySelector('.chat-config-assist-dismiss') : null;
+        if (dismiss) dismiss.addEventListener('click', () => {
+          try { localStorage.setItem(CHAT_CONFIG_ASSIST_HINT_DISMISSED_KEY, '1'); } catch (_) { /* per-viewer convenience only */ }
+          const hintEl = dismiss.closest('.chat-config-assist-hint');
+          if (hintEl) hintEl.remove();
+        });
         return null;
       } catch (err) {
         thinking.remove();

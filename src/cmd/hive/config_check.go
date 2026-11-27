@@ -74,6 +74,14 @@ func runConfigCheck(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "config INVALID: %s\nforgejo.integration.key_file: %v\n", *configPath, err)
 			return configCheckExitCode
 		}
+		// The served key list leaves out a previous key it cannot read, so
+		// a token signed with it fails during the rotation; say so here.
+		for i, p := range in.PreviousKeyPaths() {
+			if err := forgejwt.CheckKeyFile(p); err != nil {
+				fmt.Fprintf(stderr, "config INVALID: %s\nforgejo.integration.previous_key_files[%d]: %v\n", *configPath, i, err)
+				return configCheckExitCode
+			}
+		}
 	}
 
 	names := make([]string, 0, len(cfg.Agents))

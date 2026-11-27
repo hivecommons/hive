@@ -2460,10 +2460,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// way hands the queues to the right relays. It stops with b.ctx, which
 	// is all shutdown needs, so its done channel is not joined. It also
 	// serves push-branch requests with the manager's push authorizer, and
-	// answers review and merge requests with a reason (#19916).
+	// answers review and merge requests with a reason (#19916). Clone
+	// requests are served with the manager's clone authorizer when the
+	// runtime has one, and denied otherwise (#19997).
 	if deps.startForgeRequestRelay != nil {
-		_ = deps.startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
-			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger).withPushRelay(b.agentMgr.AuthorizePushBranch).withPushAudit(b.recordWriteAudit))
+		relay := newForgeRequestRelay(func() *config.Config { return b.cfg },
+			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger).withPushRelay(b.agentMgr.AuthorizePushBranch).withPushAudit(b.recordWriteAudit)
+		if a, ok := b.agentMgr.(forgeCloneAuthorizerSource); ok {
+			relay.withCloneRelay(a.AuthorizeForgeClone)
+		}
+		_ = deps.startForgeRequestRelay(b.ctx, relay)
 	}
 	// Forgejo repos (#19671): the GitHub sweeps above skip them (RepoOnGitHub),
 	// so they get their own sweeps, which need no GitHub client. A gitea config
@@ -2952,6 +2958,8 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 	b.tokenCollector.SetCopilotSessionsDir(b.cfg.Data.CopilotSessionsDir)
 	b.tokenCollector.SetBobSessionsDir(b.cfg.Data.BobSessionsDir)
 	b.tokenCollector.SetClineHomesRoot("/data/home")
+	// #20003: per-agent CODEX_HOME rollouts (/data/home/.codex-<agent>).
+	b.tokenCollector.SetCodexHomesRoot("/data/home")
 	b.tokenCollector.SetSandboxRunHistoryPath(crux.SandboxRunHistoryPath(crux.WorkDir()))
 	tokenStop := make(chan struct{})
 	deps.startTokenCollector(b.tokenCollector, tokenStop)
@@ -7608,6 +7616,9 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		return true, runAuditVerify(args[1:], stdout, stderr)
 	case forgeSubcommand:
 		return true, runForge(args[1:], stdout, stderr)
+	case colonySubcommand:
+		// Offline colony store tools (#19972); see colony_cmd.go.
+		return true, runColony(args[1:], stdout, stderr)
 	case memoryDrainSubcommand:
 		// Run as the agent by the Claude Code memory hooks Hive seeds; see
 		// memory_drain_cmd.go. Always exits 0.

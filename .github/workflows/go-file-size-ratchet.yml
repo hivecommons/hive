@@ -1,0 +1,43 @@
+name: Go file-size ratchet
+
+# Blocks growth of oversized non-test Go files outside src/crux (which has its
+# own ratchet, crux-file-size-ratchet.yml). Grandfathered files listed in
+# src/.go-file-size-ratchet.txt may shrink but not grow; new files may not
+# exceed 800 lines (#20019).
+#
+# Rollout: warning-only for one release, then enforced. Until then the check
+# step runs with continue-on-error, so a violation shows as an error
+# annotation on the PR diff without failing the job. To enforce, delete the
+# continue-on-error line below.
+on:
+  pull_request:
+    paths:
+      - 'src/**/*.go'
+      - 'src/.go-file-size-ratchet.txt'
+      - 'src/scripts/check-go-file-size-ratchet.sh'
+      - '.github/workflows/go-file-size-ratchet.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  go-file-size-ratchet:
+    name: go-file-size-ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: src
+
+      - name: Check non-test Go file sizes against the baseline
+        # Warning-only rollout (#20019): remove after one release to enforce.
+        continue-on-error: true
+        working-directory: src
+        run: bash scripts/check-go-file-size-ratchet.sh .go-file-size-ratchet.txt

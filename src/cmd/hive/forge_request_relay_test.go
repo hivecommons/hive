@@ -92,6 +92,7 @@ func newRelayHarness(t *testing.T) *relayHarness {
 	h.relay.pushDir = t.TempDir()
 	h.relay.reviewDir = t.TempDir()
 	h.relay.mergeDir = t.TempDir()
+	h.relay.cloneDir = t.TempDir()
 	return h
 }
 

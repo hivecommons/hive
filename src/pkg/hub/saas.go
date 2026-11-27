@@ -171,14 +171,21 @@ type SaaSUser struct {
 	//   Email        the provider email claim (display only; NEVER the key — subs
 	//                are stable, emails are reassignable).
 	//   LinkedGitHubLogin  an OPTIONAL attached GitHub identity for a non-GitHub
-	//                primary who needs user-scoped GitHub calls (contributor
-	//                reissue). Never required to own a hive — the App does the
+	//                primary. Written by the GitHub OAuth link step
+	//                (github_link.go, #19992), which also sets
+	//                LinkedGitHubProvenAt; only a proven value is forwarded to
+	//                spokes. Never required to own a hive — the App does the
 	//                GitHub work.
 	CanonicalID       string `json:"canonical_id,omitempty"`
 	Provider          string `json:"provider,omitempty"`
 	AvatarURL         string `json:"avatar_url,omitempty"`
 	Email             string `json:"email,omitempty"`
 	LinkedGitHubLogin string `json:"linked_github_login,omitempty"`
+	// LinkedGitHubProvenAt is when the person proved control of
+	// LinkedGitHubLogin through the hub's GitHub OAuth link step
+	// (github_link.go, hivecommons/hive#19992). Zero means the value was not
+	// proven by that flow, and it is then never forwarded to a spoke.
+	LinkedGitHubProvenAt time.Time `json:"linked_github_proven_at,omitzero"`
 
 	// DisplayName is the PROVIDER-ASSERTED human name from the OIDC name claim
 	// (or userinfo), refreshed on every completed login. Distinct from FullName,
@@ -323,6 +330,14 @@ type SaaSUser struct {
 	TopRepo           string `json:"top_repo,omitempty"`
 	TopRepoURL        string `json:"top_repo_url,omitempty"`
 	TopRepoUpdatedAt  string `json:"top_repo_updated_at,omitempty"`
+	// CRMInColony marks a record written in HIVE_HUB_CUSTOMER_STORE
+	// colony-only mode: the CRM fields above were left out of this JSON and
+	// are kept in the colony store (customer_store_only.go, #19972).
+	CRMInColony bool `json:"crm_in_colony,omitempty"`
+	// crmOverlaid is set by a read that put the CRM fields back from colony
+	// (or found them in the JSON); never serialized. A colony-only save of a
+	// record read without it leaves the colony copy alone.
+	crmOverlaid bool
 }
 
 // Length caps for the admin-editable contact fields. These are free text

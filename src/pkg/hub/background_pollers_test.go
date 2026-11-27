@@ -34,6 +34,9 @@ func TestStartBackgroundPollers_LaunchesAndStopsOnCancel(t *testing.T) {
 	cleanup := helperSetupTempDirs(t)
 	defer cleanup()
 	resetSHACaches(t)
+	// Unset HIVE_HUB_CUSTOMER_STORE is colony (#19972): the boot opens
+	// colony.db in the temp dirs, so close it when the test ends.
+	t.Cleanup(closeHubCustomerStore)
 
 	// Keep the SHA poller's persist step off the real /data/saas path.
 	oldSHAsPath := latestSHAsPath

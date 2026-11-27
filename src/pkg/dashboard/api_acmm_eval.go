@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -24,7 +25,19 @@ const (
 	acmmGitHubActionsAIID        = "acmm:github-actions-ai"
 	acmmHiveAgentLoopProvider    = "Hive agent loop"
 	acmmHiveAgentLoopLookbackDay = 30
+
+	acmmReviewApplyID             = "acmm:copilot-review-apply"
+	acmmHiveReviewFixLoopProvider = "Hive review-fix loop"
+
+	acmmCrossSessionKnowledgeID = "acmm:cross-session-knowledge"
 )
+
+// acmmLoadReviewArtifact reads Hive's recorded review verdicts. It is a
+// variable so tests can hand the evaluator a fixture instead of the hive's
+// real /data/review-verdicts.json.
+var acmmLoadReviewArtifact = func() (review.Artifact, error) {
+	return review.LoadArtifact("")
+}
 
 // acmmRefreshDebounce is the floor under `?refresh=1` (#5877): an operator-
 // forced re-evaluation still returns the cached result when the cache is
@@ -446,8 +459,7 @@ func acmmIssueContent(criterion *ACMMCriterion) (title, body string) {
 		"### Why it matters\n\n"+
 		"%s\n\n"+
 		"### How to fix\n\n"+
-		"Create one of the files listed above. The ACMM evaluation checks for file existence — "+
-		"the content can follow your project's conventions.\n\n"+
+		"%s\n\n"+
 		"---\n"+
 		"*Opened by Hive ACMM Evaluation*",
 		criterion.Name,
@@ -457,8 +469,41 @@ func acmmIssueContent(criterion *ACMMCriterion) (title, body string) {
 		patternsStr.String(),
 		criterion.Level, levelName,
 		acmmCriterionWhyItMatters(criterion.Level, criterion.Category),
+		acmmCriterionHowToFix(criterion),
 	)
 	return title, body
+}
+
+// acmmCriterionHowToFix is the "How to fix" paragraph of a gap issue. Most
+// criteria ask for one of the listed files. The review-apply criterion
+// matches workflow file names only, and the workflow it asks for takes
+// reviewer text as model input with a token that can push, so its issue
+// names the alternatives instead of telling an agent to add that workflow.
+// The cross-session-knowledge criterion credits several paths, but Hive's
+// knowledge store reads only some of them with no configuration, so its
+// issue names the path Hive indexes at boot (#20128).
+func acmmCriterionHowToFix(criterion *ACMMCriterion) string {
+	if criterion.ID == acmmCrossSessionKnowledgeID {
+		return "Create `docs/knowledge/` and add at least one fact. When `knowledge.git_sources` is unset, " +
+			"Hive adds the primary repository's `docs/knowledge/` (or `src/docs/knowledge/`) as a git " +
+			"knowledge source at boot and indexes it with no further configuration. " +
+			"Each fact is a Markdown file (`.md` or `.markdown`) with YAML front matter; Hive's indexer reads " +
+			"no other file type, so `knowledge.jsonl` passes this criterion but gives Hive's agents no facts. " +
+			"`.knowledge/` and `docs/reflections/` are indexed only after you add them as a knowledge git source. " +
+			"The ACMM evaluation checks for existence only and does not read the content."
+	}
+	if criterion.ID == acmmReviewApplyID {
+		return "The ACMM evaluation matches these workflow file names only and does not read their content. " +
+			"A workflow that applies review feedback takes reviewer text as model input and needs a token " +
+			"that can push to the repository, so it adds a second trust boundary. " +
+			"Two alternatives satisfy this criterion without one: Hive's review-fix loop passes it when Hive " +
+			"has requested changes on a PR and then reviewed a new head of that PR within the last " +
+			fmt.Sprintf("%d days", acmmHiveAgentLoopLookbackDay) +
+			", and a `.acmm.yml` waiver at the repository root can declare that the work happens elsewhere " +
+			"(see Hive's `acmm-waivers.md` documentation; a waiver marks the row but does not advance a level)."
+	}
+	return "Create one of the files listed above. The ACMM evaluation checks for file existence — " +
+		"the content can follow your project's conventions."
 }
 
 func acmmCriterionWhyItMatters(level int, category string) string {
@@ -541,6 +586,8 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 		activitySnap, activityReady = s.deps.Activity.Snapshot()
 	}
 	now := time.Now()
+	reviewArtifact, reviewErr := acmmLoadReviewArtifact()
+	reviewReady := reviewErr == nil
 
 	for _, repo := range repos {
 		ctx, cancel := context.WithTimeout(context.Background(), acmmPerRepoTimeout)
@@ -575,6 +622,20 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 				if ok, reason := hiveAgentLoopCredit(activitySnap, activityReady, fullRepo, now); ok {
 					res.Passed = true
 					res.SatisfiedBy = acmmHiveAgentLoopProvider
+					res.SatisfiedReason = reason
+				}
+			}
+			// Hive's own review-fix loop is verified evidence held by Hive,
+			// so unlike a waiver it counts as detected. It is consulted only
+			// when no file was found, and it replaces a waiver because it is
+			// the stronger claim.
+			if !passed && c.ID == acmmReviewApplyID && reviewReady {
+				if ok, reason := hiveReviewFixLoopCredit(reviewArtifact, owner+"/"+repo, now); ok {
+					res.Passed = true
+					res.Waived = false
+					res.WaiverSatisfiedBy = ""
+					res.WaiverReason = ""
+					res.SatisfiedBy = acmmHiveReviewFixLoopProvider
 					res.SatisfiedReason = reason
 				}
 			}
@@ -792,6 +853,87 @@ func hiveAgentLoopCredit(snap collect.ActivitySnapshot, ready bool, fullRepo str
 		return true, fmt.Sprintf("managed repo with Hive agent activity in the last %d days", acmmHiveAgentLoopLookbackDay)
 	}
 	return false, ""
+}
+
+// hiveReviewFixLoopCredit reports whether Hive's recorded review verdicts
+// show its review-fix loop at work in fullRepo: for one PR, an aggregate that
+// asked for changes (changes_requested or reject) at head A, and an aggregate
+// at a different head B whose earliest report arrived after the latest report
+// for head A and within the lookback window. That is, Hive asked for changes,
+// the PR got a new head, and Hive reviewed that head. Only PRs Hive itself
+// wrote count: on a contributor PR a person may have pushed the fix, which is
+// no evidence that an agent applied review feedback.
+func hiveReviewFixLoopCredit(art review.Artifact, fullRepo string, now time.Time) (bool, string) {
+	if fullRepo == "" {
+		return false, ""
+	}
+	cutoff := now.Add(-time.Duration(acmmHiveAgentLoopLookbackDay) * 24 * time.Hour)
+	byPR := make(map[int][]review.Aggregate)
+	for _, agg := range art.Items {
+		if agg.Number <= 0 || agg.HeadSHA == "" || !strings.EqualFold(agg.Repo, fullRepo) {
+			continue
+		}
+		byPR[agg.Number] = append(byPR[agg.Number], agg)
+	}
+	numbers := make([]int, 0, len(byPR))
+	for n := range byPR {
+		numbers = append(numbers, n)
+	}
+	sort.Ints(numbers)
+	for _, n := range numbers {
+		aggs := byPR[n]
+		if !reviewFixLoopHiveAuthored(aggs) {
+			continue
+		}
+		for _, a := range aggs {
+			if a.Verdict != review.VerdictChangesRequested && a.Verdict != review.VerdictReject {
+				continue
+			}
+			latestA, ok := reviewReceiptBound(a.ReportReceipts, true)
+			if !ok {
+				continue
+			}
+			for _, b := range aggs {
+				if review.SameHeadSHA(b.HeadSHA, a.HeadSHA) {
+					continue
+				}
+				earliestB, ok := reviewReceiptBound(b.ReportReceipts, false)
+				if !ok || !earliestB.After(latestA) || earliestB.Before(cutoff) {
+					continue
+				}
+				return true, fmt.Sprintf("Hive requested changes on PR #%d and reviewed a new head within the last %d days", n, acmmHiveAgentLoopLookbackDay)
+			}
+		}
+	}
+	return false, ""
+}
+
+// reviewFixLoopHiveAuthored reports whether any recorded aggregate for the PR
+// knows it to be Hive-authored.
+func reviewFixLoopHiveAuthored(aggs []review.Aggregate) bool {
+	for _, a := range aggs {
+		if a.HiveAuthoredKnown && a.HiveAuthored {
+			return true
+		}
+	}
+	return false
+}
+
+// reviewReceiptBound returns the latest (latest=true) or earliest arrival
+// time among receipts, ignoring zero times. ok is false when none is set.
+func reviewReceiptBound(receipts []review.ReportReceipt, latest bool) (time.Time, bool) {
+	var bound time.Time
+	found := false
+	for _, r := range receipts {
+		if r.ReceivedAt.IsZero() {
+			continue
+		}
+		if !found || (latest && r.ReceivedAt.After(bound)) || (!latest && r.ReceivedAt.Before(bound)) {
+			bound = r.ReceivedAt
+			found = true
+		}
+	}
+	return bound, found
 }
 
 func newestHiveActivity(repo collect.RepoActivity) time.Time {

@@ -5,10 +5,12 @@
 # of Forgejo's rules. This lane runs src/crux/forgejwt/testdata/forgejo-live.sh,
 # which publishes the key list made by `hive forge key-list` from nginx over
 # https with a private CA, starts a throwaway Forgejo that trusts only that host,
-# creates three authorized integrations, and runs TestForgejoAcceptsMintedTokens
+# creates four authorized integrations, and runs TestForgejoAcceptsMintedTokens
 # (build tag forgejo_jwt_live). It shows that a read-scope advisor token reads
-# and cannot push, a write-scope integration pushes, and which claims and
-# Authorization schemes Forgejo accepts.
+# and cannot push, a write-scope integration pushes, which claims and
+# Authorization schemes Forgejo accepts, and how the REST endpoints the sweeps
+# read (GET /user, collaborator permission, issue timeline) answer a
+# rest_audience JWT (#19920).
 #
 # Forgejo 17 is pinned here on its own: authorized integrations do not exist in
 # the 16.x image that forgejo-smoke.yml and forgejo-e2e.yml run. Move those lanes

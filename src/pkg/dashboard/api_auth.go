@@ -347,7 +347,8 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 		hiveID = s.deps.Config.HiveID
 	}
 
-	username, tokenRole, _, err := spoke.VerifySSOTokenAcrossKeys(pubKeys, token, hiveID, time.Now())
+	ssoID, _, err := spoke.VerifySSOIdentityAcrossKeys(pubKeys, token, hiveID, time.Now())
+	username, tokenRole := ssoID.Username, ssoID.Role
 	if err != nil {
 		if s.deps != nil && s.deps.Logger != nil {
 			s.deps.Logger.Warn("sso handoff rejected", "error", err.Error())
@@ -389,7 +390,10 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 	// redirected to "/", and set NO cookie at all — so "/" rejected the request
 	// and the browser bounced forever. The session store is the authority on
 	// identity here and does not depend on a shared token existing.
-	sid := s.createUserSession(username, role)
+	// A GitHub login the person proved on the hub (#19992) rides on the
+	// session for contributor features only; the role above is unaffected.
+	githubLogin := s.sessionGitHubLink(username, ssoID.GitHubLink)
+	sid := s.createUserSessionWithGitHubLogin(username, role, githubLogin, ssoID.GitHubLink.LinkedAt)
 	if sid == "" {
 		writeSSOError(w, r, http.StatusInternalServerError, ssoErrSessionFailed,
 			"The hive could not create a login session for you.",
@@ -403,6 +407,10 @@ func (s *Server) handleSSO(w http.ResponseWriter, r *http.Request) {
 	// hive with an expiry. No-op on non-hosted hives.
 	s.setTerminalAssertionCookie(w, r, username, role)
 	s.audit.Log(username, "login", auditDetail("method", "hub sso handoff", "role", role), "")
+	if githubLogin != "" {
+		s.audit.Log(username, auditGitHubLinkSession, auditDetail("github", githubLogin,
+			"linked_at", ssoID.GitHubLink.LinkedAt.UTC().Format(time.RFC3339)), "")
+	}
 	if s.deps != nil && s.deps.Logger != nil {
 		s.deps.Logger.Info("user authenticated via hub SSO handoff", "username", username, "role", role)
 	}

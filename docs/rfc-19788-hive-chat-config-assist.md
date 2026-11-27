@@ -1,19 +1,18 @@
 # RFC #19788: Hive Chat config assist (model-proposed, owner-confirmed config changes)
 
-Status: proposal. Open for maintainer discussion, not accepted.
+Status: accepted ([#19835](https://github.com/hivecommons/hive/pull/19835)). Phase 1 ([#19979](https://github.com/hivecommons/hive/issues/19979)), phase 2 ([#19977](https://github.com/hivecommons/hive/issues/19977)), phase 3a ([#19978](https://github.com/hivecommons/hive/issues/19978), proposals with "Open in agent config"), phase 3b ([#19985](https://github.com/hivecommons/hive/issues/19985), direct Apply and Undo) and the phase 1 follow-up ([#20092](https://github.com/hivecommons/hive/issues/20092), `config_assist.model` and the owner-only Settings panel) are implemented.
 Target: Hive v5
 Scope: dashboard Hive Chat panel, the `chat:` config block, agent config write endpoints, audit log
 Out of scope: a write-capable MCP server, writes from Slack/Discord/email chat surfaces, secrets, governance and write-surface settings, hub-level settings
 Refs: [#19788](https://github.com/hivecommons/hive/issues/19788), [#19177](https://github.com/hivecommons/hive/issues/19177) (Ask AI help, [design record](../src/docs/design/dashboard-ask-ai-help.md)), [#19740](https://github.com/hivecommons/hive/issues/19740) (overlay reload drops hand-edited blocks)
 
-> **This page is the design under discussion, not an adopted one.** The issue
-> was put on `hold` by a maintainer pending "an RFC that covers which settings
-> chat may change, how a change is confirmed and by whom, the audit trail, and
-> how it stays off by default". This page answers those four questions and
-> lists what is still open in [Decisions for maintainers](#decisions-for-maintainers).
-> Nothing here has shipped, and merging this page does not authorize
-> implementation tasks. The hold stays in place until a maintainer records a
-> decision on the issue ([RFC process](../src/docs/rfc-process.md#what-accepted-means)).
+> **This design was accepted on [#19788](https://github.com/hivecommons/hive/issues/19788)**
+> after review in [#19835](https://github.com/hivecommons/hive/pull/19835). It is
+> implemented one phase per issue; the status line above says which phases have
+> shipped. [Decisions for maintainers](#decisions-for-maintainers) D4
+> is still open (D2 was settled by shipping `config_assist.model` in #20092, D6 by shipping 3b) and is settled when its phase is picked up. Phase 3a keeps
+> the proposal TTL, rate and caps as code constants (the values in
+> [§3](#3-the-proposal-turn)); the `proposal_ttl` knob is not shipped.
 
 Code references are to `v5` at `302fcc6e0` and name a file plus the function or
 type. Treat them as pointers, not line-exact citations.
@@ -276,7 +275,8 @@ click and the same endpoint. It fails with `409` if the section changed since.
 | `chat_config_declined` | owner dismissed the card | proposal id |
 | `config_agent_<section>` (existing) | the dialog save (3a) or Apply (3b) | existing detail plus `via=chat`, `proposal=<id>`, and before/after values for the changed field |
 | `chat_config_apply_failed` | Apply got non-2xx (3b) | proposal id, status, reason |
-| `chat_config_undo` | owner applied an Undo | proposal id of the undo, id of the proposal it reverses |
+| `chat_config_applied` | Apply got a 2xx (3b) | proposal id, section, field, `before_fp` and `after_fp` value fingerprints (truncated SHA-256, never the values) |
+| `chat_config_undo` | owner applied an Undo | proposal id of the undo, id of the proposal it reverses, section, field, `before_fp` and `after_fp` |
 | `config_chat_assist` | Settings toggle saved | before and after `enabled` |
 
 Phase 2 also adds before/after values to the plain `config_agent_general` and
@@ -357,7 +357,8 @@ each change there ships with its own test.
   Slack/Discord/email chat stay read-only because they have no owner-verified
   session to confirm with.
 - **D6. 3b at all?** Is phase 3a ("Open in agent config") enough on its own,
-  so that 3b is dropped or deferred indefinitely?
+  so that 3b is dropped or deferred indefinitely? Settled: 3b shipped in
+  [#19985](https://github.com/hivecommons/hive/issues/19985).
 
 ## Not in scope
 

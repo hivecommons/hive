@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/atomicfile"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
@@ -344,7 +345,11 @@ const redPRFixOwnSignoffExec = stagelabels.OwnSignoffRebaseExec
 // delivers. It names ONE PR — the stuck one — with its evidence, so the kick is
 // answerable on its own rather than relying on the owner's next cadence kick
 // happening to carry the ci-failing.json block.
-func redPRFixKick(o escalation.Observation, rerouted bool) string {
+//
+// held says whether the hive's ACMM gate holds the PR for a maintainer
+// (shouldHoldAgentPR): then green CI does not merge it, and the kick must not
+// promise that it will (hivecommons/hive#20044).
+func redPRFixKick(o escalation.Observation, rerouted, held bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "🔴 FIX-BEFORE-NEW — %s#%d is red and has not moved\n\n", o.Repo, o.Number)
 	if rerouted {
@@ -363,7 +368,11 @@ func redPRFixKick(o escalation.Observation, rerouted bool) string {
 	b.WriteString("  If the PR's author is a person, not the hive App or a bot: " + stagelabels.PersonPRAgentCommitRule + "\n")
 	b.WriteString("Push to the SAME branch. Do NOT open a replacement PR.\n")
 	b.WriteString("After the push, STOP: do not watch, poll, or sleep on CI (no gh run watch/view loops).\n")
-	b.WriteString("The automerge sweep merges the PR once it is green; if the failure is infrastructure\n")
+	if held {
+		fmt.Fprintf(&b, "At this level the PR carries `%s`, so green CI does not merge it: it merges after a maintainer reviews it and removes that label. If the failure is infrastructure\n", github.ReadyForReviewLabelName())
+	} else {
+		b.WriteString("The automerge sweep merges the PR once it is green; if the failure is infrastructure\n")
+	}
 	b.WriteString("(runner lost, no space left, checks still queued) leave one comment and end the turn.\n")
 	if o.HeadSHA != "" {
 		fmt.Fprintf(&b, "\nhead: %s\n", o.HeadSHA)
@@ -455,7 +464,8 @@ func deliverReEngagement(
 	if kicker == nil {
 		return false
 	}
-	if err := kicker.Kick(fixer, redPRFixKick(o, fixer != redPRFixOwner(o.Agent))); err != nil {
+	held := shouldHoldAgentPR(redPRFixOwner(o.Agent), o.Repo, cfg.ACMMLevelOrZero(), cfg.AgentOwnsRepo, cfg.IsRedTeamAgent)
+	if err := kicker.Kick(fixer, redPRFixKick(o, fixer != redPRFixOwner(o.Agent), held)); err != nil {
 		if logger != nil {
 			level := slog.LevelWarn
 			// Pool contention is expected backpressure: retry on a later sweep.
@@ -3121,8 +3131,5 @@ func writeReviewDispatchState(plan review.DispatchPlan, confirm func(planned []r
 }
 
 func atomicWrite(path string, data []byte) {
-	tmp := path + ".tmp"
-	if os.WriteFile(tmp, data, 0o644) == nil {
-		_ = os.Rename(tmp, path)
-	}
+	_ = atomicfile.WriteFile(path, data, 0o644)
 }

@@ -628,6 +628,15 @@ _run_test_contributor_gate 1 "$AUTH_GATE" "-" \
 _run_test 1 "non-contributor gh auth token is blocked by the surface allowlist" \
   auth token
 
+# hivecommons/hive#20040: the default policies tell agents they cannot re-run
+# CI and route a re-run to a maintainer or the [shared-ci] sweep. That text is
+# only true while the wrapper refuses both re-run commands; whoever adds a
+# re-run route must update the policies too.
+_run_test_staff_gate 1 "reason=surface_allowlist" "-" "gh run rerun --failed is refused by the surface allowlist" \
+  run rerun 1 --failed
+_run_test_staff_gate 1 "reason=surface_allowlist" "-" "gh workflow run is refused by the surface allowlist" \
+  workflow run ci.yml
+
 echo ""
 echo "=== Marker trust boundary regression tests ==="
 

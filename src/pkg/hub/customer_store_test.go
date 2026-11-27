@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -423,13 +424,13 @@ func TestHubCustomerStoreShadowDualWrite(t *testing.T) {
 	if c, ok := colonyPerson(t, st, users[1]).Consent("own"); !ok || !c.Covers(store.FieldCountry) {
 		t.Fatalf("consent not mirrored: %+v", c)
 	}
-	// Removing every consent withdraws it in colony.
+	// Removing every consent deletes it from colony too (colony v0.4.0).
 	path, _ := customerConsentPath(users[1])
 	if err := saveCustomerConsents(path, map[string]customerConsent{}); err != nil {
 		t.Fatal(err)
 	}
-	if c, ok := colonyPerson(t, st, users[1]).Consent("own"); !ok || c.Active() {
-		t.Fatalf("removed consent still active in colony: %+v", c)
+	if c, ok := colonyPerson(t, st, users[1]).Consent("own"); ok {
+		t.Fatalf("removed consent still in colony: %+v", c)
 	}
 }
 
@@ -610,11 +611,88 @@ func TestHubCustomerStoreUnreadableFileFailsClosed(t *testing.T) {
 }
 
 func TestParseHubCustomerStoreMode(t *testing.T) {
-	for raw, want := range map[string]string{"": "json", "JSON": "json", " shadow ": "shadow", "colony": "colony", "colony-only": "json"} {
-		if got, _ := parseHubCustomerStoreMode(raw); got != want {
+	// Unset is the colony default (#19972); an explicit json still works; an
+	// unknown value fails closed to json and reports it.
+	for raw, want := range map[string]string{"": "colony", "  ": "colony", "JSON": "json", "json": "json", " shadow ": "shadow",
+		"colony": "colony", "colony-only": "colony-only", " Colony-Only ": "colony-only", "colony_only": "json", "bogus": "json"} {
+		got, ok := parseHubCustomerStoreMode(raw)
+		if got != want {
 			t.Errorf("%q -> %q, want %q", raw, got, want)
 		}
+		known := raw != "colony_only" && raw != "bogus"
+		if ok != known {
+			t.Errorf("%q ok = %v, want %v", raw, ok, known)
+		}
 	}
+}
+
+// A hub that ran on the old json default and is upgraded with
+// HIVE_HUB_CUSTOMER_STORE unset boots on colony (#19972): the boot sync
+// imports every user, parity holds, the JSON files are not rewritten, and
+// reads come back the same. A second boot imports nothing again and keeps a
+// colony.db backup.
+func TestHubCustomerStoreDefaultUpgradeFromJSON(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	before := map[string][]byte{}
+	files, err := listHubUserFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(f.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		before[f.Path] = data
+	}
+	if _, err := os.Stat(hubCustomerStorePath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("json era left a colony.db: %v", err)
+	}
+	t.Setenv(hubCustomerStoreEnv, "")
+	mode, ok := parseHubCustomerStoreMode(os.Getenv(hubCustomerStoreEnv))
+	if !ok || mode != hubCustomerStoreColony {
+		t.Fatalf("default mode = %q (ok %v), want colony", mode, ok)
+	}
+	// The real boot entry point reads the unset env and opens colony.
+	(&HubServer{logger: slog.Default()}).startHubCustomerStore(context.Background())
+	t.Cleanup(closeHubCustomerStore)
+	st, active := hubCRM.active()
+	if st == nil || active != hubCustomerStoreColony {
+		t.Fatalf("boot with the env unset = %q (store %v), want colony", active, st != nil)
+	}
+	rec, ran, err := st.Migration(hubCustomerStoreMigration)
+	if err != nil || !ran || rec.Report.People != len(users) {
+		t.Fatalf("upgrade import = %+v ran=%v err=%v", rec, ran, err)
+	}
+	for path, data := range before {
+		if got, _ := os.ReadFile(path); string(got) != string(data) {
+			t.Fatalf("the upgrade boot rewrote %s", filepath.Base(path))
+		}
+	}
+	if got := loadSaaSUser("ada-example"); got == nil || got.FullName != "Ada Example" || got.Notes != users[0].Notes {
+		t.Fatalf("colony read after the upgrade = %+v", got)
+	}
+	closeHubCustomerStore()
+	st = useHubCustomerStore(t, mode)
+	again, _, err := st.Migration(hubCustomerStoreMigration)
+	if err != nil || !again.At.Equal(rec.At) || again.Fingerprint != rec.Fingerprint {
+		t.Fatalf("second boot ran the import again: %+v then %+v (%v)", rec, again, err)
+	}
+	if backups, _ := filepath.Glob(hubCustomerStorePath() + hubCustomerStoreBackupPrefix + "*"); len(backups) != 1 {
+		t.Fatalf("%d colony.db backups after the second boot, want 1", len(backups))
+	}
+}
+
+// A brand-new hub, with no users directory yet, boots on the colony default
+// too: a missing directory is only treated as empty while colony.db holds
+// nobody, so a missing mount on a populated hub still fails closed.
+func TestHubCustomerStoreDefaultFreshHub(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	if err := os.RemoveAll(saasUsersDir); err != nil {
+		t.Fatal(err)
+	}
+	useHubCustomerStore(t, hubCustomerStoreColony)
 }
 
 // Nothing local_only reaches a spoke: not through the match answer to a

@@ -154,7 +154,12 @@ type ContributorConnection struct {
 	// (task_run_log.go). Zero when no task is active or the task was adopted
 	// via the resume path without a fresh assignment.
 	taskAssignedAt time.Time
-	lastPong       time.Time
+	// taskIssuedAt is when the hub first issued currentTask, from a fresh
+	// assignment or, on a resume, from the task's lease. Unlike
+	// taskAssignedAt it survives a reconnect; the completion PR relevance
+	// check reads it (#19985). Zero when unknown.
+	taskIssuedAt time.Time
+	lastPong     time.Time
 	// tmuxOutput is the last pane snapshot the relay reported, and
 	// tmuxOutputTask is the task_id that report named (#7605). Every
 	// task_progress and task_complete frame overwrites both, so the pane on
@@ -3530,6 +3535,7 @@ func (s *wsSession) handleTaskDeclined(msg WSMessage) {
 		contributor.currentTaskGen = h.nextTaskGen()
 		contributor.lastLeaseRenew = time.Time{}
 		contributor.taskAssignedAt = time.Time{}
+		contributor.taskIssuedAt = time.Time{}
 		contributor.currentPrompt = ""
 		contributor.currentLabels = nil
 		contributor.pendingToken = ""
@@ -3774,6 +3780,7 @@ func (s *wsSession) handleTaskProgress(msg WSMessage) {
 			s.contributor.mu.Lock()
 			s.contributor.currentTask = rebuilt
 			s.contributor.currentTaskGen = lease.gen
+			s.contributor.taskIssuedAt = lease.issuedAt
 			s.contributor.lastLeaseRenew = time.Now()
 			s.contributor.tmuxOutput = msg.TmuxOutput
 			s.contributor.tmuxOutputTask = lease.taskID
@@ -3960,6 +3967,12 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 		// task's wall-clock duration. Zero when the task was adopted
 		// without a fresh assignment; the record then omits duration.
 		taskAssignedAt := s.contributor.taskAssignedAt
+		// The relevance check needs when the task began even after a resume,
+		// which leaves taskAssignedAt zero (#19985).
+		taskIssuedAt := s.contributor.taskIssuedAt
+		if !taskAssignedAt.IsZero() {
+			taskIssuedAt = taskAssignedAt
+		}
 		// SECURITY (audit N9, CWE-862/639): clear ONLY when the reported
 		// task_id actually matches the held assignment.
 		//
@@ -3988,6 +4001,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			s.contributor.currentLabels = nil
 			s.contributor.tokenMintedAt = time.Time{}
 			s.contributor.taskAssignedAt = time.Time{}
+			s.contributor.taskIssuedAt = time.Time{}
 			// #2537: clear any pending/delivered credential state with the task.
 			s.contributor.pendingToken = ""
 			s.contributor.credentialDelivered = false
@@ -4016,6 +4030,9 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			var prDetail ghpkg.PRVerification
 			if completedTask != nil {
 				prDetail = h.verifyReportedPRDetail(completedTask.Repo, msg.PRURL, s.contributor.profile.GitHubUsername)
+				// #19985: an older PR of the contributor's that the relay
+				// scraped from the agent's output is not this task's work.
+				prDetail = h.dropUnrelatedReportedPR(completedTask, prDetail, msg.PRURL, s.contributor.profile.GitHubUsername, taskIssuedAt)
 				// #17300: the scan ledger has usually not seen a PR the relay
 				// just opened with its own token, so record the verified PR
 				// before the revoke below decides whether the claim is kept.
@@ -4363,6 +4380,7 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 			s.contributor.currentTask = nil
 			s.contributor.tokenMintedAt = time.Time{}
 			s.contributor.taskAssignedAt = time.Time{}
+			s.contributor.taskIssuedAt = time.Time{}
 			// #2537: clear any pending/delivered credential state with the task.
 			s.contributor.pendingToken = ""
 			s.contributor.credentialDelivered = false

@@ -84,17 +84,14 @@ Priority levels:
 
 ## Escalate Instead of Stalling
 
-Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at least two failed attempts). Use at most one escalation per item per 24h:
+Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at least two failed attempts). Use at most one escalation per item per 24h. Your mode makes no GitHub writes: the issue relay refuses labels, comments and new issues from an ADVISORY agent, so you never apply an escalation yourself. Record it in one advisory bead that names the item, the escalation that fits and the evidence; a maintainer or an agent whose mode allows it applies it:
 
-- `stage/045-needs-decision`: park the item for a maintainer ruling — apply the label through the issue relay's `label` command (or `--needs-decision` when filing a new issue) — and post one maintainer question with options A/B/C. The retired `needs-direction` / `needs-decision` labels must not be used. The hive dispatching an accepted item satisfies the target repo's own AGENTS.md/CLAUDE.md "offer a spec / confirm scope / wait for acceptance" gates — proceed; a registered sibling checkout missing under the workspace root is cloned, not escalated. Park only for real risk (security, data loss, irreversible/public actions, governance/licensing, spend, credentials) or a genuine A/B the item leaves open.
-
-  Owner rule for Hive-authored issues: do not park for sequencing, naming, numbering, config-shape, scope, or "approach A vs B" engineering questions. Decide yourself, choose the simplest additive backward-compatible option, and record `Decision taken by hive: …` in the issue body. Park only for risk categories: security posture, data loss, irreversible or public-facing behaviour, governance/policy/licensing, spend, credentials/secrets/infra the hive cannot access (owner-only), or a question about a human's intent that cannot be inferred. When you park, include `Risk: <category>` in the issue body.
-- `needs-human`: if the maintainer's direction (an `approved-direction` issue, a `/hive decision` reply, "agents stand down", "owners handle this") reserves the work for people, do NOT re-park on `stage/045-needs-decision` — the ruling was just given and the relay refuses the re-park while the decision is unchanged. Add `needs-human` through the relay's `label` command, post nothing more than one line saying so, and `/unclaim`. Never remove `needs-human`: only a person lifts it.
-- `blocked` (code exists only in an open PR): nothing to ship on the base branch — do not park on `stage/045-needs-decision`, claim, start, or @-mention the PR author. Post one neutral note via the issue relay's `comment` command with `--blocked-on-pr <pr>` (body: `Blocked on #<pr>: <file> exists only on that PR.`); the relay adds the marker and `blocked`, strips `help wanted`, and lifts it when the PR merges or closes. `/unclaim` and move on.
-- `needs-human` (not agent work: a config-only condition or expected behaviour, not a defect; or work that needs a person, real logins, hardware or a live meeting): do not just comment. Post one note via the issue relay's `comment` command with `--not-agent-work <not-a-defect|needs-human|needs-environment>` (body: the verdict and the remedy or what a person must do). The relay adds the marker and `needs-human`, so the issue leaves the Actionable lane and your work list; an identical verdict with no human comment since is dropped (`already_existed`), and a person's later comment re-queues the issue. `/unclaim` and move on.
-- `needs-spec`: file a `kind/spec` issue listing the open questions, label it `needs-spec`, link it, and stop implementation changes.
-- `needs-signal`: when the same check fails three or more times with no code cause, file a `ci`/`kind/test` issue labelled `needs-signal` for the missing guard or CI evidence.
-- `meta-issue`: when three or more open items share a root cause, file one `meta` tracker, link the children, and stop working them individually.
+- `stage/045-needs-decision`: the item needs a maintainer ruling. Write the question with options A/B/C in the bead. Recommend it only for real risk (security, data loss, irreversible/public actions, governance/licensing, spend, credentials) or a genuine A/B the item leaves open: the hive dispatching an accepted item already satisfies a target repo's own "offer a spec / confirm scope / wait for acceptance" gates. The retired `needs-direction` / `needs-decision` labels are not used.
+- `needs-human`: a maintainer's direction reserves the work for people, or the item needs a person, real logins, hardware or a live meeting. Say which in the bead. Only a person lifts `needs-human`.
+- `blocked`: the code exists only in an open PR. Name the PR and the file in the bead.
+- `needs-spec`: the item has open questions a spec must answer. List them in the bead.
+- `needs-signal`: the same check failed three or more times with no code cause. Name the missing guard or CI evidence in the bead.
+- `meta-issue`: three or more open items share a root cause. List them in one bead so a single tracker can link them, and stop working them individually.
 
 ## Work List
 
@@ -105,49 +102,22 @@ ACTIONABLE PRs:
 ${PR_LIST}
 
 ⛔ NEVER run `gh issue list`, `gh pr list`, or `gh search issues` — the work list above is your ONLY source.
-⛔ NEVER attempt out-of-tier writes: no `gh run rerun` / `POST ./actions/runs/{id}/rerun-failed-jobs` (for a suspected flake, file an issue or leave one PR comment naming it and DEFER); no repo label creation (`gh label create`, `POST /repos/…/labels`); no hive-controlled labels (`needs-human`, the retired `needs-decision` / `needs-direction`, anything else the hive sets) — record the need in the bead and park on a maintainer ruling by applying `stage/045-needs-decision` through the relay's `label` command instead; no PR review comments (`POST /pulls/{n}/comments`) — use `gh pr comment`.
+⛔ NEVER attempt out-of-tier writes: no `gh run rerun` / `POST ./actions/runs/{id}/rerun-failed-jobs` (for a suspected flake, record it in a bead and DEFER); no repo label creation (`gh label create`, `POST /repos/…/labels`); no labels, comments, reviews or issues of any kind: this mode makes no GitHub writes, so record each need, `stage/045-needs-decision` and `needs-human` included, in a bead (see Escalate Instead of Stalling).
 
-## After You Push: Do Not Wait for CI (MANDATORY)
+## Do Not Wait for CI (MANDATORY)
 
-Opening or updating a PR ends your work on that item for this kick. **Never
-watch, poll, or sleep on CI** — no `gh run watch`, no `gh run view` loops, no
-"checking again in 10 minutes". CI on a saturated runner pool can take an hour;
-a turn spent waiting is a turn the rest of the work list did not get. A PR that
-is NOT held merges automatically once its checks are green. A PR carrying
-`hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>`, or `do-not-merge`
-does NOT auto-merge on green CI — it merges only after a human removes that
-label. Waiting buys nothing either way, and it hides as "Working" on the
-dashboard while nothing happens.
-
-- Pushed the branch and opened/updated the PR → leave a `hive/awaiting-ci`
-  note on the PR itself. If it is NOT held: `gh pr comment <number> --body
-  "hive/awaiting-ci: CI pending — sweep will merge when green."` If it IS held
-  (carries `hold` or another hold label): `gh pr comment <number> --body
-  "hive/awaiting-ci: held for human review. Green CI will not merge this on
-  its own; it merges after a maintainer reviews it and removes hold."` Either
-  way this is so anyone reading the PR, not just the dashboard, can see it was
-  deliberately deferred, then **move to the next item**.
-- A check on your PR is red → run the Shared CI Baseline Triage once. If the
-  cause is your diff, fix it and push once. If it is infrastructure (runner
-  lost, "No space left on device", shards still `queued`, job failed with no
-  log), do **not** retry or wait: leave one comment naming the infra cause and
-  **DEFER — move to the next item**.
-- Never spend more than **two** status checks on the same run in one kick.
-- One scanner note per PR. Your CI-triage and rebase notes on a PR are
-  edited into one `<!-- hive:scanner-note -->` comment by the relay, and a
-  note on a PR whose head SHA and failing checks are unchanged since the last
-  note is dropped (`already_existed`). Do not re-triage such a PR: if nothing
-  changed, there is nothing new to say. Keep shared-CI incident references
-  (`<!-- hive-shared-ci-<n> -->`) as their own comment.
-- Summarize with "PR #N opened/updated; CI pending — sweep will merge when
-  green" (or "...; merges after human review" if the PR is held), then
-  continue.
+Reading a PR's checks once to judge it is fine. **Never watch, poll, or sleep on
+CI** — no `gh run watch`, no `gh run view` loops, no "checking again in 10
+minutes". CI on a saturated runner pool can take an hour; a turn spent waiting
+is a turn the rest of the work list did not get. Never spend more than **two**
+status checks on the same run in one kick. Record what you saw in the PR's bead
+and move to the next item.
 
 ## Gate Check Before Filing (MANDATORY)
 
-**Gate check before filing (MANDATORY).** Before filing a finding, check whether the repository already has a gate or a written policy for that class. If it does, do not file the finding. Instead, if the gate is misconfigured or does not cover the path, file ONE issue against the gate's config. A repository `AGENTS.md`, `GOVERNANCE.md` or ADR that says a class is out of scope is a policy: honour it and say so in your summary. For this lane, ESLint, knip, or the language equivalent, configured and run in CI, suppresses lint-shaped findings; file a rule request, not a per-site finding.
+**Gate check before recording (MANDATORY).** Before recording a finding, check whether the repository already has a gate or a written policy for that class. If it does, do not record the finding. Instead, if the gate is misconfigured or does not cover the path, record ONE advisory bead about the gate's config. A repository `AGENTS.md`, `GOVERNANCE.md` or ADR that says a class is out of scope is a policy: honour it and say so in your summary. For this lane, ESLint, knip, or the language equivalent, configured and run in CI, suppresses lint-shaped findings; record a rule request, not a per-site finding.
 
-**Three of a class means the gate is missing.** Before filing, look at the findings you have already filed in this repository (your beads via `bd list --actor scanner`, and the `[scanner]` issues in your work list). If this finding is the third or later instance of the same class - same root cause, different site (another unasserted branch, another duplicated block, another missing header, another stale doc claim, another lint-shaped defect) - do NOT file it. File ONE issue instead, titled `[scanner] Gate proposal: <class>`, that lists the prior instances, names the missing gate (the tool and where it runs in CI), and asks the maintainers to accept or decline it. Use `--needs-decision` with `Risk: governance`. Resume filing individual findings in that class only if the proposal is declined; if it is accepted, the gate check above applies once the gate lands.
+**Three of a class means the gate is missing.** Before recording, look at the findings you have already recorded for this repository (your beads via `bd list --actor scanner`). If this finding is the third or later instance of the same class - same root cause, different site (another unasserted branch, another duplicated block, another missing header, another stale doc claim, another lint-shaped defect) - do NOT record it. Record ONE advisory bead instead, titled `[scanner] Gate proposal: <class>`, that lists the prior instances, names the missing gate (the tool and where it runs in CI), marked `Risk: governance` so a maintainer can accept or decline it. Your mode files no issues: the advisory digest carries the bead to the maintainers. Resume recording individual findings in that class only if the proposal is declined; if it is accepted, the gate check above applies once the gate lands.
 
 ## Workflow
 

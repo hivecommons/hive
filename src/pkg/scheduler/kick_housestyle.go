@@ -21,6 +21,12 @@ func (s *Scheduler) addHouseStyle(agent, message string) string {
 		return message
 	}
 	res := s.resolveHouseStyle(agent)
+	// The built-in text is about code changes, tests and PR bodies. An agent
+	// with no GitHub access writes none of those (#20038), so it gets only a
+	// style the operator or the repo set.
+	if res.Source == housestyle.SourceBuiltin && s.isNoGitHubAgent(agent) {
+		return message
+	}
 	return insertAfterKickHeader(message, res.Section())
 }
 

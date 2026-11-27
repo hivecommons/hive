@@ -228,8 +228,10 @@ forgejo:
 1. Generate the RSA key (2048 bits or more), and publish the two files that
    `hive forge key-list --issuer https://keys.example.com --key /etc/hive/forgejo-jwt.pem --out DIR`
    writes at the issuer, over https (see
-   [Host the key list](#host-the-key-list)). The key host must be live
-   before step 2.
+   [Host the key list](#host-the-key-list)), or set `serve_key_list: true`
+   to have the spoke serve them (see
+   [Let the spoke serve the key list](#let-the-spoke-serve-the-key-list)).
+   The key host must be live before step 2.
 2. For each tier, run
 
    ```sh
@@ -351,9 +353,68 @@ for example an unreadable key file, builds no REST client and names
   applies to REST as well.
 - The Forgejo automerge sweep reads the collaborator permission endpoint,
   the sweeps read the issue timeline, and the close-on-merge sweep reads
-  `GET /user`. None of these has been verified against an integration JWT
-  yet ([#19914](https://github.com/hivecommons/hive/issues/19914)), so keep
-  the access token available until they are.
+  `GET /user` ([#19914](https://github.com/hivecommons/hive/issues/19914)).
+  The nightly Forgejo JWT lane (`.github/workflows/forgejo-jwt.yml`) calls
+  each of them on Forgejo 17 with a JWT for a `sub=hive:rest` integration
+  created as above, logs the status, and fails on an answer the hive does
+  not handle ([#19920](https://github.com/hivecommons/hive/issues/19920)):
+  - The issue timeline must answer 200; the sweeps have no fallback for it.
+  - A 403 from the collaborator permission endpoint makes the automerge
+    sweep read the repo's assignee list instead, as it does for an access
+    token with write but not admin access. The lane checks that list
+    answers 200.
+  - A 403 from `GET /user` makes the close-on-merge sweep use
+    `forgejo.login`. Without `forgejo.login` the sweep skips the repo with
+    an error that names `forgejo.login`. If Forgejo refuses `read:user` on
+    an integration limited to repositories, set `forgejo.login`.
+
+#### Pod-run agents clone through the hive
+
+An agent that runs in the hive pod (`sandbox.runtime` off) gets no
+credential for the Forgejo host: the access token is stripped from its pane,
+and the agents' proxy never attaches a token to a forge host. A plain
+`git clone` of a private repo fails with HTTP 401. The agent asks the hive
+instead ([#19997](https://github.com/hivecommons/hive/issues/19997)):
+
+```sh
+hive-clone --repo <owner/repo> [--dir <path>]          # new checkout
+hive-clone --repo <owner/repo> --fetch [--dir <path>]  # update a checkout
+```
+
+The hive's clone relay serves the request on a hive whose repos are all off
+GitHub, as the push relay does:
+
+- The request file must be owned by the agent's own UID, mapped to the agent
+  it names. There is no shared-UID fallback, so a hive without per-agent UIDs
+  refuses every clone request.
+- The repo must be one of `project.repos`, not paused, and in the agent's
+  repo scope. A clone is a read, so the agent's ACMM mode and whether it is
+  paused do not gate it; an advisory agent clones at the advisor tier. The URL is built from the configured name and
+  `forgejo.forgejo_url`, never from the request.
+- `forgejo.integration` is required. The hive mints a one-hour JWT for the
+  agent's own token tier and fetches with it. It never uses the long-lived
+  `token_env` token for this. If the mint fails, nothing is fetched.
+- The forge URL must be https; the relay refuses a plain-http
+  `forgejo_url`. The fetch runs as the hive, in a fresh hive-owned git
+  directory, with the push relay's git hardening: system and global config
+  off, no hooks or credential helpers, TLS verification on, https only, and
+  no redirects followed. The token is in the environment of the hive's own
+  git process and its https helper only, as a header scoped to the repo URL,
+  and it passes through the hive's egress proxy as any of the hive's own
+  forge calls do. It is never in an argument, a file, a log line or the
+  agent's environment, and any git output is scrubbed of it.
+- The agent receives a git bundle of the repo's branches and tags, mode 0600
+  and owned by its UID, in `/var/run/hive-metrics/clone-requests`.
+  `hive-clone` checks that the result and the bundle are the hive's and its
+  own, clones from or fetches the bundle as the agent, checks out the
+  default branch, points `origin` at the plain https URL, and deletes the
+  bundle. An agent has at most one bundle at a time, and the relay removes
+  one left behind after 30 minutes. Each scan serves at most one request per
+  agent, oldest first. `HIVE_FORGE_CLONE_MAX_BUNDLE_BYTES` caps a bundle (2 GiB
+  by default).
+
+A later `git fetch origin` has no credential either; run `hive-clone --fetch`.
+Publish work with `hive-push-branch`, which pushes through the push relay.
 
 #### Rotate the signing key
 
@@ -372,6 +433,25 @@ Forgejo's cached copy is refused, and the clone or push fails with
 4. One hour after step 3, when the last token signed with the old key has
    expired, publish the key list with the new key only.
 
+When the spoke serves the key list itself (`serve_key_list: true`, see
+[Let the spoke serve the key list](#let-the-spoke-serve-the-key-list)), the
+same order becomes:
+
+1. Write the new key to its own path and add that path to
+   `previous_key_files`, leaving `key_file` on the old key, and apply the
+   config. `previous_key_files` only publishes a key and never signs with
+   it, so the served list now holds both keys and tokens are still signed
+   with the old one.
+2. Wait longer than Forgejo's `CACHE_TTL`, plus the one-minute
+   `Cache-Control` max-age of the served list if a cache sits in front of the
+   spoke.
+3. Point `key_file` at the new key and `previous_key_files` at the old one.
+   New tokens are signed with the new key, and both still verify.
+4. One hour after step 3, remove the old key from `previous_key_files`.
+
+The served list re-reads a key file when its size, mode or modification
+time changes, so replacing a file in place is picked up without a restart.
+
 #### The key host is a git dependency
 
 Forgejo keeps no stale copy of the key list. If the host that serves it at
@@ -383,14 +463,17 @@ availability you expect from git.
 #### Host the key list
 
 Any https web server can serve the two files `hive forge key-list` writes.
-Forgejo is strict about how it fetches them, and each of these rules fails
-only as `invalid issuer` when you create the integration, or as
-`Authentication failed` on a clone:
+Forgejo is strict about how it fetches them. Apart from the issuer form,
+which Hive checks itself, and the private-address rule, which has its own
+`ALLOWED_DOMAINS` error, a broken rule shows up only as `invalid issuer` when
+you create the integration, or as `Authentication failed` on a clone:
 
-- The issuer is an https origin with no path, so the files sit at the root of
-  the host: `/.well-known/openid-configuration` and `/jwks.json`. Forgejo
-  refuses any scheme but https, and the certificate must be one Forgejo
-  trusts.
+- Forgejo refuses any scheme but https, and the certificate must be one
+  Forgejo trusts.
+- Hive accepts only `https://host[:port]`, with no path, query or fragment,
+  as the issuer, and refuses any other `issuer` at config load and in
+  `hive validate`. So the files sit at the root of the host:
+  `/.well-known/openid-configuration` and `/jwks.json`.
 - Forgejo follows no redirects. Serve both paths directly, with no login
   page, no `http` to `https` redirect and no trailing-slash redirect in front
   of them.
@@ -424,8 +507,56 @@ curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' https://keys.example.c
 curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' https://keys.example.com/jwks.json
 ```
 
-([#19996](https://github.com/hivecommons/hive/issues/19996) asks whether
-the spoke should serve the key list itself.)
+#### Let the spoke serve the key list
+
+Instead of a separate key host, the spoke's dashboard can serve both
+documents itself, so the key host is up whenever the hive that mints the
+tokens is up ([#19996](https://github.com/hivecommons/hive/issues/19996)).
+It is off by default. Turn it on only when `issuer` is the dashboard's own
+https origin:
+
+```yaml
+forgejo:
+  integration:
+    issuer: https://hive.example.com          # the dashboard's own origin
+    key_file: /etc/hive/forgejo-jwt.pem
+    serve_key_list: true
+    previous_key_files:                       # optional: published, never signs
+      - /etc/hive/forgejo-jwt.old.pem
+    audiences:
+      contributor: "<audience>"
+```
+
+- The dashboard then answers `GET /.well-known/openid-configuration` and
+  `GET /jwks.json` with no login. They are the only anonymous paths this
+  adds, and only while `serve_key_list` is on; with it off both answer 404
+  like any unknown path. A hosted spoke's ingress passes the two paths
+  through to the spoke the same way.
+- Both documents are rendered from `key_file` and `previous_key_files` and
+  hold public keys only: the modulus and exponent of each key, its key ID,
+  the issuer and the `jwks_uri`. No private key material and no file path is
+  served.
+- The routes serve GET only, with `Content-Type: application/json` and
+  `Cache-Control: public, max-age=60`, and are rate limited per client
+  address. Behind a reverse proxy every request shares the proxy's address,
+  so the limit is then shared too; Forgejo fetches each document only once
+  per `CACHE_TTL`.
+- If `key_file` cannot be read, both paths answer 503 and the dashboard logs
+  why, and Forgejo refuses new tokens once its cached copy expires. A
+  `previous_key_files` entry that cannot be read is left out of the list and
+  logged; `hive validate` reports it.
+- `previous_key_files` holds key files in the same form and mode as
+  `key_file`, at most four of them. They are published and never used to
+  sign, and only their public half is served.
+  It is refused without `serve_key_list`: with a separate key host, pass the
+  old key to `hive forge key-list --key` instead.
+- The issuer rules above still apply and are checked at config load: an
+  https origin with no path. Your reverse proxy must pass both paths through
+  with no authentication and no redirect, and a spoke Forgejo reaches on a
+  private address still needs `ALLOWED_DOMAINS`.
+
+Check the two paths with the `curl` commands above, pointed at the
+dashboard's origin, before you create the integration.
 
 ### Do not confuse `project.forge` with `github.forge`
 

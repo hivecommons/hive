@@ -632,10 +632,17 @@ func addPlainDashRule(message string) string {
 }
 
 func addGovernorWorkSourceRule(message string) string {
-	if message == "" || strings.Contains(message, governorWorkSourceRule) {
+	return addGovernorWorkSourceRuleText(message, governorWorkSourceRule)
+}
+
+// addGovernorWorkSourceRuleText splices the given work-source rule variant in
+// under the kick header once. The seam is unconditional (#12134); only its
+// text depends on the agent (kick_mode_text.go).
+func addGovernorWorkSourceRuleText(message, rule string) string {
+	if message == "" || strings.Contains(message, rule) {
 		return message
 	}
-	return insertAfterKickHeader(message, governorWorkSourceRule)
+	return insertAfterKickHeader(message, rule)
 }
 
 // inProgressClaimRule tells the agent to mark the issue it is about to
@@ -649,15 +656,29 @@ const inProgressClaimRule = "Before you start implementing a fix for an issue fr
 // addInProgressClaimRule appends inProgressClaimRule to a kick that lists at
 // least one issue and does not already carry it.
 func addInProgressClaimRule(message string, issues []github.Issue) string {
-	if message == "" || len(issues) == 0 || strings.Contains(message, "hive-open-issue claim --repo") {
+	return addInProgressClaimRuleText(message, issues, inProgressClaimRule)
+}
+
+// addInProgressClaimRuleText appends the given claim-seam variant to a kick
+// that lists at least one issue. A template that already carries its own claim
+// instruction keeps it and gets no second one.
+func addInProgressClaimRuleText(message string, issues []github.Issue, rule string) string {
+	if message == "" || len(issues) == 0 || strings.Contains(message, rule) || strings.Contains(message, "hive-open-issue claim --repo") {
 		return message
 	}
-	return strings.TrimRight(message, "\n") + "\n\n" + inProgressClaimRule + "\n"
+	return strings.TrimRight(message, "\n") + "\n\n" + rule + "\n"
 }
 
 const concreteKickClosingInstruction = "Begin now: pick the authorized repo you covered least recently and do your role's work there this session, filing issues/PRs through the hive relays as documented above. Do not ask for clarification — no human is attached to this session; if something is ambiguous, make the conservative choice and note it in your output."
 
 func addConcreteKickClosingInstruction(message string) string {
+	return addConcreteKickClosingInstructionText(message, concreteKickClosingInstruction)
+}
+
+// addConcreteKickClosingInstructionText ends the kick with the given closing
+// variant. Every variant starts "Begin now:" and carries the no-human line, so
+// a template that already ends with its own closing keeps it.
+func addConcreteKickClosingInstructionText(message, closing string) string {
 	trimmed := strings.TrimSpace(message)
 	if trimmed == "" {
 		return message
@@ -666,7 +687,7 @@ func addConcreteKickClosingInstruction(message string) string {
 		strings.Contains(trimmed, "Begin now:") {
 		return message
 	}
-	return trimmed + "\n\n" + concreteKickClosingInstruction
+	return trimmed + "\n\n" + closing
 }
 
 func (s *Scheduler) reposSection() string {

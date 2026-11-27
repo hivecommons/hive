@@ -500,8 +500,19 @@ func (s *Store) appendLocked(e Event) error {
 	if _, ok := s.seen[e.ID]; ok {
 		return nil
 	}
-	if len(s.seen) >= maxJournalRecords && e.Release != "*" {
+	if len(s.seen) >= maxJournalRecords && e.Release == "" {
 		return fmt.Errorf("integration journal index bound reached; observations unavailable, retain audit and disable enforcement")
+	}
+	if len(s.seen) >= maxJournalRecords && e.Release != "*" {
+		// A per-key release only shrinks state, so it passes the index bound
+		// like "*" does (#20123). Past the bound it is recorded only when it
+		// removes a held reservation, and no reservation can be admitted past
+		// the bound, so the index overshoot stays bounded by the reservations
+		// held when the bound was reached. A release that would not match is a
+		// no-op in apply and is skipped instead of growing the journal.
+		if r, held := s.reservations[e.Release]; !held || r.Claim != e.ReleaseClaim || r.ClaimGeneration != e.ReleaseGeneration {
+			return nil
+		}
 	}
 	b, err := json.Marshal(e)
 	if err != nil {

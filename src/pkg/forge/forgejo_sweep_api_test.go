@@ -219,29 +219,70 @@ func TestForgejoSweepAPISelfError(t *testing.T) {
 	}
 }
 
-// TestForgejoSweepAPISelfConfiguredLogin is #19994: with forgejo.login set the
-// sweeps already know the hive's own user, so Self returns it without a GET
-// /user lookup — the call a repository-limited token cannot make.
-func TestForgejoSweepAPISelfConfiguredLogin(t *testing.T) {
-	var calls []string
+// TestForgejoSweepAPISelfForbiddenNamesLogin: with no forgejo.login, a 403
+// from GET /user (a repo-limited token or a REST integration JWT without
+// read:user, #19920) is an error that names forgejo.login.
+func TestForgejoSweepAPISelfForbiddenNamesLogin(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls = append(calls, r.Method+" "+r.URL.Path)
-		w.WriteHeader(http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"token does not have at least one of required scope(s): [read:user]"}`))
 	}))
 	defer srv.Close()
-	api, err := NewForgejoSweepAPI("fj-token", Options{BaseURL: srv.URL, Org: "acme", Login: "  Hive-Bot  "})
+	api, err := NewForgejoSweepAPI("fj-token", Options{BaseURL: srv.URL, Org: "acme"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	self, err := api.Self(context.Background())
-	if err != nil {
-		t.Fatalf("Self: %v", err)
+	if _, err := api.Self(context.Background()); err == nil || !strings.Contains(err.Error(), "forgejo.login") {
+		t.Fatalf("Self = %v, want an error naming forgejo.login", err)
 	}
-	if self != "Hive-Bot" {
-		t.Errorf("Self = %q, want %q", self, "Hive-Bot")
-	}
-	if len(calls) != 0 {
-		t.Errorf("Self made %v request(s); want none when login is configured", calls)
+}
+
+// TestForgejoSweepAPISelfConfiguredLogin is #19994: a token limited to
+// specific repositories gets 403 from GET /user, and then the configured
+// forgejo.login names the hive's own user. Any other answer does not fall
+// back to the login: a token that can read its user must be that user.
+func TestForgejoSweepAPISelfConfiguredLogin(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		status  int
+		body    string
+		want    string
+		wantErr bool
+	}{
+		{"repo-limited token gets 403", http.StatusForbidden, `{"message":"token does not have at least one of required scope(s): [read:user]"}`, "Hive-Bot", false},
+		{"token reads the same user", http.StatusOK, `{"login":"hive-bot"}`, "hive-bot", false},
+		{"token reads another user", http.StatusOK, `{"login":"someone-else"}`, "", true},
+		{"server error is not covered by the login", http.StatusInternalServerError, `{}`, "", true},
+		{"404 is not covered by the login", http.StatusNotFound, `{}`, "", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var calls []string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls = append(calls, r.Method+" "+r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(c.status)
+				_, _ = w.Write([]byte(c.body))
+			}))
+			defer srv.Close()
+			api, err := NewForgejoSweepAPI("fj-token", Options{BaseURL: srv.URL, Org: "acme", Login: "  Hive-Bot  "})
+			if err != nil {
+				t.Fatal(err)
+			}
+			self, err := api.Self(context.Background())
+			if c.wantErr {
+				if err == nil {
+					t.Fatalf("Self = %q, want an error", self)
+				}
+				return
+			}
+			if err != nil || self != c.want {
+				t.Fatalf("Self = %q, %v; want %q", self, err, c.want)
+			}
+			if len(calls) != 1 || calls[0] != "GET /api/v1/user" {
+				t.Errorf("Self requests = %v, want one GET /api/v1/user", calls)
+			}
+		})
 	}
 }
 

@@ -34,8 +34,8 @@ type featuresEnrichmentBody struct {
 	// empty (the default, off), "off" or "gitdm_high". Any other value is
 	// rejected, so a typo is never saved and silently read as off.
 	CustomersEnrichmentAutoAccept *string `json:"customersEnrichmentAutoAccept"`
-	// CustomersStore is customers.store: empty (the default, json), "json",
-	// "shadow" or "colony". Any other value is rejected. It is read once at
+	// CustomersStore is customers.store: empty (the default, shadow), "json",
+	// "shadow", "colony" or "colony-only". Any other value is rejected. It is read once at
 	// startup, so a change applies on the next restart.
 	CustomersStore *string `json:"customersStore"`
 }
@@ -103,8 +103,9 @@ func (b featuresEnrichmentBody) prepare() (func(*config.Config), error) {
 	}
 	if b.CustomersStore != nil {
 		v, err := featuresChoice(b.CustomersStore, config.ParseCustomersStoreMode, fmt.Sprintf(
-			"customers store must be empty (default %s), %s, %s or %s",
-			config.CustomersStoreJSON, config.CustomersStoreJSON, config.CustomersStoreShadow, config.CustomersStoreColony))
+			"customers store must be empty (default %s), %s, %s, %s or %s",
+			config.DefaultCustomersStore, config.CustomersStoreJSON, config.CustomersStoreShadow, config.CustomersStoreColony,
+			config.CustomersStoreColonyOnly))
 		if err != nil {
 			return nil, err
 		}
@@ -144,7 +145,7 @@ func featuresEnrichmentResponse(cfg *config.Config) map[string]interface{} {
 			"customersEnrichmentGitdmRefresh":        config.DefaultCustomersEnrichmentGitdmRefresh.String(),
 			"customersEnrichmentDevstatsHourlyLimit": config.DefaultCustomersEnrichmentDevstatsHourlyLimit,
 			"customersEnrichmentAutoAccept":          config.CustomersAutoAcceptOff,
-			"customersStore":                         config.CustomersStoreJSON,
+			"customersStore":                         config.DefaultCustomersStore,
 		},
 	}
 }

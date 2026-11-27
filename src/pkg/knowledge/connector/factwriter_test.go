@@ -269,8 +269,10 @@ func TestWriteAtomicErrors(t *testing.T) {
 	if err := os.Mkdir(tmpDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeAtomic(filepath.Join(dir, "a.md"), "x"); err == nil || !strings.Contains(err.Error(), "writing fact") {
-		t.Fatalf("write err = %v", err)
+	// A stale fixed-name a.md.tmp (left by an older writer) no longer blocks
+	// the write: the temp name is unique.
+	if err := writeAtomic(filepath.Join(dir, "a.md"), "x"); err != nil {
+		t.Fatalf("write with a stale a.md.tmp sibling: %v", err)
 	}
 	target := filepath.Join(dir, "b.md")
 	if err := os.MkdirAll(filepath.Join(target, "child"), 0o755); err != nil {

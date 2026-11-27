@@ -1,7 +1,8 @@
 # Colony as the customer-data backend
 
-Status: **Accepted; phases 1 to 4 built, P5 cleanup built, P5 default flip
-pending shadow parity.** P3, the spoke on the colony store, is described in
+Status: **Accepted; phases 1 to 4 built, P5 cleanup built; the hub default is
+`colony`, the spoke default is `shadow` until parity is confirmed on the
+project's own hive; `colony-only` not built yet.** P3, the spoke on the colony store, is described in
 [Spoke implementation (P3)](#spoke-implementation-p3), and what P5 has done so
 far in [P5 status](#p5-status). Tracking issue
 [#19851](https://github.com/hivecommons/hive/issues/19851). Phase 1 (hub
@@ -178,7 +179,11 @@ All records carry `schema_version` in a `meta` bucket.
 | `Person` | `id`, `status`, `created_at`, `updated_at` | The caller may supply the id, so the spoke person ids in `people.json` and the edge index survive migration unchanged. |
 | `Identity` | `kind` (`github`, `ghe`, `email`, `git_email`, `slack`, `oidc`), `value`, `verified`, `locality`, `source`, `at` | Every email on a domain that is not free-mail is `local_only`. |
 | `Fact` | `field` (`real_name`, `organization`, `affiliation`, `country`, `location`, `notes`, `slack_id`, ...), `value` (empty means an explicit clear), `rank` (`user`, `admin`, `hub_shared`, `enrichment`), `source` (for example `colony:gitdm`, `github_profile`, `hub:person`, `browser_language`), `confidence` (`high`/`medium`/`low` or empty), `locality`, `from`, `until`, `at`, `by`, `suggested` | One record per field per rank. The effective value is the highest rank present. |
-| `Consent` | `scope` (a hive id), `fields`, `text_version`, `granted_at`, `withdrawn_at`, `delivered` | Replaces `customer_consent_store.go` on the hub (P4). |
+| `Identity` provenance (v0.4.0) | `manual`, `by`, `score` (the numeric confidence) | `by` never leaves the deployment. |
+| `HeldIdentity` (v0.4.0) | an identity a person claims that another person owns, with the owner's id | One owner per identity: a second claimant is held, not refused. Never resolves, never exported. `Contested` names every claimant. |
+| `Answer` (v0.4.0) | `source`, `fetched_at`, every affiliation (period, confidence, matched by), every activity (project name, count, period, link) | One per source: the detail and history behind the effective enrichment fact. Never exported. |
+| `Consent` | `scope` (a hive id), `fields`, `text_version`, `granted_at`, `withdrawn_at`, `updated_at`; delivery: `delivered_at`, `first_delivered_at`, `delivered_fields`, `last_delivered_fields`, `delivered_rev` (v0.4.0) | Replaces `customer_consent_store.go` on the hub (P4). |
+| Attachments (v0.4.0) | consumer JSON by namespace, per person and per store | Data colony does not model (hive's CRM fields). Local only, erased with the person. |
 | `Tombstone` | Salted hash of a forgotten identity | It is never re-added. |
 
 `store.SetFact` enforces precedence:
@@ -233,8 +238,10 @@ the only export a hub-bound or spoke-bound path may call.
 The same steps apply on the spoke (P3, `customers.store` /
 `HIVE_CUSTOMERS_STORE`) and on the hub (P4, `HIVE_HUB_CUSTOMER_STORE`).
 
-1. **`json` (the default until P5).** Today's behaviour. No `colony.db` is
-   created.
+1. **`json`.** The behaviour before the colony store, and the rollback. No
+   `colony.db` is created. It was the default until
+   [#19972](https://github.com/hivecommons/hive/issues/19972); a value that is
+   set but unknown still means `json`.
 2. **`shadow`.**
    - On first boot in this mode, read the JSON and write every person into
      `colony.db` in one bbolt transaction. Record the source file's hash and
@@ -243,18 +250,30 @@ The same steps apply on the spoke (P3, `customers.store` /
      reads.
    - A parity check after each sweep logs counts only, never values (people,
      facts per rank, mismatches).
-3. **`colony`.** Reads come from colony, and the JSON is still written, so
-   switching back to `json` loses nothing.
-4. **`colony-only` (P5).**
-   - JSON writes stop, and the JSON file is renamed `*.migrated` and kept for a
-     documented retention.
-   - `colony export --format hive-people-json` (and the hub equivalent) writes
-     the old shape for a manual rollback.
+3. **`colony` (the hub default since #19972; the spoke default once parity is
+   confirmed on the project's own hive).** Reads come from colony, and the
+   JSON is still written, so switching back to `json` loses nothing. A
+   deployment upgraded from the `json` default runs step 2's import on its
+   first boot, with the same backups (`*.pre-colony` on the spoke,
+   `colony.db.bak-*` on the hub, whose JSON files the import never
+   rewrites), and falls back to `json` when the import fails.
+4. **`colony-only` (P5, opt-in, never the default).**
+   - JSON writes stop, and the JSON file is renamed `*.migrated`, only after a
+     verified full write, and kept (never deleted; a forget scrubs the person
+     from it). See [colony-only](#colony-only-p5).
+   - `hive colony export --format hive-people-json` (and the hub equivalent)
+     writes the old shape for a manual rollback.
 
 **Rollback:**
 
 - From `shadow` or `colony`, set the mode back to `json`.
-- From `colony-only`, export, put the file back and set `json`.
+- From `colony-only`, set the mode to `colony`, `shadow` or `json`: the next
+  boot finds no `people.json` beside a colony-only `colony.db` and writes it
+  (and `enrichment.json`) back from `colony.db` first. By hand: stop the hive,
+  `hive colony export --format hive-people-json`, set the mode, start.
+- Before running an older hive binary on a colony-only store, export first:
+  an older binary has no `colony-only`, reads it as `json`, and colony v0.4.0
+  files (schema 2) fail closed in colony v0.3.0.
 - A schema-version mismatch on open (an older binary reading a newer file)
   fails closed to `json` mode and logs it. It never rewrites the file.
 
@@ -332,9 +351,10 @@ v0.3.0 (`src/pkg/customers/colony.go`). What it does beyond the steps above:
   Writes go to the file first, so a colony copy that fell behind can only
   send less. The
   delivery bookkeeping (first and last delivery, the delivered field sets and
-  the rev) has no slot in colony's `Consent`, so it is still read from
-  `/data/saas/consents`. Only hive ids the consent file lists are read, because
-  colony has no delete and keeps a pruned consent as an emptied record. A
+  the rev) is still read from `/data/saas/consents` in this mode (colony
+  holds a copy since v0.4.0). Only hive ids the consent file lists are read:
+  the file decides which records exist, and a pruned consent is deleted from
+  colony too. A
   person whose last sync failed is read from the file alone. Consent writes,
   the delivery stamp and the retention sweep still read and write the file
   first and mirror it, so `json` stays the rollback. In `json` and `shadow`
@@ -344,17 +364,141 @@ v0.3.0 (`src/pkg/customers/colony.go`). What it does beyond the steps above:
   Settings controls under Features, Customers. Settings refuses an unknown
   value, and shows when an environment override decides.
 - Spoke gitdm defaults on when enrichment is enabled, independently of the store flip.
+- **The default flip**
+  ([#19972](https://github.com/hivecommons/hive/issues/19972)). The store
+  mode defaults to `colony` on the hub (`HIVE_HUB_CUSTOMER_STORE` unset) and
+  to `shadow` on the spoke (`customers.store` and `HIVE_CUSTOMERS_STORE`
+  unset): JSON stays authoritative and colony is written alongside it. The
+  spoke default moves to `colony` once parity is confirmed on the project's
+  own hive. Every explicit value, `json` included, keeps working, and a set
+  but unknown value still means `json`. The hub default rests on its `shadow` boot sync
+  (`json_users=280`, `synced=280`, `failed=0`, `skipped=0`,
+  `orphans_held=0`, `colony_people=280`, `parity=true`); the project's own
+  hive's `shadow` parity is collected by the operator, and gates the spoke move to `colony`. Upgrading from the
+  `json` default goes through the boot import and backups above; the tests
+  that hold it are `TestColonyUpgradeFromJSONExplicitColony` (a hive that sets `colony` explicitly) and
+  `TestColonyDamagedFileFailsClosed` (spoke store),
+  `TestWireCustomersDefaultUpgradeFromJSON` and
+  `TestWireCustomersDefaultFallsBackToJSON` (spoke wiring), and
+  `TestHubCustomerStoreDefaultUpgradeFromJSON` and
+  `TestHubCustomerStoreUnreadableFileFailsClosed` (hub).
 
-Not yet, tracked in
-[#19972](https://github.com/hivecommons/hive/issues/19972):
+### colony-only (P5)
 
-- The store default stays `json` on hub and spoke until a full release in
-  `shadow` shows clean parity logs on the hub and on the project's own hive.
-- `colony-only`, the `*.migrated` rename and `colony export` come one release
-  after the default flip. The duplicated enrichment types in
-  `src/pkg/customers/enrichment.go` and the hub's top-repo affiliation cache
-  fields go with `colony-only`, because `json` and `shadow` mode still read
-  them.
+[#19972](https://github.com/hivecommons/hive/issues/19972), on colony v0.4.0
+(hivecommons/colony#9), which added the slots v0.3.0 lacked: identity
+provenance, held identities for a second claimant, provider answers, consent
+delivery bookkeeping, a 64 KiB limit for notes, attachments, and exact
+(`Replace`) and atomic (`Batch`) writes.
+
+**shadow and colony** now also write the new slots: identity `manual`, `by`
+and `score`; an identity colony gives to another person is a held identity on
+the second claimant instead of being dropped; and every enrichment source's
+full answer. Parity counts held identities (`json_held`, `colony_held`) and
+compares identity provenance.
+
+**Spoke (`customers.store: colony-only`, `src/pkg/customers/colony_only.go`):**
+
+- Everything `people.json` and `enrichment.json` hold is in `colony.db`: in
+  colony's typed slots where it has one, and as the person's `hive.person`
+  attachment (tags, goals, satisfaction, notes, merge records, identities in
+  hive's order with the kinds colony has no kind for) and the store's
+  `hive.people` attachment (salt, suggestions, pins, hints, tombstones). A
+  profile field colony's facts give back exactly is left out of the
+  attachment and read from colony; one that does not round-trip stays in it.
+  Enrichment is read from the answers, or from a `hive.enrichment` attachment
+  when they do not give it back exactly.
+- **The first colony-only boot** runs the colony-mode boot (import or
+  catch-up, forgets, count check), writes every person, every enrichment
+  entry and the document in one transaction, reads everything back and
+  compares it with the JSON byte for byte. Only then are `people.json` and
+  `enrichment.json` renamed to `*.migrated` (a name already taken gets a
+  `-<time>` suffix; nothing is overwritten or deleted). Any mismatch logs
+  `colony-only migration not verified` and the hive runs in `colony` mode
+  with the JSON untouched. Enrichment for an id that is not a person (an
+  orphan the next prune would drop) stays only in the `.migrated` file.
+- **After that** every change is one colony transaction and nothing writes
+  the JSON. A failed write is returned to the caller and changes nothing.
+  A restart reads everything from `colony.db`. A `colony.db` that cannot be
+  opened in colony-only keeps the Customers section off rather than starting
+  an empty `people.json`.
+- **A `people.json` beside a migrated `colony.db`.** A migration counts as
+  finished only once its renames are done and `colony-sync.json` records
+  `migrated_at`; a restore clears it. Without `migrated_at`, `people.json` is
+  the truth and is migrated again, whatever an unfinished attempt left in
+  `colony.db`. With it, a `people.json` older than the migration (a stale copy
+  put back) is renamed `people.json.stray`, kept, and the store is read from
+  `colony.db`; one newer than the migration (an older binary that read
+  `colony-only` as `json`) is refused, and so is a `colony` or `shadow` boot
+  over that store, because choosing either copy, or the orphan forget, could
+  lose people: export or move the file aside first. A migration that does
+  not verify removes the document and attachments it wrote. The renames go
+  `people.json` first; a stop before `enrichment.json` or the marker is
+  finished by the next boot.
+- **Forget** erases the person inside that transaction, compacts the file,
+  and scrubs them from the `.pre-colony` and `.migrated` files too.
+- **Rollback** is a mode change: a boot in `colony`, `shadow` or `json` that
+  finds no `people.json` beside a colony-only `colony.db` writes both files
+  back from it first, then drops the colony-only document and `migrated_at`,
+  so a later restore can never go back in time (`hive colony export` into
+  the data directory does the same). A restore that could not write
+  `people.json` keeps the Customers section off in every mode; one whose
+  cleanup alone failed is logged and the hive starts. By hand: stop the
+  hive and run `hive colony export --format hive-people-json [--dir
+  /data/customers] [--out DIR] [--force]`; it refuses to overwrite a file
+  without `--force`.
+
+**Hub (`HIVE_HUB_CUSTOMER_STORE=colony-only`, `src/pkg/hub/customer_store_only.go`):**
+
+- `shadow` and `colony` now also write the consent delivery bookkeeping
+  (first and last delivery, the delivered field sets, the rev, the update
+  time), delete a pruned consent from colony instead of emptying it, store
+  long notes under colony's own limits, and keep a linked login or email
+  another user owns as a held identity. The boot log counts `held`.
+- In `colony-only` each person's CRM fields and consent records are kept
+  exactly in their `hub.crm` attachment, with colony's typed slots written
+  beside it as in `colony` mode. The user JSON keeps the account data and is
+  written without the CRM fields (`crm_in_colony`), and only after the colony
+  write succeeded; when it fails, the full record is written as before. A
+  read of a stripped record puts the fields back from colony; a save of a
+  record read without that overlay (a sweep that changes account data only)
+  leaves the colony copy alone. Consent reads, writes, delivery stamps, the
+  retention sweep, the counts and the match index all go to colony.
+- **The first colony-only boot** needs a boot sync with parity, then writes
+  every person's attachment in one transaction and compares the read-back
+  with the JSON. Only then does it copy `users` to `users.migrated`, rename
+  `consents` to `consents.migrated` and write the `hub.colony-only` marker.
+  The marker, written after the renames and dropped by a restore, is the
+  only thing that says the hub is colony-only; a `hub.colony-only-pending`
+  note written before the renames lets the next boot undo a crashed
+  migration. Otherwise it clears the records it wrote and runs in `colony`
+  mode with every file where it was.
+- **A consents directory beside a migrated store** is never the truth: one
+  that matches colony or is older than the marker's `migrated_at` is set
+  aside; a newer one that differs refuses colony-only and the rollback
+  before any write, and the hub runs in `json` until an operator moves it.
+- **Rollback:** a boot in any other mode that finds the marker writes the CRM
+  fields and consent files back from colony first, then drops the marker and
+  the `hub.crm` copies of the restored records in one transaction; a failed
+  restore keeps the hub colony-only. `hive colony export --format
+  hive-hub-json` writes the same files elsewhere by hand.
+- The match answer and the consent paths still gate every answer on
+  `HIVE_HUB_CUSTOMERS_TRUSTED_HIVES` (`customer_trust.go`); colony-only
+  changes where the records live, not who they may reach.
+- The top-repo affiliation cache fields stay on `SaaSUser`: every mode still
+  reads them through the record, and colony-only only moves where they are
+  stored.
+
+**Retention of `*.migrated`:** kept until an operator removes them. They are
+the JSON as it stood when colony-only took over, so they are a backup like
+`*.pre-colony`: a forget scrubs them, and once the hive has run on
+colony-only for a release with clean parity they can be removed.
+
+**Cleanup:** the duplicated enrichment types in
+`src/pkg/customers/enrichment.go` and the hub's top-repo affiliation cache
+fields stay: `json`, `shadow` and `colony` mode still read and write them,
+and colony-only uses the same types for its read-back, so no path is dead
+yet. They go when `json` and `shadow` are retired.
 
 ## Providers
 
@@ -427,7 +571,7 @@ that #19303 promised.
 | Spoke gitdm | **on when enrichment is enabled** | Sends nothing about anyone; enrichment itself remains off by default. |
 | Spoke devstats, crowd.dev | off | Same reasoning as the hub. crowd.dev is inert until colony#5. |
 | Spoke auto-accept | `off` | Accepting is a decision an owner makes until the owner chooses a policy. |
-| Store mode | `json` until P5 | Then `colony` after one clean `shadow` release. |
+| Store mode | hub `colony`, spoke `shadow` | Since #19972: the hub after its clean `shadow` boot sync, the spoke stays on `shadow` until parity is confirmed on the project's own hive, then moves to `colony`. `json` stays valid and is the rollback; a set but unknown value means `json`. `colony-only` is not built yet. |
 
 ## Privacy
 
@@ -537,8 +681,8 @@ works. This section is about what to do with it once it does.
 | `HIVE_HUB_AFFILIATION_COLONY_DEVSTATS_HOURLY_LIMIT` | hub | `30` (at most `120`) | P1 |
 | `HIVE_HUB_AFFILIATION_COLONY_TIMEOUT` | hub | `2m` (at most `10m`) | P1 |
 | `HIVE_HUB_CUSTOMERS_TRUSTED_HIVES` | hub | empty | P1 PR (#19854) |
-| `HIVE_HUB_CUSTOMER_STORE` | hub | `json` | P4 |
-| `customers.store` / `HIVE_CUSTOMERS_STORE` | spoke | `json` | P3 |
+| `HIVE_HUB_CUSTOMER_STORE` | hub | `colony` (was `json` until #19972) | P4, default P5 |
+| `customers.store` / `HIVE_CUSTOMERS_STORE` | spoke | `shadow` (was `json` until #19972; moves to `colony` once parity is confirmed on the project's own hive) | P3, default P5 |
 | `customers.enrichment.auto_accept` / `HIVE_CUSTOMERS_ENRICHMENT_AUTO_ACCEPT` | spoke | `off` | P3 |
 | Existing `customers.enrichment.*` | spoke | unchanged until P5 | P5 |
 
@@ -550,7 +694,7 @@ works. This section is about what to do with it once it does.
 | P2 colony store package | [hivecommons/colony#6](https://github.com/hivecommons/colony/issues/6) | nothing | built (colony v0.3.0) |
 | P3 spoke Customers on the colony store, migration, auto-accept | [#19855](https://github.com/hivecommons/hive/issues/19855) | P2 released | built |
 | P4 hub CRM on the colony store, migration, labelled affiliation for trusted hives | [#19856](https://github.com/hivecommons/hive/issues/19856) | P2 released | built |
-| P5 default-on and cleanup | [#19857](https://github.com/hivecommons/hive/issues/19857), default flip [#19972](https://github.com/hivecommons/hive/issues/19972) | P3, P4 | cleanup built; flip after shadow parity |
+| P5 default-on and cleanup | [#19857](https://github.com/hivecommons/hive/issues/19857), default flip [#19972](https://github.com/hivecommons/hive/issues/19972) | P3, P4 | cleanup built; hub default `colony`, spoke default `shadow` until parity is confirmed on the project's own hive; `colony-only` and `colony export` open in #19972 |
 | P6 crowd.dev | [#19858](https://github.com/hivecommons/hive/issues/19858) | colony#5 | hive |
 
 The repo-shaping follow-ups above are filed only after this design is

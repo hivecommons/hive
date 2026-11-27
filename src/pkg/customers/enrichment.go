@@ -103,13 +103,21 @@ type EnrichmentStore struct {
 
 // SetColony wires the colony mirror (the people store's Colony). Call it
 // before the store is shared.
-func (e *EnrichmentStore) SetColony(c *Colony) {
+//
+// In colony-only mode it also reads every person's enrichment from
+// colony.db, since there is no enrichment.json; an error leaves the store
+// empty and is returned for the log.
+func (e *EnrichmentStore) SetColony(c *Colony) error {
 	if e == nil {
-		return
+		return nil
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.colony = c
+	if c.colonyOnly() {
+		return e.loadColonyOnlyLocked(c)
+	}
+	return nil
 }
 
 // OpenEnrichment opens <dir>/enrichment.json. A missing file is empty. A
@@ -178,6 +186,7 @@ func (e *EnrichmentStore) SetSource(id, source string, affs []EnrichedAffiliatio
 	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	before := e.snapshotOneLocked(id)
 	pe := clonePersonEnrichment(e.people[id])
 	keptA := pe.Affiliations[:0:0]
 	for _, a := range pe.Affiliations {
@@ -207,15 +216,25 @@ func (e *EnrichmentStore) SetSource(id, source string, affs []EnrichedAffiliatio
 	}
 	pe.FetchedAt[source] = at.UTC()
 	e.people[id] = pe
-	return e.saveLocked(map[string]PersonEnrichment{id: clonePersonEnrichment(pe)}, nil)
+	if err := e.saveLocked(map[string]PersonEnrichment{id: clonePersonEnrichment(pe)}, nil); err != nil {
+		e.restoreLocked(before)
+		return err
+	}
+	return nil
 }
 
 // DropSource removes one source's facts from every person, for a source
 // that was switched off. It reports how many people changed.
-func (e *EnrichmentStore) DropSource(source string) (int, error) {
+func (e *EnrichmentStore) DropSource(source string) (n int, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	n := 0
+	before := e.snapshotLocked()
+	defer func() {
+		if err != nil {
+			e.restoreLocked(before)
+			n = 0
+		}
+	}()
 	changed := map[string]PersonEnrichment{}
 	var removed []string
 	for id, pe := range e.people {
@@ -252,8 +271,13 @@ func (e *EnrichmentStore) Delete(id string) error {
 	if _, ok := e.people[id]; !ok {
 		return nil
 	}
+	before := e.snapshotOneLocked(id)
 	delete(e.people, id)
-	return e.saveLocked(nil, []string{id})
+	if err := e.saveLocked(nil, []string{id}); err != nil {
+		e.restoreLocked(before)
+		return err
+	}
+	return nil
 }
 
 // Prune removes the people keep says are gone (forgotten, merged away or
@@ -261,6 +285,7 @@ func (e *EnrichmentStore) Delete(id string) error {
 func (e *EnrichmentStore) Prune(keep func(id string) bool) (int, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	before := e.snapshotLocked()
 	n := 0
 	var removed []string
 	for id := range e.people {
@@ -273,7 +298,55 @@ func (e *EnrichmentStore) Prune(keep func(id string) bool) (int, error) {
 	if n == 0 {
 		return 0, nil
 	}
-	return n, e.saveLocked(nil, removed)
+	if err := e.saveLocked(nil, removed); err != nil {
+		e.restoreLocked(before)
+		return n, err
+	}
+	return n, nil
+}
+
+// enrichmentSnapshot is the state a failed save rolls back to.
+type enrichmentSnapshot struct {
+	people map[string]PersonEnrichment
+	saved  []byte
+	// only marks a snapshot of the person one alone.
+	one  string
+	only bool
+}
+
+// snapshotLocked copies the state; e.mu is held.
+func (e *EnrichmentStore) snapshotLocked() enrichmentSnapshot {
+	sn := enrichmentSnapshot{people: make(map[string]PersonEnrichment, len(e.people)), saved: e.saved}
+	for id, pe := range e.people {
+		sn.people[id] = clonePersonEnrichment(pe)
+	}
+	return sn
+}
+
+// snapshotOneLocked is snapshotLocked for a change to one person only:
+// it keeps that person, so a per-person sweep does not copy everyone.
+func (e *EnrichmentStore) snapshotOneLocked(id string) enrichmentSnapshot {
+	sn := enrichmentSnapshot{saved: e.saved, one: id, only: true}
+	if pe, ok := e.people[id]; ok {
+		sn.people = map[string]PersonEnrichment{id: clonePersonEnrichment(pe)}
+	}
+	return sn
+}
+
+// restoreLocked puts back a snapshot after a failed save, so a change that
+// was not written is not shown (colony-only writes only what changed, so
+// it would never be retried); e.mu is held.
+func (e *EnrichmentStore) restoreLocked(sn enrichmentSnapshot) {
+	e.saved = sn.saved
+	if !sn.only {
+		e.people = sn.people
+		return
+	}
+	if pe, ok := sn.people[sn.one]; ok {
+		e.people[sn.one] = pe
+	} else {
+		delete(e.people, sn.one)
+	}
 }
 
 // saveLocked writes enrichment.json and then mirrors the people it changed
@@ -285,6 +358,14 @@ func (e *EnrichmentStore) saveLocked(changed map[string]PersonEnrichment, remove
 		return fmt.Errorf("customers: encoding %s: %w", EnrichmentFileName, err)
 	}
 	if bytes.Equal(data, e.saved) {
+		return nil
+	}
+	if e.colony.colonyOnly() {
+		// colony-only: colony.db only, no enrichment.json.
+		if err := e.colony.saveColonyOnlyEnrichment(changed, removed); err != nil {
+			return err
+		}
+		e.saved = data
 		return nil
 	}
 	if err := writeFileAtomic(e.path, ".enrichment-*", data); err != nil {

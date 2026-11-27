@@ -106,8 +106,8 @@ agents:
 - name: supervisor
   display_name: Supervisor
   role: supervisor
-  description: 'Autonomous oversight. Self-healing: restarts stalled agents,
-    triggers rollbacks on deploy failures.
+  description: 'Autonomous oversight. Reports stalled agents and deploy failures
+    in advisory beads for specialist agents to act on.
 
     '
   emoji: 👑
@@ -118,15 +118,15 @@ agents:
   bead_role: supervisor
   mode: ADVISORY
   kick_template: supervisor-nogithub.md
-  include_repos: true
+  include_repos: false
   clear_on_kick: false
   stale_timeout: 600
-  interactions: 'Autonomous oversight of all agents. Triggers self-healing actions
-    without human intervention.
+  interactions: 'Autonomous oversight of all agents. Reports stalled agents
+    and delegates remediation without human intervention.
 
     '
-  knowledge_use: 'Reads agent health history. Produces sweep reports and self-healing
-    action logs.
+  knowledge_use: 'Reads agent health history. Produces sweep reports and advisory
+    beads.
 
     '
 - name: scanner

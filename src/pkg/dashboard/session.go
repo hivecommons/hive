@@ -26,6 +26,18 @@ type userSession struct {
 	Username  string
 	Role      string
 	ExpiresAt time.Time
+	// GitHubLogin is the GitHub login a non-GitHub sign-in proved control of
+	// on the hub, carried by the SSO handoff (github_link.go, #19992). It is
+	// used only for contributor features keyed by GitHub login, never for the
+	// role.
+	GitHubLogin string `json:",omitempty"`
+	// GitHubLinkedAt is the hub's proof time for GitHubLogin (hub clock),
+	// kept so a revoke can name the exact proof it revokes. GitHubLinkSetAt
+	// is when this spoke attached it (spoke clock): the link is honoured only
+	// for sessionGitHubLinkTTL after that, so an unlink on the hub reaches
+	// existing sessions on their next SSO handoff.
+	GitHubLinkedAt  time.Time `json:",omitzero"`
+	GitHubLinkSetAt time.Time `json:",omitzero"`
 }
 
 // sessionIDBytes is the entropy of an opaque session id. 32 bytes (256 bits) is

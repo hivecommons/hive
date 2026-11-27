@@ -3,10 +3,10 @@ package inbox
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/atomicfile"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
@@ -237,24 +237,5 @@ func factKeyPart(s string) string {
 // writeFactAtomic writes a fact through a temp file and a rename, with the
 // mode connector facts use.
 func writeFactAtomic(path, content string) error {
-	dir := filepath.Dir(path)
-	f, err := os.CreateTemp(dir, ".tmp-fact-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	_, werr := f.WriteString(content)
-	if cerr := f.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr == nil {
-		werr = os.Chmod(tmp, factFileMode)
-	}
-	if werr == nil {
-		werr = os.Rename(tmp, path)
-	}
-	if werr != nil {
-		_ = os.Remove(tmp)
-	}
-	return werr
+	return atomicfile.WriteFile(path, []byte(content), factFileMode)
 }

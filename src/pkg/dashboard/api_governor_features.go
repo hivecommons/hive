@@ -499,7 +499,12 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	} else if err := s.saveConfig(); err != nil {
+		// Same contract as the write-back branch above: a 200 here would
+		// tell the operator the change is saved while it is lost on the
+		// next restart (#20073).
 		s.logger.Error("failed to persist config after features update", "error", err)
+		writeConfigSaveError(w, err, "")
+		return
 	}
 	s.auditFromRequest(r, "config_governor_features", auditDetail("section", "features"), "")
 	floor := s.refreshAndPersistSeq()
