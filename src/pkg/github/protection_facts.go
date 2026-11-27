@@ -24,6 +24,9 @@ type protectionCollector struct {
 	c *Client
 	// required is keyed "owner/repo@branch".
 	required map[string]requiredSet
+
+	conversationRequired map[string]bool
+
 	// reviews is keyed "owner/repo"; a nil map value records a repo whose
 	// GraphQL query failed, so it is attempted only once.
 	reviews map[string]map[int]prReviewState
@@ -85,6 +88,9 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 		pr.CommentCount = rs.comments
 		pr.ReviewThreadCount = rs.reviewThreads
 		pr.LinkedIssues = rs.linkedIssues
+		if rs.reviewThreads > 0 {
+			f.UnresolvedReviewThreads, f.reviewThreadCommentIDs = pc.reviewConversationBlocker(ctx, pr)
+		}
 	}
 
 	if reported != nil {
@@ -160,7 +166,8 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 	// dashboard still wants "changes requested by @x" / "2 approvals" on
 	// such a PR (#8968). The decision itself stays ReviewDecisionNone —
 	// unknown, never inferred — exactly as the contract above requires.
-	if f.ReviewDecision == ReviewDecisionNone && !f.RequiredChecksKnown && f.ApprovalsGiven == 0 && len(f.ChangesRequestedBy) == 0 {
+	if f.ReviewDecision == ReviewDecisionNone && !f.RequiredChecksKnown && f.ApprovalsGiven == 0 && len(f.ChangesRequestedBy) == 0 && f.UnresolvedReviewThreads == 0 {
+		pr.Protection = nil
 		return
 	}
 	pr.Protection = &f
