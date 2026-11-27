@@ -153,6 +153,12 @@ func (h *ContributeWSHub) settleIssueFromVerdictWithEvidence(repo string, number
 			"pr_url", claim.PRURL, "pr_author", claim.PRAuthor,
 			"merged", claim.MergedPR, "merged_at", claim.MergedAt,
 			"weak", claim.Reference || claim.ExternalAuthor, "reporter", reporter)
+		// A verified merged claim is what the already-done label stands for,
+		// so an earlier unverified verdict's pending cleanup must not take
+		// the label off now.
+		if claim.MergedPR {
+			h.dropUnverifiedAlreadyDoneCleanup(repo, number)
+		}
 		if err := h.markIssuePRClaim(ctx, repo, number, claim); err != nil && err != ghpkg.ErrNoGitHubClient {
 			h.logger.Warn("[contribute-ws] verified PR-claim label failed",
 				"repo", repo, "number", number, "ref", ref.String(), "error", err.Error())
@@ -241,44 +247,38 @@ func (h *ContributeWSHub) markIssuePRClaim(ctx context.Context, repo string, num
 
 // removeUnverifiedAlreadyDoneLabel takes the already-done label off an issue
 // whose verdict did not verify, when the hive itself added it after the task
-// was dispatched (a relay labelling on the task credential). Best-effort: a
-// failure is logged and the comment and hold still go out.
-func (h *ContributeWSHub) removeUnverifiedAlreadyDoneLabel(repo string, number int, dispatchedAt time.Time) {
+// was dispatched (a relay labelling on the task credential). It reports
+// whether it removed the label; a label that is already gone, one a person
+// added, or one the hive added before dispatchedAt is no error and stays
+// where it is. The caller logs a failure and queues the retry
+// (contribute_already_done_cleanup.go).
+func (h *ContributeWSHub) removeUnverifiedAlreadyDoneLabel(ctx context.Context, repo string, number int, dispatchedAt time.Time) (bool, error) {
 	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
-		return
+		return false, nil
 	}
 	label := config.HubConfig{}.ContributeAlreadyDoneLabelOrDefault()
 	if h.server.deps.Config != nil {
 		label = h.server.deps.Config.Hub.ContributeAlreadyDoneLabelOrDefault()
 	}
-	ctx := h.server.deps.Ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(ctx, verdictSettleTimeout)
-	defer cancel()
 	removed, err := h.server.deps.GHClient.RemoveHiveLabelAddedSince(ctx, repo, number, label, dispatchedAt)
-	if h.logger == nil {
-		return
-	}
 	if err != nil {
-		h.logger.Warn("[contribute-ws] removing the relay's unverified already-done label failed",
-			"repo", repo, "number", number, "label", label, "error", err.Error())
-		return
+		return false, err
 	}
-	if removed {
+	if removed && h.logger != nil {
 		h.logger.Info("[contribute-ws] removed the already-done label the relay applied to an unverified verdict",
 			"repo", repo, "number", number, "label", label)
 	}
+	return removed, nil
 }
 
 // noteAlreadyDoneUnverified posts the claim-worded comment for an already-done
 // verdict with no verifiable evidence. It applies no label: the already-done
 // label means verified, and hive/likely-done means an API-verified merged PR
-// (the claim-label sync removes it from any issue without one).
-func (h *ContributeWSHub) noteAlreadyDoneUnverified(ctx context.Context, repo string, number int, reporter string, hold time.Duration) error {
+// (the claim-label sync removes it from any issue without one). It reports
+// whether it posted the comment; one already on the issue is left alone.
+func (h *ContributeWSHub) noteAlreadyDoneUnverified(ctx context.Context, repo string, number int, reporter string, hold time.Duration) (bool, error) {
 	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
-		return ghpkg.ErrNoGitHubClient
+		return false, ghpkg.ErrNoGitHubClient
 	}
 	label := config.HubConfig{}.ContributeAlreadyDoneLabelOrDefault()
 	if h.server.deps.Config != nil {
@@ -293,9 +293,12 @@ func (h *ContributeWSHub) noteAlreadyDoneUnverified(ctx context.Context, repo st
 		who, label, int(hold.Hours()/24))
 	ok, err := h.server.deps.GHClient.IssueCommentsContain(ctx, repo, number, body)
 	if err != nil || ok {
-		return err
+		return false, err
 	}
-	return h.server.deps.GHClient.CreateIssueComment(ctx, repo, number, body)
+	if err := h.server.deps.GHClient.CreateIssueComment(ctx, repo, number, body); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (h *ContributeWSHub) markAlreadyDoneIssue(ctx context.Context, repo string, number int, claim ghpkg.IssueClaim, reporter string, closeIssue bool) error {

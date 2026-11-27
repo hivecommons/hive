@@ -82,6 +82,21 @@ func (c *Client) ListIssueSnapshots(ctx context.Context, opts IssueSnapshotOptio
 	return out, nil
 }
 
+// ReadIssueSnapshot reads one issue by number, as ListIssueSnapshots would
+// list it: one GET, for a caller that needs the issue's current updated_at
+// or labels outside the enumeration.
+func (c *Client) ReadIssueSnapshot(ctx context.Context, repo string, number int) (IssueSnapshot, error) {
+	if c == nil || c.client == nil {
+		return IssueSnapshot{}, ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	issue, _, err := c.client.Issues.Get(ctx, owner, repoName, number)
+	if err != nil {
+		return IssueSnapshot{}, err
+	}
+	return issueSnapshotFrom(owner+"/"+repoName, issue), nil
+}
+
 func issueSnapshotFrom(repo string, issue *gh.Issue) IssueSnapshot {
 	return IssueSnapshot{
 		Repo:        repo,

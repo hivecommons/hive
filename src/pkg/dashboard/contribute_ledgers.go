@@ -809,19 +809,40 @@ func (h *ContributeWSHub) markTaskCompletedVerdict(repo string, number int, prUR
 // credential (projectbluefin/utah-packages#1175: labelled at 11:49:55, the
 // "not labelled" comment at 11:50:11, the label left on). The hub takes off a
 // label the hive added since dispatchedAt; one a person added stays.
+//
+// When GitHub fails the removal or the comment, the label would otherwise
+// stay for good: it withholds the issue from offers and kicks, so no second
+// verdict ever comes to try again. The failed part is queued, after the hold
+// it belongs to is booked, as a pending cleanup that a later pass retries
+// (contribute_already_done_cleanup.go). A part GitHub refuses for good (403,
+// 404, 410, 422) is logged as given up instead.
 func (h *ContributeWSHub) markAlreadyDoneUnverified(repo string, number int, reporter, reason string, evidence *VerdictEvidence, dispatchedAt time.Time) {
 	if h == nil || repo == "" || number <= 0 {
 		return
 	}
 	reason = truncateReasonBytes(reason)
 	hold := h.configuredAlreadyDoneUnverifiedHold()
+	cleanup := unverifiedAlreadyDoneCleanup{
+		Repo:         repo,
+		Number:       number,
+		DispatchedAt: dispatchedAt,
+		Reporter:     reporter,
+		HoldHours:    hold.Hours(),
+	}
 	// The label removal and the comment go out before the hold is booked so
 	// the hive's own activity does not count as newer issue activity that
 	// lifts the hold.
-	h.removeUnverifiedAlreadyDoneLabel(repo, number, dispatchedAt)
-	if err := h.noteAlreadyDoneUnverified(context.Background(), repo, number, reporter, hold); err != nil && h.logger != nil && err != ghpkg.ErrNoGitHubClient {
-		h.logger.Warn("[contribute-ws] unverified already-done verdict comment failed",
-			"repo", repo, "number", number, "error", err.Error())
+	labelCtx := context.Background()
+	if h.server != nil && h.server.deps != nil && h.server.deps.Ctx != nil {
+		labelCtx = h.server.deps.Ctx
+	}
+	labelCtx, cancel := context.WithTimeout(labelCtx, verdictSettleTimeout)
+	if _, err := h.removeUnverifiedAlreadyDoneLabel(labelCtx, repo, number, dispatchedAt); err != nil {
+		cleanup.Label = h.unverifiedAlreadyDoneRetryable(repo, number, unverifiedAlreadyDonePartLabel, 0, err)
+	}
+	cancel()
+	if _, err := h.noteAlreadyDoneUnverified(context.Background(), repo, number, reporter, hold); err != nil && err != ghpkg.ErrNoGitHubClient {
+		cleanup.Comment = h.unverifiedAlreadyDoneRetryable(repo, number, unverifiedAlreadyDonePartComment, 0, err)
 	}
 	rec := noWorkVerdictRecord{
 		RecordedAt:            time.Now(),
@@ -840,6 +861,13 @@ func (h *ContributeWSHub) markAlreadyDoneUnverified(repo string, number int, rep
 	h.noWorkVerdicts[key] = rec
 	h.completedMu.Unlock()
 	h.saveNoWorkVerdicts()
+	// After the hold: the retry pass posts a pending comment only while the
+	// hold it announces is on the books.
+	if cleanup.pending() {
+		h.queueUnverifiedAlreadyDoneCleanup(cleanup)
+	} else {
+		h.dropUnverifiedAlreadyDoneCleanup(repo, number)
+	}
 }
 
 func (h *ContributeWSHub) clearNoWorkVerdict(repo string, number int) {

@@ -37,6 +37,8 @@ type settleGHFixture struct {
 	issueLabels      []string
 	labelsRemoved    []string
 	issueEvents      []map[string]any
+	// issueUpdatedAt, when set, is the issue's updated_at on GET.
+	issueUpdatedAt time.Time
 }
 
 func (f *settleGHFixture) server(t *testing.T) *httptest.Server {
@@ -86,14 +88,18 @@ func (f *settleGHFixture) server(t *testing.T) *httptest.Server {
 			for _, l := range f.issueLabels {
 				labels = append(labels, map[string]any{"name": l})
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
+			issue := map[string]any{
 				"number": 7,
 				"state":  "open",
 				"title":  "settle me",
 				"body":   "filed by automation",
 				"user":   map[string]any{"login": "hive-bot", "type": "Bot"},
 				"labels": labels,
-			})
+			}
+			if !f.issueUpdatedAt.IsZero() {
+				issue["updated_at"] = f.issueUpdatedAt.UTC().Format(time.RFC3339Nano)
+			}
+			_ = json.NewEncoder(w).Encode(issue)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/o/r/issues/7/events":
 			events := f.issueEvents
 			if events == nil {

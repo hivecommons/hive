@@ -1203,6 +1203,13 @@ type ContributeWSHub struct {
 	completedTasksFile      string
 	failedTasksFile         string
 	noPRStreaksFile         string
+	// unverifiedAlreadyDoneCleanups records, per work item, the label removal
+	// or comment an unverified already-done verdict could not finish because
+	// GitHub failed, for the retry pass to finish later
+	// (contribute_already_done_cleanup.go). Guarded by completedMu and
+	// persisted beside the no-PR streaks.
+	unverifiedAlreadyDoneCleanups     map[string]unverifiedAlreadyDoneCleanup
+	unverifiedAlreadyDoneCleanupsFile string
 	// taskLeasesFile is where the server-issued lease registry is persisted so it
 	// survives a hub restart (#5681). Overridable per hub for tests, like the
 	// sibling ledgers.
@@ -1440,6 +1447,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub.loadNoWorkVerdicts()
 	hub.loadIdleCompletions()
 	hub.loadAuthorReplyReleases()
+	hub.loadUnverifiedAlreadyDoneCleanups()
 	hub.loadStandbyOutcomes()
 	hub.loadActivity()
 	// #5681: restore the leases the PREVIOUS process issued before any relay can
@@ -5498,6 +5506,7 @@ func (h *ContributeWSHub) blockedClaimsLoop(interval time.Duration) {
 func (h *ContributeWSHub) cleanupLoop() {
 	go h.blockedClaimsLoop(5 * time.Minute)
 	go h.authorReplyReleaseLoop(authorReplyReleaseInterval)
+	go h.unverifiedAlreadyDoneCleanupLoop(unverifiedAlreadyDoneCleanupInterval)
 	if h.doneCh != nil {
 		defer close(h.doneCh)
 	}
