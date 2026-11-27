@@ -181,8 +181,12 @@ if [ "$1" = "-h" ] && [ -n "${HIVE_TEST_GROUPS:-}" ]; then
   new_group="$2"
   shift 2
   for p in "$@"; do
+    [ -n "${HIVE_TEST_CHGRP_FAIL:-}" ] && [ "$p" = "$HIVE_TEST_CHGRP_FAIL" ] && continue
     printf '%s\t%s\n' "$p" "$new_group" >> "$HIVE_TEST_GROUPS"
   done
+fi
+if [ -n "${HIVE_TEST_CHGRP_FAIL:-}" ]; then
+  for p in "$@"; do [ "$p" = "$HIVE_TEST_CHGRP_FAIL" ] && exit 1; done
 fi
 exit 0
 EOFCHGRP
@@ -221,12 +225,18 @@ group_of() {
 }
 selected=()
 rc=0
+min_depth=0
+if [ "$1" = "-xdev" ] && [ "$2" = "-mindepth" ] && [ "$3" = "1" ]; then
+  min_depth=1
+  shift 3
+  set -- -xdev "$@"
+fi
 if [ "$#" -eq 10 ] && [ "$1" = "-xdev" ] && [ "$2" = "!" ] && [ "$3" = "-group" ] \
    && [ "$4" = "node" ] && [ "$5" = "-exec" ] && [ "$6" = "chgrp" ] && [ "$7" = "-h" ] \
    && [ "$8" = "node" ] && [ "$9" = "{}" ] && [ "${10}" = "+" ]; then
   while IFS= read -r entry; do
     [ "$(group_of "$entry")" = node ] || selected+=("$entry")
-  done < <("$HIVE_TEST_REAL_FIND" "$root" -depth)
+  done < <("$HIVE_TEST_REAL_FIND" "$root" -mindepth "$min_depth" -depth)
   if [ "${#selected[@]}" -gt 0 ]; then
     chgrp -h node "${selected[@]}" || rc=1
   fi
@@ -481,6 +491,32 @@ EOFOWNERS
     ok "a fully current agent (right uid, marker and group node) is still skipped"
   else
     bad "worker re-walked a fully current agent" "output: $(tr '\n' ';' < "$WORK/worker.out")"
+  fi
+  # partial: a regroup that fails beneath the agent dir must leave the agent
+  # dir off node, so the marker it publishes does not make the next boot skip.
+  PA="$WORK/data/agents/partial"
+  mkdir -p "$PA/repo"
+  : > "$PA/repo/stuck"
+  printf '%s\t%s\n' "$PA" 2014 "$PA/repo" 2014 "$PA/repo/stuck" 2014 >> "$WORK/owners.tsv"
+  printf '%s\t%s\n' "$PA" 1002 "$PA/repo" 1002 "$PA/repo/stuck" 1002 >> "$HIVE_TEST_GROUPS"
+  printf '2014\n' > "$(hive_reown_marker_path "$PA")"
+  : > "$HIVE_TEST_CHGRP_LOG"
+  PATH="$WORK/bin:$PATH" HIVE_TEST_CHGRP_FAIL="$PA/repo/stuck" AGENT_UID_LINES="$(printf 'partial\t2014')" \
+    hive_run_uid_isolation_migration > "$WORK/worker-partial.out" 2>&1
+  if grep -q 'WARN: regroup of partial to node was incomplete' "$WORK/worker-partial.out" \
+     && [ "$(final_group "$PA")" != node ] && [ "$(final_group "$PA/repo")" = node ]; then
+    ok "a partial regroup leaves the agent dir off node so the next boot retries"
+  else
+    bad "a partial regroup made the agent look current" "output: $(tr '\n' ';' < "$WORK/worker-partial.out") chgrp: $(tr '\n' ';' < "$HIVE_TEST_CHGRP_LOG")"
+  fi
+  : > "$HIVE_TEST_CHGRP_LOG"
+  PATH="$WORK/bin:$PATH" AGENT_UID_LINES="$(printf 'partial\t2014')" \
+    hive_run_uid_isolation_migration > "$WORK/worker-retry.out" 2>&1
+  if grep -q 'repairing partial (uid 2014)' "$WORK/worker-retry.out" \
+     && [ "$(final_group "$PA")" = node ] && [ "$(final_group "$PA/repo/stuck")" = node ]; then
+    ok "the next pass retries a partial regroup and then marks the agent dir node"
+  else
+    bad "a partial regroup was not retried" "output: $(tr '\n' ';' < "$WORK/worker-retry.out")"
   fi
 else
   bad "the UID-isolation worker is extractable from entrypoint.sh"

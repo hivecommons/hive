@@ -220,7 +220,7 @@ func TestUnownableTallySummaryCarriesCountAndSample(t *testing.T) {
 		t.Errorf("hint attr = %q, want unownableHint", attrs["hint"])
 	}
 	// #20162: the hint must name a repair that actually runs.
-	for _, want := range []string{"the entrypoint regroups agent trees at the next start", "chgrp -hR node <path>"} {
+	for _, want := range []string{"the entrypoint regroups agent trees at the next start", "chgrp -hR node <path>", "chown -hR <agent-uid>:node <path>"} {
 		if !strings.Contains(attrs["hint"], want) {
 			t.Errorf("hint attr = %q, want it to contain %q", attrs["hint"], want)
 		}

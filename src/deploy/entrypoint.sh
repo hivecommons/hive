@@ -165,12 +165,25 @@ hive_run_uid_isolation_migration() {
       # by uid only (kept off the startup path), so entries that kept the
       # right uid but took the fsGroup gid are regrouped here. `chgrp -h`
       # never follows a link, matching the re-own; modes are left untouched.
-      for _agent_regroup in "$_agent_dir" "${_agent_data_root}/home/agents/${_agent_name}"; do
-        if [ -d "$_agent_regroup" ] && ! [ -L "$_agent_regroup" ]; then
-          find "$_agent_regroup" -xdev \! -group node -exec chgrp -h node {} + 2>/dev/null \
-            || echo "[entrypoint] WARN: regroup of ${_agent_regroup} to node was incomplete; the next boot retries"
+      # The agent dir's OWN group is part of the "already current" test above,
+      # so it is regrouped LAST and only once everything beneath it (and the
+      # agent's home) regrouped cleanly: a partial pass leaves it off node and
+      # the next boot re-walks instead of trusting the published marker.
+      _agent_home_dir="${_agent_data_root}/home/agents/${_agent_name}"
+      _agent_regroup_ok=true
+      if [ -d "$_agent_home_dir" ] && ! [ -L "$_agent_home_dir" ]; then
+        find "$_agent_home_dir" -xdev \! -group node -exec chgrp -h node {} + 2>/dev/null \
+          || _agent_regroup_ok=false
+      fi
+      if [ -d "$_agent_dir" ] && ! [ -L "$_agent_dir" ]; then
+        find "$_agent_dir" -xdev -mindepth 1 \! -group node -exec chgrp -h node {} + 2>/dev/null \
+          || _agent_regroup_ok=false
+        if [ "$_agent_regroup_ok" = true ] && [ "$(stat -c '%G' "$_agent_dir" 2>/dev/null)" != node ]; then
+          chgrp -h node "$_agent_dir" 2>/dev/null || _agent_regroup_ok=false
         fi
-      done
+      fi
+      [ "$_agent_regroup_ok" = true ] \
+        || echo "[entrypoint] WARN: regroup of ${_agent_name} to node was incomplete; ${_agent_dir} keeps its group so the next boot retries"
       hive_publish_uid_isolation_marker "$_agent_marker" "$_agent_expected" || true
       echo "[entrypoint] UID isolation: ${_agent_name} pass complete"
     fi
