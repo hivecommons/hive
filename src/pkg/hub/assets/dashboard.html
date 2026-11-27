@@ -13050,10 +13050,13 @@
       if (!ts) return '';
       var d = new Date(ts);
       if (isNaN(d.getTime())) return ts.substring(0, 10);
-      // 12-hour clock with a compact single-letter meridiem (e.g. "9:21p").
-      var parts = d.toLocaleString('en-US', {year:'numeric',month:'2-digit',day:'2-digit',hour:'numeric',minute:'2-digit',hour12:true,timeZone:'America/New_York'}).replace(',','').split(' ');
+      // 12-hour clock with a compact single-letter meridiem (e.g. "9:21p"),
+      // in the viewer's own time zone, with the zone name taken from the
+      // formatter so it follows daylight saving time (#20190).
+      var parts = d.toLocaleString('en-US', {year:'numeric',month:'2-digit',day:'2-digit',hour:'numeric',minute:'2-digit',hour12:true,timeZoneName:'short'}).replace(',','').split(' ');
+      var zone = parts.pop() || ''; // e.g. "PST", "EDT", "GMT+1"
       var meridiem = (parts.pop() || '').toLowerCase().charAt(0); // "AM"->"a", "PM"->"p"
-      return parts.join(' ') + meridiem + ' EDT';
+      return parts.join(' ') + meridiem + (zone ? ' ' + zone : '');
     }
 
     function sortUsers(key) {
