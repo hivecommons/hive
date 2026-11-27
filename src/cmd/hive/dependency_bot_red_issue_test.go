@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1829,6 +1830,272 @@ func TestDependencyBotRedIssueParkedHeadOnlyOwnHandoff(t *testing.T) {
 	newDepBotRedIssuePass(fe.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, depBotT0, discardLogger())
 	if !newDepBotRedIssuePass(fe.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, past, discardLogger()) || fe.creates != 0 || store.redHeadJudged(depBotKey, "sha-2") {
 		t.Fatal("unreadable label events judged the head or filed")
+	}
+}
+
+// depBotParkedRedAt is the parked newer head sha-2 with CI activity read
+// for head: build failed an hour before at, and test failed long before
+// and again at at.
+func depBotParkedRedAt(head string, at time.Time) github.PullRequest {
+	pr := depBotParked(depBotCrossHeadPR("sha-2"))
+	build, first := at.Add(-time.Hour), at.Add(-48*time.Hour)
+	pr.CIActivity = &github.PRCIActivity{Head: head, Checks: []github.PRActivityCheck{
+		{Name: "build", State: "completed", Conclusion: "failure", Since: &build, Head: head},
+		{Name: "test", State: "completed", Conclusion: "failure", Since: &first, Head: head},
+		{Name: "test", State: "completed", Conclusion: "failure", Since: &at, Head: head},
+	}}
+	return pr
+}
+
+// depBotLogRecorder records each log message with its attributes.
+type depBotLogRecorder struct {
+	records []map[string]string
+}
+
+func (h *depBotLogRecorder) Enabled(context.Context, slog.Level) bool { return true }
+func (h *depBotLogRecorder) Handle(_ context.Context, r slog.Record) error {
+	rec := map[string]string{"msg": r.Message}
+	r.Attrs(func(a slog.Attr) bool {
+		rec[a.Key] = a.Value.String()
+		return true
+	})
+	h.records = append(h.records, rec)
+	return nil
+}
+func (h *depBotLogRecorder) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *depBotLogRecorder) WithGroup(string) slog.Handler      { return h }
+
+func (h *depBotLogRecorder) with(msg string) []map[string]string {
+	var out []map[string]string
+	for _, r := range h.records {
+		if r["msg"] == msg {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// depBotRedSince takes, per judged check, its newest failing completed run
+// on the head, and the latest of those; anything it cannot time is false.
+func TestDependencyBotRedSince(t *testing.T) {
+	at := depBotT0
+	if got, ok := depBotRedSince(depBotParkedRedAt("sha-2", at), []string{"build", "test"}); !ok || !got.Equal(at) {
+		t.Fatalf("depBotRedSince = %v, %v; want the newest test failure %v", got, ok, at)
+	}
+	if got, ok := depBotRedSince(depBotParkedRedAt("sha-2", at), []string{"build"}); !ok || !got.Equal(at.Add(-time.Hour)) {
+		t.Fatalf("build only: depBotRedSince = %v, %v; want its failure", got, ok)
+	}
+	later := at.Add(time.Hour)
+	cases := []struct {
+		name string
+		mut  func(*github.PullRequest)
+		ok   bool
+	}{
+		{"no activity", func(p *github.PullRequest) { p.CIActivity = nil }, false},
+		{"activity for another head", func(p *github.PullRequest) { p.CIActivity.Head = "sha-1" }, false},
+		{"runs for another head", func(p *github.PullRequest) {
+			for i := range p.CIActivity.Checks {
+				p.CIActivity.Checks[i].Head = "sha-1"
+			}
+		}, false},
+		{"a judged check with no run", func(p *github.PullRequest) { p.CIActivity.Checks = p.CIActivity.Checks[1:] }, false},
+		{"a failing run without a time", func(p *github.PullRequest) { p.CIActivity.Checks[0].Since = nil }, false},
+		{"a pending re-run and a success do not count", func(p *github.PullRequest) {
+			p.CIActivity.Checks = append(p.CIActivity.Checks,
+				github.PRActivityCheck{Name: "test", State: "in_progress", Since: &later, Head: "sha-2"},
+				github.PRActivityCheck{Name: "build", State: "completed", Conclusion: "success", Since: &later, Head: "sha-2"})
+		}, true},
+		{"action_required counts", func(p *github.PullRequest) { p.CIActivity.Checks[0].Conclusion = "action_required" }, true},
+		{"a cancelled run does not count", func(p *github.PullRequest) { p.CIActivity.Checks[0].Conclusion = "cancelled" }, false},
+	}
+	for _, tc := range cases {
+		pr := depBotParkedRedAt("sha-2", at)
+		tc.mut(&pr)
+		got, ok := depBotRedSince(pr, []string{"build", "test"})
+		if ok != tc.ok || (ok && !got.Equal(at)) {
+			t.Errorf("%s: depBotRedSince = %v, %v; want ok=%v", tc.name, got, ok, tc.ok)
+		}
+	}
+	if _, ok := depBotRedSince(depBotParkedRedAt("sha-2", at), nil); ok {
+		t.Error("no judged checks: want false")
+	}
+}
+
+// A parked newer head counts as red from when its failing checks last
+// failed when that is earlier than the sweep's first sighting of it, but
+// only once that sighting is depBotParkedHeadTriageFloor old: a head first
+// seen red for days by its checks (a judgement reopened for newer rules, a
+// clock pruned by a gap, a hive outage) waits the floor, not the grace; one
+// red for less waits only the rest of the grace; a check that failed after
+// the sighting does not make it wait longer; and without usable CI
+// activity the sighting is the clock.
+func TestDependencyBotRedIssueParkedHeadGraceFromChecks(t *testing.T) {
+	newTestEscalationStore(t)
+	ctx := context.Background()
+	past := depBotT0.Add(depBotRedCIGrace)
+	file := func(f *depBotRedIssueFake, store *depBotConflictStore, pr github.PullRequest, at time.Time) bool {
+		return newDepBotRedIssuePass(f.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, pr, at, discardLogger())
+	}
+
+	f := newDepBotCrossHeadFake()
+	store := depBotParkedStore()
+	old := depBotParkedRedAt("sha-2", depBotT0.Add(-48*time.Hour))
+	for _, at := range []time.Time{depBotT0, depBotT0.Add(depBotParkedHeadTriageFloor - time.Minute)} {
+		if !file(f, store, old, at) || store.redHeadJudged(depBotKey, "sha-2") || f.reads() != 0 {
+			t.Fatalf("at %v: red for days by its checks, inside the floor of its first sighting: not kept waiting, or read", at)
+		}
+	}
+	if file(f, store, old, depBotT0.Add(depBotParkedHeadTriageFloor)) || !store.redHeadJudged(depBotKey, "sha-2") || f.creates != 1 {
+		t.Fatalf("red for days by its checks, the floor up: judged=%v creates=%d, want judged", store.redHeadJudged(depBotKey, "sha-2"), f.creates)
+	}
+
+	// Red an hour by its checks when first seen: it waits, and is judged
+	// once the grace from the checks is up, three hours after the sighting.
+	recent := past.Add(-time.Hour)
+	f = newDepBotCrossHeadFake()
+	store = depBotParkedStore()
+	parked := depBotParkedRedAt("sha-2", recent)
+	if !file(f, store, parked, past) || store.redHeadJudged(depBotKey, "sha-2") || f.reads() != 0 {
+		t.Fatal("red for less than the grace by its checks: not kept waiting, or read")
+	}
+	if file(f, store, parked, recent.Add(depBotRedCIGrace)) || !store.redHeadJudged(depBotKey, "sha-2") || f.creates != 1 {
+		t.Fatal("the grace from its checks is up: the head is not judged")
+	}
+
+	// A check that failed again after the first sighting does not move the
+	// clock later: the head is judged a grace after the sighting.
+	f = newDepBotCrossHeadFake()
+	store = depBotParkedStore()
+	if !file(f, store, depBotParked(depBotCrossHeadPR("sha-2")), depBotT0) {
+		t.Fatal("first sighting: not kept waiting")
+	}
+	if file(f, store, depBotParkedRedAt("sha-2", depBotT0.Add(2*time.Hour)), past) || !store.redHeadJudged(depBotKey, "sha-2") {
+		t.Fatal("a check that failed after the first sighting made the head wait longer")
+	}
+
+	// No CI activity, or activity read for another head: the sighting is
+	// the clock, as before.
+	noActivity := depBotParked(depBotCrossHeadPR("sha-2"))
+	otherRuns := depBotParkedRedAt("sha-1", depBotRedFailStart)
+	otherRuns.CIActivity.Head = "sha-2"
+	for name, pr := range map[string]github.PullRequest{
+		"no activity":               noActivity,
+		"activity for another head": depBotParkedRedAt("sha-1", depBotRedFailStart),
+		"runs for another head":     otherRuns,
+	} {
+		f = newDepBotCrossHeadFake()
+		store = depBotParkedStore()
+		if !file(f, store, pr, past) || store.redHeadJudged(depBotKey, "sha-2") || f.reads() != 0 {
+			t.Fatalf("%s: not kept waiting from the first sighting", name)
+		}
+		if file(f, store, pr, past.Add(depBotRedCIGrace)) || !store.redHeadJudged(depBotKey, "sha-2") {
+			t.Fatalf("%s: not judged a grace after the first sighting", name)
+		}
+	}
+}
+
+// The parked head's wait is logged once while it stays the same and again
+// when its start changes, with why and how long it has left; after a pass
+// that did not wait pruned the grace clock, a head red past the grace by
+// its checks waits only the floor again.
+func TestDependencyBotRedIssueParkedHeadWaitLogged(t *testing.T) {
+	newTestEscalationStore(t)
+	ctx := context.Background()
+	const msg = "dependency-bot red CI: parked head waiting before the repository issue check"
+	f := newDepBotCrossHeadFake()
+	store := depBotParkedStore()
+	parked := depBotParkedRedAt("sha-2", depBotRedFailStart)
+	var rec depBotLogRecorder
+	logger := slog.New(&rec)
+	file := func(at time.Time) bool {
+		return newDepBotRedIssuePass(f.policy(), nil).fileForParkedHead(ctx, store, "acme/widgets", depBotKey, parked, at, logger)
+	}
+
+	// Inside the floor the sighting is the start (two passes, one line);
+	// past it the checks' earlier time is (two passes, one more line).
+	for _, at := range []time.Time{depBotT0, depBotT0.Add(10 * time.Minute), depBotT0.Add(time.Hour), depBotT0.Add(2 * time.Hour)} {
+		if !file(at) {
+			t.Fatalf("at %v: inside the grace from its checks, not kept waiting", at)
+		}
+	}
+	got := rec.with(msg)
+	if len(got) != 2 {
+		t.Fatalf("wait logged %d times over four passes with one change of start, want twice: %v", len(got), rec.records)
+	}
+	for i, want := range []time.Duration{3 * time.Hour, 2 * time.Hour} {
+		if got[i]["why"] != "grace" || got[i]["remaining"] != want.String() || got[i]["head"] != "sha-2" {
+			t.Fatalf("wait log %d = %v, want why grace, %v remaining, head sha-2", i, got[i], want)
+		}
+	}
+
+	// A pass that did not keep the clock prunes it: the next pass starts
+	// from a new sighting (logged again) and waits the floor, not the grace.
+	store.pruneObservations(map[string]bool{})
+	resumed := depBotT0.Add(depBotRedCIGrace)
+	if !file(resumed) || store.redHeadJudged(depBotKey, "sha-2") {
+		t.Fatal("after the clock was pruned, the new sighting did not wait the floor")
+	}
+	if got = rec.with(msg); len(got) != 3 || got[2]["remaining"] != depBotParkedHeadTriageFloor.String() {
+		t.Fatalf("wait after the prune: logs %v, want a third line with the floor remaining", got)
+	}
+	if file(resumed.Add(depBotParkedHeadTriageFloor)) || !store.redHeadJudged(depBotKey, "sha-2") || f.creates != 1 {
+		t.Fatal("the floor is up on a head red past the grace by its checks: not judged")
+	}
+	if n := len(rec.with(msg)); n != 3 {
+		t.Fatalf("wait logged %d times, want still three", n)
+	}
+}
+
+// depBotParkedHeadWait's remaining honours the triage floor and the
+// transient re-run's backstop; noteRedWait logs a wait again only when its
+// head, reason or start changes.
+func TestDependencyBotParkedHeadWait(t *testing.T) {
+	obs := depBotT0
+	days := depBotParkedRedClock{observed: obs, checks: obs.Add(-48 * time.Hour), checksOK: true}
+	fresh := depBotParkedRedClock{observed: obs}
+	rerunOwed := depBotTransientRerun{State: depBotRerunOwed}
+	cases := []struct {
+		name      string
+		clock     depBotParkedRedClock
+		now       time.Time
+		owed      time.Duration
+		rerun     depBotTransientRerun
+		why       string
+		remaining time.Duration
+	}{
+		{"red for days by its checks, inside the floor", days, obs.Add(10 * time.Minute), 0, depBotTransientRerun{}, "grace", depBotParkedHeadTriageFloor - 10*time.Minute},
+		{"red for days by its checks, the floor up", days, obs.Add(depBotParkedHeadTriageFloor), 0, depBotTransientRerun{}, "", 0},
+		{"no check time", fresh, obs.Add(time.Hour), 0, depBotTransientRerun{}, "grace", depBotRedCIGrace - time.Hour},
+		{"re-run owed on a head red for days", days, obs.Add(time.Hour), 10 * time.Minute, rerunOwed, "transient-rerun", depBotTransientRerunBackstop - 10*time.Minute},
+		{"re-run owed on a fresh head", fresh, obs.Add(time.Hour), time.Hour, rerunOwed, "transient-rerun", depBotRedCIGrace + depBotTransientRerunBackstop - time.Hour},
+	}
+	for _, tc := range cases {
+		red := tc.now.Sub(tc.clock.since(tc.now))
+		if why, remaining := depBotParkedHeadWait(tc.clock, tc.now, red, tc.owed, tc.rerun); why != tc.why || remaining != tc.remaining {
+			t.Errorf("%s: wait = %q, %v; want %q, %v", tc.name, why, remaining, tc.why, tc.remaining)
+		}
+	}
+
+	store := loadDepBotConflictStore("")
+	w := depBotRedWait{Head: "sha-2", Why: "grace", Since: obs}
+	if !store.noteRedWait(depBotKey, w) || store.noteRedWait(depBotKey, w) {
+		t.Fatal("an unchanged wait is not logged exactly once")
+	}
+	for _, next := range []struct {
+		name string
+		w    depBotRedWait
+	}{
+		{"grace to transient-rerun", depBotRedWait{Head: "sha-2", Why: "transient-rerun", Since: obs}},
+		{"a new start", depBotRedWait{Head: "sha-2", Why: "transient-rerun", Since: obs.Add(time.Hour)}},
+		{"another head", depBotRedWait{Head: "sha-3", Why: "transient-rerun", Since: obs.Add(time.Hour)}},
+	} {
+		if !store.noteRedWait(depBotKey, next.w) || store.noteRedWait(depBotKey, next.w) {
+			t.Fatalf("%s: not logged again exactly once", next.name)
+		}
+	}
+	store.forgetRedWait(depBotKey)
+	if !store.noteRedWait(depBotKey, depBotRedWait{Head: "sha-3", Why: "transient-rerun", Since: obs.Add(time.Hour)}) {
+		t.Fatal("a wait after the last one ended is not logged")
 	}
 }
 

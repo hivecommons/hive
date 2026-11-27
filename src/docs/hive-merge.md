@@ -1118,6 +1118,24 @@ handed off at once exactly as with the switch off. No hand-off waits for the
 filer. A parked head past the budget is judged on a later pass; any other
 case is judged once.
 
+A parked PR's newer head first waits the same 4 hours of red CI as the
+hand-off (longer while the hive's one transient re-run is owed). The 4 hours
+count from the sweep's own first sighting of the head red, or from an
+earlier time when its failing checks show one: the latest time any of them
+last failed on that head, read from the check runs the sweep already has.
+That earlier time is used only once the first sighting is 30 minutes old,
+so a head first seen already red for days (after a hive outage, or with
+the switch just turned on) still waits 30 minutes for the transient triage
+or the hive's re-run to land before it is judged, for good. A head red for
+days is therefore judged about 30 minutes after a hive upgrade reopens it,
+or after a pass that skipped it, instead of another 4 hours. A check that
+fails again after the first sighting never makes the wait longer. When the
+check times are missing, or were read for another head, the first sighting
+is the start, as before. The wait is logged once, and again whenever its
+head, reason or start changes, with `why` (`grace` or `transient-rerun`)
+and `remaining`:
+`dependency-bot red CI: parked head waiting before the repository issue check`.
+
 A temporary refusal (the budget, own accounts not yet known, or a GitHub
 call that failed with a 5xx, a 429, a rate-limited 403 or a network error)
 leaves the head pending: the parked path tries it again on a later pass,

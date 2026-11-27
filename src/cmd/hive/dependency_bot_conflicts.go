@@ -84,6 +84,10 @@ type depBotConflictStore struct {
 	// for the cross-head rule (dependency_bot_red_issue.go).
 	redIssues map[string]*depBotRedIssueRecord
 	redHeads  map[string]*depBotRedHeads
+	// redWaitLogged remembers, in memory only, the parked-head wait last
+	// logged per PR before the repository issue check, so an unchanged
+	// wait is logged once (dependency_bot_red_issue.go).
+	redWaitLogged map[string]depBotRedWait
 
 	// staleRedLast holds, persisted, the last stale-red rebase request per
 	// PR, kept across the bot's new heads (stale_red_bot_rebase.go).
