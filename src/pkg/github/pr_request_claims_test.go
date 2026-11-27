@@ -82,6 +82,48 @@ func TestValidatePRRequestClaims_RejectsMissingClaimedArtifact(t *testing.T) {
 	}
 }
 
+func TestValidatePRRequestClaims_RustInlineTestModuleSatisfiesTestClaim(t *testing.T) {
+	tests := []struct {
+		name    string
+		file    string
+		patch   string
+		wantErr bool
+	}{
+		{"cfg(test) module", "src/lib.rs", "@@ -10,3 +10,9 @@\n fn add(a: i32, b: i32) -> i32 { a + b }\n+\n+#[cfg(test)]\n+mod tests {\n+    use super::*;\n+}\n", false},
+		{"tokio test fn", "src-tauri/src/hive.rs", "@@ -1,2 +1,5 @@\n+#[tokio::test]\n+async fn fetches() {}\n", false},
+		{"no test attribute", "src/lib.rs", "@@ -1,2 +1,3 @@\n fn add(a: i32, b: i32) -> i32 { a + b }\n+fn sub(a: i32, b: i32) -> i32 { a - b }\n", true},
+		{"attribute only in context", "src/lib.rs", "@@ -1,3 +1,4 @@\n #[cfg(test)]\n mod tests {\n+    // note\n }\n", true},
+		{"attribute removed", "src/lib.rs", "@@ -1,2 +1,1 @@\n-#[test]\n fn old() {}\n", true},
+		{"non-Rust file", "src/lib.py", "@@ -1,1 +1,2 @@\n+#[cfg(test)]\n", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"status": "ahead", "files": []map[string]string{
+					{"filename": tt.file, "status": "modified", "patch": tt.patch},
+				}})
+			}))
+			defer srv.Close()
+			c := claimValidationClient(t, srv)
+
+			_, _, err := c.validatePRRequestClaims(context.Background(), PRRequest{
+				Repo: "o/r", Base: "main", Head: "agent/change", Title: "test: cover adder",
+			})
+			if !tt.wantErr {
+				if err != nil {
+					t.Fatalf("inline Rust test module must satisfy the claim: %v", err)
+				}
+				return
+			}
+			reason, ok := prRequestPolicyReason(err)
+			if !ok || reason != "title claims test but diff contains no test file" {
+				t.Fatalf("error = %v (%q, policy=%v)", err, reason, ok)
+			}
+		})
+	}
+}
+
 func TestValidatePRRequestClaims_PagesCompareFilesForClaimedArtifact(t *testing.T) {
 	var srv *httptest.Server
 	pages := 0
