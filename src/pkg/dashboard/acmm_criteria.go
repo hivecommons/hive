@@ -112,7 +112,7 @@ var universalCriteria = []ACMMCriterion{
 	{ID: "acmm:session-continuity", Source: "acmm", Level: 4, Category: "learning", Name: "Session continuity",
 		Patterns: []string{".claude/checkpoint.md", ".claude/session-summary.md"}},
 	{ID: "acmm:cross-session-knowledge", Source: "acmm", Level: 4, Category: "learning", Name: "Cross-session knowledge",
-		Patterns: []string{"knowledge.jsonl", ".knowledge/", "docs/reflections/"}},
+		Patterns: []string{"docs/knowledge/", "src/docs/knowledge/", ".knowledge/", "docs/reflections/", "knowledge.jsonl"}},
 
 	// ── L5 Semi-Autonomous (5) ──
 	{ID: "acmm:github-actions-ai", Source: "acmm", Level: 5, Category: "feedback-loop", Name: "GitHub Actions AI integration",

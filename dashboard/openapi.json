@@ -28293,6 +28293,66 @@
         }
       }
     },
+    "/api/auth/github-link/revoke": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Revoke a GitHub login link",
+        "description": "Owner revokes the GitHub login link a hub OIDC sign-in proved (#19992): clears it from the identity's live sessions and keeps it off later SSO sessions until a newer proof on the hub. A body that names a login is an attempt to create a link and is refused with 403. Audited as github_link_revoked or github_link_refused. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "identity": {
+                    "type": "string",
+                    "description": "Sign-in identity, provider:subject"
+                  }
+                },
+                "required": [
+                  "identity"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Link revoked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "identity": {
+                      "type": "string"
+                    },
+                    "login": {
+                      "type": "string"
+                    },
+                    "sessions_cleared": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing identity or invalid body"
+          },
+          "403": {
+            "description": "Owner role required, or the body named a login"
+          }
+        }
+      }
+    },
     "/api/auth/token": {
       "get": {
         "tags": [

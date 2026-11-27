@@ -73,6 +73,7 @@ func (s *HubServer) registerOAuth() {
 	s.mux.HandleFunc("GET /api/auth/callback", s.handleOAuthCallback)
 	s.mux.HandleFunc("GET /api/auth/user", s.handleAuthUser)
 	s.mux.HandleFunc("POST /api/auth/logout", s.handleLogout)
+	s.registerGitHubLinkRoutes()
 
 	names := make([]string, 0, s.authProviders.Count())
 	for _, p := range s.authProviders.Providers() {
@@ -740,6 +741,15 @@ func (s *HubServer) handleOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// A GitHub link step (github_link.go, #19992) shares this callback. It is
+	// routed off first and verified against its own host-only state cookie;
+	// the sign-in path below never sees a link state, so it can never
+	// complete one as a GitHub login.
+	if isGitHubLinkState(r) {
+		s.handleGitHubLinkCallback(w, r, code)
+		return
+	}
+
 	// SECURITY (audit F11, CWE-352): verify the login started in THIS browser
 	// BEFORE exchanging the code or minting any session. A callback whose state
 	// does not match this browser's cookie is a login the victim never began —
@@ -1066,9 +1076,9 @@ func (s *HubServer) mintSessionCookies(w http.ResponseWriter, r *http.Request, c
 	// as before, minus a `g:1` claim the Node proxy ignores. keyGenerations is
 	// nil only in hand-built test servers, which stay on the unmarked mint.
 	var cookieValue string
-	if s.keyGenerations != nil {
+	if gs := s.currentGenerations(); gs != nil {
 		cookieValue, _ = mintHubUserCookieValueV3ForGeneration(
-			s.keyGenerations, canonicalID, time.Now(), cookieSessionTTL)
+			gs, canonicalID, time.Now(), cookieSessionTTL)
 	} else {
 		cookieValue, _ = mintHubUserCookieValueV3(
 			s.sessionSigningSeed(), canonicalID, time.Now(), cookieSessionTTL)

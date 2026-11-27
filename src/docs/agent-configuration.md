@@ -697,6 +697,10 @@ for Claude model IDs. It describes the configured model and is dropped for a
 review head using a different model. Sandbox Job kicks receive the same context
 and compaction settings as pane launches.
 
+#### Setting the windows
+
+Use the **Context window (tokens)** and **Auto-compact window (tokens)** fields in the agent's Settings dialog (General section) for `max_context_tokens` and `auto_compact_window_tokens`. Saving writes the config file, the dashboard overlay and `/data/agent-configs/<agent>.yaml` together and restarts the agent, because the CLI reads both values at launch. An empty field or `0` clears the key. A hand edit to the agent file or to the agent's block in the config file also takes effect at the next boot or reload: on a Kubernetes spoke a non-zero value in either layer is no longer replaced by an older dashboard overlay entry for the agent that does not set the key, and a non-zero value in the agent file wins over the overlay. Because `0` means unset, clearing a value in the dashboard does not override a non-zero value in a read-only ConfigMap seed; remove it there.
+
 Hive does not export the variable for model IDs that contain `claude` (for example `anthropic/claude-sonnet-5-5`), because the CLI already knows those windows. Set `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` to turn the export off for the whole hive.
 
 ### Per-agent homes: what is shared and what is private
@@ -835,6 +839,7 @@ agents:
 - **What does not change.** The CLI still talks to Hive's translator, so the real gateway key stays out of the agent's environment, `/v1/models` discovery, metering, key rotation, the opt-in timeouts and retries, and spending-limit detection all work as before. Hive does not edit the CLI's requests or its system prompt.
 - **Continuity.** The first kick after a launch starts a new session; later kicks resume it by id (`--resume`). `clear_on_kick: true` (the default) starts a new session on every non-resume kick, which replaces the interactive `/clear`. If the recorded session can no longer be resumed, the turn starts a new one and says so in the pane.
 - **What is skipped.** There is no idle placeholder kick at launch (a headless turn is a full model call), no consent-screen watcher, and no post-kick "continue" or action nudges, because the pane is a shell between turns and each turn ends when `claude -p` exits. PR follow-up resume kicks are refused, as for headless agy.
+- **Setting it.** Use the **Headless turns** toggle in the agent's Settings dialog (General section); saving it writes the config file, the dashboard overlay and `/data/agent-configs/<agent>.yaml` together and restarts the agent. A hand edit to the agent file or to the agent's block in the config file also takes effect at the next boot or reload: on a Kubernetes spoke an opt-in in either layer is no longer replaced by the dashboard overlay's older copy of the agent. An explicit `headless_turns: false` is kept as a real value: turning the toggle off writes `false` to the config file, the overlay and the agent file, and that overlay `false` overrides a `true` in the ConfigMap seed, which the dashboard cannot rewrite.
 - **Scope.** The setting applies only to translator-routed agents; it is ignored on `claude` (subscription) and every other CLI backend, and when `launch_cmd` is set. Whether a given request is covered by subscriber credits is Anthropic's decision; Hive only changes how the CLI is started.
 
 ### Claude Managed Agents hosted execution

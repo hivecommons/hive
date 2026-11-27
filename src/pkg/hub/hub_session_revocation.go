@@ -406,8 +406,8 @@ func (s *HubServer) verifyHubUserCookie(value string) (string, bool) {
 	}
 	now := time.Now()
 	revoked := s.hubSessionRevokedLookup(now)
-	if s.keyGenerations != nil {
-		u, _, ok := verifyHubUserCookieAcrossGenerations(s.keyGenerations, value, now, revoked)
+	if gs := s.currentGenerations(); gs != nil {
+		u, _, ok := verifyHubUserCookieAcrossGenerations(gs, value, now, revoked)
 		return u, ok
 	}
 	return verifyHubUserCookieEitherAt(s.sessionPublicKey(), s.sessionKey(), value, now, revoked)

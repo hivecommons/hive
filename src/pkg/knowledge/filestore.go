@@ -165,8 +165,12 @@ func (s *FileStore) reindex() {
 			return nil
 		}
 		if d.IsDir() {
+			// Nested dot folders (.obsidian, .git) are tool state, not
+			// facts. The root itself is exempt, so a store or git source
+			// pointed at a dot-named folder such as .knowledge/ is
+			// indexed (#20128).
 			base := filepath.Base(path)
-			if strings.HasPrefix(base, ".") {
+			if path != s.rootDir && strings.HasPrefix(base, ".") {
 				return fs.SkipDir
 			}
 			return nil

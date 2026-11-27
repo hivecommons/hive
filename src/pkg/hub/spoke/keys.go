@@ -121,6 +121,21 @@ func SpokeHeartbeatKey() string {
 	return deriveDomainKey(master, infoHeartbeatKey)
 }
 
+// VerifySSOIdentityAcrossKeys is VerifySSOTokenAcrossKeys returning the full
+// SSOIdentity, including a proven GitHub login link (#19992).
+func VerifySSOIdentityAcrossKeys(keys []string, token, expectedHiveID string, now time.Time) (SSOIdentity, int, error) {
+	valid := validPublicKeys(keys...)
+	if len(valid) == 0 {
+		return SSOIdentity{}, -1, fmt.Errorf("sso: no verification key configured")
+	}
+	for i, k := range valid {
+		if id, err := VerifySSOTokenIdentity(k, token, expectedHiveID, now); err == nil {
+			return id, i, nil
+		}
+	}
+	return SSOIdentity{}, -1, fmt.Errorf("sso: token rejected by all keys")
+}
+
 func VerifySSOTokenAcrossKeys(keys []string, token, expectedHiveID string, now time.Time) (username, role string, keyIndex int, err error) {
 	valid := validPublicKeys(keys...)
 	if len(valid) == 0 {

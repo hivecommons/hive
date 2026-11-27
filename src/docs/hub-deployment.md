@@ -96,9 +96,15 @@ A spoke can run without the master: give it the per-hive keys the hub derives (`
 
 - The previous generation keeps verifying for seven days (`verify_until`), and at most two generations are live. When the window ends, the previous generation is retired.
 - A second rotation inside eight hours is refused unless the request sets `force`.
+- The hub signs with keys from the generation set, not from `HIVE_HUB_SECRET`. The exception is a hub whose generations file could not be read at startup: it falls back to `HIVE_HUB_SECRET` and refuses to rotate until the file is fixed. Session cookies are signed with the current generation. SSO handoff tokens and heartbeat response signatures are signed per hive, with the current generation unless one of these applies while the previous generation is still inside its window:
+  - The sweep's last read of that hive's Deployment found it on the previous generation. The hub signs with the previous generation, which is the only key such a spoke holds.
+  - The sweep has not read the hive since the hub started, and the hive's SaaS record was created before the rotation. The hub also signs with the previous generation. A spoke the sweep has already patched holds that key as `_PREV`, so it accepts the signature too.
+- The sweep reads the Deployment spec, not the running pod. If a patched spoke's new pod never becomes ready, the old pod still holds only the previous keys, and it rejects SSO handoffs and heartbeat signatures once the sweep has recorded the spoke on the current generation.
+- During the window the hub verifies session cookies and heartbeat bearers against both generations. A swept spoke verifies SSO tokens, session cookies and heartbeat signatures against `HIVE_SSO_PUBLIC_KEY` / `HIVE_SESSION_PUBLIC_KEY` plus their `_PREV` copies. A spoke the sweep has not patched yet has no `_PREV` keys and only the previous generation's public keys, so it rejects session cookies minted after the rotation until the sweep patches it.
+- After retirement the sweep removes the `_PREV` variables over its following cycles, at most three spokes per cycle. Until a spoke's `_PREV` is removed, that spoke still accepts signatures from the retired generation, which matters only to someone holding the retired master. A swept spoke keeps working, because its current keys already match what the hub signs with, and this survives a hub restart: the hub keeps the generation set as its source of truth even though `HIVE_HUB_SECRET` still holds the retired master. Nobody is logged out at retirement. A session cookie lasts seven days, as long as the window, so every cookie minted before the rotation has expired by the time its generation retires.
 - A heartbeat key derived from `HIVE_HUB_SECRET` after a rotation is a previous-generation key. The hub checks heartbeat bearers against its generation set, so that key stops verifying when the previous generation retires. `HIVE_TERMINAL_KEY` and `HIVE_INVITE_KEY` are minted and verified on the spoke itself, so hub generations do not apply to them.
 
-**How spokes get the new keys.** The only delivery path is the per-hive env reconcile sweep. Every 15 minutes, it reads the spoke's `hive` Deployment with kubectl and patches the derived keys into its env, at most three spokes per cycle, so a large fleet takes hours to converge. While a previous generation is live it also delivers `HIVE_SSO_PUBLIC_KEY_PREV` and `HIVE_SESSION_PUBLIC_KEY_PREV`, which is how SSO and session verification on a swept spoke accept the previous generation. It covers only hives the hub has a SaaS record for that are not in `provisioning` status, on clusters the hub can reach. Pull-only and unreachable clusters are skipped. A spoke whose keys an operator copied into its environment by hand gets nothing from a rotation.
+**How spokes get the new keys.** The only delivery path is the per-hive env reconcile sweep. Every 15 minutes, it reads the spoke's `hive` Deployment with kubectl and patches the derived keys into its env, at most three spokes per cycle, so a large fleet takes hours to converge. While a previous generation is live it also delivers `HIVE_SSO_PUBLIC_KEY_PREV` and `HIVE_SESSION_PUBLIC_KEY_PREV`, which is how SSO and session verification on a swept spoke accept the previous generation. It covers only hives the hub has a SaaS record for that are not in `provisioning` status, on clusters the hub can reach. Pull-only and unreachable clusters are skipped. A spoke whose keys an operator copied into its environment by hand gets nothing from a rotation. The same is true for a spoke outside the sweep that derives its keys from `HIVE_HUB_SECRET`. The rotation check counts only hives the sweep considers, so it does not stop a rotation for either kind. From the moment of rotation such a spoke fails to verify the hub's session cookies, and it fails to verify SSO handoffs and heartbeat signatures unless the hub signs them with the previous generation as described above. When the previous generation retires it fails all three until its keys are updated.
 
 **Rotation is refused when the sweep cannot see the whole fleet.** The endpoint refuses to rotate unless the last sweep considered at least one hive and reached every hive it considered. `force` does not override this check. A hub with no kubectl access to its spokes, or with no hub-provisioned hives, cannot rotate through the endpoint at all, so its master stays on the current generation.
 
@@ -245,12 +251,14 @@ on the JSON. Check the first boot's `hub customer store: boot sync` line for
   mode the match answer and the Profile sharing page also read the grant
   from colony, which can only narrow what the file grants (a field crosses
   only when both grant it, and a withdrawal on either side holds); the delivery
-  bookkeeping, which colony has no slot for, is still read from
-  `/data/saas/consents`, and a person whose last sync failed is read from the
-  file alone. Consent writes still go to the file first and are mirrored, so
-  `json` stays the rollback. When the hub prunes a consent, colony
-  has no delete, so its record is emptied (no fields, text version or times)
-  and only the hive id stays, until the user is deleted.
+  bookkeeping is still read from `/data/saas/consents` in this mode (colony
+  holds a copy since colony v0.4.0), and a person whose last sync failed is
+  read from the file alone. Consent writes still go to the file first and are
+  mirrored, so `json` stays the rollback. A consent the hub prunes is deleted
+  from colony too.
+- **Long notes** (up to colony's 64 KiB `notes` limit, carriage returns
+  included) are stored in colony since v0.4.0, and a linked login or email
+  another user owns is kept as a held identity instead of being skipped.
 - **Affiliation in the answer** is not a delivered field: it is not stamped on
   a consent record and carries no `cleared` signal, so when it stops crossing
   the hive drops it at its 72-hour refresh expiry. A person who cleared their
@@ -275,6 +283,109 @@ on the JSON. Check the first boot's `hub customer store: boot sync` line for
   unclean node loss, or a stray process holding the file. The cost is a short
   hub outage on every roll, including hub self-upgrades.
   `src/deploy/check-hub-manifest.py` fails on any other strategy.
+
+#### colony-only (opt-in)
+
+`HIVE_HUB_CUSTOMER_STORE=colony-only` makes `colony.db` the only copy of the
+CRM fields and the consent records ([#19972](https://github.com/hivecommons/hive/issues/19972)).
+It is never the default. Account data (hives, expiry, quota, tokens) stays in
+the user JSON.
+
+**Moving the hub to colony-only:**
+
+1. Run a release in `colony` with clean boot logs: `hub customer store: boot
+   sync` with `parity=true`, `failed=0`, `skipped=0`, `orphans_held=0`.
+2. Take a volume backup of `/data/saas` (users, consents, `colony.db`).
+3. Set `HIVE_HUB_CUSTOMER_STORE=colony-only` and roll the hub.
+4. On that boot the hub runs the colony boot sync, which must report parity,
+   writes every person's CRM fields and consent records into colony in one
+   transaction, reads them all back and compares them with the JSON. Only
+   then does it copy `/data/saas/users` to `users.migrated`, rename
+   `/data/saas/consents` to `consents.migrated` (a taken name gets a
+   `-<time>` suffix; nothing is overwritten or deleted), write the
+   `hub.colony-only` marker in `colony.db` and log `colony-only took over`.
+   Only that marker, written after the renames, says the hub is colony-only.
+   If the sync has no parity or the read-back does not match, it logs why
+   (counts only), clears the records it wrote and runs in `colony` mode with
+   every file where it was. A boot after a crash part-way through the
+   migration renames `consents.migrated` back first.
+5. From then on a user record is written without its CRM fields
+   (`crm_in_colony: true`), only after the colony write succeeded; when the
+   colony write fails the full record is written as before. Consent records
+   are read, written, stamped and swept in colony only.
+6. Every later colony-only boot skips the boot sync but still runs its
+   forget pass, after the boot backup of `colony.db`: a person whose user
+   file is gone from `/data/saas/users` (deleted while the hub was down, or
+   removed by an operator) is erased from colony. A burst of such people is
+   held, not erased, as in the boot sync. The boot logs
+   `hub customer store: colony-only forget pass` with `forgotten` and
+   `orphans_held` when either is non-zero; if the users directory cannot be
+   listed it logs `colony-only forget pass failed` and erases nobody.
+
+**A consents directory beside a colony-only store** is never read as the
+records, because it could forget consents colony holds or bring back one a
+person withdrew:
+
+- one that matches colony exactly, or was last changed before the
+  migration (a stale copy put back), is set aside as `consents.ignored`
+  (colony-only) or `consents.pre-restore` (rollback), never deleted;
+- one changed after the migration that differs from colony (written by an
+  older hub image, or while the hub fell back to `json`) is merged into
+  colony narrow-only, then set aside like an older one: a withdrawal on
+  either side wins, a grant both hold keeps only the fields both grant, a
+  grant only the directory holds is not added, and delivery bookkeeping is
+  kept from both. Anything the merge cannot classify (a file that is not a
+  consent file of a known user, a field this release does not know, a grant
+  colony holds that the directory lacks, a delivered grant colony has no
+  record of) refuses both colony-only and the rollback before anything is
+  written. The hub then runs in `json` mode and logs
+  `consents_newer_than_colony_only`. To resolve
+  it, set `HIVE_HUB_CUSTOMERS_SHARE_ENABLED=false` first, so nothing is
+  delivered from either copy meanwhile; move the directory aside (for example
+  to `consents.held`); boot again; apply any withdrawal or narrowed grant
+  from it on the people's Profile sharing pages; then turn sharing back on.
+- a restore writes the consent files into `consents.restoring` and renames
+  it into place whole, so a crash part-way never leaves a partial directory
+  behind.
+
+**While colony-only is not running** (any fallback to `json` with a
+colony-only `colony.db`), a change to the CRM fields of a stripped record is
+refused, and deleting a user answers `503` until the hub has opened
+`colony.db` again, so a deleted person is always forgotten there too.
+
+**Rolling back:** set `HIVE_HUB_CUSTOMER_STORE` to `colony`, `shadow` or
+`json` and roll the hub. The boot finds the colony-only marker in `colony.db`
+and writes the CRM fields back into every stripped user record and the
+consent files back into `/data/saas/consents` first, then drops the marker
+and the colony-only copies of those records in one transaction. If that
+restore fails, the hub stays colony-only and retries on the next boot, so it
+never serves records without their CRM fields. By hand: stop the hub, run
+`hive colony export --format hive-hub-json --dir /data/saas --out
+/tmp/hub-export` (without `--out` it writes `/data/saas/hub-export`; it never
+writes over the live files), check the files, copy `users/*.json` and
+`consents/*.json` into place, set the mode and start the hub; the restore on that boot finds
+the same files and drops the marker. The export never overwrites a file
+without `--force`.
+
+`users.migrated` and `consents.migrated` are the JSON as it stood when
+colony-only took over. They, `consents.ignored` and `consents.pre-restore`
+are removed by the daily consent sweep 90 days after they were set aside
+(never while a `colony.db` on disk is not open). Deleting a user removes
+their copies there too.
+
+**Never run a hub image older than colony-only against a colony-only
+store; roll back first.** While the store is colony-only, the hub records a
+`schema_version` in `colony.db` that no colony release accepts, from the
+moment it opens the store (so also after a crash), and puts the real one
+back before its own next open; a rollback drops it with the marker. An older
+image therefore fails to open `colony.db` (`ErrSchemaTooNew`) and runs in
+`json` mode without writing it, so its boot sync can no longer empty colony's
+typed facts and consents. It still serves the stripped records with their
+CRM fields empty and saves them without `crm_in_colony`: colony keeps the
+`hub.crm` copy and fills every field such a save left empty, but a field that
+image cleared comes back. Any other tool that opens a colony-only
+`colony.db` with `store.Open` gets the same refusal; use `hive colony
+export`.
 
 ### Ask AI help
 

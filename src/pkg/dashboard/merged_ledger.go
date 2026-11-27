@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/atomicfile"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/github"
 )
@@ -310,33 +311,10 @@ func (l *MergedLedger) persistLocked() {
 // ledgers on one path, or a restart overlapping a roll) rename each other's
 // file away, failing with ENOENT (hivecommons/hive#16629).
 func writeFileAtomicUnique(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Chmod(tmp, 0o644); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
-		return err
-	}
-	return nil
+	return atomicfile.WriteFile(path, data, 0o644)
 }
 
 // Summary computes the API block at now in loc (nil → UTC). "Today" rolls

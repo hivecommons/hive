@@ -11,6 +11,72 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.381.4)
+
+### Fixed
+
+- The agent Settings dialog now has Context window and Auto-compact window fields for `max_context_tokens` and `auto_compact_window_tokens`, which save to every config layer and restart the agent, and both keys set in `/data/agent-configs/<agent>.yaml` or the agent's block of the runtime config are no longer dropped on a Kubernetes spoke when the dashboard overlay's older copy of the agent replaces it at boot (#19913).
+- **`hive-open-pr` title-claim gate now recognises inline Rust test modules.** A title that claims "test" used to be refused unless a changed path looked like a test file, so test-only Rust PRs (whose unit tests live in an inline `#[cfg(test)] mod tests` block in the source file) were rejected with `title claims test but diff contains no test file` and had to be retitled. A changed `*.rs` file now also counts as a test file when its added lines contain `#[test]`, `#[cfg(test)]` or `#[tokio::test]`. The path rules are unchanged, so no PR accepted before is refused now. ([#20138](https://github.com/hivecommons/hive/issues/20138))
+
+## 2026-11-27 (v5.381.3)
+
+### Fixed
+
+- State files that went through a fixed `.tmp` name or skipped `fsync` (dashboard history and merge-eligibility files, hive state buckets, CLI-memory and connector facts, inbox facts and transcripts, marketplace bundles, contributor readings, remote AGENTS.md copies, merged ledger) now share one atomic write: a unique temp file, fsync, rename and directory fsync, so concurrent writers and crashes can no longer leave a partial or missing file.
+
+## 2026-11-27 (v5.381.2)
+
+### Fixed
+
+- **Integration reservation releases no longer fail repeatedly once the integration journal reaches its record bound.** Every per-key release was refused with "integration journal index bound reached", so held reservations were never released and the error repeated on each claim release. A release that frees a held reservation is now recorded past the bound, a release with nothing to free is skipped, and journal replay accepts those release records (#20123).
+
+## 2026-11-27 (v5.381.1)
+
+### Fixed
+
+- **Colony-only hub boots now forget users deleted from `/data/saas/users`, and a changed consent is replaced in one colony transaction.** A colony-only boot skips the boot sync, so a user removed while the hub was down stayed in `colony.db`; the forget pass now runs on its own there, with the same mass-deletion guard. A consent change was a delete and a write, so a failure between them left no consent for the scope, which reads as a withdrawal (#20112, #20113).
+- Colony: the consent sweep removes users.migrated, consents.migrated, consents.ignored and consents.pre-restore copies 90 days after they were set aside, and a consents directory newer than the colony-only migration is merged into colony narrow-only (a withdrawal on either side wins, nothing widens a grant) instead of refusing the boot (#20114, #20115)
+- **A hub image older than colony-only no longer writes into a colony-only `colony.db`.** While the hub store is colony-only, `colony.db` records a schema version every colony release refuses, so such an image falls back to `json` mode without its boot sync emptying colony's typed facts and consents; current images and `hive colony export` open it as before, and a rollback from colony-only clears it (#20116).
+
+## 2026-11-27 (v5.381.0)
+
+### Added
+
+- **The hub can keep its customer data on the colony store alone (`HIVE_HUB_CUSTOMER_STORE=colony-only`, opt-in).** After a boot sync with parity and a verified read-back, the CRM fields and consent records (delivery bookkeeping included) live only in `/data/saas/colony.db`: the consents directory is renamed `consents.migrated`, the users directory is copied to `users.migrated`, and user records are written without their CRM fields, only once the colony write succeeded. Setting `colony`, `shadow` or `json` again writes everything back on the next boot, and `hive colony export --format hive-hub-json` does it by hand. `shadow` and `colony` now also store the delivery bookkeeping, long notes and a second user's linked login or email, and delete a pruned consent from colony. The trusted-hive gate on customer data is unchanged (#19972).
+
+### Fixed
+
+- `headless_turns: true` set in `/data/agent-configs/<agent>.yaml` or in the agent's block of the runtime config is no longer dropped on a Kubernetes spoke when the dashboard overlay's older copy of the agent replaces it at boot, and the agent's Settings dialog now has a Headless turns toggle that saves the key to every layer and restarts the agent (#19902).
+
+## 2026-11-27 (v5.380.0)
+
+### Added
+
+- A person signed in to the hub through OpenID Connect can link the GitHub login they control by completing GitHub OAuth on the hub; a spoke then shows them that login's contributor profile. An owner can unlink or revoke a link but cannot create one, and the link never changes roles or owner-authored merge checks (#19992).
+- Claude CLI agents can opt into earlier auto-compaction with a per-agent window, including sandbox Job kicks; inference-routed agents with a known context window can instead use a hive-wide percentage ([#20077](https://github.com/hivecommons/hive/issues/20077)).
+
+### Fixed
+
+- Colony: colony-only review fixes, and test the shadow default over a colony-mode store (#20099)
+- **Hub signing follows master-key rotation.** After a rotation the hub kept signing SSO handoff tokens and heartbeat response signatures with the pre-rotation master, and once that generation retired the reconcile sweep rebuilt the retired generation's keys from `HIVE_HUB_SECRET` and pushed them back onto spokes. Both would have broken sign-in and heartbeat verification on every swept spoke at retirement. The hub now signs with keys from its generation set (the current generation, or the still-live previous one for a spoke the sweep last saw on it), and keeps the generation set authoritative after retirement and across restarts. See the rotation section of `src/docs/hub-deployment.md`. ([#20102](https://github.com/hivecommons/hive/issues/20102))
+- The hub no longer runs a whole pod lifetime in `json` mode because the previous pod still held `colony.db`'s lock at boot. It now retries the open with doubling backoff for up to `HIVE_HUB_CUSTOMER_STORE_LOCK_WAIT` (default `2m`), logs each retry, and falls back to `json` only after that. Run the hub Deployment with `strategy: Recreate`; `src/deploy/check-hub-manifest.py` now fails on any other strategy, because under a rolling update the old pod keeps the lock until the new one is Ready ([#20103](https://github.com/hivecommons/hive/issues/20103)).
+- An issue create left Unknown by an ambiguous GitHub response is no longer reported as a stuck effect-ledger op while it is still inside its one-hour unresolved TTL, since the next refused retry past the TTL expires it on its own; it is reported only if it is still refused after that (#20100).
+
+## 2026-11-26 (v5.379.0)
+
+### Added
+
+- Hive Chat config assist gains `chat.config_assist.model`, the model for the proposal turn (falls back to `chat.grounded_answers.model`, then the reviewer model), with a model picker on the Settings panel, which is now owner-only for reading too so other roles see an owner-only note instead of a switch that fails on save (#20092).
+
+### Changed
+
+- **A spoke that took the `colony` default goes back to `shadow` on its next upgrade.** A hive that ran v5.376.0 with no `customers.store` set picked up the short-lived `colony` default. The spoke default is now `shadow` until parity is confirmed on the project's own hive, so on its next upgrade such a hive reads from JSON again while still writing colony alongside it. Nothing is lost: every mode keeps writing the JSON files. To stay on `colony`, set `customers.store: colony` or `HIVE_CUSTOMERS_STORE=colony` before upgrading ([#19972](https://github.com/hivecommons/hive/issues/19972)).
+
+### Fixed
+
+- Hive Chat config assist Apply now re-checks the proposal against its own allowlist on every Apply and Undo, refusing seed-owned keys (`github`, `hub`, `variables`, `acmm_level`, `hive_id`) and secret fields with `403`, answers a non-owner with an explicit owner-only `403`, and audits every successful Apply as `chat_config_applied` and every Undo as `chat_config_undo` with the user, section, field and old and new value fingerprints instead of the values (#19985).
+- Default agent policies now name only tools the agent image provides: the image ships `issue-coauthor` on `PATH` (and `hive-open-pr` uses it), the PR overlap note is posted once instead of edited, the hotspot report points at `GET /api/hotspots` only, and `scanner-holdgated.md` describes the `ready-for-review` label instead of `hold`.
+
 ## 2026-11-26 (v5.378.0)
 
 ### Added

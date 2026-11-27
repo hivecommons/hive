@@ -61,6 +61,26 @@ type ssoClaims struct {
 	HiveID   string `json:"h"`
 	IssuedAt int64  `json:"iat"`
 	Expiry   int64  `json:"exp"`
+	// GitHubLogin is the GitHub login a non-GitHub sign-in proved control of
+	// through the hub's link step, and GitHubLinkedAt when (unix seconds)
+	// (hivecommons/hive#19992). Both are omitted when there is no proven link,
+	// so the token is byte-identical to the earlier shape, and a spoke that
+	// does not know the fields ignores them.
+	GitHubLogin    string `json:"g,omitempty"`
+	GitHubLinkedAt int64  `json:"ga,omitempty"`
+}
+
+// SSOGitHubLink is a proven GitHub login link carried by an SSO token.
+type SSOGitHubLink struct {
+	Login    string
+	LinkedAt time.Time
+}
+
+// SSOIdentity is what a verified SSO token asserts.
+type SSOIdentity struct {
+	Username   string
+	Role       string
+	GitHubLink SSOGitHubLink
 }
 
 // b64 encodes without padding so the token is URL-safe in a query parameter.
@@ -74,6 +94,12 @@ var ssoB64 = base64.RawURLEncoding
 // seedHex is empty/not a valid 32-byte seed, or if username/hiveID are empty — a
 // caller holding only a PUBLIC key (or no key) therefore cannot produce a token.
 func MintSSOToken(seedHex, username, role, hiveID string, now time.Time) string {
+	return MintSSOTokenWithGitHubLink(seedHex, username, role, hiveID, SSOGitHubLink{}, now)
+}
+
+// MintSSOTokenWithGitHubLink is MintSSOToken carrying a proven GitHub login
+// link. A link with an empty login or zero time is left out.
+func MintSSOTokenWithGitHubLink(seedHex, username, role, hiveID string, link SSOGitHubLink, now time.Time) string {
 	if seedHex == "" || username == "" || hiveID == "" {
 		return ""
 	}
@@ -93,6 +119,10 @@ func MintSSOToken(seedHex, username, role, hiveID string, now time.Time) string 
 		IssuedAt: now.Unix(),
 		Expiry:   now.Add(ssoTokenTTL).Unix(),
 	}
+	if login := strings.TrimSpace(link.Login); login != "" && !link.LinkedAt.IsZero() {
+		claims.GitHubLogin = login
+		claims.GitHubLinkedAt = link.LinkedAt.Unix()
+	}
 	payload, err := json.Marshal(claims)
 	if err != nil {
 		return ""
@@ -110,16 +140,26 @@ func MintSSOToken(seedHex, username, role, hiveID string, now time.Time) string 
 // open hive B). Because verification needs only the public key, a spoke that holds
 // pubHex cannot mint a token. `now` is the verifier's clock.
 func VerifySSOToken(pubHex, token, expectedHiveID string, now time.Time) (username, role string, err error) {
+	id, err := VerifySSOTokenIdentity(pubHex, token, expectedHiveID, now)
+	if err != nil {
+		return "", "", err
+	}
+	return id.Username, id.Role, nil
+}
+
+// VerifySSOTokenIdentity is VerifySSOToken returning everything the token
+// asserts, including a proven GitHub login link.
+func VerifySSOTokenIdentity(pubHex, token, expectedHiveID string, now time.Time) (SSOIdentity, error) {
 	if pubHex == "" {
-		return "", "", fmt.Errorf("sso: no verification key configured")
+		return SSOIdentity{}, fmt.Errorf("sso: no verification key configured")
 	}
 	pub, err := hex.DecodeString(strings.TrimSpace(pubHex))
 	if err != nil || len(pub) != ed25519.PublicKeySize {
-		return "", "", fmt.Errorf("sso: invalid verification key")
+		return SSOIdentity{}, fmt.Errorf("sso: invalid verification key")
 	}
 	parts := strings.SplitN(token, ".", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", fmt.Errorf("sso: malformed token")
+		return SSOIdentity{}, fmt.Errorf("sso: malformed token")
 	}
 	body, sigB64 := parts[0], parts[1]
 
@@ -127,36 +167,40 @@ func VerifySSOToken(pubHex, token, expectedHiveID string, now time.Time) (userna
 	// is constant-time and safe on attacker-controlled input.
 	sig, err := ssoB64.DecodeString(sigB64)
 	if err != nil || len(sig) != ed25519.SignatureSize {
-		return "", "", fmt.Errorf("sso: bad signature")
+		return SSOIdentity{}, fmt.Errorf("sso: bad signature")
 	}
 	if !ed25519.Verify(ed25519.PublicKey(pub), []byte(body), sig) {
-		return "", "", fmt.Errorf("sso: bad signature")
+		return SSOIdentity{}, fmt.Errorf("sso: bad signature")
 	}
 
 	raw, err := ssoB64.DecodeString(body)
 	if err != nil {
-		return "", "", fmt.Errorf("sso: undecodable payload")
+		return SSOIdentity{}, fmt.Errorf("sso: undecodable payload")
 	}
 	var claims ssoClaims
 	if err := json.Unmarshal(raw, &claims); err != nil {
-		return "", "", fmt.Errorf("sso: unparseable claims")
+		return SSOIdentity{}, fmt.Errorf("sso: unparseable claims")
 	}
 	if claims.Version != ssoTokenVersion {
-		return "", "", fmt.Errorf("sso: unexpected token version")
+		return SSOIdentity{}, fmt.Errorf("sso: unexpected token version")
 	}
 	if claims.HiveID != expectedHiveID {
-		return "", "", fmt.Errorf("sso: token is for a different hive")
+		return SSOIdentity{}, fmt.Errorf("sso: token is for a different hive")
 	}
 	if claims.Username == "" {
-		return "", "", fmt.Errorf("sso: empty username")
+		return SSOIdentity{}, fmt.Errorf("sso: empty username")
 	}
 	nowUnix := now.Unix()
 	skew := int64(ssoClockSkew / time.Second)
 	if claims.IssuedAt > nowUnix+skew {
-		return "", "", fmt.Errorf("sso: token not yet valid")
+		return SSOIdentity{}, fmt.Errorf("sso: token not yet valid")
 	}
 	if claims.Expiry < nowUnix-skew {
-		return "", "", fmt.Errorf("sso: token expired")
+		return SSOIdentity{}, fmt.Errorf("sso: token expired")
 	}
-	return claims.Username, claims.Role, nil
+	id := SSOIdentity{Username: claims.Username, Role: claims.Role}
+	if claims.GitHubLogin != "" && claims.GitHubLinkedAt > 0 {
+		id.GitHubLink = SSOGitHubLink{Login: claims.GitHubLogin, LinkedAt: time.Unix(claims.GitHubLinkedAt, 0).UTC()}
+	}
+	return id, nil
 }

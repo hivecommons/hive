@@ -1,0 +1,1 @@
+- ACMM `acmm:cross-session-knowledge` now credits `docs/knowledge/` and `src/docs/knowledge/`, the paths Hive indexes at boot, and its gap issue names that path; a knowledge store or git source rooted at a dot-named folder such as `.knowledge/` is now indexed instead of skipped (#20128).

@@ -6547,12 +6547,42 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// one that outranks this overlay) was dropped on every boot and reload.
 	// Carry the lower layer's value forward when, and only when, the overlay
 	// says nothing; an explicit false still wins.
+	//
+	// headless_turns (#19902) has the same shape: no pack seeds it, and the
+	// dashboard's General section writes it to this overlay, the config file
+	// and the per-agent file together. A hand edit to the config file's
+	// agents.<name> block was dropped on every boot because the overlay's
+	// older entry for the agent, silent on the key, replaced it whole. It is a
+	// pointer for the same reason as converse: an overlay `false` (the
+	// dashboard's off) must beat a seed `true` the dashboard cannot rewrite,
+	// so only a nil overlay value takes the lower layer's.
+	//
+	// max_context_tokens and auto_compact_window_tokens (#19913) are ints, so
+	// "unset" is 0: a non-zero lower-layer value is carried only when the
+	// overlay entry is silent (0). An overlay value always wins.
 	for name, oa := range overlay.Agents {
-		if oa.Converse != nil {
+		base, ok := cfg.Agents[name]
+		if !ok {
 			continue
 		}
-		if base, ok := cfg.Agents[name]; ok && base.Converse != nil {
+		changed := false
+		if oa.Converse == nil && base.Converse != nil {
 			oa.Converse = base.Converse
+			changed = true
+		}
+		if oa.HeadlessTurns == nil && base.HeadlessTurns != nil {
+			oa.HeadlessTurns = base.HeadlessTurns
+			changed = true
+		}
+		if oa.MaxContextTokens == 0 && base.MaxContextTokens > 0 {
+			oa.MaxContextTokens = base.MaxContextTokens
+			changed = true
+		}
+		if oa.AutoCompactWindowTokens == 0 && base.AutoCompactWindowTokens > 0 {
+			oa.AutoCompactWindowTokens = base.AutoCompactWindowTokens
+			changed = true
+		}
+		if changed {
 			overlay.Agents[name] = oa
 		}
 	}
@@ -6566,11 +6596,19 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// under the overlay's older copy of the same agent, so an operator's
 	// `paused: true` or `sandbox:` block in the agent file never took effect
 	// while the overlay and runtime config still said otherwise (#18804). Carry
-	// those two operator-owned fields forward from the file. Not the whole
-	// entry: an explicit overlay `converse: false` deliberately beats the file
-	// (#7503), and pack-reconciled fields live in the overlay. `paused: false`
-	// in a file is indistinguishable from unset, so only a pause is carried;
-	// unpause through the dashboard, which writes both layers.
+	// those operator-owned fields forward from the file, and `headless_turns`
+	// with them (#19902), which was missing from this list so the documented
+	// per-agent file never switched an agent on a Kubernetes spoke. Not the
+	// whole entry: an explicit overlay `converse: false` deliberately beats
+	// the file (#7503), and pack-reconciled fields live in the overlay.
+	// `paused: false` in a file is indistinguishable from unset, so only a
+	// pause is carried; unpause through the dashboard, which writes both
+	// layers. `headless_turns` is a pointer, so the file's explicit value,
+	// true or false, is carried and an absent key leaves the overlay's.
+	// `max_context_tokens` and `auto_compact_window_tokens` (#19913) are
+	// carried the same way when the file sets them (non-zero), so a gateway
+	// that reports no window can be given one in the documented agent file;
+	// a compaction window the validator would reject is not carried.
 	if cfg.Data.AgentsDir != "" {
 		if files, ferr := LoadAgentOverrides(cfg.Data.AgentsDir); ferr == nil {
 			for name, fa := range files {
@@ -6584,6 +6622,15 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 				}
 				if fa.Sandbox != nil {
 					a.Sandbox = fa.Sandbox
+				}
+				if fa.HeadlessTurns != nil {
+					a.HeadlessTurns = fa.HeadlessTurns
+				}
+				if fa.MaxContextTokens > 0 {
+					a.MaxContextTokens = fa.MaxContextTokens
+				}
+				if fa.AutoCompactWindowTokens > 0 && ValidateAutoCompactWindowTokens(fa.AutoCompactWindowTokens) == nil {
+					a.AutoCompactWindowTokens = fa.AutoCompactWindowTokens
 				}
 				cfg.Agents[name] = a
 			}

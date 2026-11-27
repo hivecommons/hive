@@ -351,9 +351,10 @@ v0.3.0 (`src/pkg/customers/colony.go`). What it does beyond the steps above:
   Writes go to the file first, so a colony copy that fell behind can only
   send less. The
   delivery bookkeeping (first and last delivery, the delivered field sets and
-  the rev) has no slot in colony's `Consent`, so it is still read from
-  `/data/saas/consents`. Only hive ids the consent file lists are read, because
-  colony has no delete and keeps a pruned consent as an emptied record. A
+  the rev) is still read from `/data/saas/consents` in this mode (colony
+  holds a copy since v0.4.0). Only hive ids the consent file lists are read:
+  the file decides which records exist, and a pruned consent is deleted from
+  colony too. A
   person whose last sync failed is read from the file alone. Consent writes,
   the delivery stamp and the retention sweep still read and write the file
   first and mirror it, so `json` stays the rollback. In `json` and `shadow`
@@ -421,15 +422,72 @@ compares identity provenance.
   A restart reads everything from `colony.db`. A `colony.db` that cannot be
   opened in colony-only keeps the Customers section off rather than starting
   an empty `people.json`.
+- **A `people.json` beside a migrated `colony.db`.** A migration counts as
+  finished only once its renames are done and `colony-sync.json` records
+  `migrated_at`; a restore clears it. Without `migrated_at`, `people.json` is
+  the truth and is migrated again, whatever an unfinished attempt left in
+  `colony.db`. With it, a `people.json` older than the migration (a stale copy
+  put back) is renamed `people.json.stray`, kept, and the store is read from
+  `colony.db`; one newer than the migration (an older binary that read
+  `colony-only` as `json`) is refused, and so is a `colony` or `shadow` boot
+  over that store, because choosing either copy, or the orphan forget, could
+  lose people: export or move the file aside first. A migration that does
+  not verify removes the document and attachments it wrote. The renames go
+  `people.json` first; a stop before `enrichment.json` or the marker is
+  finished by the next boot.
 - **Forget** erases the person inside that transaction, compacts the file,
   and scrubs them from the `.pre-colony` and `.migrated` files too.
 - **Rollback** is a mode change: a boot in `colony`, `shadow` or `json` that
   finds no `people.json` beside a colony-only `colony.db` writes both files
-  back from it first, and a `colony` or `shadow` boot drops the colony-only
-  document so a later restore can never go back in time. By hand: stop the
+  back from it first, then drops the colony-only document and `migrated_at`,
+  so a later restore can never go back in time (`hive colony export` into
+  the data directory does the same). A restore that could not write
+  `people.json` keeps the Customers section off in every mode; one whose
+  cleanup alone failed is logged and the hive starts. By hand: stop the
   hive and run `hive colony export --format hive-people-json [--dir
   /data/customers] [--out DIR] [--force]`; it refuses to overwrite a file
   without `--force`.
+
+**Hub (`HIVE_HUB_CUSTOMER_STORE=colony-only`, `src/pkg/hub/customer_store_only.go`):**
+
+- `shadow` and `colony` now also write the consent delivery bookkeeping
+  (first and last delivery, the delivered field sets, the rev, the update
+  time), delete a pruned consent from colony instead of emptying it, store
+  long notes under colony's own limits, and keep a linked login or email
+  another user owns as a held identity. The boot log counts `held`.
+- In `colony-only` each person's CRM fields and consent records are kept
+  exactly in their `hub.crm` attachment, with colony's typed slots written
+  beside it as in `colony` mode. The user JSON keeps the account data and is
+  written without the CRM fields (`crm_in_colony`), and only after the colony
+  write succeeded; when it fails, the full record is written as before. A
+  read of a stripped record puts the fields back from colony; a save of a
+  record read without that overlay (a sweep that changes account data only)
+  leaves the colony copy alone. Consent reads, writes, delivery stamps, the
+  retention sweep, the counts and the match index all go to colony.
+- **The first colony-only boot** needs a boot sync with parity, then writes
+  every person's attachment in one transaction and compares the read-back
+  with the JSON. Only then does it copy `users` to `users.migrated`, rename
+  `consents` to `consents.migrated` and write the `hub.colony-only` marker.
+  The marker, written after the renames and dropped by a restore, is the
+  only thing that says the hub is colony-only; a `hub.colony-only-pending`
+  note written before the renames lets the next boot undo a crashed
+  migration. Otherwise it clears the records it wrote and runs in `colony`
+  mode with every file where it was.
+- **A consents directory beside a migrated store** is never the truth: one
+  that matches colony or is older than the marker's `migrated_at` is set
+  aside; a newer one that differs refuses colony-only and the rollback
+  before any write, and the hub runs in `json` until an operator moves it.
+- **Rollback:** a boot in any other mode that finds the marker writes the CRM
+  fields and consent files back from colony first, then drops the marker and
+  the `hub.crm` copies of the restored records in one transaction; a failed
+  restore keeps the hub colony-only. `hive colony export --format
+  hive-hub-json` writes the same files elsewhere by hand.
+- The match answer and the consent paths still gate every answer on
+  `HIVE_HUB_CUSTOMERS_TRUSTED_HIVES` (`customer_trust.go`); colony-only
+  changes where the records live, not who they may reach.
+- The top-repo affiliation cache fields stay on `SaaSUser`: every mode still
+  reads them through the record, and colony-only only moves where they are
+  stored.
 
 **Retention of `*.migrated`:** kept until an operator removes them. They are
 the JSON as it stood when colony-only took over, so they are a backup like

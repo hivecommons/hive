@@ -28,6 +28,8 @@ const (
 
 	acmmReviewApplyID             = "acmm:copilot-review-apply"
 	acmmHiveReviewFixLoopProvider = "Hive review-fix loop"
+
+	acmmCrossSessionKnowledgeID = "acmm:cross-session-knowledge"
 )
 
 // acmmLoadReviewArtifact reads Hive's recorded review verdicts. It is a
@@ -477,7 +479,19 @@ func acmmIssueContent(criterion *ACMMCriterion) (title, body string) {
 // matches workflow file names only, and the workflow it asks for takes
 // reviewer text as model input with a token that can push, so its issue
 // names the alternatives instead of telling an agent to add that workflow.
+// The cross-session-knowledge criterion credits several paths, but Hive's
+// knowledge store reads only some of them with no configuration, so its
+// issue names the path Hive indexes at boot (#20128).
 func acmmCriterionHowToFix(criterion *ACMMCriterion) string {
+	if criterion.ID == acmmCrossSessionKnowledgeID {
+		return "Create `docs/knowledge/` and add at least one fact. When `knowledge.git_sources` is unset, " +
+			"Hive adds the primary repository's `docs/knowledge/` (or `src/docs/knowledge/`) as a git " +
+			"knowledge source at boot and indexes it with no further configuration. " +
+			"Each fact is a Markdown file (`.md` or `.markdown`) with YAML front matter; Hive's indexer reads " +
+			"no other file type, so `knowledge.jsonl` passes this criterion but gives Hive's agents no facts. " +
+			"`.knowledge/` and `docs/reflections/` are indexed only after you add them as a knowledge git source. " +
+			"The ACMM evaluation checks for existence only and does not read the content."
+	}
 	if criterion.ID == acmmReviewApplyID {
 		return "The ACMM evaluation matches these workflow file names only and does not read their content. " +
 			"A workflow that applies review feedback takes reviewer text as model input and needs a token " +

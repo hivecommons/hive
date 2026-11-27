@@ -2,7 +2,6 @@ package hub
 
 import (
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -276,17 +275,13 @@ func (s *HubServer) handleAdminCustomerConsentCounts(w http.ResponseWriter, r *h
 func (s *HubServer) customerConsentCounts(now time.Time) ([]customerConsentHiveCount, error) {
 	customerConsentMu.Lock()
 	defer customerConsentMu.Unlock()
-	dir := customerConsentDir()
-	entries, err := os.ReadDir(dir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	paths, err := customerConsentPaths()
+	if err != nil {
 		return nil, err
 	}
 	byHive := make(map[string]*customerConsentHiveCount)
-	for _, entry := range entries {
-		if !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		records, err := readCustomerConsents(filepath.Join(dir, entry.Name()))
+	for _, path := range paths {
+		records, err := readCustomerConsents(path)
 		if err != nil {
 			s.logger.Warn("customer consent counts: unreadable record skipped", "error", err)
 			continue
