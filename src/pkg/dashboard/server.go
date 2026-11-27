@@ -3341,6 +3341,18 @@ const githubAppStateNotInstalledToken = "not-installed"
 // riding a cached token that cannot be renewed. Waiting for the first failed
 // mint kept the banner down and the hub green for up to an hour after an
 // installation was cleared — exactly when the operator needed the opposite.
+// githubAuthNotApplicableDetail is the github_auth detail for a hive whose
+// every repository is on another forge (Forgejo, GitLab, Gitea).
+const githubAuthNotApplicableDetail = "not applicable: no repository uses GitHub"
+
+// allReposOffGitHub reports whether no repository of this hive is on GitHub,
+// using the same predicate the boot path uses to skip GitHub credentials
+// (config.AllReposOffGitHub). Such a hive has no GitHub auth on purpose, so a
+// missing App or token must not fail github_auth and turn its hub row red.
+func (s *Server) allReposOffGitHub() bool {
+	return s != nil && s.deps != nil && s.deps.Config.AllReposOffGitHub()
+}
+
 func (s *Server) githubAppNotInstalled() bool {
 	s.githubAppMu.RLock()
 	defer s.githubAppMu.RUnlock()
@@ -3772,6 +3784,8 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 			detail = "token-based — " + s.deps.GHTokenScopes.Detail
 		}
 		checks["github_auth"] = map[string]any{"status": "pass", "detail": detail}
+	} else if s.allReposOffGitHub() {
+		checks["github_auth"] = map[string]any{"status": "pass", "detail": githubAuthNotApplicableDetail}
 	} else {
 		checks["github_auth"] = map[string]any{"status": "fail", "detail": "no GitHub auth configured"}
 		overall = "degraded"
@@ -5171,6 +5185,8 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 			detail = "token — " + s.deps.GHTokenScopes.Detail
 		}
 		checks = append(checks, check{Name: "github_auth", Status: "pass", Detail: detail})
+	} else if s.allReposOffGitHub() {
+		checks = append(checks, check{Name: "github_auth", Status: "pass", Detail: githubAuthNotApplicableDetail})
 	} else {
 		checks = append(checks, check{Name: "github_auth", Status: "fail", Detail: "no auth"})
 		fails++
