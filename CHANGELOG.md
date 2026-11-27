@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.383.3)
+
+### Fixed
+
+- Self-upgrade retry, backoff, give-up and boot logs no longer carry an empty `last_error=` when the failed attempt recorded no error (the patch or restart succeeded but the image never changed); they now name that cause. The bounded retry and backoff WARNs no longer file fleet self-reports as `unclassified_error_repeated`; giving up after the last attempt still logs an ERROR that is reported.
+
 ## 2026-11-27 (v5.383.2)
 
 ### Fixed
