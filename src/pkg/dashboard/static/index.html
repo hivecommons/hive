@@ -71164,6 +71164,16 @@ function burnAreaChart() {
           <div class="config-toggle-switch ${g.headlessTurns ? 'on' : ''}" id="cfg-headless-turns" data-action="toggleConfigSwitch" data-section="general" data-key="headlessTurns"></div>
           <span class="config-toggle-label">Headless turns ${settingHelpMark('agent-configuration', '', 'Headless turns', `agents.<key>.headless_turns: run one claude -p per kick instead of a resident interactive Claude CLI. Applies only to translator-routed agents (vllm, llm-d, litellm, watsonx or a named gateway) without a launch_cmd. Saving a change restarts the agent.`)}</span>
         </div>
+        <div class="config-field-row">
+          <div class="config-field">
+            <label>Context window (tokens) ${settingHelpMark('agent-configuration', 'context-window-for-inference-routed-agents', 'Context window (tokens)', `agents.<key>.max_context_tokens: the model's context window, passed to the Claude CLI as CLAUDE_CODE_MAX_CONTEXT_TOKENS on a translator-routed agent. Set it when the gateway reports no window (LiteLLM's /v1/models does not), or the CLI assumes its own default and compacts too late. 0 or empty discovers the window from the gateway. Ignored for Claude models and while the governor runs the agent on a different model. Saving a change restarts the agent.`)}</label>
+            <input type="number" id="cfg-max-context-tokens" min="0" step="1" value="${g.maxContextTokens || ''}" placeholder="0 = discover" data-change-action="markDirty" data-arg0="general" data-arg1="maxContextTokens" data-arg-types="s,s,N">
+          </div>
+          <div class="config-field">
+            <label>Auto-compact window (tokens) ${settingHelpMark('agent-configuration', 'context-window-for-inference-routed-agents', 'Auto-compact window (tokens)', `agents.<key>.auto_compact_window_tokens: the window the Claude CLI auto-compacts against, passed as CLAUDE_CODE_AUTO_COMPACT_WINDOW. 0 or empty leaves it unset; any other value must be at least 100000. Ignored while the governor runs the agent on a different model. Saving a change restarts the agent.`)}</label>
+            <input type="number" id="cfg-auto-compact-window-tokens" min="0" step="1" value="${g.autoCompactWindowTokens || ''}" placeholder="0 = unset" data-change-action="markDirty" data-arg0="general" data-arg1="autoCompactWindowTokens" data-arg-types="s,s,N">
+          </div>
+        </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${onDemand ? 'on' : ''}" id="cfg-on-demand" data-action="toggleConfigSwitch" data-section="general" data-key="onDemand"></div>
           <span class="config-toggle-label">On Demand ${settingHelpMark('agent-configuration', 'anatomy-of-an-agent', 'On Demand', `When on, this agent is never started at boot and never kicked by the governor or by event (CEL) triggers — it only runs when something summons it explicitly. Turn it OFF to make the agent run on its cadence like a normal agent. Note: an agent also needs a cadence entry in the ACTIVE governor mode before it will actually be kicked. On-demand agents are also excluded from review fan-out, so a reviewer left on-demand cannot be dispatched.`)}${g.onDemand === true ? ' ' + statusBadgeHTML('on_demand', 'on demand', '', '') : ''}</span>
