@@ -361,6 +361,12 @@ func TestAlreadyDoneVerdict_UnverifiedRetryKeepsAPersonsActivityLiftingTheHold(t
 	if !ok || !hold.RecordedAt.Equal(booked) {
 		t.Fatalf("hold = %+v (ok=%v), want it left at %s: the person's activity must still lift it", hold, ok, booked)
 	}
+	fx.mu.Lock()
+	comments := append([]string(nil), fx.comments...)
+	fx.mu.Unlock()
+	if len(comments) != 0 || flake.comments.Load() != 1 {
+		t.Fatalf("comments = %v (POST attempts %d); the comment must not announce a hold the person's activity lifts", comments, flake.comments.Load())
+	}
 	if hub.isSuppressedByNoWorkVerdict("o/r", 7, personAt) {
 		t.Fatal("the person's activity after the hold must lift it")
 	}

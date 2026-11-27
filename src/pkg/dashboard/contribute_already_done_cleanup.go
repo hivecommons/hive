@@ -40,7 +40,8 @@ import (
 //   - the comment is posted, or is already on the issue (IssueCommentsContain).
 //     A pending comment is dropped unposted once its premise is gone: the
 //     unverified hold it announces was lifted, expired or cleared (a later
-//     completion with a PR, for one). A stuck label is still taken off;
+//     completion with a PR, for one), or newer activity on the issue lifts it
+//     at the next offer check. A stuck label is still taken off;
 //   - a verified merged claim now covers the issue (a later verdict that did
 //     verify, or the claim scan): the label then means what it says, so it
 //     stays and the claim-worded comment is not posted either;
@@ -330,6 +331,13 @@ func (h *ContributeWSHub) retryUnverifiedAlreadyDoneCleanup(ctx context.Context,
 			return next
 		}
 		restamp = !snap.UpdatedAt.After(hold.RecordedAt)
+		if !restamp && next.Comment {
+			// The newer activity voids the hold on the next offer check,
+			// so the comment would announce a hold that has already lifted.
+			h.logger.Info("[contribute-ws] unverified already-done comment dropped: newer issue activity lifts its offer hold",
+				"repo", rec.Repo, "number", rec.Number)
+			next.Comment = false
+		}
 	}
 	wrote := false
 	if next.Label {
