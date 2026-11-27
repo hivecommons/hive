@@ -435,6 +435,9 @@ func TestHubColonyOnlyRefusesNewerConsents(t *testing.T) {
 				t.Errorf("a refused boot rewrote a user record: %v", err)
 			}
 			closeHubCustomerStore()
+			if err := releaseHubColonyOnlyGuard(hubCustomerStorePath(), time.Second); err != nil {
+				t.Fatal(err)
+			}
 			st2, err := store.Open(hubCustomerStorePath(), store.Options{})
 			if err != nil {
 				t.Fatal(err)

@@ -1092,11 +1092,19 @@ func ExportHubCustomerStore(saasDir, outDir string, force bool) (HubCustomerExpo
 		// Never create an empty colony.db by exporting from the wrong place.
 		return rep, fmt.Errorf("hub customer store: colony.db: %w", err)
 	}
-	st, err := store.Open(path, store.Options{LockTimeout: hubCustomerStoreLockTimeout})
+	err := releaseHubColonyOnlyGuard(path, hubCustomerStoreLockTimeout)
+	var st *store.Store
+	if err == nil {
+		st, err = store.Open(path, store.Options{LockTimeout: hubCustomerStoreLockTimeout})
+	}
 	if err != nil {
 		return rep, fmt.Errorf("hub customer store: opening colony.db (stop the hub first): %w", err)
 	}
 	defer func() { _ = st.Close() }()
+	// Guarded again before anything else, as the hub does at boot (#20116).
+	if err := syncHubColonyOnlyGuard(st); err != nil {
+		return rep, err
+	}
 	migrated, err := hubColonyOnlyMigrated(st)
 	if err != nil {
 		return rep, err

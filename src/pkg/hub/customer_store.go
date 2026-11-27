@@ -130,7 +130,13 @@ func openHubCustomerStoreFile(ctx context.Context, logger *slog.Logger, path, mo
 	deadline := time.Now().Add(wait)
 	backoff := hubCustomerStoreRetryBackoff
 	for attempt := 1; ; attempt++ {
-		st, err := store.Open(path, store.Options{LockTimeout: hubCustomerStoreLockTimeout})
+		// A colony-only store records a schema_version older images refuse
+		// (#20116); this image puts the real one back first.
+		err := releaseHubColonyOnlyGuard(path, hubCustomerStoreLockTimeout)
+		var st *store.Store
+		if err == nil {
+			st, err = store.Open(path, store.Options{LockTimeout: hubCustomerStoreLockTimeout})
+		}
 		if err == nil || !errors.Is(err, store.ErrLocked) {
 			if err == nil && attempt > 1 {
 				logger.Info("hub customer store: lock acquired after retry", "requested", mode, "attempts", attempt)
@@ -306,6 +312,11 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 		logger.Warn("hub customer store: open failed; json mode", "requested", mode, "error", crmErrClass(err))
 		return hubCustomerStoreJSON
 	}
+	// A colony-only store is guarded again at once, so an older image that
+	// opens it after this one stops or crashes refuses it (#20116).
+	if err := syncHubColonyOnlyGuard(st); err != nil {
+		logger.Error("hub customer store: colony-only guard not set; an older image could open this store", "error", crmErrClass(err))
+	}
 	// A colony-only migration that crashed part-way is undone first, so
 	// nothing below reads a consents directory it had renamed away.
 	if err := recoverHubColonyOnlyPending(st); err != nil {
@@ -325,6 +336,9 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 			mode = hubCustomerStoreColonyOnly
 		} else if restored {
 			logger.Info("hub customer store: restored json from colony-only", "mode", mode)
+			if err := syncHubColonyOnlyGuard(st); err != nil {
+				logger.Warn("hub customer store: colony-only guard not cleared", "error", crmErrClass(err))
+			}
 		}
 	}
 	migrated := false
@@ -393,10 +407,19 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 					"skipped", rep.Skipped)
 				mode = hubCustomerStoreColony
 			default:
-				if err := migrateHubColonyOnly(st, time.Now()); err != nil {
+				// Guarded before the first record is stripped, so a crash
+				// part-way never leaves stripped records to an older image.
+				if err := setHubColonyOnlyGuard(st, true); err != nil {
+					logger.Warn("hub customer store: colony-only guard not set; running in colony mode, json kept",
+						"error", crmErrClass(err))
+					mode = hubCustomerStoreColony
+				} else if err := migrateHubColonyOnly(st, time.Now()); err != nil {
 					logger.Warn("hub customer store: colony-only migration not verified; running in colony mode, json kept",
 						"error", crmErrClass(err))
 					mode = hubCustomerStoreColony
+				}
+				if err := syncHubColonyOnlyGuard(st); err != nil {
+					logger.Warn("hub customer store: colony-only guard not updated", "error", crmErrClass(err))
 				}
 			}
 		}
