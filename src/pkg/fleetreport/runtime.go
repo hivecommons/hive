@@ -212,7 +212,7 @@ var Classes = map[string]ClassSpec{
 	ClassAdvisoryPostFailed:          {Component: "github-client", Severity: "medium", MinCount: 1, Keywords: []string{"advisory post failed", "advisory digest"}},
 	ClassUpgradeStalled:              {Component: "agent-lifecycle", Severity: "high", MinCount: 1, Keywords: []string{"upgrade stalled", "upgrade stall"}},
 	ClassDataDiskPressure:            {Component: "agent-runtime", Severity: "high", MinCount: 1, Keywords: []string{"disk full", "disk pressure", "no space left"}},
-	ClassGitHubAppTokenMintFailed:    {Component: "github-client", Severity: "high", MinCount: 1, Keywords: []string{"token mint failed", "installation token"}},
+	ClassGitHubAppTokenMintFailed:    {Component: "github-client", Severity: "high", MinCount: 1, Keywords: []string{"token mint failed", "installation token", "agent token refresh failed"}},
 	ClassGitHubAppNotInstalled:       {Component: "github-client", Severity: "medium", MinCount: 1, Keywords: []string{"github app installation id is unset", "github app has no installation"}},
 	ClassForgeUnreachable:            {Component: "network", Severity: "medium", MinCount: 1, MinDuration: forgeUnreachableSustained, Keywords: []string{"github host unreachable", "forge unreachable"}},
 	ClassUnexpectedHub5xx:            {Component: "dashboard", Severity: "medium", MinCount: hub5xxStreak, Keywords: []string{"hub 5", "hub returned 5"}},

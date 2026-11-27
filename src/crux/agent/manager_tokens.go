@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -831,11 +832,11 @@ func (m *Manager) RefreshAgentTokenFor(ctx context.Context, name string) error {
 		return fmt.Errorf("agent %s has no dedicated UID", name)
 	}
 	tier := m.agentTokenTier(agent)
-	if err := auth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
+	err := auth.WriteAgentToken(ctx, agent.Name, tier, agent.UID)
+	m.reportAgentTokenRefresh(agent.Name, err)
+	if err != nil {
 		return fmt.Errorf("re-caching scoped token for %s: %w", name, err)
 	}
-	// A successful re-cache proves this agent's forge connection recovered.
-	m.clearCondition(crux.ClassForgeUnreachable, agent.Name)
 	return nil
 }
 
@@ -875,19 +876,12 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 
 	for _, a := range agents {
 		tier := m.agentTokenTier(a)
-		if err := auth.WriteAgentToken(ctx, a.Name, tier, a.UID); err != nil {
+		err := auth.WriteAgentToken(ctx, a.Name, tier, a.UID)
+		m.reportAgentTokenRefresh(a.Name, err)
+		if err != nil {
 			m.logger.Warn("agent token refresh failed", "agent", a.Name, "error", err)
-			// Keep an ongoing forge outage's condition current: without a
-			// re-observation, a launch-time forge_unreachable whose refreshes
-			// keep failing would age out of the fleet report's TTL while the
-			// outage continues (hivecommons/hive#19403).
-			if isForgeTransportErr(err) {
-				m.observeCondition(crux.ClassForgeUnreachable, a.Name, "github host unreachable during token refresh: "+err.Error(), "")
-			}
 			continue
 		}
-		// A launch-time forge outage can recover without another launch.
-		m.clearCondition(crux.ClassForgeUnreachable, a.Name)
 		// App auth can arrive after launch. Publish the cache path then too, so
 		// the next turn can read without a restart of the shared-UID agent.
 		if a.UID == 0 && a.tmuxSession != "" {
@@ -916,6 +910,36 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 				}
 			}
 		}
+	}
+}
+
+// reportAgentTokenRefresh keeps token delivery conditions current for both
+// periodic and on-demand refreshes, and clears them when delivery recovers.
+func (m *Manager) reportAgentTokenRefresh(agent string, err error) {
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	class := ""
+	message := ""
+	switch {
+	case err == nil:
+	case errors.Is(err, crux.ErrGitHubAppNotInstalled):
+		class = crux.ClassGitHubAppNotInstalled
+		message = "github app installation id is unset: " + err.Error()
+	case isForgeTransportErr(err):
+		class = crux.ClassForgeUnreachable
+		message = "github host unreachable during token refresh: " + err.Error()
+	default:
+		class = crux.ClassGitHubAppTokenMintFailed
+		message = "github app token mint failed during agent token refresh: " + err.Error()
+	}
+	for _, candidate := range []string{crux.ClassGitHubAppNotInstalled, crux.ClassForgeUnreachable, crux.ClassGitHubAppTokenMintFailed} {
+		if candidate != class {
+			m.clearCondition(candidate, agent)
+		}
+	}
+	if class != "" {
+		m.observeCondition(class, agent, message, "")
 	}
 }
 

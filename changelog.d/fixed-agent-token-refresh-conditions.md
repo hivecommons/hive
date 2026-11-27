@@ -1,0 +1,1 @@
+- Report agent GitHub token refresh failures under the appropriate authentication or connectivity condition and clear it when refresh recovers.
