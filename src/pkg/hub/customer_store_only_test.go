@@ -395,9 +395,9 @@ func TestHubColonyOnlySetsAsideReappearedConsents(t *testing.T) {
 }
 
 // A consents directory changed after the migration (an older binary, or a
-// json-mode fallback, wrote it) that differs from colony refuses
-// colony-only, and refuses a rollback, with nothing moved or written:
-// neither copy can be chosen safely. The hub reads that directory in json
+// json-mode fallback, wrote it) that the narrow-only merge cannot classify
+// refuses colony-only, and refuses a rollback, with nothing moved or
+// written: neither copy can be chosen safely. The hub reads that directory in json
 // mode until an operator moves it aside.
 func TestHubColonyOnlyRefusesNewerConsents(t *testing.T) {
 	for _, mode := range []string{hubCustomerStoreColonyOnly, hubCustomerStoreColony, hubCustomerStoreShadow, hubCustomerStoreJSON} {
@@ -410,8 +410,9 @@ func TestHubColonyOnlyRefusesNewerConsents(t *testing.T) {
 			}
 			at := hubMigratedAt(t, st)
 			closeHubCustomerStore()
-			// A withdrawal made while colony-only was not running.
-			newer := `{"own":{"person":"ada-example","hive_id":"own","withdrawn_at":"2026-11-20T00:00:00Z"}}`
+			// A withdrawal made while colony-only was not running, under a
+			// key that does not match its hive: the merge cannot classify it.
+			newer := `{"own":{"person":"ada-example","hive_id":"other","withdrawn_at":"2026-11-20T00:00:00Z"}}`
 			path := writeReappearedConsents(t, newer, at.Add(time.Hour))
 			before, err := os.ReadFile(mustUserPath(t, users[0]))
 			if err != nil {

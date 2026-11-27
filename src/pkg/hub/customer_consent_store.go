@@ -170,6 +170,12 @@ func pruneCustomerConsents(path string, now time.Time) error {
 // Retention still applies when the sharing switch is turned off.
 func (s *HubServer) startCustomerConsentSweep(ctx context.Context) {
 	sweep := func(now time.Time) {
+		// The copies colony-only kept or set aside hold the same data.
+		if n, err := pruneHubKeptCopies(now); err != nil {
+			s.logger.Warn("customer consent sweep: kept copy prune failed", "error", crmErrClass(err))
+		} else if n > 0 {
+			s.logger.Info("customer consent sweep: removed kept colony-only copies past retention", "count", n)
+		}
 		paths, err := customerConsentPaths()
 		if err != nil {
 			s.logger.Warn("customer consent sweep: list failed", "error", err)
