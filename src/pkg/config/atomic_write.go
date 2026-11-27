@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/hivecommons/hive/pkg/atomicfile"
 )
 
 // writeFileAtomic replaces the contents of path without ever exposing a
@@ -16,8 +18,8 @@ import (
 // then fell back to a months-stale /data/hive.yaml.bak and a hive booted
 // with a three-month-old ACMM level and roster.
 //
-// Strategy: write data to a temp file in the TARGET's directory, fsync it,
-// then rename it onto the target. Two constraints shape the details:
+// Strategy: atomicfile.WriteFile on the TARGET (a temp file in its directory,
+// fsynced, then renamed onto it). Two constraints shape the details:
 //
 //   - path may be a symlink (hosted spokes link /etc/hive/hive.yaml to the
 //     PVC runtime config, #17468). The rename must land on the link's
@@ -41,45 +43,17 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return fmt.Errorf("resolving %s: %w", path, err)
 	}
 
-	dir := filepath.Dir(target)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(target)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("creating temp file in %s: %w", dir, err)
-	}
-	tmpPath := tmp.Name()
-	cleanup := func() { _ = os.Remove(tmpPath) }
-
-	if err := tmp.Chmod(mode); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("chmod temp file %s: %w", tmpPath, err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("writing temp file %s: %w", tmpPath, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		cleanup()
-		return fmt.Errorf("syncing temp file %s: %w", tmpPath, err)
-	}
-	if err := tmp.Close(); err != nil {
-		cleanup()
-		return fmt.Errorf("closing temp file %s: %w", tmpPath, err)
-	}
-
-	if err := os.Rename(tmpPath, target); err != nil {
-		cleanup()
+	err := atomicfile.WriteFile(target, data, mode)
+	var renameErr *os.LinkError
+	if err != nil && errors.As(err, &renameErr) {
 		// Bind-mounted single file (or any filesystem that refuses the
 		// rename): keep the inode and write in place, as Save always did.
 		if inPlaceErr := writeFileInPlace(target, data, mode); inPlaceErr != nil {
-			return fmt.Errorf("renaming %s onto %s: %w (in-place fallback also failed: %v)", tmpPath, target, err, inPlaceErr)
+			return fmt.Errorf("%w (in-place fallback also failed: %v)", err, inPlaceErr)
 		}
 		return nil
 	}
-	syncDir(dir)
-	return nil
+	return err
 }
 
 // writeFileInPlace is the pre-#17862 O_TRUNC write, kept only as the fallback
@@ -104,13 +78,5 @@ func writeFileInPlace(target string, data []byte, mode os.FileMode) error {
 }
 
 // syncDir fsyncs a directory so the rename that just happened in it is
-// durable. Best-effort: some filesystems (and all of Windows) refuse to open
-// a directory for sync, and a failure here cannot un-do the rename.
-func syncDir(dir string) {
-	d, err := os.Open(dir)
-	if err != nil {
-		return
-	}
-	_ = d.Sync()
-	_ = d.Close()
-}
+// durable. Best-effort; see atomicfile.SyncDir.
+func syncDir(dir string) { atomicfile.SyncDir(dir) }

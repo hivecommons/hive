@@ -1,7 +1,6 @@
 package rotation
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/atomicfile"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -325,23 +325,10 @@ func publishContributorReadingAtomic(path string, r ContributorReading) error {
 // publishContributorFileAtomic writes data to path via a unique temp sibling
 // then rename (shared by the reading and the presence marker).
 func publishContributorFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	var nonce [6]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return err
-	}
-	tmp := filepath.Join(dir, fmt.Sprintf(".%s.tmp-%d-%s", filepath.Base(path), os.Getpid(), hex.EncodeToString(nonce[:])))
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return atomicfile.WriteFile(path, data, 0o600)
 }
 
 // EnableContributorReadingPublish turns on publishing to dir, keyed by account
