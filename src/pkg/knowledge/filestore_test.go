@@ -464,6 +464,27 @@ func TestFileStore_SkipsHiddenDirsAndNonMarkdown(t *testing.T) {
 	}
 }
 
+// A store rooted at a dot-named folder indexes it; only nested dot folders
+// are skipped (#20128).
+func TestFileStore_IndexesDotNamedRoot(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".knowledge")
+	if err := os.MkdirAll(filepath.Join(dir, ".obsidian"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeMarkdown(t, dir, "fact.md", "# Fact\nContent.")
+	if err := os.WriteFile(filepath.Join(dir, ".obsidian", "config.md"), []byte("# Hidden"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	fs, err := NewFileStore(dir, "test", fileStoreTestLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fs.Stats().TotalPages; got != 1 {
+		t.Errorf("TotalPages = %d, want 1 (root indexed, nested .obsidian skipped)", got)
+	}
+}
+
 // --- Subdirectory slug paths ---
 
 func TestFileStore_SubdirectorySlugs(t *testing.T) {
