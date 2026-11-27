@@ -15,8 +15,11 @@ import (
 )
 
 func TestReviewConversationBlocker(t *testing.T) {
+	ctx := context.Background()
+	status := &statusCommentServer{}
+	comments := status.start(t).Config.Handler
 	var resolved, pageFailed atomic.Bool
-	var optional atomic.Bool
+	var optional, policyUnreadable atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -25,7 +28,11 @@ func TestReviewConversationBlocker(t *testing.T) {
 		case "/repos/o/r/rules/branches/optional":
 			fmt.Fprint(w, `[{"type":"pull_request","parameters":{"required_review_thread_resolution":false}}]`)
 		case "/repos/o/r/branches/optional/protection":
-			http.Error(w, `{"message":"Resource not accessible by integration"}`, http.StatusForbidden)
+			if policyUnreadable.Load() {
+				http.Error(w, `{"message":"Resource not accessible by integration"}`, http.StatusForbidden)
+			} else {
+				http.Error(w, `{"message":"Branch not protected"}`, http.StatusNotFound)
+			}
 		case "/graphql":
 			var req struct {
 				Query     string
@@ -37,7 +44,7 @@ func TestReviewConversationBlocker(t *testing.T) {
 				return
 			}
 			if strings.Contains(req.Query, "pullRequests(") {
-				fmt.Fprint(w, `{"data":{"repository":{"pullRequests":{"nodes":[{"number":5,"reviewThreads":{"totalCount":2}}]}}}}`)
+				fmt.Fprint(w, `{"data":{"repository":{"pullRequests":{"nodes":[{"number":5,"comments":{"totalCount":1},"reviewThreads":{"totalCount":2}}]}}}}`)
 				return
 			}
 			base := "main"
@@ -58,33 +65,74 @@ func TestReviewConversationBlocker(t *testing.T) {
 				http.Error(w, `{"message":"unexpected cursor"}`, http.StatusBadRequest)
 			}
 		default:
-			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
-			http.NotFound(w, r)
+			comments.ServeHTTP(w, r)
 		}
 	}))
 	defer srv.Close()
 	c := testClient(t, srv.URL)
-	pr := PullRequest{Repo: "o/r", Number: 5, BaseRef: "main", HeadSHA: "head", MergeableState: "blocked"}
+	c.SetAppBotLogin("hive-app[bot]")
+	c.SetWritebackGate(writeback.New(writeback.Config{}, writeback.Deps{}, ""))
+	pr := PullRequest{Repo: "o/r", Number: 5, BaseRef: "main", HeadSHA: "head", MergeableState: "blocked", Author: "hive-app[bot]", AppAuthored: true}
+	if _, err := c.UpsertPRStatusSection(ctx, pr.Repo, pr.Number, "other", "keep this section"); err != nil {
+		t.Fatal(err)
+	}
+	checkNotice := func(want bool) {
+		t.Helper()
+		status.mu.Lock()
+		defer status.mu.Unlock()
+		if len(status.comments) != 1 {
+			t.Fatalf("got %d comments, want one shared status comment", len(status.comments))
+		}
+		body, _ := status.comments[0]["body"].(string)
+		if _, got := prstatus.Get(body, reviewConversationStatusSection); got != want {
+			t.Fatalf("status comment has blocker section = %t, want %t: %q", got, want, body)
+		}
+		if section, _ := prstatus.Get(body, "other"); section != "keep this section" {
+			t.Fatalf("unrelated section changed: %q", body)
+		}
+	}
 	refresh := func(want string) {
 		t.Helper()
-		newProtectionCollector(c).attach(context.Background(), &pr, nil)
+		newProtectionCollector(c).attach(ctx, &pr, nil)
 		if got, ok := pr.BranchProtectionBlockReason(); got != want || ok != (want != "") {
 			t.Fatalf("merge blocker = (%q, %v), want %q", got, ok, want)
 		}
+		c.PostReviewConversationBlockers(ctx, []PullRequest{pr})
 	}
 	refresh("1 unresolved review thread")
 	if ids := pr.Protection.reviewThreadCommentIDs; len(ids) != 1 || ids[0] != 3000000000 {
 		t.Fatalf("unresolved discussion links = %v", ids)
 	}
+	checkNotice(true)
 	pageFailed.Store(true)
 	refresh("") // The first page alone is not a complete count.
+	checkNotice(true)
 	pageFailed.Store(false)
 	resolved.Store(true)
+	c.SetRepoPausedFunc(func(string) bool { return true })
+	refresh("")
+	checkNotice(true)
+	c.SetRepoPausedFunc(nil)
 	refresh("") // Other branch rules can keep mergeStateStatus BLOCKED.
+	checkNotice(false)
 	resolved.Store(false)
+	refresh("1 unresolved review thread")
+	pr.MergeableState = "unknown"
+	refresh("")
+	checkNotice(true)
+	pr.MergeableState = "clean"
+	refresh("")
+	checkNotice(false)
+	pr.MergeableState = "blocked"
+	refresh("1 unresolved review thread")
 	optional.Store(true)
 	pr.BaseRef = "optional"
+	policyUnreadable.Store(true)
 	refresh("")
+	checkNotice(true)
+	policyUnreadable.Store(false)
+	refresh("")
+	checkNotice(false)
 }
 
 func TestReviewConversationBlockerNotice(t *testing.T) {

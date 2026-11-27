@@ -25,7 +25,7 @@ type protectionCollector struct {
 	// required is keyed "owner/repo@branch".
 	required map[string]requiredSet
 
-	conversationRequired map[string]bool
+	conversationRequired map[string]conversationRule
 
 	// reviews is keyed "owner/repo"; a nil map value records a repo whose
 	// GraphQL query failed, so it is attempted only once.
@@ -74,6 +74,7 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 		return
 	}
 	var f ProtectionFacts
+	pr.reviewConversationKnown = false
 
 	if rs, ok := pc.reviewState(ctx, pr.Repo, pr.Number); ok {
 		f.ReviewDecision = rs.decision
@@ -89,7 +90,12 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 		pr.ReviewThreadCount = rs.reviewThreads
 		pr.LinkedIssues = rs.linkedIssues
 		if rs.reviewThreads > 0 {
-			f.UnresolvedReviewThreads, f.reviewThreadCommentIDs = pc.reviewConversationBlocker(ctx, pr)
+			f.UnresolvedReviewThreads, f.reviewThreadCommentIDs, pr.reviewConversationKnown = pc.reviewConversationBlocker(ctx, pr)
+		} else if rs.comments > 0 {
+			// Both totals come from the same query. A positive issue-comment
+			// count rules out the review-decision-only fallback (and means
+			// there could be a status section to clear).
+			pr.reviewConversationKnown = true
 		}
 	}
 
