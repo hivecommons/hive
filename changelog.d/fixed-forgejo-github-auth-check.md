@@ -1,0 +1,1 @@
+- A hive whose every repository is on another forge (such as Forgejo) no longer fails the `github_auth` health check for having no GitHub credentials; the check now passes as not applicable, so the hub row is not red.
