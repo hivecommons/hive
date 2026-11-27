@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.382.1)
+
+### Fixed
+
+- An inference-routed agent behind a LiteLLM gateway now learns its model's context window from the gateway's `/model/info` (`model_info.max_input_tokens`) when `/v1/models` reports none, so the Claude CLI gets `CLAUDE_CODE_MAX_CONTEXT_TOKENS` without a hand-set `max_context_tokens` (#19913).
+
 ## 2026-11-27 (v5.382.0)
 
 ### Added
