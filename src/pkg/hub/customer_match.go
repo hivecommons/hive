@@ -22,7 +22,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -154,16 +153,11 @@ func (s *HubServer) customerMatchIndexFor(hiveID string, keys []string, now time
 	st.mu.Unlock()
 
 	paths := make(map[string]string)
-	dir := customerConsentDir()
-	entries, err := os.ReadDir(dir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	consentPaths, err := customerConsentPaths()
+	if err != nil {
 		s.logger.Warn("customer match: list consents failed", "error", err)
 	}
-	for _, entry := range entries {
-		if !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		path := filepath.Join(dir, entry.Name())
+	for _, path := range consentPaths {
 		records, err := readCustomerConsents(path)
 		if err != nil {
 			continue
@@ -173,7 +167,7 @@ func (s *HubServer) customerMatchIndexFor(hiveID string, keys []string, now time
 		if c, ok := records[hiveID]; !ok || c.discardable(now) || c.WithdrawnAt != nil && c.DeliveredFields == nil {
 			continue
 		}
-		user := loadSaaSUser(strings.TrimSuffix(entry.Name(), ".json"))
+		user := loadSaaSUser(strings.TrimSuffix(filepath.Base(path), ".json"))
 		if user == nil {
 			continue
 		}

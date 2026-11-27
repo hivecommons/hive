@@ -330,6 +330,14 @@ type SaaSUser struct {
 	TopRepo           string `json:"top_repo,omitempty"`
 	TopRepoURL        string `json:"top_repo_url,omitempty"`
 	TopRepoUpdatedAt  string `json:"top_repo_updated_at,omitempty"`
+	// CRMInColony marks a record written in HIVE_HUB_CUSTOMER_STORE
+	// colony-only mode: the CRM fields above were left out of this JSON and
+	// are kept in the colony store (customer_store_only.go, #19972).
+	CRMInColony bool `json:"crm_in_colony,omitempty"`
+	// crmOverlaid is set by a read that put the CRM fields back from colony
+	// (or found them in the JSON); never serialized. A colony-only save of a
+	// record read without it leaves the colony copy alone.
+	crmOverlaid bool
 }
 
 // Length caps for the admin-editable contact fields. These are free text

@@ -20,6 +20,9 @@ package hub
 //     (dual-read), and the JSON is still written, so setting json again
 //     loses nothing. A hub upgrading from the json default runs the import
 //     on that boot; if it fails, the hub stays on json.
+//   - colony-only (opt-in, never the default; customer_store_only.go): after
+//     a verified boot, colony.db is the only copy of the CRM fields and the
+//     consent records, and user records are written without the CRM fields.
 //
 // The JSON files are never rewritten by the migration. They are the backup
 // and the rollback path. Before each shadow or colony boot opens colony.db,
@@ -163,7 +166,7 @@ func parseHubCustomerStoreMode(raw string) (string, bool) {
 	switch m := strings.ToLower(strings.TrimSpace(raw)); m {
 	case "":
 		return hubCustomerStoreDefault, true
-	case hubCustomerStoreJSON, hubCustomerStoreShadow, hubCustomerStoreColony:
+	case hubCustomerStoreJSON, hubCustomerStoreShadow, hubCustomerStoreColony, hubCustomerStoreColonyOnly:
 		return m, true
 	}
 	return hubCustomerStoreJSON, false
@@ -230,6 +233,10 @@ func crmErrClass(err error) string {
 		return "identity_conflict"
 	case errors.Is(err, errCRMNotStored):
 		return "not_stored"
+	case errors.Is(err, errConsentsNewer):
+		// /data/saas/consents changed after the colony-only migration:
+		// move it aside (hub-deployment.md, colony-only).
+		return "consents_newer_than_colony_only"
 	case errors.Is(err, fs.ErrPermission):
 		return "permission"
 	case errors.Is(err, fs.ErrNotExist):
@@ -264,8 +271,11 @@ type hubCustomerStoreSyncReport struct {
 	ColonyPeople  int
 	ColonyFacts   map[store.Rank]int
 	ColonyConsent int
-	Tombstones    int
-	Parity        bool
+	// ColonyHeld counts identities colony keeps as held (a second user
+	// with the same linked login or email).
+	ColonyHeld int
+	Tombstones int
+	Parity     bool
 }
 
 // openHubCustomerStore opens the store for mode and, in shadow or colony
@@ -296,6 +306,52 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 		logger.Warn("hub customer store: open failed; json mode", "requested", mode, "error", crmErrClass(err))
 		return hubCustomerStoreJSON
 	}
+	// A colony-only migration that crashed part-way is undone first, so
+	// nothing below reads a consents directory it had renamed away.
+	if err := recoverHubColonyOnlyPending(st); err != nil {
+		_ = st.Close()
+		logger.Error("hub customer store: an interrupted colony-only migration could not be undone; json mode, nothing changed",
+			"requested", mode, "error", crmErrClass(err))
+		return hubCustomerStoreJSON
+	}
+	if mode != hubCustomerStoreColonyOnly {
+		// Back from colony-only: the CRM fields and consent files are
+		// written back from colony first (#19972).
+		if restored, err := restoreHubFromColonyOnly(st, time.Now()); err != nil {
+			// The data is only in colony: stay colony-only rather than
+			// serve records without it. The next boot tries again.
+			logger.Warn("hub customer store: restore from colony-only failed; staying colony-only", "requested", mode,
+				"error", crmErrClass(err))
+			mode = hubCustomerStoreColonyOnly
+		} else if restored {
+			logger.Info("hub customer store: restored json from colony-only", "mode", mode)
+		}
+	}
+	migrated := false
+	if mode == hubCustomerStoreColonyOnly {
+		m, err := hubColonyOnlyMigrated(st)
+		if err != nil {
+			_ = st.Close()
+			logger.Warn("hub customer store: colony-only check failed; json mode", "error", crmErrClass(err))
+			return hubCustomerStoreJSON
+		}
+		migrated = m
+		if migrated {
+			// A consents directory beside a store colony-only took over is
+			// never read as the truth: it is set aside, not deleted.
+			// One newer than the migration refuses colony-only, with
+			// nothing written: json mode reads that directory, and colony.db
+			// and every stripped record stay as they are.
+			if aside, err := setAsideReappearedConsents(st, time.Now()); err != nil {
+				_ = st.Close()
+				logger.Error("hub customer store: a consents directory beside the colony-only store was not set aside; json mode",
+					"error", crmErrClass(err))
+				return hubCustomerStoreJSON
+			} else if aside {
+				logger.Warn("hub customer store: a consents directory reappeared beside the colony-only store; set aside as consents.ignored, colony stays the truth")
+			}
+		}
+	}
 	if mode != hubCustomerStoreJSON && exists {
 		// Backed up only once the lock is held, from a consistent read of
 		// the open store, so a boot that fails closed never rotates a good
@@ -306,7 +362,7 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 			return hubCustomerStoreJSON
 		}
 	}
-	if mode != hubCustomerStoreJSON {
+	if mode != hubCustomerStoreJSON && !migrated {
 		rep, err := syncHubCustomerStore(ctx, st)
 		if err != nil {
 			_ = st.Close()
@@ -318,10 +374,31 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 			"forgotten", rep.Forgotten, "orphans_held", rep.OrphansHeld, "colony_people", rep.ColonyPeople,
 			"facts_user", rep.ColonyFacts[store.RankUser], "facts_admin", rep.ColonyFacts[store.RankAdmin],
 			"facts_enrichment", rep.ColonyFacts[store.RankEnrichment], "consents", rep.ColonyConsent,
-			"tombstones", rep.Tombstones, "parity", rep.Parity)
+			"held", rep.ColonyHeld, "tombstones", rep.Tombstones, "parity", rep.Parity)
 		if !rep.Parity {
 			logger.Warn("hub customer store: parity mismatch after boot sync; people that did not sync read from json",
 				"json_users", rep.JSONUsers, "colony_people", rep.ColonyPeople, "skipped", rep.Skipped, "failed", rep.Failed)
+		}
+		if mode == hubCustomerStoreColonyOnly {
+			// First colony-only boot: only a clean sync and a verified
+			// read-back move the hub off the JSON.
+			switch {
+			case !rep.Parity:
+				logger.Warn("hub customer store: colony-only needs a clean boot sync; running in colony mode")
+				mode = hubCustomerStoreColony
+			case rep.Skipped > 0:
+				// A user colony does not hold would lose their consent
+				// records with the rename.
+				logger.Warn("hub customer store: colony-only needs every user in colony; running in colony mode",
+					"skipped", rep.Skipped)
+				mode = hubCustomerStoreColony
+			default:
+				if err := migrateHubColonyOnly(st, time.Now()); err != nil {
+					logger.Warn("hub customer store: colony-only migration not verified; running in colony mode, json kept",
+						"error", crmErrClass(err))
+					mode = hubCustomerStoreColony
+				}
+			}
 		}
 	}
 	hubCRM.rw.Lock()
@@ -691,6 +768,7 @@ func syncHubCustomerStore(ctx context.Context, st *store.Store) (hubCustomerStor
 		return rep, err
 	}
 	rep.ColonyPeople, rep.ColonyFacts, rep.ColonyConsent, rep.Tombstones = stats.People, stats.Facts, stats.Consents, stats.Tombstones
+	rep.ColonyHeld = stats.Held
 	rep.Parity = rep.ColonyPeople == rep.Synced && rep.Failed == 0 && rep.OrphansHeld == 0
 	return rep, nil
 }
@@ -719,10 +797,17 @@ func syncPerson(st *store.Store, u *SaaSUser) error {
 		return err
 	}
 	holds := func(want store.Identity) bool {
-		return err == nil && slices.ContainsFunc(p.Identities, func(have store.Identity) bool {
+		if err != nil {
+			return false
+		}
+		same := func(have store.Identity) bool {
 			return sameCRMIdentity(have, want) && have.Source == want.Source && have.Verified == want.Verified &&
 				(have.Locality == want.Locality || have.Locality == store.LocalityLocalOnly)
-		})
+		}
+		if slices.ContainsFunc(p.Identities, same) {
+			return true
+		}
+		return slices.ContainsFunc(p.Held, func(h store.HeldIdentity) bool { return same(h.Identity) })
 	}
 	changed := false
 	if !holds(primary) {
@@ -739,8 +824,10 @@ func syncPerson(st *store.Store, u *SaaSUser) error {
 		if holds(ident) {
 			continue
 		}
-		if _, err := st.UpsertIdentity(id, ident); err != nil &&
-			!errors.Is(err, store.ErrTombstoned) && !errors.Is(err, store.ErrIdentityConflict) {
+		// One another person owns is kept here as a held identity
+		// (colony v0.4.0) instead of being dropped.
+		if _, err := st.Upsert(store.PersonSpec{ID: id, Identities: []store.Identity{ident}, HoldConflicts: true}); err != nil &&
+			!errors.Is(err, store.ErrTombstoned) {
 			return err
 		}
 		changed = true
@@ -756,6 +843,13 @@ func syncPerson(st *store.Store, u *SaaSUser) error {
 	for _, have := range p.Identities {
 		if !slices.ContainsFunc(wantIdent, func(w store.Identity) bool { return sameCRMIdentity(have, w) }) {
 			if err := st.RemoveIdentity(id, have.Ref()); err != nil && !errors.Is(err, store.ErrNotFound) {
+				return err
+			}
+		}
+	}
+	for _, have := range p.Held {
+		if !slices.ContainsFunc(wantIdent, func(w store.Identity) bool { return sameCRMIdentity(have.Identity, w) }) {
+			if _, err := st.RemoveHeld(id, have.Ref()); err != nil && !errors.Is(err, store.ErrNotFound) {
 				return err
 			}
 		}
@@ -790,27 +884,42 @@ func syncPerson(st *store.Store, u *SaaSUser) error {
 	if err != nil {
 		return err
 	}
+	return syncCRMConsents(st, id, records)
+}
+
+// syncCRMConsents makes colony's consent records for person id match the
+// hub's, delivery bookkeeping included (colony v0.4.0). A consent the hub
+// pruned is deleted from colony too.
+func syncCRMConsents(st *store.Store, id string, records map[string]customerConsent) error {
+	p, err := st.Get(id)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
 	consents := crmConsentsFromRecords(records)
 	for _, c := range consents {
-		if have, ok := p.Consent(c.Scope); ok && crmConsentEqual(have, c) {
+		have, ok := p.Consent(c.Scope)
+		if ok && crmConsentEqual(have, c) {
 			continue
+		}
+		if ok {
+			// SetConsent keeps stored delivery bookkeeping when the record
+			// names none; the hub's record is the whole truth, so replace it.
+			if _, err := st.DeleteConsent(id, c.Scope); err != nil {
+				return err
+			}
 		}
 		if err := st.SetConsent(id, c); err != nil {
 			return err
 		}
 	}
-	// A consent the hub pruned has no record left. Colony has no delete, so
-	// the record is emptied there: no fields, text version or times, and
-	// never active. Only the hive id stays, until the user is deleted.
 	for _, have := range p.Consents {
 		if slices.ContainsFunc(consents, func(c store.Consent) bool { return c.Scope == have.Scope }) {
 			continue
 		}
-		empty := store.Consent{Scope: have.Scope, Fields: []string{}}
-		if crmConsentEqual(have, empty) {
-			continue
-		}
-		if err := st.SetConsent(id, empty); err != nil {
+		if _, err := st.DeleteConsent(id, have.Scope); err != nil {
 			return err
 		}
 	}
@@ -854,7 +963,10 @@ func sameCRMIdentity(a, b store.Identity) bool {
 
 func crmConsentEqual(a, b store.Consent) bool {
 	return a.Scope == b.Scope && slices.Equal(a.Fields, b.Fields) && a.TextVersion == b.TextVersion &&
-		a.GrantedAt.Equal(b.GrantedAt) && a.WithdrawnAt.Equal(b.WithdrawnAt) && a.DeliveredAt.Equal(b.DeliveredAt)
+		a.GrantedAt.Equal(b.GrantedAt) && a.WithdrawnAt.Equal(b.WithdrawnAt) && a.DeliveredAt.Equal(b.DeliveredAt) &&
+		(b.UpdatedAt.IsZero() || a.UpdatedAt.Equal(b.UpdatedAt)) && a.FirstDeliveredAt.Equal(b.FirstDeliveredAt) &&
+		slices.Equal(a.DeliveredFields, b.DeliveredFields) && slices.Equal(a.LastDeliveredFields, b.LastDeliveredFields) &&
+		a.DeliveredRev == b.DeliveredRev
 }
 
 // crmMirrorUser is the dual-write hook in saveSaaSUser (shadow and colony).
@@ -914,8 +1026,16 @@ func crmMirrorConsentFile(path string) {
 
 // crmOverlayUser is the colony-mode read hook in loadSaaSUser.
 func crmOverlayUser(u *SaaSUser) {
+	if u == nil {
+		return
+	}
 	st, mode := hubCRM.active()
-	if st == nil || mode != hubCustomerStoreColony || u == nil {
+	if st != nil && mode == hubCustomerStoreColonyOnly {
+		u.crmOverlaid = crmOnlyOverlay(st, u)
+		return
+	}
+	u.crmOverlaid = true
+	if st == nil || mode != hubCustomerStoreColony {
 		return
 	}
 	id := crmPersonID(u)
@@ -940,13 +1060,15 @@ func crmOverlayUser(u *SaaSUser) {
 // not run (a user file that could not be read at that moment) must never
 // bring back a field the person turned off or undo a withdrawal. The
 // hub-only delivery bookkeeping (first and last delivery, delivered fields,
-// rev), which colony's Consent has no slot for, always comes from the file.
+// rev) always comes from the file in this mode, though colony holds a copy
+// since v0.4.0.
 // It is called by the read paths: the match index, the match answer and the
 // person's own consent page. Write paths never call it.
 //
-// Only hive ids the consent file still lists are considered: colony has no
-// delete, so a consent the hub pruned is an emptied record there, and the
-// file decides which records exist. A person whose last sync failed or was
+// Only hive ids the consent file still lists are considered: the file
+// decides which records exist (a consent the hub prunes is deleted from
+// colony too, and an emptied record an older release left there is never
+// read). A person whose last sync failed or was
 // skipped is read from the file alone, like crmOverlayUser.
 func crmOverlayConsents(u *SaaSUser, records map[string]customerConsent) {
 	st, mode := hubCRM.active()
