@@ -339,16 +339,10 @@ func (h *ContributeWSHub) retryUnverifiedAlreadyDoneCleanup(ctx context.Context,
 			next.Comment = false
 		}
 	}
+	// The comment goes first: while the label is still on, the issue stays
+	// out of offers, so no offer check can void the hold on the comment's
+	// updated_at before the restamp. Taking the label off is the last call.
 	wrote := false
-	if next.Label {
-		removed, err := h.removeUnverifiedAlreadyDoneLabel(ctx, rec.Repo, rec.Number, rec.DispatchedAt)
-		if err != nil {
-			next.Label = h.unverifiedAlreadyDoneRetryable(rec.Repo, rec.Number, unverifiedAlreadyDonePartLabel, next.Attempts, err)
-		} else {
-			next.Label = false
-			wrote = wrote || removed
-		}
-	}
 	if next.Comment {
 		created, err := h.noteAlreadyDoneUnverified(ctx, rec.Repo, rec.Number, rec.Reporter, rec.hold())
 		if err != nil {
@@ -356,6 +350,15 @@ func (h *ContributeWSHub) retryUnverifiedAlreadyDoneCleanup(ctx context.Context,
 		} else {
 			next.Comment = false
 			wrote = wrote || created
+		}
+	}
+	if next.Label {
+		removed, err := h.removeUnverifiedAlreadyDoneLabel(ctx, rec.Repo, rec.Number, rec.DispatchedAt)
+		if err != nil {
+			next.Label = h.unverifiedAlreadyDoneRetryable(rec.Repo, rec.Number, unverifiedAlreadyDonePartLabel, next.Attempts, err)
+		} else {
+			next.Label = false
+			wrote = wrote || removed
 		}
 	}
 	if wrote && restamp {
