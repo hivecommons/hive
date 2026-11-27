@@ -170,7 +170,11 @@ type RegistryEntry struct {
 	Org   string   `json:"org"`
 	Repos []string `json:"repos"`
 	// ProjectName is reported by self-hosted spokes; for hosted hives the
-	// operator-editable SaaS record is authoritative.
+	// operator-editable SaaS record is authoritative and handleRenameHive
+	// persists changes to that record. The My Hives row renders the name
+	// as its top line; when empty, the client falls back to an org/repo
+	// label. Older spokes that omit the field retain their last reported
+	// name rather than clearing it on the next heartbeat.
 	ProjectName string `json:"projectName,omitempty"`
 	// AIAuthor is the GitHub account this hive's agents open PRs as, as
 	// reported by the spoke. The hub needs it to echo project config back
