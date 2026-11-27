@@ -115,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || unresolvedConversationsSkip(r) || reviewRetryServerError(r) || stageLabelServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) || unauthorizedLoginRejected(r) || appTokenRefreshTimeoutFallback(r) {
+	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || unresolvedConversationsSkip(r) || reviewRetryServerError(r) || stageLabelServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) || unauthorizedLoginRejected(r) || appTokenRefreshTimeoutFallback(r) || selfUpgradeBoundedRetry(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -158,6 +158,33 @@ const claudeCredentialRebridgedMessage = "claude credential bridge: a private cr
 // failed or refused repair logs a different message and stays reportable.
 func claudeCredentialRebridged(r slog.Record) bool {
 	return r.Level == slog.LevelWarn && strings.TrimSpace(r.Message) == claudeCredentialRebridgedMessage
+}
+
+// selfUpgradeRetryMessage and selfUpgradeRetryDeferredMessage are the WARNs
+// cmd/hive's heartbeat UpgradeCallback logs while a failed self-upgrade is
+// still inside its bounded retry budget (src/cmd/hive/main.go). Keep the
+// strings in sync.
+const (
+	selfUpgradeRetryMessage         = "self-upgrade retrying after a failed attempt (image unchanged)"
+	selfUpgradeRetryDeferredMessage = "self-upgrade retry deferred: backing off after a failed attempt"
+)
+
+// selfUpgradeBoundedRetry is the self-upgrade working through its bounded
+// retry budget. The heartbeat re-logs it on every tick until the backoff and
+// the minimum-uptime floor clear, so it crossed the repeat threshold within
+// minutes of any failed attempt and filed as unclassified_error_repeated
+// (hivecommons/hive#20168). The terminal outcome stays reportable: exhausting
+// the budget logs "self-upgrade FAILED: giving up ..." at ERROR, which this
+// does not match. The WARNs stay in local logs.
+func selfUpgradeBoundedRetry(r slog.Record) bool {
+	if r.Level != slog.LevelWarn {
+		return false
+	}
+	switch strings.TrimSpace(r.Message) {
+	case selfUpgradeRetryMessage, selfUpgradeRetryDeferredMessage:
+		return true
+	}
+	return false
 }
 
 // unauthorizedLoginRejected is the dashboard refusing a GitHub user who is not
