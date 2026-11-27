@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.381.2)
+
+### Fixed
+
+- **Integration reservation releases no longer fail repeatedly once the integration journal reaches its record bound.** Every per-key release was refused with "integration journal index bound reached", so held reservations were never released and the error repeated on each claim release. A release that frees a held reservation is now recorded past the bound, a release with nothing to free is skipped, and journal replay accepts those release records (#20123).
+
 ## 2026-11-27 (v5.381.1)
 
 ### Fixed
