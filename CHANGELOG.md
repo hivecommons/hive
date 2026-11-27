@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.381.4)
+
+### Fixed
+
+- The agent Settings dialog now has Context window and Auto-compact window fields for `max_context_tokens` and `auto_compact_window_tokens`, which save to every config layer and restart the agent, and both keys set in `/data/agent-configs/<agent>.yaml` or the agent's block of the runtime config are no longer dropped on a Kubernetes spoke when the dashboard overlay's older copy of the agent replaces it at boot (#19913).
+- **`hive-open-pr` title-claim gate now recognises inline Rust test modules.** A title that claims "test" used to be refused unless a changed path looked like a test file, so test-only Rust PRs (whose unit tests live in an inline `#[cfg(test)] mod tests` block in the source file) were rejected with `title claims test but diff contains no test file` and had to be retitled. A changed `*.rs` file now also counts as a test file when its added lines contain `#[test]`, `#[cfg(test)]` or `#[tokio::test]`. The path rules are unchanged, so no PR accepted before is refused now. ([#20138](https://github.com/hivecommons/hive/issues/20138))
+
 ## 2026-11-27 (v5.381.3)
 
 ### Fixed
