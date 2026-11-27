@@ -87,12 +87,16 @@ func isScannerAgent(agent string) bool {
 // a shared-CI incident reference must stay a separate, never-edited comment,
 // and blocker, verification or status markers have their own writers.
 // Ad-hoc markers the agent invents (`<!-- hive-scanner-triage -->`) do not
-// make a note special and are folded in like the rest of the text.
+// make a note special and are folded in like the rest of the text. Neither
+// does a scanner-note marker the agent copied into its text, bare or with
+// attributes: the relay computes the note's state itself and strips the
+// copied marker, so such a note is folded and deduped like any other
+// (hivecommons/hive#20160).
 func scannerNoteCandidate(body string) bool {
 	if strings.Contains(body, "<!-- hive-shared-ci-") || verificationMarker(body) != "" {
 		return false
 	}
-	rest := strings.ReplaceAll(body, "<!-- "+OriginMarkerName+" ", "")
+	rest := strings.ReplaceAll(stripScannerNoteMarker(body), "<!-- "+OriginMarkerName+" ", "")
 	return !strings.Contains(rest, "<!-- hive:")
 }
 

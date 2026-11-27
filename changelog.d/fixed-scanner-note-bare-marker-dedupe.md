@@ -1,0 +1,1 @@
+- Scanner CI-triage notes that carry a copied `<!-- hive:scanner-note -->` marker are now folded into the one scanner note per PR and dropped when the head and failing checks are unchanged, instead of each posting a new comment.

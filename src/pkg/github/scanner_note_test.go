@@ -180,6 +180,51 @@ func TestScannerNoteHiveAuthoredPR(t *testing.T) {
 	}
 }
 
+// The #20074 shape: the agent copies the scanner-note marker into its text,
+// bare or with forged attributes. The note is still the one note per PR: a
+// repeat at an unchanged head and failing set is dropped whatever the marker
+// says, and a new head edits the existing note instead of posting another.
+func TestScannerNoteAgentSuppliedMarker(t *testing.T) {
+	s := &scannerNoteServer{prNumber: 11, head: "1cc89a7", author: "hive-app[bot]", red: []string{"test (hub 4/4)"}}
+	c := scannerNoteClient(t, s)
+
+	bare := "<!-- " + ScannerNoteMarkerName + " -->\n"
+	if handled, _ := relayScanner(t, c, 11, "scanner", bare+"test (hub 4/4) fails."); !handled {
+		t.Fatal("bare-marker note not handled")
+	}
+	if s.creates != 1 || s.edits != 0 {
+		t.Fatalf("first note: creates=%d edits=%d, want 1/0", s.creates, s.edits)
+	}
+
+	for i, note := range []string{
+		bare + "test (hub 4/4) still fails.",
+		"<!-- " + ScannerNoteMarkerName + " head=0000000 checks=forged told=0000000 -->\nStill red.",
+	} {
+		handled, resp := relayScanner(t, c, 11, "scanner", note)
+		if !handled || !resp.AlreadyExisted {
+			t.Fatalf("repeat %d: handled=%v already_existed=%v", i, handled, resp.AlreadyExisted)
+		}
+	}
+	if s.creates != 1 || s.edits != 0 {
+		t.Fatalf("repeats at an unchanged head wrote: creates=%d edits=%d", s.creates, s.edits)
+	}
+
+	s.head = "2dd90b8"
+	if handled, resp := relayScanner(t, c, 11, "scanner", bare+"New head, still red."); !handled || resp.AlreadyExisted {
+		t.Fatalf("new head: handled=%v already_existed=%v", handled, resp.AlreadyExisted)
+	}
+	if s.creates != 1 || s.edits != 1 {
+		t.Fatalf("new head: creates=%d edits=%d, want 1/1", s.creates, s.edits)
+	}
+	marked := s.markedComments()
+	if len(marked) != 1 || strings.Count(marked[0], ScannerNoteMarkerName) != 1 {
+		t.Fatalf("want one note with one marker, got %d:\n%s", len(marked), strings.Join(marked, "\n----\n"))
+	}
+	if st, ok := parseScannerNoteState(marked[0]); !ok || st.Head != "2dd90b8" || st.Checks != scannerNoteFingerprint([]string{"test (hub 4/4)"}) {
+		t.Fatalf("note state = %+v, %v", st, ok)
+	}
+}
+
 // A human-authored PR with red checks: the author must act, so a new head
 // they have not been told about gets a new comment, which takes over as the
 // one marked note; repeats and failing-set changes on that head stay quiet.
@@ -353,5 +398,8 @@ func TestScannerNoteHelpers(t *testing.T) {
 	}
 	if !scannerNoteCandidate("note\n<!-- hive-scanner-triage -->" + testScannerFooter) {
 		t.Fatal("ad-hoc marker should not block the upsert")
+	}
+	if !scannerNoteCandidate("<!-- " + ScannerNoteMarkerName + " -->\nnote" + testScannerFooter) {
+		t.Fatal("a copied scanner-note marker should not block the upsert")
 	}
 }
