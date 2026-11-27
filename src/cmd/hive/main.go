@@ -2460,10 +2460,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// way hands the queues to the right relays. It stops with b.ctx, which
 	// is all shutdown needs, so its done channel is not joined. It also
 	// serves push-branch requests with the manager's push authorizer, and
-	// answers review and merge requests with a reason (#19916).
+	// answers review and merge requests with a reason (#19916). Clone
+	// requests are served with the manager's clone authorizer when the
+	// runtime has one, and denied otherwise (#19997).
 	if deps.startForgeRequestRelay != nil {
-		_ = deps.startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
-			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger).withPushRelay(b.agentMgr.AuthorizePushBranch).withPushAudit(b.recordWriteAudit))
+		relay := newForgeRequestRelay(func() *config.Config { return b.cfg },
+			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger).withPushRelay(b.agentMgr.AuthorizePushBranch).withPushAudit(b.recordWriteAudit)
+		if a, ok := b.agentMgr.(forgeCloneAuthorizerSource); ok {
+			relay.withCloneRelay(a.AuthorizeForgeClone)
+		}
+		_ = deps.startForgeRequestRelay(b.ctx, relay)
 	}
 	// Forgejo repos (#19671): the GitHub sweeps above skip them (RepoOnGitHub),
 	// so they get their own sweeps, which need no GitHub client. A gitea config

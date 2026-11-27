@@ -108,6 +108,10 @@ type forgeRequestRelay struct {
 	reviewDir   string
 	mergeDir    string
 	queuesReady bool
+
+	// The clone queue (forge_clone_relay.go, #19997).
+	cloneAuthz forgeCloneAuthorizer
+	cloneDir   string
 }
 
 func newForgeRequestRelay(cfg func() *config.Config, prAuthz github.PRRequestAuthorizer, issueAuthz github.IssueRequestAuthorizer, logger *slog.Logger) *forgeRequestRelay {
@@ -125,6 +129,7 @@ func newForgeRequestRelay(cfg func() *config.Config, prAuthz github.PRRequestAut
 		pushDir:    github.PushBranchRequestDir,
 		reviewDir:  github.ReviewRequestDir,
 		mergeDir:   github.MergeRequestDir,
+		cloneDir:   forgeCloneRequestDir,
 	}
 }
 
@@ -167,6 +172,7 @@ func (r *forgeRequestRelay) scanOnce(ctx context.Context) {
 	for _, path := range pendingRequestFiles(r.pushDir) {
 		r.handlePushBranch(ctx, path)
 	}
+	r.serveCloneQueue(ctx)
 	for _, path := range pendingRequestFiles(r.prDir) {
 		r.handlePR(ctx, path)
 	}

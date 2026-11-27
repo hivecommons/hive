@@ -368,6 +368,54 @@ for example an unreadable key file, builds no REST client and names
     an error that names `forgejo.login`. If Forgejo refuses `read:user` on
     an integration limited to repositories, set `forgejo.login`.
 
+#### Pod-run agents clone through the hive
+
+An agent that runs in the hive pod (`sandbox.runtime` off) gets no
+credential for the Forgejo host: the access token is stripped from its pane,
+and the agents' proxy never attaches a token to a forge host. A plain
+`git clone` of a private repo fails with HTTP 401. The agent asks the hive
+instead ([#19997](https://github.com/hivecommons/hive/issues/19997)):
+
+```sh
+hive-clone --repo <owner/repo> [--dir <path>]          # new checkout
+hive-clone --repo <owner/repo> --fetch [--dir <path>]  # update a checkout
+```
+
+The hive's clone relay serves the request on a hive whose repos are all off
+GitHub, as the push relay does:
+
+- The request file must be owned by the agent's own UID, mapped to the agent
+  it names. There is no shared-UID fallback, so a hive without per-agent UIDs
+  refuses every clone request.
+- The repo must be one of `project.repos`, not paused, and in the agent's
+  repo scope. A clone is a read, so the agent's ACMM mode and whether it is
+  paused do not gate it; an advisory agent clones at the advisor tier. The URL is built from the configured name and
+  `forgejo.forgejo_url`, never from the request.
+- `forgejo.integration` is required. The hive mints a one-hour JWT for the
+  agent's own token tier and fetches with it. It never uses the long-lived
+  `token_env` token for this. If the mint fails, nothing is fetched.
+- The forge URL must be https; the relay refuses a plain-http
+  `forgejo_url`. The fetch runs as the hive, in a fresh hive-owned git
+  directory, with the push relay's git hardening: system and global config
+  off, no hooks or credential helpers, TLS verification on, https only, and
+  no redirects followed. The token is in the environment of the hive's own
+  git process and its https helper only, as a header scoped to the repo URL,
+  and it passes through the hive's egress proxy as any of the hive's own
+  forge calls do. It is never in an argument, a file, a log line or the
+  agent's environment, and any git output is scrubbed of it.
+- The agent receives a git bundle of the repo's branches and tags, mode 0600
+  and owned by its UID, in `/var/run/hive-metrics/clone-requests`.
+  `hive-clone` checks that the result and the bundle are the hive's and its
+  own, clones from or fetches the bundle as the agent, checks out the
+  default branch, points `origin` at the plain https URL, and deletes the
+  bundle. An agent has at most one bundle at a time, and the relay removes
+  one left behind after 30 minutes. Each scan serves at most one request per
+  agent, oldest first. `HIVE_FORGE_CLONE_MAX_BUNDLE_BYTES` caps a bundle (2 GiB
+  by default).
+
+A later `git fetch origin` has no credential either; run `hive-clone --fetch`.
+Publish work with `hive-push-branch`, which pushes through the push relay.
+
 #### Rotate the signing key
 
 The key file is read at every mint, so replacing it rotates the key. Forgejo
