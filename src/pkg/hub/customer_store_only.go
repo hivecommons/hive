@@ -27,7 +27,9 @@ package hub
 // colony-only. A mismatch keeps the hub in colony mode, with every file as
 // it was and the records it wrote cleared. A consents directory found beside
 // a colony-only store is never read as the records: older than the
-// migration it is set aside, newer (and different) it refuses the boot.
+// migration it is set aside; newer (and different) it is merged into colony
+// narrow-only and set aside, or refuses the boot when the merge cannot
+// classify it (customer_store_only_merge.go).
 //
 // Rollback: a boot in colony, shadow or json mode that finds the
 // colony-only document writes the CRM fields back into every stripped user
@@ -783,6 +785,12 @@ func migrateHubColonyOnly(st *store.Store, now time.Time) error {
 	}); err != nil {
 		return fail(err)
 	}
+	// Retention for the kept copies runs from now (pruneHubKeptCopies).
+	for _, kept := range []string{pending.UsersTo, pending.ConsentsTo} {
+		if kept != "" {
+			markHubKeptCopy(kept, now)
+		}
+	}
 	slog.Info("hub customer store: colony-only took over; consent files renamed, CRM fields leave the user json on the next save",
 		"people", len(wants), "renamed", len(renamed))
 	return nil
@@ -869,8 +877,9 @@ func hubCustomerFiles(st *store.Store, usersDir string) (map[string][]byte, map[
 // it wrote back, in one transaction. A consents directory that exists is
 // handled first, before anything is written (checkReappearedConsents): one
 // that matches colony is kept, an older one is set aside, never
-// overwritten, and a newer one refuses the restore. On error the document
-// stays and the next boot tries again.
+// overwritten, and a newer one is merged into colony narrow-only first and
+// then set aside, or refuses the restore when it cannot be. On error the
+// document stays and the next boot tries again.
 func restoreHubFromColonyOnly(st *store.Store, now time.Time) (bool, error) {
 	doc, migrated, err := hubColonyOnlyDocOf(st)
 	if err != nil || !migrated {
@@ -886,7 +895,15 @@ func restoreHubFromColonyOnly(st *store.Store, now time.Time) (bool, error) {
 		return false, err
 	}
 	if state == consentsNewer {
-		return false, errConsentsNewer
+		// Merged narrow-only into colony first (errConsentsNewer when it
+		// cannot be), then rendered again and set aside as an older one.
+		if err := mergeNewerConsents(st, dir, consents); err != nil {
+			return false, err
+		}
+		if users, consents, err = hubCustomerFiles(st, saasUsersDir); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return false, err
+		}
+		state = consentsOlder
 	}
 	// The consent files are written into consents.restoring and renamed
 	// into place whole, so a crash part-way never leaves a partial
@@ -909,6 +926,7 @@ func restoreHubFromColonyOnly(st *store.Store, now time.Time) (bool, error) {
 		if err := os.Rename(dir, aside); err != nil {
 			return false, err
 		}
+		markHubKeptCopy(aside, now)
 	}
 	if len(consents) > 0 {
 		if err := os.Rename(staging, dir); err != nil {
@@ -944,10 +962,11 @@ func restoreHubFromColonyOnly(st *store.Store, now time.Time) (bool, error) {
 
 // errConsentsNewer refuses a boot: a consents directory written after the
 // colony-only migration (by an older binary, or a json-mode fallback) holds
-// changes colony lacks, and colony holds records it lacks. Neither can be
-// chosen safely, so neither is, and nothing is written.
-var errConsentsNewer = errors.New("hub customer store: /data/saas/consents is newer than the colony-only migration and differs from colony.db; " +
-	"move it aside to keep colony.db (merge any change from it by hand), then boot again")
+// changes colony lacks that the narrow-only merge (mergeNewerConsents)
+// cannot classify. Neither copy can be chosen safely, so neither is, and
+// nothing is written.
+var errConsentsNewer = errors.New("hub customer store: /data/saas/consents is newer than the colony-only migration and holds changes the narrow-only merge cannot classify; " +
+	"move it aside to keep colony.db (apply any withdrawal or narrowed grant from it by hand), then boot again")
 
 // Reappeared consents directory states.
 const (
@@ -1150,25 +1169,28 @@ func scrubHubMigrated(u *SaaSUser) error {
 	}
 	saasDir := filepath.Dir(saasUsersDir)
 	var dirs []string
-	// Every copy colony-only keeps or sets aside: .migrated, and the
-	// consents directories a restore or a colony-only boot set aside.
-	for _, pat := range []string{
-		filepath.Base(saasUsersDir) + hubMigratedSuffix + "*",
-		filepath.Base(customerConsentDir()) + hubMigratedSuffix + "*",
-		filepath.Base(customerConsentDir()) + hubRestoredAsideSuffix + "*",
-		filepath.Base(customerConsentDir()) + hubIgnoredSuffix + "*",
-	} {
-		matches, err := filepath.Glob(filepath.Join(saasDir, pat))
+	for _, k := range hubKeptCopies() {
+		matches, err := filepath.Glob(filepath.Join(saasDir, k.pattern))
 		if err != nil {
 			return err
 		}
 		dirs = append(dirs, matches...)
 	}
 	for _, d := range dirs {
+		// A removal must not restart the copy's retention clock
+		// (pruneHubKeptCopies reads it from the directory's mtime).
+		fi, statErr := os.Stat(d)
+		removed := false
 		for _, base := range bases {
-			if err := os.Remove(filepath.Join(d, base)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			err := os.Remove(filepath.Join(d, base))
+			if err == nil {
+				removed = true
+			} else if !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
+		}
+		if removed && statErr == nil {
+			_ = os.Chtimes(d, fi.ModTime(), fi.ModTime())
 		}
 	}
 	return nil
@@ -1177,8 +1199,9 @@ func scrubHubMigrated(u *SaaSUser) error {
 // setAsideReappearedConsents handles a consents directory beside a
 // colony-only store, which is never read as the records: one older than the
 // migration (a stale copy put back) or matching colony is set aside, never
-// deleted; a newer one that differs refuses colony-only (errConsentsNewer)
-// with nothing moved. It reports whether one was set aside.
+// deleted; a newer one that differs is merged into colony narrow-only and
+// then set aside, or refuses colony-only (errConsentsNewer) with nothing
+// moved or written. It reports whether one was set aside.
 func setAsideReappearedConsents(st *store.Store, now time.Time) (bool, error) {
 	dir := customerConsentDir()
 	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
@@ -1199,11 +1222,18 @@ func setAsideReappearedConsents(st *store.Store, now time.Time) (bool, error) {
 		return false, err
 	}
 	if state == consentsNewer {
-		return false, errConsentsNewer
+		// Merged narrow-only into colony, then set aside like any other.
+		if err := mergeNewerConsents(st, dir, consents); err != nil {
+			return false, err
+		}
 	}
 	to, err := uniqueSibling(dir, hubIgnoredSuffix, now)
 	if err != nil {
 		return false, err
 	}
-	return true, os.Rename(dir, to)
+	if err := os.Rename(dir, to); err != nil {
+		return false, err
+	}
+	markHubKeptCopy(to, now)
+	return true, nil
 }

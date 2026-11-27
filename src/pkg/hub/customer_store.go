@@ -339,9 +339,11 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 		if migrated {
 			// A consents directory beside a store colony-only took over is
 			// never read as the truth: it is set aside, not deleted.
-			// One newer than the migration refuses colony-only, with
-			// nothing written: json mode reads that directory, and colony.db
-			// and every stripped record stay as they are.
+			// One newer than the migration is merged into colony
+			// narrow-only first; one the merge cannot classify refuses
+			// colony-only, with nothing written: json mode reads that
+			// directory, and colony.db and every stripped record stay as
+			// they are.
 			if aside, err := setAsideReappearedConsents(st, time.Now()); err != nil {
 				_ = st.Close()
 				logger.Error("hub customer store: a consents directory beside the colony-only store was not set aside; json mode",

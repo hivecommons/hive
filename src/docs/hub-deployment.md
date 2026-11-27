@@ -322,9 +322,16 @@ person withdrew:
   migration (a stale copy put back), is set aside as `consents.ignored`
   (colony-only) or `consents.pre-restore` (rollback), never deleted;
 - one changed after the migration that differs from colony (written by an
-  older hub image, or while the hub fell back to `json`) refuses both
-  colony-only and the rollback before anything is written. The hub then
-  runs in `json` mode and logs `consents_newer_than_colony_only`. To resolve
+  older hub image, or while the hub fell back to `json`) is merged into
+  colony narrow-only, then set aside like an older one: a withdrawal on
+  either side wins, a grant both hold keeps only the fields both grant, a
+  grant only the directory holds is not added, and delivery bookkeeping is
+  kept from both. Anything the merge cannot classify (a file that is not a
+  consent file of a known user, a field this release does not know, a grant
+  colony holds that the directory lacks, a delivered grant colony has no
+  record of) refuses both colony-only and the rollback before anything is
+  written. The hub then runs in `json` mode and logs
+  `consents_newer_than_colony_only`. To resolve
   it, set `HIVE_HUB_CUSTOMERS_SHARE_ENABLED=false` first, so nothing is
   delivered from either copy meanwhile; move the directory aside (for example
   to `consents.held`); boot again; apply any withdrawal or narrowed grant
@@ -352,10 +359,11 @@ writes over the live files), check the files, copy `users/*.json` and
 the same files and drops the marker. The export never overwrites a file
 without `--force`.
 
-`users.migrated` and `consents.migrated` are kept until an operator removes
-them: they are the JSON as it stood when colony-only took over. Deleting a
-user removes their copies there too, and in `consents.ignored` and
-`consents.pre-restore`.
+`users.migrated` and `consents.migrated` are the JSON as it stood when
+colony-only took over. They, `consents.ignored` and `consents.pre-restore`
+are removed by the daily consent sweep 90 days after they were set aside
+(never while a `colony.db` on disk is not open). Deleting a user removes
+their copies there too.
 
 **Never run a hub image older than colony-only against a colony-only
 store; roll back first.** Such an image opens the same `colony.db`, reads
