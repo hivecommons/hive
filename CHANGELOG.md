@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.382.2)
+
+### Fixed
+
+- Report agent GitHub token refresh failures under the appropriate authentication or connectivity condition and clear it when refresh recovers.
+
 ## 2026-11-27 (v5.382.1)
 
 ### Fixed
