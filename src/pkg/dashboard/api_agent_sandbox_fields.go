@@ -6,7 +6,6 @@ import (
 	"regexp"
 	"strings"
 
-	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/pkg/config"
 )
 
@@ -232,7 +231,7 @@ func applySandboxJobScheduling(job *config.SandboxJobConfig, m map[string]interf
 			*f.dst = value
 		}
 	}
-	if err := cruxconfig.ValidateSandboxJobMetadata(&config.SandboxJobConfig{PodLabels: job.PodLabels, PodAnnotations: job.PodAnnotations}); err != nil {
+	if err := config.ValidateSandboxJobMetadata(&config.SandboxJobConfig{PodLabels: job.PodLabels, PodAnnotations: job.PodAnnotations}); err != nil {
 		return err
 	}
 	if v, ok := m["nodeSelector"]; ok {
