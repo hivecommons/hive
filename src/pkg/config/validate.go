@@ -464,6 +464,9 @@ func (c *Config) validateJobAffinities() error {
 		if err := cruxconfig.ValidateSandboxJobTransport(c.AgentSandbox.Job); err != nil {
 			return fmt.Errorf("agent_sandbox.%w", err)
 		}
+		if err := cruxconfig.ValidateSandboxJobMetadata(c.AgentSandbox.Job); err != nil {
+			return fmt.Errorf("agent_sandbox.%w", err)
+		}
 	}
 	names := make([]string, 0, len(c.Agents))
 	for name := range c.Agents {
@@ -478,6 +481,13 @@ func (c *Config) validateJobAffinities() error {
 			}
 			if err := cruxconfig.ValidateSandboxJobTransport(agent.Sandbox.Job); err != nil {
 				return fmt.Errorf("agents.%s.sandbox.%w", name, err)
+			}
+			if err := cruxconfig.ValidateSandboxJobMetadata(agent.Sandbox.Job); err != nil {
+				return fmt.Errorf("agents.%s.sandbox.%w", name, err)
+			}
+			effective := agent.SandboxJob(c.AgentSandbox)
+			if err := cruxconfig.ValidateSandboxJobMetadata(&effective); err != nil {
+				return fmt.Errorf("agents.%s.sandbox effective %w", name, err)
 			}
 		}
 	}

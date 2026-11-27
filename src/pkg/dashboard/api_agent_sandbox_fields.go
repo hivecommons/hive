@@ -88,6 +88,8 @@ func agentSandboxFieldsView(a config.AgentConfig, global config.AgentSandboxConf
 			"envFromSecrets":      nonNilStrings(job.EnvFromSecrets),
 			"imagePullSecrets":    nonNilStrings(job.ImagePullSecrets),
 			"nodeSelector":        nonNilStringMap(job.NodeSelector),
+			"podLabels":           nonNilStringMap(job.PodLabels),
+			"podAnnotations":      nonNilStringMap(job.PodAnnotations),
 			"resources":           resourcesView(job.Resources),
 			"tolerations":         nonNilTolerations(job.Tolerations),
 			"scheduleTimeoutS":    job.ScheduleTimeoutS,
@@ -214,6 +216,24 @@ func applySandboxJobFields(job *config.SandboxJobConfig, m map[string]interface{
 // by the per-agent block and the hive-wide agent_sandbox.job block; field
 // names the YAML prefix used in error messages.
 func applySandboxJobScheduling(job *config.SandboxJobConfig, m map[string]interface{}, field string) error {
+	for _, f := range []struct {
+		key string
+		dst *map[string]string
+	}{
+		{"podLabels", &job.PodLabels},
+		{"podAnnotations", &job.PodAnnotations},
+	} {
+		if v, ok := m[f.key]; ok {
+			value, err := sandboxMetadataMapFromBody(field+"."+f.key, v)
+			if err != nil {
+				return err
+			}
+			*f.dst = value
+		}
+	}
+	if err := config.ValidateSandboxJobMetadata(&config.SandboxJobConfig{PodLabels: job.PodLabels, PodAnnotations: job.PodAnnotations}); err != nil {
+		return err
+	}
 	if v, ok := m["nodeSelector"]; ok {
 		sel, err := nodeSelectorFromBody(field+".node_selector", v)
 		if err != nil {

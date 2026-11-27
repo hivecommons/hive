@@ -718,6 +718,11 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if sandboxEditsPresent(body) {
+		effectiveJob := agentCfg.SandboxJob(s.deps.Config.AgentSandbox)
+		if err := config.ValidateSandboxJobMetadata(&effectiveJob); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		if err := sandboxEnabledProblem(name, agentCfg, s.deps.Config.AgentSandbox); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return

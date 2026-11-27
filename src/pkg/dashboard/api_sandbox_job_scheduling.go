@@ -97,8 +97,26 @@ func validateK8sQualifiedName(field, s string) error {
 }
 
 // stringMapFromBody reads a JSON object of strings. Numbers are accepted and
-// formatted, so a quantity typed as 2 is "2". nil or {} is nil.
+// formatted, so a quantity typed as 2 is "2". nil or {} is nil. Keys and
+// values are trimmed.
 func stringMapFromBody(field string, v interface{}) (map[string]string, error) {
+	return readStringMapFromBody(field, v, true)
+}
+
+// sandboxMetadataMapFromBody reads pod labels or annotations. It is
+// stringMapFromBody without trimming, so annotation values keep their
+// whitespace and an untrimmed key is reported as invalid, not silently fixed.
+// Values must be JSON strings: a number is refused rather than formatted,
+// matching the Kubernetes API, where label and annotation values are strings.
+func sandboxMetadataMapFromBody(field string, v interface{}) (map[string]string, error) {
+	return readStringMapFromBody(field, v, false)
+}
+
+// readStringMapFromBody is the shared core of stringMapFromBody and
+// sandboxMetadataMapFromBody. Every value is written to the Job manifest, so
+// any entry that looks like a credential is refused. lenient selects the
+// stringMapFromBody behaviour: trim keys and values and format numbers.
+func readStringMapFromBody(field string, v interface{}, lenient bool) (map[string]string, error) {
 	if v == nil {
 		return nil, nil
 	}
@@ -111,12 +129,21 @@ func stringMapFromBody(field string, v interface{}) (map[string]string, error) {
 	}
 	out := make(map[string]string, len(obj))
 	for k, raw := range obj {
-		key := strings.TrimSpace(k)
+		key := k
+		if lenient {
+			key = strings.TrimSpace(k)
+		}
 		var val string
 		switch x := raw.(type) {
 		case string:
-			val = strings.TrimSpace(x)
+			val = x
+			if lenient {
+				val = strings.TrimSpace(x)
+			}
 		case float64:
+			if !lenient {
+				return nil, fmt.Errorf("%s: the value of %q must be a string", field, key)
+			}
 			val = strconv.FormatFloat(x, 'f', -1, 64)
 		default:
 			return nil, fmt.Errorf("%s: the value of %q must be a string", field, key)
@@ -574,6 +601,8 @@ func agentSandboxEffectiveView(a config.AgentConfig, global config.AgentSandboxC
 		"ttlSeconds":       fallback(own.TTLSeconds != 0, g.TTLSeconds != 0),
 		"scheduleTimeoutS": fallback(own.ScheduleTimeoutS != 0, g.ScheduleTimeoutS != 0),
 		"imagePullSecrets": fallback(len(own.ImagePullSecrets) > 0, len(g.ImagePullSecrets) > 0),
+		"podLabels":        fallback(len(own.PodLabels) > 0, len(g.PodLabels) > 0),
+		"podAnnotations":   fallback(len(own.PodAnnotations) > 0, len(g.PodAnnotations) > 0),
 	}
 	var hidden []string
 	if ownJob {
@@ -616,6 +645,8 @@ func agentSandboxEffectiveView(a config.AgentConfig, global config.AgentSandboxC
 	return map[string]interface{}{
 		"job": map[string]interface{}{
 			"nodeSelector":     nonNilStringMap(eff.NodeSelector),
+			"podLabels":        nonNilStringMap(eff.PodLabels),
+			"podAnnotations":   nonNilStringMap(eff.PodAnnotations),
 			"resources":        resourcesView(eff.Resources),
 			"tolerations":      nonNilTolerations(eff.Tolerations),
 			"serviceAccount":   eff.ServiceAccount,
@@ -639,6 +670,8 @@ func agentSandboxEffectiveView(a config.AgentConfig, global config.AgentSandboxC
 // Each key is raw so an absent key is "unchanged" and null clears the field.
 type sandboxJobDefaultsBody struct {
 	NodeSelector     json.RawMessage `json:"agentSandboxJobNodeSelector"`
+	PodLabels        json.RawMessage `json:"agentSandboxJobPodLabels"`
+	PodAnnotations   json.RawMessage `json:"agentSandboxJobPodAnnotations"`
 	Resources        json.RawMessage `json:"agentSandboxJobResources"`
 	Tolerations      json.RawMessage `json:"agentSandboxJobTolerations"`
 	ImagePullSecrets json.RawMessage `json:"agentSandboxJobImagePullSecrets"`
@@ -672,6 +705,8 @@ func (b sandboxJobDefaultsBody) parse(current config.AgentSandboxConfig) (sandbo
 		raw json.RawMessage
 	}{
 		{"nodeSelector", b.NodeSelector},
+		{"podLabels", b.PodLabels},
+		{"podAnnotations", b.PodAnnotations},
 		{"resources", b.Resources},
 		{"tolerations", b.Tolerations},
 		{"scheduleTimeoutS", b.ScheduleTimeoutS},
@@ -764,6 +799,8 @@ func sandboxJobDefaultsResponse(cfg *config.Config) map[string]interface{} {
 	job := sandboxJobOrEmpty(cfg)
 	return map[string]interface{}{
 		"agentSandboxJobNodeSelector":     nonNilStringMap(job.NodeSelector),
+		"agentSandboxJobPodLabels":        nonNilStringMap(job.PodLabels),
+		"agentSandboxJobPodAnnotations":   nonNilStringMap(job.PodAnnotations),
 		"agentSandboxJobResources":        resourcesView(job.Resources),
 		"agentSandboxJobTolerations":      nonNilTolerations(job.Tolerations),
 		"agentSandboxJobImagePullSecrets": nonNilStrings(job.ImagePullSecrets),
