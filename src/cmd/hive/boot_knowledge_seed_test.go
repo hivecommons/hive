@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"gopkg.in/yaml.v3"
 )
 
 // fakeSeedProbe answers the seed's two GitHub questions from fixed data and
@@ -109,10 +110,23 @@ func TestSeedKnowledgeGitSource(t *testing.T) {
 			wantLen: 1,
 		},
 		{
-			name: "explicit empty list opts out",
+			name: "explicit empty list from a dashboard save still seeds",
 			cfg: func() *config.Config {
 				c := seedCfg("acme/widgets")
 				c.Knowledge.GitSources = []config.GitSourceConfigYAML{}
+				return c
+			},
+			probe:     &fakeSeedProbe{branch: "main", exists: map[string]bool{"docs/knowledge": true}},
+			want:      &config.GitSourceConfigYAML{Name: "widgets-knowledge", URL: "https://github.com/acme/widgets", Branch: "main", Subpath: "docs/knowledge", Layer: "project"},
+			wantAsked: []string{"docs/knowledge"},
+			wantLen:   1,
+		},
+		{
+			name: "dashboard disconnect marker opts out",
+			cfg: func() *config.Config {
+				c := seedCfg("acme/widgets")
+				c.Knowledge.GitSources = []config.GitSourceConfigYAML{}
+				c.Knowledge.GitSourcesDisconnected = true
 				return c
 			},
 			probe: &fakeSeedProbe{branch: "main", exists: map[string]bool{"docs/knowledge": true}},
@@ -194,4 +208,44 @@ func seedCfg(primary string) *config.Config {
 	c := &config.Config{}
 	c.Project.PrimaryRepo = primary
 	return c
+}
+
+// TestSeedKnowledgeGitSourceAfterYAMLRoundTrip covers hivecommons/hive#20173:
+// a dashboard save of a config nobody gave git sources must not read back
+// as an operator opt-out, while a saved disconnect must.
+func TestSeedKnowledgeGitSourceAfterYAMLRoundTrip(t *testing.T) {
+	roundTrip := func(t *testing.T, in config.KnowledgeConfig) config.KnowledgeConfig {
+		t.Helper()
+		data, err := yaml.Marshal(in)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		var out config.KnowledgeConfig
+		if err := yaml.Unmarshal(data, &out); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return out
+	}
+	probe := func() *fakeSeedProbe {
+		return &fakeSeedProbe{branch: "main", exists: map[string]bool{"docs/knowledge": true}}
+	}
+
+	t.Run("unset list seeds after a save", func(t *testing.T) {
+		cfg := seedCfg("acme/widgets")
+		cfg.Knowledge = roundTrip(t, config.KnowledgeConfig{})
+		if !seedKnowledgeGitSource(context.Background(), cfg, probe(), slog.Default()) {
+			t.Fatalf("seed did not run after a YAML round trip of an unset git_sources list: %+v", cfg.Knowledge.GitSources)
+		}
+	})
+
+	t.Run("disconnect marker survives a save and blocks the seed", func(t *testing.T) {
+		cfg := seedCfg("acme/widgets")
+		cfg.Knowledge = roundTrip(t, config.KnowledgeConfig{GitSources: []config.GitSourceConfigYAML{}, GitSourcesDisconnected: true})
+		if !cfg.Knowledge.GitSourcesDisconnected {
+			t.Fatal("git_sources_disconnected did not survive the YAML round trip")
+		}
+		if seedKnowledgeGitSource(context.Background(), cfg, probe(), slog.Default()) {
+			t.Fatalf("seed ran despite a recorded dashboard disconnect: %+v", cfg.Knowledge.GitSources)
+		}
+	})
 }

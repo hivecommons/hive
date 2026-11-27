@@ -579,7 +579,8 @@
       "HoldoutPercent": 0,
       "OnError": ""
     },
-    "SidecarAdvise": false
+    "SidecarAdvise": false,
+    "GitSourcesDisconnected": false
   },
   "inbox": {
     "spek": {},

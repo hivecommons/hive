@@ -26,16 +26,23 @@ const knowledgeSeedLayer = "project"
 // seedKnowledgeGitSource gives a hive with no knowledge.git_sources one
 // entry pointing at its primary repo's knowledge directory, so hosted spokes
 // index the repo's curated entries without per-spoke hand config. It runs
-// in memory at every boot and never writes hive.yaml: an operator list (even
-// an explicit empty `git_sources: []`, which is what a dashboard disconnect
-// saves) is left alone, so the decision is idempotent and never overwrites
-// configuration. It reports whether an entry was appended.
+// in memory at every boot and never writes hive.yaml: a non-empty operator
+// list is left alone, and so is a hive whose dashboard recorded a disconnect
+// (knowledge.git_sources_disconnected), so the decision is idempotent and
+// never overwrites configuration. An empty list is treated like an absent
+// key, because any dashboard save used to write `git_sources: []` for a list
+// nobody set (hivecommons/hive#20173). It reports whether an entry was
+// appended.
 func seedKnowledgeGitSource(ctx context.Context, cfg *config.Config, probe knowledgeSeedProbe, logger *slog.Logger) bool {
 	if cfg == nil {
 		return false
 	}
-	if cfg.Knowledge.GitSources != nil {
+	if len(cfg.Knowledge.GitSources) > 0 {
 		logger.Debug("knowledge: git source seed skipped", "reason", "knowledge.git_sources is operator-set", "count", len(cfg.Knowledge.GitSources))
+		return false
+	}
+	if cfg.Knowledge.GitSourcesDisconnected {
+		logger.Debug("knowledge: git source seed skipped", "reason", "knowledge.git_sources_disconnected is set")
 		return false
 	}
 	repo := strings.TrimSpace(cfg.Project.PrimaryRepo)
