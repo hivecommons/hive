@@ -3,6 +3,7 @@ package connector
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/hivecommons/hive/pkg/atomicfile"
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
@@ -356,13 +358,12 @@ func writeAtomic(path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating vault dir: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+	if err := atomicfile.WriteFile(path, []byte(content), 0o644); err != nil {
+		var renameErr *os.LinkError
+		if errors.As(err, &renameErr) {
+			return fmt.Errorf("renaming fact: %w", err)
+		}
 		return fmt.Errorf("writing fact: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("renaming fact: %w", err)
 	}
 	return nil
 }

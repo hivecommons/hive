@@ -10,6 +10,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/atomicfile"
 )
 
 // Transcription statuses for one Inbox item.
@@ -340,28 +342,8 @@ func pruneOldest[V any](m map[string]V, keep int) {
 // writeFileAtomic writes data to path with mode 0600 via a temp file in the
 // same directory and a rename, creating the directory 0700.
 func writeFileAtomic(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, transcriptDirMode); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), transcriptDirMode); err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(dir, ".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	_, werr := f.Write(data)
-	cerr := f.Close()
-	if werr == nil {
-		werr = cerr
-	}
-	if werr == nil {
-		werr = os.Chmod(tmp, transcriptFileMode)
-	}
-	if werr == nil {
-		werr = os.Rename(tmp, path)
-	}
-	if werr != nil {
-		_ = os.Remove(tmp)
-	}
-	return werr
+	return atomicfile.WriteFile(path, data, transcriptFileMode)
 }

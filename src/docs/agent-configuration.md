@@ -697,6 +697,10 @@ for Claude model IDs. It describes the configured model and is dropped for a
 review head using a different model. Sandbox Job kicks receive the same context
 and compaction settings as pane launches.
 
+#### Setting the windows
+
+Use the **Context window (tokens)** and **Auto-compact window (tokens)** fields in the agent's Settings dialog (General section) for `max_context_tokens` and `auto_compact_window_tokens`. Saving writes the config file, the dashboard overlay and `/data/agent-configs/<agent>.yaml` together and restarts the agent, because the CLI reads both values at launch. An empty field or `0` clears the key. A hand edit to the agent file or to the agent's block in the config file also takes effect at the next boot or reload: on a Kubernetes spoke a non-zero value in either layer is no longer replaced by an older dashboard overlay entry for the agent that does not set the key, and a non-zero value in the agent file wins over the overlay. Because `0` means unset, clearing a value in the dashboard does not override a non-zero value in a read-only ConfigMap seed; remove it there.
+
 Hive does not export the variable for model IDs that contain `claude` (for example `anthropic/claude-sonnet-5-5`), because the CLI already knows those windows. Set `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` to turn the export off for the whole hive.
 
 ### Per-agent homes: what is shared and what is private

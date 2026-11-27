@@ -6,6 +6,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -189,11 +190,23 @@ func TestHubColonyOnlyMergeRefusesUnclassifiable(t *testing.T) {
 				t.Errorf("a refused merge set the directory aside: %v", err)
 			}
 			closeHubCustomerStore()
+			// The store is still colony-only, so the refused merge must leave
+			// it guarded against older images (#20116). Release the guard the
+			// way this hub does before it opens the file.
+			if err := openAsOlderImage(t); !errors.Is(err, store.ErrSchemaTooNew) {
+				t.Fatalf("older image open after a refused merge = %v, want ErrSchemaTooNew", err)
+			}
+			if err := releaseHubColonyOnlyGuard(hubCustomerStorePath(), hubCustomerStoreLockTimeout); err != nil {
+				t.Fatal(err)
+			}
 			st, err := store.Open(hubCustomerStorePath(), store.Options{})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer func() { _ = st.Close() }()
+			if migrated, err := hubColonyOnlyMigrated(st); err != nil || !migrated {
+				t.Errorf("a refused merge dropped the colony-only document: %v, %v", migrated, err)
+			}
 			rec, ok, err := crmGetRecord(st, crmPersonID(users[0]))
 			if err != nil || !ok {
 				t.Fatalf("colony record = %v, %v", ok, err)

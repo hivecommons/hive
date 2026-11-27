@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/atomicfile"
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
@@ -445,12 +446,12 @@ func repoFromClaudeSlug(path string, repos []string) string {
 }
 
 func writeAtomic(path, content string) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+	if err := atomicfile.WriteFile(path, []byte(content), 0o644); err != nil {
+		var renameErr *os.LinkError
+		if errors.As(err, &renameErr) {
+			return fmt.Errorf("cli-memory drain: renaming %s: %w", path, err)
+		}
 		return fmt.Errorf("cli-memory drain: writing %s: %w", path, err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("cli-memory drain: renaming %s: %w", path, err)
 	}
 	return nil
 }
