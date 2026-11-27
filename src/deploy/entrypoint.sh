@@ -141,13 +141,18 @@ hive_run_uid_isolation_migration() {
 
   printf '%s\n' "$AGENT_UID_LINES" | while IFS="$(printf '\t')" read -r _agent_name _agent_uid; do
     [ -n "$_agent_name" ] || continue
-    _agent_dir="/data/agents/${_agent_name}"
+    _agent_data_root="${HIVE_DATA_ROOT:-/data}"
+    _agent_dir="${_agent_data_root}/agents/${_agent_name}"
     _agent_marker="$(hive_uid_isolation_marker_path "$_agent_uid")"
     _agent_expected="${HIVE_UID_ISOLATION_REVISION}:${_agent_uid}"
     _agent_owner="$(stat -c '%u' "$_agent_dir" 2>/dev/null || echo 0)"
+    _agent_group="$(stat -c '%G' "$_agent_dir" 2>/dev/null || true)"
 
+    # #20162: the group is part of "current". A kubelet fsGroup re-group
+    # (OnRootMismatch) can put the pod fsGroup gid on the whole PVC after the
+    # marker was written; setgid agent dirs then hand that gid to every clone.
     if hive_uid_isolation_marker_matches "$_agent_marker" "$_agent_expected" \
-       && [ "$_agent_owner" = "$_agent_uid" ]; then
+       && [ "$_agent_owner" = "$_agent_uid" ] && [ "$_agent_group" = node ]; then
       echo "[entrypoint] UID isolation: ${_agent_name} already current — skipping"
     else
       echo "[entrypoint] UID isolation: repairing ${_agent_name} (uid ${_agent_uid}) in background"
@@ -155,6 +160,17 @@ hive_run_uid_isolation_migration() {
       if [ -d "$_agent_dir" ] && ! [ -L "$_agent_dir" ]; then
         chmod g+rwX "$_agent_dir" 2>/dev/null || true
       fi
+      # #20162: put agent trees back in group node (the layout the re-own,
+      # useradd -g node and forgejwt assume). The re-own selects by top-level
+      # owner and can be skipped by its own marker, so entries that kept the
+      # right uid but took the fsGroup gid are regrouped here. `chgrp -h`
+      # never follows a link, matching the re-own; modes are left untouched.
+      for _agent_regroup in "$_agent_dir" "${_agent_data_root}/home/agents/${_agent_name}"; do
+        if [ -d "$_agent_regroup" ] && ! [ -L "$_agent_regroup" ]; then
+          find "$_agent_regroup" -xdev \! -group node -exec chgrp -h node {} + 2>/dev/null \
+            || echo "[entrypoint] WARN: regroup of ${_agent_regroup} to node was incomplete; the next boot retries"
+        fi
+      done
       hive_publish_uid_isolation_marker "$_agent_marker" "$_agent_expected" || true
       echo "[entrypoint] UID isolation: ${_agent_name} pass complete"
     fi
@@ -298,12 +314,13 @@ hive_reown_marker_path() {
 # the container mid-walk, and the next boot started the whole tree over, so a
 # spoke could crash-loop on its own migration. It is now:
 #
-#   - incremental: `find \! -uid` selects only entries NOT already owned by
-#     <uid>, so a restarted pod resumes where it was killed instead of
-#     re-chowning what it already did;
+#   - incremental: `find \( \! -uid -o \! -group node \)` selects only
+#     entries NOT already <uid>:node, so a restarted pod resumes where it was
+#     killed instead of re-chowning what it already did. The group half
+#     (#20162) repairs entries a kubelet fsGroup re-group moved off node;
 #   - skipped once complete: a marker recording <uid> is written only after a
 #     walk finishes with no error. A later boot whose marker matches AND whose
-#     top-level entry is still owned by <uid> costs one stat;
+#     top-level entry is still <uid>:node costs two stats;
 #   - post-order (-depth): the top-level entry is changed last, so it still
 #     reads as the old owner until every entry below it has been handed over.
 #
@@ -320,8 +337,9 @@ hive_reown_path_if_needed() {
   _reown_uid="$2"
   [ -e "$_reown_path" ] || return 0
   _reown_owner="$(stat -c '%u' "$_reown_path" 2>/dev/null || echo 0)"
+  _reown_group="$(stat -c '%G' "$_reown_path" 2>/dev/null || true)"
   _reown_marker="$(hive_reown_marker_path "$_reown_path")"
-  if [ "$_reown_owner" = "$_reown_uid" ] && [ -f "$_reown_marker" ] \
+  if [ "$_reown_owner" = "$_reown_uid" ] && [ "$_reown_group" = node ] && [ -f "$_reown_marker" ] \
      && [ "$(cat "$_reown_marker" 2>/dev/null || true)" = "$_reown_uid" ]; then
     return 0
   fi
@@ -335,7 +353,7 @@ hive_reown_path_if_needed() {
   _reown_list="$(mktemp "${_reown_marker}.changed.XXXXXX" 2>/dev/null || echo /dev/null)"
   _reown_start="$(date +%s)"
   _reown_ok=0
-  if find "$_reown_path" -depth \! -uid "$_reown_uid" \
+  if find "$_reown_path" -depth \( \! -uid "$_reown_uid" -o \! -group node \) \
        -exec chown -h "${_reown_uid}:node" {} + -print > "$_reown_list" 2>/dev/null; then
     _reown_ok=1
   fi

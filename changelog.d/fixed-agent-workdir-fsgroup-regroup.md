@@ -1,0 +1,1 @@
+- Agent workdirs under `/data/agents/<agent>` and `/data/home/agents/<agent>` are regrouped to `node` at startup after a kubelet fsGroup re-group, so new clones no longer inherit the pod fsGroup gid, and the permissions watcher hint now names a repair that runs.

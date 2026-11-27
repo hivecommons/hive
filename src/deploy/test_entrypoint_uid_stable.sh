@@ -81,6 +81,19 @@ if [ "$1" = "-c" ] && [ "$2" = "%u" ]; then
     exit 0
   fi
 fi
+if [ "$1" = "-c" ] && [ "$2" = "%G" ]; then
+  # #20162: group from the groups table, LAST match wins (the chown and chgrp
+  # stubs append to it); unlisted paths are in group node.
+  path="$3"
+  found=""
+  if [ -n "${HIVE_TEST_GROUPS:-}" ] && [ -f "$HIVE_TEST_GROUPS" ]; then
+    while IFS=$'\t' read -r p group; do
+      [ "$p" = "$path" ] && found="$group"
+    done < "$HIVE_TEST_GROUPS"
+  fi
+  printf '%s\n' "${found:-node}"
+  exit 0
+fi
 if [ "$1" = "-c" ] && [ "$2" = "%u:%G" ]; then
   path="$3"
   while IFS=$'\t' read -r p owner; do
@@ -143,6 +156,7 @@ cat > "$WORK/bin/chown" <<'EOFCHOWN'
 printf '%s\n' "$*" >> "${HIVE_TEST_CHOWN_LOG}"
 if [ "$1" = "-h" ] && [ -n "${HIVE_TEST_OWNERS:-}" ]; then
   new_owner="${2%%:*}"
+  new_group="${2#*:}"
   shift 2
   applied=0
   for p in "$@"; do
@@ -150,6 +164,7 @@ if [ "$1" = "-h" ] && [ -n "${HIVE_TEST_OWNERS:-}" ]; then
       break
     fi
     printf '%s\t%s\n' "$p" "$new_owner" >> "$HIVE_TEST_OWNERS"
+    [ -z "${HIVE_TEST_GROUPS:-}" ] || printf '%s\t%s\n' "$p" "$new_group" >> "$HIVE_TEST_GROUPS"
     applied=$((applied + 1))
   done
 fi
@@ -157,12 +172,30 @@ exit "${HIVE_TEST_CHOWN_RC:-0}"
 EOFCHOWN
 chmod +x "$WORK/bin/chown"
 
+# chgrp stub (#20162): logs every call and, for `chgrp -h GROUP path...`,
+# appends each path's new group to the groups table.
+cat > "$WORK/bin/chgrp" <<'EOFCHGRP'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${HIVE_TEST_CHGRP_LOG}"
+if [ "$1" = "-h" ] && [ -n "${HIVE_TEST_GROUPS:-}" ]; then
+  new_group="$2"
+  shift 2
+  for p in "$@"; do
+    printf '%s\t%s\n' "$p" "$new_group" >> "$HIVE_TEST_GROUPS"
+  done
+fi
+exit 0
+EOFCHGRP
+chmod +x "$WORK/bin/chgrp"
+
 # find stub: an unprivileged test cannot create files owned by other uids, so
 # ownership comes from the owners table (last match, default
 # HIVE_TEST_TREE_DEFAULT_OWNER) while the TRAVERSAL is the real `find -depth`
-# over a real tree. It accepts only the exact invocation the re-own uses, so a
-# change to the predicate, the post-order walk, or the symlink-safe `chown -h`
-# fails here instead of silently testing something else.
+# over a real tree. It accepts only the exact invocations the re-own and the
+# worker's regroup (#20162) use, so a change to the predicate, the post-order
+# walk, or the symlink-safe `chown -h`/`chgrp -h` fails here instead of
+# silently testing something else. Groups come from the groups table (last
+# match, default node).
 HIVE_TEST_REAL_FIND="$(command -v find)"
 export HIVE_TEST_REAL_FIND
 cat > "$WORK/bin/find" <<'EOFFIND'
@@ -170,14 +203,6 @@ cat > "$WORK/bin/find" <<'EOFFIND'
 printf '%s\n' "$*" >> "${HIVE_TEST_FIND_LOG}"
 root="$1"
 shift
-if [ "$#" -ne 11 ] || [ "$1" != "-depth" ] || [ "$2" != "!" ] || [ "$3" != "-uid" ] \
-   || [ "$5" != "-exec" ] || [ "$6" != "chown" ] || [ "$7" != "-h" ] \
-   || [ "$9" != "{}" ] || [ "${10}" != "+" ] || [ "${11}" != "-print" ]; then
-  echo "find stub: unexpected invocation: $root $*" >&2
-  exit 64
-fi
-want="$4"
-owner_arg="$8"
 owner_of() {
   local path="$1" found="" p uid
   while IFS=$'\t' read -r p uid; do
@@ -185,11 +210,43 @@ owner_of() {
   done < "${HIVE_TEST_OWNERS}"
   printf '%s\n' "${found:-${HIVE_TEST_TREE_DEFAULT_OWNER:-0}}"
 }
+group_of() {
+  local path="$1" found="" p group
+  if [ -n "${HIVE_TEST_GROUPS:-}" ] && [ -f "$HIVE_TEST_GROUPS" ]; then
+    while IFS=$'\t' read -r p group; do
+      [ "$p" = "$path" ] && found="$group"
+    done < "$HIVE_TEST_GROUPS"
+  fi
+  printf '%s\n' "${found:-node}"
+}
 selected=()
-while IFS= read -r entry; do
-  [ "$(owner_of "$entry")" = "$want" ] || selected+=("$entry")
-done < <("$HIVE_TEST_REAL_FIND" "$root" -depth)
 rc=0
+if [ "$#" -eq 10 ] && [ "$1" = "-xdev" ] && [ "$2" = "!" ] && [ "$3" = "-group" ] \
+   && [ "$4" = "node" ] && [ "$5" = "-exec" ] && [ "$6" = "chgrp" ] && [ "$7" = "-h" ] \
+   && [ "$8" = "node" ] && [ "$9" = "{}" ] && [ "${10}" = "+" ]; then
+  while IFS= read -r entry; do
+    [ "$(group_of "$entry")" = node ] || selected+=("$entry")
+  done < <("$HIVE_TEST_REAL_FIND" "$root" -depth)
+  if [ "${#selected[@]}" -gt 0 ]; then
+    chgrp -h node "${selected[@]}" || rc=1
+  fi
+  exit "$rc"
+fi
+if [ "$#" -ne 17 ] || [ "$1" != "-depth" ] || [ "$2" != "(" ] || [ "$3" != "!" ] \
+   || [ "$4" != "-uid" ] || [ "$6" != "-o" ] || [ "$7" != "!" ] || [ "$8" != "-group" ] \
+   || [ "$9" != "node" ] || [ "${10}" != ")" ] \
+   || [ "${11}" != "-exec" ] || [ "${12}" != "chown" ] || [ "${13}" != "-h" ] \
+   || [ "${15}" != "{}" ] || [ "${16}" != "+" ] || [ "${17}" != "-print" ]; then
+  echo "find stub: unexpected invocation: $root $*" >&2
+  exit 64
+fi
+want="$5"
+owner_arg="${14}"
+while IFS= read -r entry; do
+  if [ "$(owner_of "$entry")" != "$want" ] || [ "$(group_of "$entry")" != node ]; then
+    selected+=("$entry")
+  fi
+done < <("$HIVE_TEST_REAL_FIND" "$root" -depth)
 if [ "${#selected[@]}" -gt 0 ]; then
   printf '%s\n' "${selected[@]}"
   chown -h "$owner_arg" "${selected[@]}" || rc=1
@@ -200,6 +257,9 @@ chmod +x "$WORK/bin/find"
 export HIVE_TEST_FIND_LOG="$WORK/find.log"
 : > "$HIVE_TEST_FIND_LOG"
 export HIVE_TEST_CHOWN_LOG="$WORK/chown.log"
+export HIVE_TEST_CHGRP_LOG="$WORK/chgrp.log"
+export HIVE_TEST_GROUPS="$WORK/groups.tsv"
+: > "$HIVE_TEST_GROUPS"
 export HIVE_TEST_TOKEN_OWNERS="$WORK/token-owners.tsv"
 : > "$HIVE_TEST_CHOWN_LOG"
 PATH="$WORK/bin:$PATH" hive_reown_agent_paths_if_needed scanner 2010 > "$WORK/reown.out"
@@ -275,8 +335,8 @@ PATH="$WORK/bin:$PATH" HIVE_TEST_CHOWN_RC=1 HIVE_TEST_CHOWN_APPLY_LIMIT=1 \
 RUN1_PATHS="$(chowned_paths)"
 RUN1_LAST="$(printf '%s\n' "$RUN1_PATHS" | tail -n 1)"
 RUN1_APPLIED="$(printf '%s\n' "$RUN1_PATHS" | head -n 1)"
-if [ "$(head -n 1 "$HIVE_TEST_FIND_LOG")" = "$TREE -depth ! -uid 2011 -exec chown -h 2011:node {} + -print" ]; then
-  ok "re-own walks post-order, selects only entries not owned by the target uid, and uses symlink-safe chown -h"
+if [ "$(head -n 1 "$HIVE_TEST_FIND_LOG")" = "$TREE -depth ( ! -uid 2011 -o ! -group node ) -exec chown -h 2011:node {} + -print" ]; then
+  ok "re-own walks post-order, selects only entries not already uid:node, and uses symlink-safe chown -h"
 else
   bad "re-own find invocation changed shape" "find log: $(tr '\n' ';' < "$HIVE_TEST_FIND_LOG")"
 fi
@@ -347,6 +407,91 @@ if [ -s "$HIVE_TEST_FIND_LOG" ] && [ ! -s "$HIVE_TEST_CHOWN_LOG" ] \
   ok "a marker for another uid is ignored; an already-owned tree is walked once and re-marked"
 else
   bad "stale-uid marker handling wrong" "chown: $(tr '\n' ';' < "$HIVE_TEST_CHOWN_LOG") marker: $(cat "$MARKER" 2>/dev/null) output: $(tr '\n' ';' < "$WORK/run5.out")"
+fi
+
+# Run 6 (#20162): a kubelet fsGroup re-group moved the tree to gid 1002 after
+# the marker was written. The right uid and a matching marker must not skip it:
+# entries off group node are re-owned to uid:node, entries already in node are
+# left alone.
+printf '%s\t%s\n' "$TREE" 1002 "$TREE/b" 1002 >> "$HIVE_TEST_GROUPS"
+: > "$HIVE_TEST_CHOWN_LOG"
+: > "$HIVE_TEST_FIND_LOG"
+PATH="$WORK/bin:$PATH" hive_reown_path_if_needed "$TREE" 2011 > "$WORK/run6.out"
+RUN6_PATHS="$(chowned_paths | sort)"
+RUN6_WANT="$(printf '%s\n' "$TREE" "$TREE/b" | sort)"
+if [ -s "$HIVE_TEST_FIND_LOG" ] && [ "$RUN6_PATHS" = "$RUN6_WANT" ] \
+   && grep -q -- '-h 2011:node' "$HIVE_TEST_CHOWN_LOG"; then
+  ok "a marker with the right uid but a re-grouped top-level entry is re-walked; only off-group entries are regrouped"
+else
+  bad "re-own skipped or over-touched a re-grouped tree" "chowned: $(printf '%s' "$RUN6_PATHS" | tr '\n' ';') want: $(printf '%s' "$RUN6_WANT" | tr '\n' ';')"
+fi
+
+# ── #20162: the background worker regroups agent trees to node ──────────────
+# Extract the real worker (and the marker helpers it uses) and run it against
+# the stubbed tree.
+WORKER="$WORK/uid-worker.sh"
+sed -n '/^hive_uid_isolation_marker_path() {/,/^hive_start_uid_isolation_migration() {/p' "$ENTRYPOINT" | sed '$d' > "$WORKER"
+if grep -q '^hive_run_uid_isolation_migration() {' "$WORKER"; then
+  # shellcheck disable=SC1090
+  # Intentionally execute extracted shipped helpers.
+  . "$WORKER"
+  mkdir -p "$HIVE_UID_ISOLATION_MARKER_DIR"
+  # keeper: right uid and a matching worker marker, but its agent dir and one
+  # clone file took gid 1002. Its home top is already uid:node (the re-own is
+  # skipped by its marker) and holds one 1002 entry only the regroup finds.
+  # steady: fully current, so it must stay "already current" and untouched.
+  KA="$WORK/data/agents/keeper"
+  KH="$WORK/data/home/agents/keeper"
+  SA="$WORK/data/agents/steady"
+  mkdir -p "$KA/repo" "$KH" "$SA"
+  : > "$KA/repo/file"
+  : > "$KA/ok"
+  : > "$KH/.profile"
+  : > "$KH/.ok"
+  cat >> "$WORK/owners.tsv" <<EOFOWNERS
+$KA	2012
+$KA/repo	2012
+$KA/repo/file	2012
+$KA/ok	2012
+$KH	2012
+$KH/.profile	2012
+$KH/.ok	2012
+$SA	2013
+EOFOWNERS
+  printf '%s\t%s\n' "$KA" 1002 "$KA/repo" 1002 "$KA/repo/file" 1002 "$KH/.profile" 1002 >> "$HIVE_TEST_GROUPS"
+  printf '2012\n' > "$(hive_reown_marker_path "$KA")"
+  printf '2012\n' > "$(hive_reown_marker_path "$KH")"
+  printf '2013\n' > "$(hive_reown_marker_path "$SA")"
+  printf '%s\n' "${HIVE_UID_ISOLATION_REVISION}:2012" > "$(hive_uid_isolation_marker_path 2012)"
+  printf '%s\n' "${HIVE_UID_ISOLATION_REVISION}:2013" > "$(hive_uid_isolation_marker_path 2013)"
+  : > "$HIVE_TEST_CHOWN_LOG"
+  : > "$HIVE_TEST_CHGRP_LOG"
+  PATH="$WORK/bin:$PATH" AGENT_UID_LINES="$(printf 'keeper\t2012\nsteady\t2013')" \
+    hive_run_uid_isolation_migration > "$WORK/worker.out" 2>&1
+  final_group() { PATH="$WORK/bin:$PATH" stat -c '%G' "$1"; }
+  if ! grep -q 'keeper already current' "$WORK/worker.out" \
+     && grep -q 'repairing keeper (uid 2012)' "$WORK/worker.out" \
+     && [ "$(final_group "$KA")" = node ] && [ "$(final_group "$KA/repo")" = node ] \
+     && [ "$(final_group "$KA/repo/file")" = node ] && [ "$(final_group "$KH/.profile")" = node ] \
+     && grep -q -- "-h node .*$KH/.profile" "$HIVE_TEST_CHGRP_LOG"; then
+    ok "an agent dir with the right uid, a matching marker and gid 1002 is not 'already current' and is regrouped to node"
+  else
+    bad "worker skipped or did not regroup a re-grouped agent tree" "output: $(tr '\n' ';' < "$WORK/worker.out") chgrp: $(tr '\n' ';' < "$HIVE_TEST_CHGRP_LOG")"
+  fi
+  if ! grep -qE -- "$KA/ok( |\$)|$KH/.ok( |\$)|$KH( |\$)" "$HIVE_TEST_CHGRP_LOG" \
+     && ! grep -qE -- "$KA/ok( |\$)|$KH/.ok( |\$)|$KH( |\$)" "$HIVE_TEST_CHOWN_LOG"; then
+    ok "entries with the right uid and group node get no chgrp or chown"
+  else
+    bad "worker touched entries already uid:node" "chown: $(tr '\n' ';' < "$HIVE_TEST_CHOWN_LOG") chgrp: $(tr '\n' ';' < "$HIVE_TEST_CHGRP_LOG")"
+  fi
+  if grep -q 'steady already current' "$WORK/worker.out" \
+     && ! grep -q "$SA" "$HIVE_TEST_CHGRP_LOG" "$HIVE_TEST_CHOWN_LOG"; then
+    ok "a fully current agent (right uid, marker and group node) is still skipped"
+  else
+    bad "worker re-walked a fully current agent" "output: $(tr '\n' ';' < "$WORK/worker.out")"
+  fi
+else
+  bad "the UID-isolation worker is extractable from entrypoint.sh"
 fi
 
 echo
