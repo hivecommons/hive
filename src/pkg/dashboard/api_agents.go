@@ -74,6 +74,11 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 			config.AgentConfig
 			Enabled  *bool `json:"enabled"`
 			OnDemand *bool `json:"on_demand"`
+			// PromptTemplate is the prompt TEXT the Create dialog's Prompt
+			// Template tab edited. kick_template is a bare file name; the
+			// text used to ride in it, so the agent ran the built-in prompt
+			// and its next config load failed (hivecommons/hive#20205).
+			PromptTemplate string `json:"prompt_template"`
 		} `json:"agent"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -117,6 +122,13 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// kick_template is a bare file name. Prompt text sent here fails
+	// validateAgentOverlay at the next load and, until then, every kick logs
+	// "template not found" and runs the built-in prompt (#20205).
+	if err := config.ValidateKickTemplateName(agent.KickTemplate); err != nil {
+		jsonError(w, err.Error()+"; send prompt text in agent.prompt_template instead", http.StatusBadRequest)
+		return
+	}
 
 	if _, exists := s.deps.Config.Agents[body.Name]; exists {
 		jsonError(w, "agent already exists", http.StatusConflict)
@@ -154,6 +166,19 @@ func (s *Server) handleAgentCreate(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, "prompt source: "+err.Error(), http.StatusBadRequest)
 			return
 		}
+	} else if strings.TrimSpace(body.Agent.PromptTemplate) != "" {
+		// Same as the import path (registerDefinedAgent): the text becomes
+		// <name>.md and kick_template names that file. A prompt source, when
+		// set, already baked that file above and wins.
+		templateFileName := body.Name + ".md"
+		savePath, _, err := writePromptTemplate(templateFileName, []byte(body.Agent.PromptTemplate))
+		if err != nil {
+			s.logger.Error("failed to save prompt template for new agent", "agent", body.Name, "path", savePath, "error", err)
+			jsonError(w, "failed to save prompt template: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		agent.KickTemplate = templateFileName
+		s.logger.Info("prompt template saved for new agent", "agent", body.Name, "path", savePath)
 	}
 
 	if err := config.SaveAgentFile(agentsDir, body.Name, agent); err != nil {
