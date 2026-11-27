@@ -457,6 +457,7 @@ func (r *forgeRequestRelay) handleClone(ctx context.Context, path string) (fetch
 	result(forgeCloneResponse{OK: true, Repo: repo, Bundle: bundle, RemoteURL: remoteURL, DefaultBranch: def, Attempts: attempt})
 	r.settle(path, "", false)
 	r.logger.Info("forge request relay: repo cloned for agent", "agent", req.Agent, "repo", repo, "tier", tier, "bundle", bundle)
+	return fetched
 }
 
 // forgeCloneStage creates the hive-owned GIT_DIR the fetch writes into: a
