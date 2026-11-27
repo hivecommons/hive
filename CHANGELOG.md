@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.383.4)
+
+### Fixed
+
+- The boot-time seed of the primary repo's `docs/knowledge/` git source now runs on spokes whose dashboard config was saved: `knowledge.git_sources` is omitted when unset, and a dashboard disconnect is recorded as `knowledge.git_sources_disconnected: true` instead of an empty list (#20173).
+
 ## 2026-11-27 (v5.383.3)
 
 ### Fixed

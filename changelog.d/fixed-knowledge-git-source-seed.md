@@ -1,1 +1,0 @@
-- The boot-time seed of the primary repo's `docs/knowledge/` git source now runs on spokes whose dashboard config was saved: `knowledge.git_sources` is omitted when unset, and a dashboard disconnect is recorded as `knowledge.git_sources_disconnected: true` instead of an empty list (#20173).
