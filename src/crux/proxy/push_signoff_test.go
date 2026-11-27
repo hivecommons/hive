@@ -229,6 +229,24 @@ func TestPushSignoffRefusalPushOptions(t *testing.T) {
 	}
 }
 
+func TestPushSignoffRefusalShallowPushOptions(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
+	lane := "scanner <scanner@hive.kubestellar.io>"
+	pack := packObjBytes(1, nil, []byte(testCommit(lane, lane, "unsigned", 1)))
+	// A shallow clone sends "shallow <oid>" lines before the first command,
+	// so the capabilities are not on pkt-line 0.
+	shallow := "shallow 2222222222222222222222222222222222222222\n"
+	body := []byte(fmt.Sprintf("%04x%s", len(shallow)+4, shallow))
+	body = append(body, pktCmd(" report-status push-options")...)
+	opt := "ci.skip"
+	body = append(body, []byte(fmt.Sprintf("%04x%s0000", len(opt)+4, opt))...)
+	body = append(body, wrapPack(pack)...)
+	reason, refused, _ := pushSignoffRefusal(pushReq(body), "scanner", nil)
+	if !refused || strings.Contains(reason, "no packfile") {
+		t.Fatalf("shallow push with push-options must be parsed and its unsigned lane commit refused, got refused=%v reason=%q", refused, reason)
+	}
+}
+
 func TestPushSignoffRefusalOversizeClosesConnection(t *testing.T) {
 	body := append(pktCmd(" report-status"), make([]byte, maxPushSignoffBody+1)...)
 	_, refused, closeConn := pushSignoffRefusal(pushReq(body), "scanner", nil)

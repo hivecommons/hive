@@ -83,11 +83,14 @@ var packTypeNames = map[int]string{1: "commit", 2: "tree", 3: "blob", 4: "tag"}
 
 // skipPushCommands advances past the pkt-line command list, and past the
 // push-options section when the first command advertises it. It returns the
-// offset of the first byte after them.
+// offset of the first byte after them. A push from a shallow clone sends
+// "shallow <oid>" lines before the first command, so capabilities are read
+// from the first line that carries a NUL, not from line 0.
 func skipPushCommands(body []byte) (int, error) {
 	pos := 0
 	section := func(first bool) (pushOptions bool, err error) {
-		for i := 0; ; i++ {
+		capsSeen := false
+		for {
 			if pos+4 > len(body) {
 				return false, fmt.Errorf("truncated command list")
 			}
@@ -102,9 +105,10 @@ func skipPushCommands(body []byte) (int, error) {
 			if n < 4 || pos+n-4 > len(body) {
 				return false, fmt.Errorf("bad pkt-line")
 			}
-			if first && i == 0 {
+			if first && !capsSeen {
 				line := body[pos : pos+n-4]
 				if nul := bytes.IndexByte(line, 0); nul >= 0 {
+					capsSeen = true
 					for _, c := range strings.Fields(string(line[nul+1:])) {
 						if c == "push-options" {
 							pushOptions = true
