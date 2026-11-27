@@ -1,0 +1,1 @@
+- Self-upgrade retry, backoff, give-up and boot logs no longer carry an empty `last_error=` when the failed attempt recorded no error (the patch or restart succeeded but the image never changed); they now name that cause, so the retry WARN is diagnosable instead of surfacing as an unclassified repeated error.

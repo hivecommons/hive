@@ -161,6 +161,42 @@ func TestBootHeartbeatUpgradeCallback_RetriesAfterBackoffThenHitsUptimeFloor(t *
 	}
 }
 
+// A failed attempt whose patch/restart succeeded records no LastError; the
+// retry WARN must still say why it is retrying instead of carrying a bare
+// "last_error=" that the fleet self-report files as an unclassified repeat
+// (#20168).
+func TestBootHeartbeatUpgradeCallback_RetryNeverLogsEmptyLastError(t *testing.T) {
+	f := newBootHeartbeatFake()
+	newBootHeartbeatCollect(t, f, bootHeartbeatConfig())
+	path := pinUpgradeMarker(t)
+
+	writeTestUpgradeMarker(t, path, upgradeMarker{
+		TargetSHA:   "feedbeef",
+		CurrentSHA:  upgradeMarkerTestCurrent,
+		RequestedAt: time.Now().UTC().Add(-2 * selfUpgradeMaxBackoff),
+		Attempts:    1,
+	})
+
+	heartbeatCallback[spoke.UpgradeCallback](t, f)("feedbeef")
+
+	var retryLine string
+	for _, line := range strings.Split(f.log.String(), "\n") {
+		if strings.Contains(line, "self-upgrade retrying after a failed attempt (image unchanged)") {
+			retryLine = line
+			break
+		}
+	}
+	if retryLine == "" {
+		t.Fatalf("expired backoff did not retry:\n%s", f.log.String())
+	}
+	if strings.HasSuffix(retryLine, "last_error=") || strings.Contains(retryLine, "last_error= ") || strings.Contains(retryLine, `last_error=""`) {
+		t.Fatalf("retry WARN carries an empty last_error:\n%s", retryLine)
+	}
+	if !strings.Contains(retryLine, "no error recorded") {
+		t.Fatalf("retry WARN does not explain the missing error:\n%s", retryLine)
+	}
+}
+
 func TestBootHeartbeatUpgradeCallback_ClearsStaleMarkerForDifferentTarget(t *testing.T) {
 	f := newBootHeartbeatFake()
 	newBootHeartbeatCollect(t, f, bootHeartbeatConfig())
