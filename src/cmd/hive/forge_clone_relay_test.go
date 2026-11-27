@@ -557,9 +557,11 @@ func TestForgeCloneRelayRefusesPlainHTTP(t *testing.T) {
 	}
 	var resp forgeCloneResponse
 	readRelayResult(t, path, &resp)
-	if resp.OK || !strings.Contains(resp.Error, "https only") {
+	// Refused either by the URL normalizer or by the relay's own https check.
+	if resp.OK || !strings.Contains(resp.Error, "clone rejected") || !strings.Contains(resp.Error, "http://fj.example") {
 		t.Fatalf("resp = %+v", resp)
 	}
+	assertExists(t, path+".rejected", true)
 }
 
 // A request path that is a symlink (for example to another agent's file, to
