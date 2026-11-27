@@ -1,1 +1,0 @@
-- `hive-clone` works in the stock Kubernetes pod again: when the hive cannot `chown` the clone bundle to the agent (no effective `CAP_CHOWN`), it writes the bundle as the agent's UID through `su-exec` instead of failing and quarantining the request (#20195).

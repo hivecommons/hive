@@ -2989,6 +2989,10 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 		return github.NewReviewEvidenceVerifier(b.cfg.Evidence.SigningKeyPath())
 	})
 	b.metricsCollector.SetPRIssueWindowStartProvider(b.dashSrv.CostWindowStart)
+	// Merged / closed counts come from the GitHub Search API; repos on
+	// another forge are left out of them instead of failing every reconcile
+	// (#20179). Before wireForgeStateCounts, which builds the counters.
+	b.metricsCollector.SetRepoOnGitHubProvider(func(repo string) bool { return b.cfg.RepoOnGitHub(repo) })
 	// Merged / closed counts move on webhook events and the Search API is
 	// asked only hourly; with forgestate.enabled the Overview's open totals
 	// come from the cache the governor already reads (#13376).
