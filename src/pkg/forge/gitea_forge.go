@@ -379,7 +379,7 @@ func (f *giteaForge) Merge(ctx context.Context, repo string, number int, opts Me
 	}
 	// An open change request from a writer refuses the merge, like the
 	// hold label, before the merge endpoint is called (#20067).
-	if err := f.gateChangesRequested(ctx, owner, name, number, "merge"); err != nil {
+	if err := f.gateChangesRequested(ctx, owner, name, number, "merge", true); err != nil {
 		return fmt.Errorf("%s: merge %s#%d: %w", f.label, slug, number, err)
 	}
 

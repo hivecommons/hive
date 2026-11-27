@@ -85,9 +85,10 @@ func (f *giteaForge) writerCheck(owner, name string) reviewgate.WriterFunc {
 
 // gateChangesRequested refuses with a *reviewgate.BlockedError while
 // owner/name#number has an open change request from a writer that no
-// operator override covers, or when its reviews cannot be read. Each gated
+// operator override covers (when allowOverride), or when its reviews cannot
+// be read. Each gated
 // attempt is logged with the reviewer and the review ID.
-func (f *giteaForge) gateChangesRequested(ctx context.Context, owner, name string, number int, action string) error {
+func (f *giteaForge) gateChangesRequested(ctx context.Context, owner, name string, number int, action string, allowOverride bool) error {
 	slug := owner + "/" + name
 	reviews, err := f.reviews(ctx, owner, name, number)
 	if err != nil {
@@ -95,7 +96,13 @@ func (f *giteaForge) gateChangesRequested(ctx context.Context, owner, name strin
 			"forge", f.label, "repo", slug, "pr", number, "action", action, "outcome", reviewgate.OutcomeUnreadable, "error", err)
 		return &reviewgate.BlockedError{Repo: slug, Number: number, Cause: err}
 	}
-	d := reviewgate.Decide(slug, number, reviewgate.Evaluate(ctx, reviews, f.writerCheck(owner, name)))
+	blocks := reviewgate.Evaluate(ctx, reviews, f.writerCheck(owner, name))
+	d := reviewgate.Decision{Blocks: blocks}
+	if allowOverride {
+		// Only the merge honours an operator override; an approval label
+		// usually comes from an agent's own relay request.
+		d = reviewgate.Decide(slug, number, blocks)
+	}
 	if len(d.Blocks) == 0 {
 		return nil
 	}

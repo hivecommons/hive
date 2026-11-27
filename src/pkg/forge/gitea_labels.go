@@ -53,7 +53,7 @@ func (f *giteaForge) AddLabels(ctx context.Context, repo string, number int, lab
 	// `lgtm` / `approved` approves a PR for merging: an open change request
 	// from a writer refuses it (#20067). Other labels pass straight through.
 	if approvesForMerge(labels) {
-		if err := f.gateChangesRequested(ctx, owner, name, number, "label"); err != nil {
+		if err := f.gateChangesRequested(ctx, owner, name, number, "label", false); err != nil {
 			return fmt.Errorf("%s: add labels to %s: %w", f.label, slug, err)
 		}
 	}

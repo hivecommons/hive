@@ -106,3 +106,19 @@ func TestRepoItemDecisionOverrideMustNameEveryOpenChangeRequest(t *testing.T) {
 		})
 	}
 }
+
+// TestRepoItemDecisionOverrideNeedsMergeBar: an Approve carrying an override
+// from someone without merger or owner role is refused; the override would
+// let the sweep merge over the change request.
+func TestRepoItemDecisionOverrideNeedsMergeBar(t *testing.T) {
+	t.Cleanup(func() { github.ClearChangesRequestedOverride("testorg/testrepo", 8) })
+	mock := &repoItemDecisionMock{prForeign: true, prLabels: []string{"stage/090-ready-for-human-merge"}, prReviews: openChangeRequestReviews}
+	srv := newRepoItemDecisionServer(t, mock)
+	w := postRepoItemDecisionAs(t, srv, 8, "writer", "read-write", `{"decision":"approve","type":"pr","override_reason":"ok","override_review_ids":[42]}`)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("code = %d body = %s, want 403", w.Code, w.Body.String())
+	}
+	if len(mock.comments)+len(mock.merges) != 0 {
+		t.Fatalf("writes reached GitHub: comments=%q merges=%v", mock.comments, mock.merges)
+	}
+}

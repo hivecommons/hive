@@ -193,3 +193,26 @@ func TestGitHubForgeLabelRelayIsGated(t *testing.T) {
 		t.Fatalf("writes = %d, want the label write refused", stub.writes)
 	}
 }
+
+// An operator override lets the Forgejo merge through but never an approval
+// label, which usually comes from an agent's own relay request.
+func TestGiteaOverrideCoversMergeNotLabels(t *testing.T) {
+	f := &giteaGateFake{
+		reviews: []map[string]any{giteaReview(42, "maint", "REQUEST_CHANGES", false, "2026-11-26T10:00:00Z")},
+		perms:   map[string]string{"maint": "write"},
+	}
+	g := f.forge(t)
+	t.Cleanup(func() { reviewgate.ClearOverride("o/r", 7) })
+	if _, err := reviewgate.RecordOverride("o/r", 7, "owner", "why", []reviewgate.Block{{Reviewer: "maint", ReviewID: 42}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.AddLabels(context.Background(), "o/r", 7, []string{"lgtm"}); !errors.Is(err, reviewgate.ErrChangesRequested) {
+		t.Fatalf("AddLabels(lgtm) with an override = %v, want refused", err)
+	}
+	if err := g.Merge(context.Background(), "o/r", 7, MergeOptions{HeadSHA: "h7"}); err != nil {
+		t.Fatalf("Merge with an override: %v", err)
+	}
+	if merges, labels := f.counts(); merges != 1 || labels != 0 {
+		t.Fatalf("merges = %d, labels = %d; want 1 and 0", merges, labels)
+	}
+}

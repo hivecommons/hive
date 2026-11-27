@@ -429,7 +429,7 @@ func (s *Server) handleRepoItemDecision(w http.ResponseWriter, r *http.Request) 
 			jsonError(w, "merger or owner access required to merge or queue a pull request", http.StatusForbidden)
 			return
 		}
-		if !s.clearChangeRequestsForDecision(ctx, w, repoFull, number, user, decision, body.OverrideReason, body.OverrideReviewIDs) {
+		if !s.clearChangeRequestsForDecision(ctx, w, r, repoFull, number, user, decision, body.OverrideReason, body.OverrideReviewIDs) {
 			return
 		}
 	}

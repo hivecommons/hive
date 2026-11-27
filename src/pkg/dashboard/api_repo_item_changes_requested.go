@@ -84,7 +84,7 @@ func repoItemDecisionGatesChangeRequests(decision string) bool {
 // change request, or the operator sent an override reason, which is recorded
 // and audited. Otherwise it has answered the request (409 naming the open
 // change requests, or 502 when they could not be read) and returns false.
-func (s *Server) clearChangeRequestsForDecision(ctx context.Context, w http.ResponseWriter, repoFull string, number int, user, decision, reason string, shown []int64) bool {
+func (s *Server) clearChangeRequestsForDecision(ctx context.Context, w http.ResponseWriter, r *http.Request, repoFull string, number int, user, decision, reason string, shown []int64) bool {
 	gh := s.deps.GHClient
 	blocks, err := gh.OpenChangeRequests(ctx, repoFull, number)
 	if err != nil {
@@ -109,6 +109,13 @@ func (s *Server) clearChangeRequestsForDecision(ctx context.Context, w http.Resp
 			out.ChangeRequests = append(out.ChangeRequests, repoItemChangeRequest{Reviewer: b.Reviewer, ReviewID: b.ReviewID, CommitID: b.CommitID, URL: b.URL})
 		}
 		jsonStatusResponse(w, http.StatusConflict, out)
+		return false
+	}
+	// An override lets the merge sweep merge over the change request, so it
+	// takes the merge bar (a verified owner or a merger) whatever decision
+	// carries it, Approve included.
+	if !repoItemMergeDecisionAllowed(r) {
+		jsonError(w, "merger or owner access required to override an open change request", http.StatusForbidden)
 		return false
 	}
 	if len(reason) > repoItemMaxOverrideReason {
