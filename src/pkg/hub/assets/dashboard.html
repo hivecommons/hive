@@ -179,6 +179,7 @@
     .alert-row-hive { font-weight: 700; color: var(--text); }
     .alert-row-reason { color: var(--muted); }
     .alert-row-age { color: var(--muted); font-size: var(--fs-xs); margin-left: auto; white-space: nowrap; }
+    .release-tracking-off { font-size: var(--fs-xs); color: var(--muted); }
     .alert-ack-btn { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 5px; padding: 1px 8px; font-size: 0.66rem; font-family: inherit; cursor: pointer; }
     .alert-ack-btn:hover { color: var(--text); border-color: var(--muted); }
     .alert-panel-more { margin-top: var(--sp-4); font-size: 0.7rem; color: var(--muted); background: none; border: none; font-family: inherit; cursor: pointer; text-decoration: underline; padding: var(--sp-0); }
@@ -4892,7 +4893,7 @@
        checkbox, channel block, image-pulls line) would wait forever. When
        set, those are hidden and RELEASE_TRACKING_OFF_HTML says why. */
     var _releaseTrackingDisabled = false;
-    var RELEASE_TRACKING_OFF_HTML = '<span class="release-tracking-off" style="font-size:0.7rem;color:var(--muted)" title="HIVE_HUB_RELEASE_TRACKING_DISABLED is set: the hub does not look up the latest release, so it offers no upgrade target to itself or its spokes">Release tracking is off</span>';
+    var RELEASE_TRACKING_OFF_HTML = '<span class="release-tracking-off" title="HIVE_HUB_RELEASE_TRACKING_DISABLED is set: the hub does not look up the latest release, so it offers no upgrade target to itself or its spokes">Release tracking is off</span>';
     var _stablePromotion = {auto_promote: true, soak_hours: 24, maintained_hives: []};
     /* Parent domain for hosted-tenant URLs, from the server (hub_spoke_domain).
        Empty until the first payload lands, and the link builders below treat
