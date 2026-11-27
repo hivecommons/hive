@@ -223,13 +223,10 @@ func TestForgejoServedKeyListBootstrap(t *testing.T) {
 	}
 	b := &boot{cfg: cfg, logger: slog.New(slog.NewTextHandler(&logs, nil))}
 	b.wireForgeRemotes()
-	if got := strings.Count(logs.String(), "level=WARN"); got != len(agentmode.KnownTokenTiers) {
-		t.Fatalf("got %d warnings, want one per tier: %s", got, logs.String())
+	if got := strings.Count(logs.String(), "level=WARN"); got != 1 || !strings.Contains(logs.String(), "no audiences configured") {
+		t.Fatalf("got %d warnings, want one bootstrap warning: %s", got, logs.String())
 	}
 	for _, tier := range agentmode.KnownTokenTiers {
-		if !strings.Contains(logs.String(), "tier="+string(tier)) {
-			t.Errorf("missing warning for %s: %s", tier, logs.String())
-		}
 		minter := forgejoMinter(cfg).(pushbroker.TieredMinter).WithTier(tier)
 		if _, err := minter.MintPushToken(context.Background(), "team/app"); err == nil || !strings.Contains(err.Error(), "no integration audiences") {
 			t.Errorf("tier %s: expected missing audience error, got %v", tier, err)
@@ -238,7 +235,7 @@ func TestForgejoServedKeyListBootstrap(t *testing.T) {
 	logs.Reset()
 	cfg.Forgejo.Integration.Audiences = map[string]string{"advisor": "aud"}
 	b.wireForgeRemotes()
-	if strings.Contains(logs.String(), "tier=advisor") || strings.Count(logs.String(), "level=WARN") != len(agentmode.KnownTokenTiers)-1 {
-		t.Fatalf("unexpected partial configuration warnings: %s", logs.String())
+	if strings.Contains(logs.String(), "level=WARN") {
+		t.Fatalf("unexpected partial configuration warning: %s", logs.String())
 	}
 }
