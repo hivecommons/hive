@@ -203,7 +203,24 @@ func listHubAdmins() []hubAdminAPIEntry {
 
 func (s *HubServer) handleHubAdminsList(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"admins": listHubAdmins(), "root_admin": isRootHubAdmin(s.getRealAuthUser(r))})
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"admins":     listHubAdmins(),
+		"root_admin": isRootHubAdmin(s.getRealAuthUser(r)),
+		// login_providers tells the dashboard which identity form to ask for
+		// in the "Add admin" field (#20198): a GitHub login on a GitHub hub,
+		// custom:<subject> on a custom-OIDC hub.
+		"login_providers": s.loginProviderNames(),
+	})
+}
+
+// loginProviderNames lists the enabled human-login provider names in the
+// registry's order ("github", "custom", ...). Empty when no registry is set.
+func (s *HubServer) loginProviderNames() []string {
+	names := []string{}
+	for _, p := range s.authProviders.Providers() {
+		names = append(names, p.Name)
+	}
+	return names
 }
 
 func (s *HubServer) handleHubAdminsGrant(w http.ResponseWriter, r *http.Request) {
