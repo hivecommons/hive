@@ -313,6 +313,14 @@ the user JSON.
    (`crm_in_colony: true`), only after the colony write succeeded; when the
    colony write fails the full record is written as before. Consent records
    are read, written, stamped and swept in colony only.
+6. Every later colony-only boot skips the boot sync but still runs its
+   forget pass, after the boot backup of `colony.db`: a person whose user
+   file is gone from `/data/saas/users` (deleted while the hub was down, or
+   removed by an operator) is erased from colony. A burst of such people is
+   held, not erased, as in the boot sync. The boot logs
+   `hub customer store: colony-only forget pass` with `forgotten` and
+   `orphans_held` when either is non-zero; if the users directory cannot be
+   listed it logs `colony-only forget pass failed` and erases nobody.
 
 **A consents directory beside a colony-only store** is never read as the
 records, because it could forget consents colony holds or bring back one a
