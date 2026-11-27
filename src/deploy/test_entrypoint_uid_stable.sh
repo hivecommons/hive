@@ -232,20 +232,16 @@ if [ "$#" -eq 10 ] && [ "$1" = "-xdev" ] && [ "$2" = "!" ] && [ "$3" = "-group" 
   fi
   exit "$rc"
 fi
-if [ "$#" -ne 17 ] || [ "$1" != "-depth" ] || [ "$2" != "(" ] || [ "$3" != "!" ] \
-   || [ "$4" != "-uid" ] || [ "$6" != "-o" ] || [ "$7" != "!" ] || [ "$8" != "-group" ] \
-   || [ "$9" != "node" ] || [ "${10}" != ")" ] \
-   || [ "${11}" != "-exec" ] || [ "${12}" != "chown" ] || [ "${13}" != "-h" ] \
-   || [ "${15}" != "{}" ] || [ "${16}" != "+" ] || [ "${17}" != "-print" ]; then
+if [ "$#" -ne 11 ] || [ "$1" != "-depth" ] || [ "$2" != "!" ] || [ "$3" != "-uid" ] \
+   || [ "$5" != "-exec" ] || [ "$6" != "chown" ] || [ "$7" != "-h" ] \
+   || [ "$9" != "{}" ] || [ "${10}" != "+" ] || [ "${11}" != "-print" ]; then
   echo "find stub: unexpected invocation: $root $*" >&2
   exit 64
 fi
-want="$5"
-owner_arg="${14}"
+want="$4"
+owner_arg="$8"
 while IFS= read -r entry; do
-  if [ "$(owner_of "$entry")" != "$want" ] || [ "$(group_of "$entry")" != node ]; then
-    selected+=("$entry")
-  fi
+  [ "$(owner_of "$entry")" = "$want" ] || selected+=("$entry")
 done < <("$HIVE_TEST_REAL_FIND" "$root" -depth)
 if [ "${#selected[@]}" -gt 0 ]; then
   printf '%s\n' "${selected[@]}"
@@ -335,8 +331,8 @@ PATH="$WORK/bin:$PATH" HIVE_TEST_CHOWN_RC=1 HIVE_TEST_CHOWN_APPLY_LIMIT=1 \
 RUN1_PATHS="$(chowned_paths)"
 RUN1_LAST="$(printf '%s\n' "$RUN1_PATHS" | tail -n 1)"
 RUN1_APPLIED="$(printf '%s\n' "$RUN1_PATHS" | head -n 1)"
-if [ "$(head -n 1 "$HIVE_TEST_FIND_LOG")" = "$TREE -depth ( ! -uid 2011 -o ! -group node ) -exec chown -h 2011:node {} + -print" ]; then
-  ok "re-own walks post-order, selects only entries not already uid:node, and uses symlink-safe chown -h"
+if [ "$(head -n 1 "$HIVE_TEST_FIND_LOG")" = "$TREE -depth ! -uid 2011 -exec chown -h 2011:node {} + -print" ]; then
+  ok "re-own walks post-order, selects only entries not owned by the target uid, and uses symlink-safe chown -h"
 else
   bad "re-own find invocation changed shape" "find log: $(tr '\n' ';' < "$HIVE_TEST_FIND_LOG")"
 fi
@@ -410,20 +406,16 @@ else
 fi
 
 # Run 6 (#20162): a kubelet fsGroup re-group moved the tree to gid 1002 after
-# the marker was written. The right uid and a matching marker must not skip it:
-# entries off group node are re-owned to uid:node, entries already in node are
-# left alone.
+# the marker was written. The synchronous re-own runs on PID 1's startup path,
+# so it must stay one stat here: the background worker owns the regroup.
 printf '%s\t%s\n' "$TREE" 1002 "$TREE/b" 1002 >> "$HIVE_TEST_GROUPS"
 : > "$HIVE_TEST_CHOWN_LOG"
 : > "$HIVE_TEST_FIND_LOG"
 PATH="$WORK/bin:$PATH" hive_reown_path_if_needed "$TREE" 2011 > "$WORK/run6.out"
-RUN6_PATHS="$(chowned_paths | sort)"
-RUN6_WANT="$(printf '%s\n' "$TREE" "$TREE/b" | sort)"
-if [ -s "$HIVE_TEST_FIND_LOG" ] && [ "$RUN6_PATHS" = "$RUN6_WANT" ] \
-   && grep -q -- '-h 2011:node' "$HIVE_TEST_CHOWN_LOG"; then
-  ok "a marker with the right uid but a re-grouped top-level entry is re-walked; only off-group entries are regrouped"
+if [ ! -s "$HIVE_TEST_FIND_LOG" ] && [ ! -s "$HIVE_TEST_CHOWN_LOG" ]; then
+  ok "the synchronous re-own does not walk a re-grouped tree whose uid and marker match"
 else
-  bad "re-own skipped or over-touched a re-grouped tree" "chowned: $(printf '%s' "$RUN6_PATHS" | tr '\n' ';') want: $(printf '%s' "$RUN6_WANT" | tr '\n' ';')"
+  bad "synchronous re-own walked a re-grouped tree on the startup path" "find: $(tr '\n' ';' < "$HIVE_TEST_FIND_LOG") chown: $(tr '\n' ';' < "$HIVE_TEST_CHOWN_LOG")"
 fi
 
 # ── #20162: the background worker regroups agent trees to node ──────────────
