@@ -204,6 +204,10 @@ func parsePushCommits(body []byte) ([]pushCommit, error) {
 			obj.typ = typ
 			sha = string(h.Sum(nil))
 		case packTypeCommit:
+			// size is the pusher's claim; cap it before inflating into memory.
+			if size > maxPushDelta {
+				return nil, fmt.Errorf("pack commit %d too large to check", i)
+			}
 			data, err := io.ReadAll(io.LimitReader(zr, size+1))
 			if err != nil || int64(len(data)) != size {
 				return nil, fmt.Errorf("pack commit %d unreadable", i)

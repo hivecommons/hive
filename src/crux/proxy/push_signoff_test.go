@@ -255,6 +255,18 @@ func TestPushSignoffRefusalOversizeClosesConnection(t *testing.T) {
 	}
 }
 
+// A commit's size comes from the pusher-controlled pack header; one above
+// maxPushDelta must be refused before it is inflated into memory.
+func TestPushSignoffRefusalOversizeCommitObject(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
+	obj := packObjBytes(1, nil, make([]byte, maxPushDelta+1))
+	body := append(pktCmd(" report-status"), wrapPack(obj)...)
+	reason, refused, _ := pushSignoffRefusal(pushReq(body), "scanner", nil)
+	if !refused || !strings.Contains(reason, "too large to check") {
+		t.Fatalf("oversize commit object: refused=%v reason=%q, want refused as too large", refused, reason)
+	}
+}
+
 // Lanes on App-authored hives commit as the App bot's noreply address
 // (agentGitIdentity), not <lane>@HIVE_GIT_BOT_EMAIL_DOMAIN; the check must
 // treat both as the lane's own identity.
