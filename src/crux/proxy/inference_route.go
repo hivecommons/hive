@@ -418,6 +418,9 @@ const maxModelLenQueryTimeout = 3 * time.Second
 // positive one, in that order, wins (hivecommons/hive#19913). When no entry
 // has the model's id, the first entry is used only if it is the ONLY entry:
 // on a multi-model gateway another model's window would be wrong.
+// When the listing names no window, a LiteLLM gateway's /model/info is asked
+// next (see queryLiteLLMModelInfoWindow): LiteLLM's own /v1/models carries no
+// window, so without it every route behind such a gateway stayed at 0.
 // apiKey and caBundle are optional (see FindEndpointForModel).
 func queryMaxModelLen(endpoint, model, apiKey, caBundle string) int {
 	rt, rtErr := inferenceTransport(caBundle)
@@ -425,6 +428,15 @@ func queryMaxModelLen(endpoint, model, apiKey, caBundle string) int {
 		return 0
 	}
 	client := &http.Client{Timeout: maxModelLenQueryTimeout, Transport: rt, CheckRedirect: egressCheckRedirect()}
+	if n := queryModelsListingWindow(client, endpoint, model, apiKey); n > 0 {
+		return n
+	}
+	return queryLiteLLMModelInfoWindow(client, endpoint, model, apiKey)
+}
+
+// queryModelsListingWindow reads the model's window from /v1/models; 0 when
+// the request fails or the listing names none.
+func queryModelsListingWindow(client *http.Client, endpoint, model, apiKey string) int {
 	req, err := newModelsRequest(endpoint, apiKey)
 	if err != nil {
 		return 0
@@ -454,6 +466,60 @@ func queryMaxModelLen(endpoint, model, apiKey, caBundle string) int {
 	}
 	if len(result.Data) == 1 {
 		return result.Data[0].window()
+	}
+	return 0
+}
+
+// liteLLMModelInfoPath is LiteLLM's per-deployment metadata endpoint, served
+// at the proxy root rather than under /v1.
+const liteLLMModelInfoPath = "/model/info"
+
+// maxLiteLLMModelInfoBody caps the /model/info body read; a gateway with many
+// deployments lists each with its full parameters.
+const maxLiteLLMModelInfoBody = 8 << 20
+
+// queryLiteLLMModelInfoWindow reads the model's window from a LiteLLM
+// gateway's /model/info: {data:[{model_name, model_info:{max_input_tokens}}]}
+// (hivecommons/hive#19913). Only an entry whose model_name is the route's
+// model counts, because a gateway lists many models; model_info.max_tokens is
+// not used, since LiteLLM fills it with the output limit for many models. A
+// server that is not LiteLLM answers 404 or a body without such entries, and
+// the result is 0.
+func queryLiteLLMModelInfoWindow(client *http.Client, endpoint, model, apiKey string) int {
+	base := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(endpoint), "/"), "/v1")
+	req, err := http.NewRequest(http.MethodGet, base+liteLLMModelInfoPath, nil)
+	if err != nil {
+		return 0
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return 0
+	}
+	var result struct {
+		Data []struct {
+			ModelName string `json:"model_name"`
+			ModelInfo struct {
+				MaxInputTokens float64 `json:"max_input_tokens"`
+			} `json:"model_info"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxLiteLLMModelInfoBody)).Decode(&result); err != nil {
+		return 0
+	}
+	for _, d := range result.Data {
+		if d.ModelName != model {
+			continue
+		}
+		if n := (modelWindowEntry{MaxInputTokens: d.ModelInfo.MaxInputTokens}).window(); n > 0 {
+			return n
+		}
 	}
 	return 0
 }
