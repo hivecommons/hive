@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.383.5)
+
+### Fixed
+
+- A hive whose every repository is on another forge (such as Forgejo) no longer fails the `github_auth` health check for having no GitHub credentials; the check now passes as not applicable, so the hub row is not red.
+
 ## 2026-11-27 (v5.383.4)
 
 ### Fixed
