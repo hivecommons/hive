@@ -2219,10 +2219,16 @@ BASHRC
       # Invalidate a stale/incomplete marker synchronously, then leave the
       # recursive work to the background migration. Manager.Start waits for
       # this protected marker before the agent can enter its tree.
+      # #20162: the dir's group is part of "current", matching the worker's
+      # skip test. A re-grouped tree (pod fsGroup gid, not node) drops the
+      # marker here so the agent is held until the background regroup finishes
+      # instead of running beside it and creating entries mid-walk.
       AGENT_DIR_OWNER=$(stat -c '%u' "/data/agents/${agent_name}" 2>/dev/null || echo "0")
+      AGENT_DIR_GROUP=$(stat -c '%G' "/data/agents/${agent_name}" 2>/dev/null || true)
       AGENT_ISOLATION_MARKER=$(hive_uid_isolation_marker_path "$AGENT_UID")
       AGENT_ISOLATION_EXPECTED="${HIVE_UID_ISOLATION_REVISION}:${AGENT_UID}"
       if [ "$AGENT_DIR_OWNER" != "$AGENT_UID" ] \
+         || [ "$AGENT_DIR_GROUP" != node ] \
          || ! hive_uid_isolation_marker_matches "$AGENT_ISOLATION_MARKER" "$AGENT_ISOLATION_EXPECTED"; then
         rm -f "$AGENT_ISOLATION_MARKER" 2>/dev/null || true
       fi

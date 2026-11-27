@@ -24,6 +24,19 @@ else
   ok "the synchronous per-agent provisioning loop is O(number of agents)"
 fi
 
+# #20162: the worker re-walks an agent whose dir left group node, so the
+# synchronous invalidation must drop that agent's marker on the same condition.
+# Otherwise the Go manager launches the agent while the background regroup is
+# still walking its tree, and entries it creates mid-walk keep the fsGroup gid.
+invalidate="$(sed -n '/Invalidate a stale\/incomplete marker synchronously/,/rm -f "\$AGENT_ISOLATION_MARKER"/p' <<<"$provisioning")"
+if grep -q "AGENT_DIR_GROUP=\$(stat -c '%G'" <<<"$invalidate" \
+   && grep -q '"\$AGENT_DIR_GROUP" != node' <<<"$invalidate"; then
+  ok "the synchronous marker invalidation also fires when the agent dir left group node"
+else
+  bad "the synchronous marker invalidation ignores the agent dir's group" \
+      "a re-grouped agent would run during the background regroup"
+fi
+
 worker="$(sed -n '/^hive_run_uid_isolation_migration() {/,/^}/p' "$ENTRYPOINT")"
 starter="$(sed -n '/^hive_start_uid_isolation_migration() {/,/^}/p' "$ENTRYPOINT")"
 if grep -q 'chown -R' <<<"$worker" && grep -q 'hive_run_uid_isolation_migration &' <<<"$starter"; then
