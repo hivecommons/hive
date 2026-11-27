@@ -1,0 +1,1 @@
+- A merge request refused because its workflow change does not qualify for the pin-only exception no longer files an `unclassified_error_repeated` selfreport when agents re-request the same PR; the refusal is expected policy enforcement and the WARN stays in local logs (#20169).

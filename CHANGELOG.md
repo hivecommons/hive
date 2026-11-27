@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.383.1)
+
+### Fixed
+
+- Scanner CI-triage notes that carry a copied `<!-- hive:scanner-note -->` marker are now folded into the one scanner note per PR and dropped when the head and failing checks are unchanged, instead of each posting a new comment.
+
 ## 2026-11-27 (v5.383.0)
 
 ### Added
