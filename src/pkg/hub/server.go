@@ -2486,6 +2486,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 					if len(entry.Repos) == 0 && len(h.Repos) > 0 {
 						entry.Repos = h.Repos
 					}
+					// The identity-only minimal beat carries no forge
+					// fields; without this a Forgejo hive falls back to a
+					// github.com pill and link until the next full collect.
+					if entry.ForgeKind == "" && h.ForgeKind != "" {
+						entry.ForgeKind, entry.ForgeBaseURL, entry.ForgeLogin = h.ForgeKind, h.ForgeBaseURL, h.ForgeLogin
+					}
 				}
 				if entry.StartedAt == "" && h.StartedAt != "" {
 					entry.StartedAt = h.StartedAt

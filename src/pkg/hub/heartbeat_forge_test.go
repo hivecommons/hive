@@ -55,3 +55,25 @@ func TestHeartbeatForgeFieldsCrossTheWire(t *testing.T) {
 		t.Fatalf("decoded = %q %q %q", got.ForgeKind, got.ForgeBaseURL, got.ForgeLogin)
 	}
 }
+
+// The identity-only minimal liveness beat (stats_stale) carries no forge
+// fields. Without a carry-forward the Forgejo hive drew as github.com again
+// until the next full collect.
+func TestHeartbeatDegradedBeatCarriesForgeForward(t *testing.T) {
+	srv := degradedCarryTestServer(t)
+	const hiveID = "carry-forge-hive"
+
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"tswn","primary_repo":"hive","repos":["hive"],"forge_kind":"forgejo","forge_base_url":"https://code.tswn.us","forge_login":"hive-bot"}`)
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"tswn","primary_repo":"hive","stats_stale":true}`)
+
+	entry := registryEntryByID(t, srv, hiveID)
+	if entry.ForgeKind != "forgejo" || entry.ForgeBaseURL != "https://code.tswn.us" || entry.ForgeLogin != "hive-bot" {
+		t.Fatalf("after stats_stale beat forge = %q %q %q, want forgejo https://code.tswn.us hive-bot carried forward", entry.ForgeKind, entry.ForgeBaseURL, entry.ForgeLogin)
+	}
+
+	// A reassignment to another org must not inherit the old tenant's forge.
+	postBeat(t, srv, `{"hive_id":"`+hiveID+`","org":"available-x","stats_stale":true}`)
+	if entry := registryEntryByID(t, srv, hiveID); entry.ForgeKind != "" {
+		t.Fatalf("forge kind %q survived an org change", entry.ForgeKind)
+	}
+}

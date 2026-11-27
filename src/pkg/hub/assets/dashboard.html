@@ -3221,6 +3221,15 @@
       return forgeHostPillHTML(hiveForgeHost(h) || label, 'var(--purple)', label);
     }
 
+    // hiveHostLabel is the text the Location pill shows for a hive, so search
+    // and the host facet group a Forgejo hive under its own forge host, not
+    // github.com. Absent host on a GitHub hive means public GitHub.
+    function hiveHostLabel(h) {
+      var kind = hiveForgeKind(h);
+      if (kind) return hiveForgeHost(h) || FORGE_KIND_LABELS[kind];
+      return hiveForgeHost(h) || PAST_REQUESTS_DEFAULT_GITHUB_HOST;
+    }
+
     // hiveForgeLabel names the forge a hive's repos live on, for tooltips.
     function hiveForgeLabel(h) {
       var kind = hiveForgeKind(h);
@@ -6478,8 +6487,9 @@
         /* The GitHub host is shown as a pill in the Location column, so it has
            to be searchable too — "github.ibm.com" is how an admin narrows to
            the GHE fleet. Absent means public GitHub, which is what the pill
-           renders, so search on that same default rather than nothing. */
-        h.githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST
+           renders, so search on that same default rather than nothing. A
+           Forgejo/Gitea/GitLab hive searches on its forge host instead. */
+        hiveHostLabel(h)
       ];
       (h.repos || []).forEach(function(r) { parts.push(r); });
       (h.access || []).forEach(function(a) {
@@ -6777,7 +6787,7 @@
       /* Absent host means public GitHub — bucket it under the same label the
          pill renders, not FACET_UNKNOWN, so old spokes group with github.com
          rather than forming a meaningless "—" bucket. */
-      f[FACET_GITHUB_HOST] = h.githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST;
+      f[FACET_GITHUB_HOST] = hiveHostLabel(h);
       var flags = hiveStatusFlags(h);
       f[FACET_STATUS] = flags.degraded ? 'Degraded' : (h.online ? 'Online' : 'Offline');
       return f;
