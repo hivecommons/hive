@@ -170,9 +170,26 @@ func reconcileUpgradeOutcomeAtBoot(markerPath, outcomePath, runningSHA string, l
 // because it reads as truncation and sends the reader looking for the rest.
 func upgradeFailureSummary(attempts int, lastError string) string {
 	if strings.TrimSpace(lastError) == "" {
-		return fmt.Sprintf("self-upgrade failed after %d attempts (no error recorded; the image never changed - check that the deployment tracks a tag carrying the target SHA)", attempts)
+		return fmt.Sprintf("self-upgrade failed after %d attempts (%s)", attempts, upgradeNoErrorRecorded)
 	}
 	return fmt.Sprintf("self-upgrade failed after %d attempts: %s", attempts, lastError)
+}
+
+// upgradeNoErrorRecorded explains a failed attempt that left no LastError. That
+// is the common case, not a corner: when the Deployment patch or rollout
+// restart SUCCEEDS the process records nothing, and the attempt only shows up
+// as failed on the next boot because the image never changed (#20168).
+const upgradeNoErrorRecorded = "no error recorded; the image never changed - check that the deployment tracks a tag carrying the target SHA"
+
+// upgradeLastErrorForLog is the last_error value the self-upgrade logs carry.
+// An empty value told an operator (and the fleet self-report, which filed it
+// as unclassified_error_repeated) nothing about why the retry was needed, so
+// an attempt that failed without an error says so explicitly.
+func upgradeLastErrorForLog(lastError string) string {
+	if strings.TrimSpace(lastError) == "" {
+		return upgradeNoErrorRecorded
+	}
+	return lastError
 }
 
 func recordUpgradeError(path string, upgradeErr error, logger *slog.Logger) {
