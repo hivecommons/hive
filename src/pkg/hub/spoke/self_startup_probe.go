@@ -52,6 +52,9 @@ func k8sUpgradePatch(path string, body []byte) error {
 // must never abort the image upgrade itself (#18479).
 func k8sUpgradePatchWithDeployment(path string, body, current []byte) error {
 	var err error
+	if body, err = backfillFsGroupChangePolicy(body, current); err != nil {
+		return err
+	}
 	dep, decodeErr := decodeUpgradeProbes(current)
 	if decodeErr != nil {
 		slog.Warn("self-upgrade: skipping startup probe backfill, cannot decode deployment probes",
@@ -204,4 +207,65 @@ func fullStartupProbe(port any) map[string]any {
 		"periodSeconds":       HostedStartupProbePeriodSeconds,
 		"failureThreshold":    HostedStartupProbeFailureThreshold,
 	}
+}
+
+// HostedFsGroupChangePolicy is the pod fsGroupChangePolicy the provisioning
+// template renders next to fsGroup (#20162). Without it Kubernetes defaults to
+// Always: kubelet re-groups the whole /data PVC on every mount, which undoes
+// the entrypoint's regroup of the agent trees to node and holds every agent
+// behind a full background chgrp walk on each restart.
+const HostedFsGroupChangePolicy = "OnRootMismatch"
+
+// backfillFsGroupChangePolicy adds the template's fsGroupChangePolicy to the
+// upgrade patch when the live pod sets fsGroup but no change policy, so spokes
+// provisioned before #20162 converge in the SAME template update as the
+// upgrade (no extra rollout). A pod without fsGroup (the OpenShift SCC lane)
+// or with an explicit policy is left alone. A nil body requests a backfill
+// only and stays nil when none is needed. Best-effort like the probe
+// backfill: an undecodable Deployment skips it and keeps the upgrade patch.
+func backfillFsGroupChangePolicy(body, current []byte) ([]byte, error) {
+	var dep struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					SecurityContext *struct {
+						FSGroup             *int64 `json:"fsGroup"`
+						FSGroupChangePolicy string `json:"fsGroupChangePolicy"`
+					} `json:"securityContext"`
+				} `json:"spec"`
+			} `json:"template"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal(current, &dep); err != nil {
+		slog.Warn("self-upgrade: skipping fsGroupChangePolicy backfill, cannot decode deployment", "err", err)
+		return body, nil
+	}
+	sc := dep.Spec.Template.Spec.SecurityContext
+	if sc == nil || sc.FSGroup == nil || sc.FSGroupChangePolicy != "" {
+		return body, nil
+	}
+	if body == nil {
+		body = []byte(`{"spec":{"template":{}}}`)
+	}
+	var patch map[string]any
+	if err := json.Unmarshal(body, &patch); err != nil {
+		return nil, fmt.Errorf("decoding upgrade patch: %w", err)
+	}
+	template := patch["spec"].(map[string]any)["template"].(map[string]any)
+	spec, _ := template["spec"].(map[string]any)
+	if spec == nil {
+		spec = map[string]any{}
+		template["spec"] = spec
+	}
+	psc, _ := spec["securityContext"].(map[string]any)
+	if psc == nil {
+		psc = map[string]any{}
+		spec["securityContext"] = psc
+	}
+	psc["fsGroupChangePolicy"] = HostedFsGroupChangePolicy
+	out, err := json.Marshal(patch)
+	if err != nil {
+		return nil, fmt.Errorf("encoding upgrade fsGroupChangePolicy: %w", err)
+	}
+	return out, nil
 }
