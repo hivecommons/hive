@@ -4828,6 +4828,21 @@
     }
 
     var _userQuota = 0, _userUsed = 0, _isAdmin = false, _isRootAdmin = false;
+    /* HIVE_HUB_MODE=self-hosted (#20189): the hub provisions no hive, so the
+       hosted-fleet controls have nothing to act on. Set from
+       /api/saas/my-hives; applySelfHostedMode hides those controls and every
+       loader that would re-show one returns early while it is set. */
+    var _hubSelfHosted = false;
+    var SELF_HOSTED_HIDDEN_IDS = ['btn-add-hive', 'btn-request-hive', 'cluster-health-section', 'scale-controls-section', 'nps-section'];
+    function applySelfHostedMode() {
+      if (!_hubSelfHosted) return;
+      SELF_HOSTED_HIDDEN_IDS.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        el.style.display = 'none';
+        el.hidden = true;
+      });
+    }
     var _personalProfileLinksAllowed = false;
     var _profileShareHiveIDs = new Set();
     var _profileShareHiveSignature = '';
@@ -7930,7 +7945,8 @@
                label says so; the JSON field keeps its original name. */
             renderUsageSection('By org / repo', d.byOrg, 'org') +
             renderUsageSection('By owner', d.byOwner, 'owner') +
-            renderUsageSection('By cluster', d.byCluster, 'cluster') +
+            /* A self-hosted hub has no cluster fleet to split by (#20189). */
+            (_hubSelfHosted ? '' : renderUsageSection('By cluster', d.byCluster, 'cluster')) +
           '</div>' +
           zeroHtml +
           '<div style="margin-top:10px;font-size:0.66rem;color:var(--muted);line-height:1.4">' + esc(d.currencyNote || '') + '</div>' +
@@ -7960,6 +7976,7 @@
         var data = await resp.json();
         _userQuota = data.saas_quota || 0;
         _userUsed = data.saas_used || 0;
+        _hubSelfHosted = data.hub_self_hosted === true;
         _allDashHives = data.hives || [];
         _hiveRegistry = data.hives || [];
         var showProfileShare = _personalProfileLinksAllowed && data.customersShareEnabled === true;
@@ -8227,6 +8244,8 @@
         if (requestBtn) {
           requestBtn.style.display = canCreate ? 'none' : '';
         }
+        /* Self-hosted hub: "Register your own hive" is the only path. */
+        applySelfHostedMode();
         /* Render through sortedDashHives() rather than the raw payload so an
            active sort — whether the operator clicked a column or restored a
            saved view that carries one — survives each poll instead of snapping
@@ -11780,7 +11799,7 @@
       } catch (e) { /* transient: next poll retries */ }
     }
     async function loadScaleSettings() {
-      if (!_isAdmin) return;
+      if (!_isAdmin || _hubSelfHosted) return;
       try {
         var resp = await fetch('/api/saas/admin/scale-settings');
         if (!resp.ok) { document.getElementById('scale-controls-section').style.display = 'none'; return; }
@@ -11973,7 +11992,7 @@
     }
 
     async function loadClusterHealth() {
-      if (!_isAdmin) return;
+      if (!_isAdmin || _hubSelfHosted) return;
       try {
         var resp = await fetch('/api/saas/cluster-health');
         if (resp.status === 403) {
@@ -13109,7 +13128,7 @@
           return;
         }
         _adminLoaded = true;
-        document.getElementById('nps-section').hidden = false;
+        document.getElementById('nps-section').hidden = _hubSelfHosted;
         document.getElementById('admin-section').style.display = '';
         var navFleet = document.getElementById('nav-fleet');
         if (navFleet) navFleet.style.display = '';
@@ -13441,6 +13460,9 @@
     // full width, so this must track the <th> count in renderUsers.
     // 10 since the Affiliation column landed.
     var USERS_TABLE_COLSPAN = 10;
+    // A self-hosted hub drops the Quota column (#20189), so its spanning rows
+    // are one column narrower.
+    function usersTableColspan() { return USERS_TABLE_COLSPAN - (_hubSelfHosted ? 1 : 0); }
     // Rows of the notes textarea. Big enough for a short paragraph without
     // pushing the next user off screen. It is the only free-form prose field,
     // so it gets the height as well as the width; still user-resizable.
@@ -13886,7 +13908,7 @@
       var user = escAttr(u.github_username);
       return '<tr id="' + contactPanelId(u.github_username) + '"' + (rowClass || '') + ' style="display:' + (open ? '' : 'none') + '">' +
         /* position:relative anchors the absolutely-positioned × below. */
-        '<td class="contact-panel-cell" colspan="' + USERS_TABLE_COLSPAN + '" style="background:var(--surface);position:relative">' +
+        '<td class="contact-panel-cell" colspan="' + usersTableColspan() + '" style="background:var(--surface);position:relative">' +
         '<div style="padding:10px 14px 12px 40px;display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start">' +
           '<div style="flex:1 1 ' + CONTACT_W_NAME_BASIS + ';min-width:' + CONTACT_W_NAME_MIN + '">' +
             '<label style="' + lbl + '">Full name</label>' +
@@ -14517,7 +14539,7 @@
 
         var hiveRows = '';
         if (hiveCount > 0) {
-          hiveRows = '<tr id="' + expandId + '"' + rowClass + ' style="display:' + (isExpanded ? '' : 'none') + '"><td colspan="' + USERS_TABLE_COLSPAN + '"><div style="padding:8px 12px 8px 40px;font-size:var(--fs-sm)">';
+          hiveRows = '<tr id="' + expandId + '"' + rowClass + ' style="display:' + (isExpanded ? '' : 'none') + '"><td colspan="' + usersTableColspan() + '"><div style="padding:8px 12px 8px 40px;font-size:var(--fs-sm)">';
           hiveRows += '<table style="width:100%;border-collapse:collapse"><thead><tr style="color:var(--muted);font-size:0.7rem"><th style="text-align:left;padding:var(--sp-2) var(--sp-4)">Hive</th><th>Role</th><th>Type</th><th>Link</th></tr></thead><tbody>';
           hiveIds.forEach(function(hid) {
             var role = hivesObj[hid];
@@ -14560,7 +14582,8 @@
           '<td style="text-align:left">' + renderContactCell(u) + '</td>' +
           '<td>' + countryCell(u) + '</td>' +
           '<td>' + statusCell + '</td>' +
-          '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:var(--sp-2);background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
+          /* Hosted-hive quota means nothing on a self-hosted hub (#20189). */
+          (_hubSelfHosted ? '' : '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:var(--sp-2);background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>') +
           '<td>' + affiliationCell(u) + '</td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span class="text-muted">0</span>') + '</td>' +
           '<td class="users-actions-cell">' + userActions + '</td>' +
@@ -14572,7 +14595,9 @@
         // as new companies are entered.
         '<datalist id="contact-company-suggestions">' + companyDatalistOptionsHTML() + '</datalist>' +
         '<table class="hive-table"><thead><tr>' +
-        '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'full_name\')" style="cursor:pointer">Contact ⇅</th><th onclick="sortUsers(\'country\')" style="cursor:pointer">Country ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th><th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th><th onclick="sortUsers(\'affiliation\')">AFFILIATION ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
+        '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'full_name\')" style="cursor:pointer">Contact ⇅</th><th onclick="sortUsers(\'country\')" style="cursor:pointer">Country ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th>' +
+        (_hubSelfHosted ? '' : '<th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th>') +
+        '<th onclick="sortUsers(\'affiliation\')">AFFILIATION ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
       // The contact panels are built as raw HTML above; wire their listeners
       // once the rows are actually in the DOM. Inline on* handlers are avoided

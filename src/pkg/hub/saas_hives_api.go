@@ -1290,6 +1290,7 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		"hives_total":              len(result),
 		"hives_matched":            matched,
 		"saas_quota":               user.SaaSQuota,
+		"hub_self_hosted":          hubSelfHosted(),
 		"saas_used":                saasCount,
 		"is_admin":                 isAdmin,
 		"latest_sha":               getLatestSHA(),

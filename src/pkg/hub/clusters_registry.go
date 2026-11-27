@@ -164,7 +164,23 @@ func quarantineClustersFile(path string, logger *slog.Logger) {
 //
 // Unchanged from the original loadClusters ENOENT branch, kept in one place so
 // the "absent" path is provably identical to what shipped before this fix.
+//
+// A hub started with HIVE_HUB_MODE=self-hosted provisions no hive, so it gets
+// a neutral in-cluster entry under the same ID instead: no OKE name and no
+// storage, ingress, architecture or image assumptions it cannot know (#20189).
+// The entry itself stays, because hubCluster and the lite-enrollment path
+// look the default ID up.
 func defaultClusterRegistry() map[string]ClusterConfig {
+	if hubSelfHosted() {
+		return map[string]ClusterConfig{
+			defaultClusterID: {
+				ID:        defaultClusterID,
+				Name:      selfHostedClusterName,
+				InCluster: true,
+				Domain:    hubSpokeDomain(),
+			},
+		}
+	}
 	return map[string]ClusterConfig{
 		defaultClusterID: {
 			ID:           defaultClusterID,
@@ -213,6 +229,10 @@ func loadClustersChecked(logger *slog.Logger) (map[string]ClusterConfig, cluster
 	data, outcome := readClustersFile(clustersConfigPath, logger)
 	switch outcome {
 	case clustersAbsent:
+		if hubSelfHosted() {
+			logger.Info("no clusters config found on a self-hosted hub, using a neutral in-cluster entry", "path", clustersConfigPath)
+			return defaultClusterRegistry(), clustersAbsent
+		}
 		logger.Info("no clusters config found, using default hive-oke cluster", "path", clustersConfigPath)
 		return defaultClusterRegistry(), clustersAbsent
 	case clustersUntrusted:
