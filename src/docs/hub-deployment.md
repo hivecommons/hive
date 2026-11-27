@@ -358,11 +358,18 @@ user removes their copies there too, and in `consents.ignored` and
 `consents.pre-restore`.
 
 **Never run a hub image older than colony-only against a colony-only
-store; roll back first.** Such an image opens the same `colony.db`, reads
-stripped records as empty and saves them without `crm_in_colony`, and with
-`HIVE_HUB_CUSTOMER_STORE` unset its colony-mode boot sync empties colony's
-typed facts and consents. Colony keeps the `hub.crm` copy and fills every
-field such a save left empty, but a field that image cleared comes back.
+store; roll back first.** While the store is colony-only, the hub records a
+`schema_version` in `colony.db` that no colony release accepts, from the
+moment it opens the store (so also after a crash), and puts the real one
+back before its own next open; a rollback drops it with the marker. An older
+image therefore fails to open `colony.db` (`ErrSchemaTooNew`) and runs in
+`json` mode without writing it, so its boot sync can no longer empty colony's
+typed facts and consents. It still serves the stripped records with their
+CRM fields empty and saves them without `crm_in_colony`: colony keeps the
+`hub.crm` copy and fills every field such a save left empty, but a field that
+image cleared comes back. Any other tool that opens a colony-only
+`colony.db` with `store.Open` gets the same refusal; use `hive colony
+export`.
 
 ### Ask AI help
 
