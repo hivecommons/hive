@@ -106,14 +106,17 @@ func stringMapFromBody(field string, v interface{}) (map[string]string, error) {
 // sandboxMetadataMapFromBody reads pod labels or annotations. It is
 // stringMapFromBody without trimming, so annotation values keep their
 // whitespace and an untrimmed key is reported as invalid, not silently fixed.
+// Values must be JSON strings: a number is refused rather than formatted,
+// matching the Kubernetes API, where label and annotation values are strings.
 func sandboxMetadataMapFromBody(field string, v interface{}) (map[string]string, error) {
 	return readStringMapFromBody(field, v, false)
 }
 
 // readStringMapFromBody is the shared core of stringMapFromBody and
 // sandboxMetadataMapFromBody. Every value is written to the Job manifest, so
-// any entry that looks like a credential is refused.
-func readStringMapFromBody(field string, v interface{}, trim bool) (map[string]string, error) {
+// any entry that looks like a credential is refused. lenient selects the
+// stringMapFromBody behaviour: trim keys and values and format numbers.
+func readStringMapFromBody(field string, v interface{}, lenient bool) (map[string]string, error) {
 	if v == nil {
 		return nil, nil
 	}
@@ -127,17 +130,20 @@ func readStringMapFromBody(field string, v interface{}, trim bool) (map[string]s
 	out := make(map[string]string, len(obj))
 	for k, raw := range obj {
 		key := k
-		if trim {
+		if lenient {
 			key = strings.TrimSpace(k)
 		}
 		var val string
 		switch x := raw.(type) {
 		case string:
 			val = x
-			if trim {
+			if lenient {
 				val = strings.TrimSpace(x)
 			}
 		case float64:
+			if !lenient {
+				return nil, fmt.Errorf("%s: the value of %q must be a string", field, key)
+			}
 			val = strconv.FormatFloat(x, 'f', -1, 64)
 		default:
 			return nil, fmt.Errorf("%s: the value of %q must be a string", field, key)
