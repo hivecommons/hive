@@ -1,1 +1,0 @@
-- A hive whose repositories are all on another forge (Forgejo, Gitea, GitLab) no longer asks the GitHub Search API for its merged-PR and closed-issue counts or warns `github client not configured` every hour; the counts show as unsupported, and a mixed hive counts only its GitHub repositories (#20179).
