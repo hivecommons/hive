@@ -358,6 +358,9 @@ type npsRecentResponse struct {
 // npsAggregation is the GET /api/admin/nps response.
 type npsAggregation struct {
 	npsTally
+	// Enabled reports whether NPS is switched on for this hub (#20197). The
+	// dashboard hides the card when it is false and Total is 0.
+	Enabled      bool                `json:"enabled"`
 	PromoterPct  int                 `json:"promoter_pct"`
 	PassivePct   int                 `json:"passive_pct"`
 	DetractorPct int                 `json:"detractor_pct"`
@@ -564,5 +567,7 @@ func (s *HubServer) handleAdminNPS(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	_ = json.NewEncoder(w).Encode(buildNPSAggregation(records, s.npsHiveNames()))
+	agg := buildNPSAggregation(records, s.npsHiveNames())
+	agg.Enabled = s.npsEnabledOnHub()
+	_ = json.NewEncoder(w).Encode(agg)
 }
