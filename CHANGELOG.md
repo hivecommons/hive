@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.381.0)
+
+### Added
+
+- **The hub can keep its customer data on the colony store alone (`HIVE_HUB_CUSTOMER_STORE=colony-only`, opt-in).** After a boot sync with parity and a verified read-back, the CRM fields and consent records (delivery bookkeeping included) live only in `/data/saas/colony.db`: the consents directory is renamed `consents.migrated`, the users directory is copied to `users.migrated`, and user records are written without their CRM fields, only once the colony write succeeded. Setting `colony`, `shadow` or `json` again writes everything back on the next boot, and `hive colony export --format hive-hub-json` does it by hand. `shadow` and `colony` now also store the delivery bookkeeping, long notes and a second user's linked login or email, and delete a pruned consent from colony. The trusted-hive gate on customer data is unchanged (#19972).
+
+### Fixed
+
+- `headless_turns: true` set in `/data/agent-configs/<agent>.yaml` or in the agent's block of the runtime config is no longer dropped on a Kubernetes spoke when the dashboard overlay's older copy of the agent replaces it at boot, and the agent's Settings dialog now has a Headless turns toggle that saves the key to every layer and restarts the agent (#19902).
+
 ## 2026-11-27 (v5.380.0)
 
 ### Added
