@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.383.2)
+
+### Fixed
+
+- A merge request refused because its workflow change does not qualify for the pin-only exception no longer files an `unclassified_error_repeated` selfreport when agents re-request the same PR; the refusal is expected policy enforcement and the WARN stays in local logs (#20169).
+
 ## 2026-11-27 (v5.383.1)
 
 ### Fixed
