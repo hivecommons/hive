@@ -90,6 +90,12 @@ type MetricsCollector struct {
 	// queries: merged / closed counters move on webhook events and the
 	// search path only runs as the hourly reconcile (hivecommons/hive#13376).
 	forgeCounts *forgestate.Counts
+	// prIssueUnsupportedLogged records that the "no repo is on GitHub"
+	// DEBUG line was written, so it is logged once rather than every collect.
+	prIssueUnsupportedLogged bool
+	// repoOnGitHubFn reports whether a repo is on GitHub; nil means every
+	// repo is. See SetRepoOnGitHubProvider. Guarded by scopeMu.
+	repoOnGitHubFn func(repo string) bool
 
 	// coverageTargetFn supplies the configured coverage goal on every collect so
 	// an edit from the hub applies without a restart; nil means the default.
@@ -192,7 +198,7 @@ func (mc *MetricsCollector) EnableForgeCounts(open forgestate.OpenSource) *forge
 		return nil
 	}
 	c := forgestate.NewCounts(forgestate.CountsOptions{
-		Repos:     mc.countReposQualified(),
+		Repos:     mc.githubCountRepos(mc.countReposQualified()),
 		Open:      open,
 		Reconcile: mc.reconcileOutcomeCounts,
 		Author:    mc.countAuthor(),
@@ -218,7 +224,15 @@ func (mc *MetricsCollector) ForgeCounts() *forgestate.Counts {
 // check: the same two Search-API queries per repo the collector used to run
 // on every collect. A count GitHub could not produce (missing author,
 // incomplete result) is an error so it never overwrites the counters.
+//
+// A repo on another forge has no Search API to ask. It is answered with
+// zero and no error: the counters never publish it (collectPRIssueCountsFromForge
+// aggregates over GitHub repos only), and an error would log a warning every
+// hour for a count that can never exist (hivecommons/hive#20179).
 func (mc *MetricsCollector) reconcileOutcomeCounts(ctx context.Context, repo string) (int, int, error) {
+	if !mc.repoOnGitHub(repo) {
+		return 0, 0, nil
+	}
 	gh := mc.client()
 	if gh == nil {
 		return 0, 0, fmt.Errorf("github client not configured")
@@ -378,9 +392,17 @@ func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
 		mc.collectPRIssueCountsFromForge(ctx, fc)
 		return
 	}
+	all := mc.countRepos()
+	if len(all) == 0 {
+		return
+	}
+	repos := mc.githubCountRepos(all)
+	if len(repos) == 0 {
+		mc.noteCountsUnsupported(len(all))
+		return
+	}
 	gh := mc.client()
-	repos := mc.countRepos()
-	if gh == nil || len(repos) == 0 {
+	if gh == nil {
 		return
 	}
 
@@ -427,8 +449,15 @@ func (mc *MetricsCollector) collectPRIssueCounts(ctx context.Context) {
 // due; between reconciles the counters are whatever the webhooks moved them
 // to. A failed reconcile keeps the last-good counts and carries stale_since.
 func (mc *MetricsCollector) collectPRIssueCountsFromForge(ctx context.Context, fc *forgestate.Counts) {
-	repos := mc.countReposQualified()
+	all := mc.countReposQualified()
+	if len(all) == 0 {
+		return
+	}
+	repos := mc.githubCountRepos(all)
 	if len(repos) == 0 {
+		// Every repo is on another forge: there is nothing to reconcile
+		// against, so the Search API is never asked.
+		mc.noteCountsUnsupported(len(all))
 		return
 	}
 	if fc.ReconcileDue() {
@@ -565,6 +594,59 @@ func (mc *MetricsCollector) countRepos() []string {
 		out = append(out, repo)
 	}
 	return out
+}
+
+// SetRepoOnGitHubProvider installs the check that says whether a repo lives
+// on GitHub (config.Config.RepoOnGitHub). The merged-PR / closed-issue counts
+// come from the GitHub Search API, so repos on another forge are left out of
+// them. Nil, the default, treats every repo as GitHub. Call before
+// EnableForgeCounts so the counters are built from the GitHub repos only.
+func (mc *MetricsCollector) SetRepoOnGitHubProvider(fn func(repo string) bool) {
+	if mc == nil {
+		return
+	}
+	mc.scopeMu.Lock()
+	defer mc.scopeMu.Unlock()
+	mc.repoOnGitHubFn = fn
+}
+
+func (mc *MetricsCollector) repoOnGitHub(repo string) bool {
+	if mc == nil {
+		return true
+	}
+	mc.scopeMu.RLock()
+	fn := mc.repoOnGitHubFn
+	mc.scopeMu.RUnlock()
+	return fn == nil || fn(repo)
+}
+
+// githubCountRepos filters repos to those on GitHub.
+func (mc *MetricsCollector) githubCountRepos(repos []string) []string {
+	out := make([]string, 0, len(repos))
+	for _, repo := range repos {
+		if mc.repoOnGitHub(repo) {
+			out = append(out, repo)
+		}
+	}
+	return out
+}
+
+// prIssueCountsUnsupported is the count error a hive with no GitHub repo
+// reports: its forge has no source for the hive-attributed counts yet.
+const prIssueCountsUnsupported = "unsupported: no configured repo is on GitHub, and merged-PR / closed-issue counts come from the GitHub Search API"
+
+// noteCountsUnsupported records that no repo can be counted, so the
+// dashboard shows the counts as unsupported rather than 0 or a GitHub
+// outage. It logs once, at DEBUG: this is configuration, not a failure.
+func (mc *MetricsCollector) noteCountsUnsupported(skipped int) {
+	mc.prIssueMu.Lock()
+	mc.prIssueErr = prIssueCountsUnsupported
+	first := !mc.prIssueUnsupportedLogged
+	mc.prIssueUnsupportedLogged = true
+	mc.prIssueMu.Unlock()
+	if first {
+		mc.logger.Debug("PR/issue counts skipped: every repo is on another forge", "repos", skipped)
+	}
 }
 
 // countReposQualified is countRepos with bare names qualified by the
