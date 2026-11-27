@@ -361,9 +361,22 @@ Every bridge request but `/healthz` carries a random per-run bearer token. It li
 On a cluster with default-deny NetworkPolicies, add these rules yourself:
 
 1. Egress from the hive pod to the Job pods on TCP 8477. Select the Job pods with `app.kubernetes.io/managed-by: hive-kubejob`.
-2. Egress from the Job pods to CoreDNS and to wherever the agent's model runs, such as a gateway or the translator listener for Job kicks.
+2. Egress from the Job pods to CoreDNS and to wherever the agent's model runs, such as a gateway or the translator listener for Job kicks. An allow rule can select the operator's `job.pod_labels`.
 
-Until rule 1 exists, no push succeeds. Hive logs the first failed connection and every 15th after it (`kubejob: the job bridge is not answering; retrying`, with the job, phase and port), and after 6 connection timeouts in a row fails the kick with an error that names the requirement. A pod that is still starting refuses connections rather than timing out, so a slow image pull does not trip it. Job pods carry only the `managed-by`, `job-name`, `hive.kubestellar.io/job` and agent labels. **There is no `job.pod_labels` or `job.pod_annotations` yet**, so an operator who allows egress by a label such as `internet-client` cannot apply it to Job pods. Select Job pods by the labels above, or use a namespace-wide policy, until those options exist.
+Until rule 1 exists, no push succeeds. Hive logs the first failed connection and every 15th after it (`kubejob: the job bridge is not answering; retrying`, with the job, phase and port), and after 6 connection timeouts in a row fails the kick with an error that names the requirement. A pod that is still starting refuses connections rather than timing out, so a slow image pull does not trip it.
+
+**Job pod metadata.** Set `agent_sandbox.job.pod_labels` and `pod_annotations` to add operator-controlled metadata to Job pods on either transport. Labels also appear on the Job. Per-agent `sandbox.job` maps extend the global maps, overriding matching keys without dropping other global keys. Kubernetes validates the key and label-value syntax; Hive refuses invalid metadata, `app.kubernetes.io/managed-by`, `job-name`, and keys under `hive.kubestellar.io/` at config load.
+
+```yaml
+agent_sandbox:
+  job:
+    pod_labels:
+      example.com/internet-client: "true"
+    pod_annotations:
+      example.com/policy: sandbox
+```
+
+Labels selected by an allow policy widen network access for code run by the agent. Use `network: none` for deny-all egress, and ensure no other NetworkPolicy selects the pod to allow egress: Kubernetes policies are additive.
 
 **Runtime class (`job.runtime_class_name`).** Sets the Job pod's `runtimeClassName`, for example `kata`, on either transport. Empty (the default) leaves the cluster default, as before. `HIVE_SANDBOX_JOB_RUNTIME_CLASS_NAME`, when set, overrides it for every Job. A per-agent `job` block that leaves it empty inherits the `agent_sandbox.job` value, so an agent's own block cannot drop the spoke's runtime class by accident. The value must be a Kubernetes object name; anything else is refused when the config loads.
 

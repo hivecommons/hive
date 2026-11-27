@@ -222,6 +222,33 @@ test('hive scheduling edits stage agentSandbox keys and refuse an incomplete rel
   assert.ok(!t.state.dirty.security || !('agentSandboxJobGithubReadProxy' in t.state.dirty.security));
 });
 
+test('pod metadata renders and stages in both scopes without losing annotation newlines', () => {
+  for (const scope of ['agent', 'hive']) {
+    const t = load({ inputs: {
+      [`sbx-${scope}-podLabels`]: 'example.com/team=platform',
+      [`sbx-${scope}-podAnnotations`]: '{"example.com/note":"first\\nsecond"}',
+    } });
+    const data = scope === 'agent' ? { sandboxJob: { podLabels: { 'example.com/team': 'platform' } } } : { agentSandboxJobPodLabels: { 'example.com/team': 'platform' } };
+    const html = t.api.sandboxSchedulingHtml(scope, data);
+    assert.ok(html.includes(`id="sbx-${scope}-podLabels"`));
+    assert.ok(html.includes(`id="sbx-${scope}-podAnnotations"`));
+    t.api.markSandboxScheduling(scope);
+    const staged = scope === 'agent' ? t.state.dirty.general.sandboxJob : t.state.dirty.security;
+    assert.deepStrictEqual(staged[scope === 'agent' ? 'podLabels' : 'agentSandboxJobPodLabels'], { 'example.com/team': 'platform' });
+    assert.deepStrictEqual(staged[scope === 'agent' ? 'podAnnotations' : 'agentSandboxJobPodAnnotations'], { 'example.com/note': 'first\nsecond' });
+  }
+});
+
+test('invalid pod metadata input is not staged', () => {
+  const t = load({ inputs: {
+    'sbx-agent-podLabels': 'job-name=bad',
+    'sbx-agent-podAnnotations': '{"example.com/note":2}',
+  } });
+  t.api.markSandboxScheduling('agent');
+  assert.ok(!('podLabels' in t.state.dirty.general.sandboxJob));
+  assert.ok(!('podAnnotations' in t.state.dirty.general.sandboxJob));
+});
+
 // sandbox.setup (#19574) shares the renderer and the stager.
 test('setup block renders next to the preflight with full YAML paths and the effective row', () => {
   const { api } = load();

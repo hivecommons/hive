@@ -132,6 +132,31 @@ func stringMapFromBody(field string, v interface{}) (map[string]string, error) {
 	return out, nil
 }
 
+func sandboxMetadataMapFromBody(field string, v interface{}) (map[string]string, error) {
+	if v == nil {
+		return nil, nil
+	}
+	obj, ok := v.(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("%s must be an object of strings", field)
+	}
+	if len(obj) > maxSandboxJobMapEntries {
+		return nil, fmt.Errorf("%s takes at most %d entries", field, maxSandboxJobMapEntries)
+	}
+	if len(obj) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(obj))
+	for key, raw := range obj {
+		value, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s: the value of %q must be a string", field, key)
+		}
+		out[key] = value
+	}
+	return out, nil
+}
+
 // nodeSelectorFromBody reads and validates job.node_selector.
 func nodeSelectorFromBody(field string, v interface{}) (map[string]string, error) {
 	m, err := stringMapFromBody(field, v)
@@ -574,6 +599,8 @@ func agentSandboxEffectiveView(a config.AgentConfig, global config.AgentSandboxC
 		"ttlSeconds":       fallback(own.TTLSeconds != 0, g.TTLSeconds != 0),
 		"scheduleTimeoutS": fallback(own.ScheduleTimeoutS != 0, g.ScheduleTimeoutS != 0),
 		"imagePullSecrets": fallback(len(own.ImagePullSecrets) > 0, len(g.ImagePullSecrets) > 0),
+		"podLabels":        fallback(len(own.PodLabels) > 0, len(g.PodLabels) > 0),
+		"podAnnotations":   fallback(len(own.PodAnnotations) > 0, len(g.PodAnnotations) > 0),
 	}
 	var hidden []string
 	if ownJob {
@@ -616,6 +643,8 @@ func agentSandboxEffectiveView(a config.AgentConfig, global config.AgentSandboxC
 	return map[string]interface{}{
 		"job": map[string]interface{}{
 			"nodeSelector":     nonNilStringMap(eff.NodeSelector),
+			"podLabels":        nonNilStringMap(eff.PodLabels),
+			"podAnnotations":   nonNilStringMap(eff.PodAnnotations),
 			"resources":        resourcesView(eff.Resources),
 			"tolerations":      nonNilTolerations(eff.Tolerations),
 			"serviceAccount":   eff.ServiceAccount,
@@ -639,6 +668,8 @@ func agentSandboxEffectiveView(a config.AgentConfig, global config.AgentSandboxC
 // Each key is raw so an absent key is "unchanged" and null clears the field.
 type sandboxJobDefaultsBody struct {
 	NodeSelector     json.RawMessage `json:"agentSandboxJobNodeSelector"`
+	PodLabels        json.RawMessage `json:"agentSandboxJobPodLabels"`
+	PodAnnotations   json.RawMessage `json:"agentSandboxJobPodAnnotations"`
 	Resources        json.RawMessage `json:"agentSandboxJobResources"`
 	Tolerations      json.RawMessage `json:"agentSandboxJobTolerations"`
 	ImagePullSecrets json.RawMessage `json:"agentSandboxJobImagePullSecrets"`
@@ -672,6 +703,8 @@ func (b sandboxJobDefaultsBody) parse(current config.AgentSandboxConfig) (sandbo
 		raw json.RawMessage
 	}{
 		{"nodeSelector", b.NodeSelector},
+		{"podLabels", b.PodLabels},
+		{"podAnnotations", b.PodAnnotations},
 		{"resources", b.Resources},
 		{"tolerations", b.Tolerations},
 		{"scheduleTimeoutS", b.ScheduleTimeoutS},
@@ -764,6 +797,8 @@ func sandboxJobDefaultsResponse(cfg *config.Config) map[string]interface{} {
 	job := sandboxJobOrEmpty(cfg)
 	return map[string]interface{}{
 		"agentSandboxJobNodeSelector":     nonNilStringMap(job.NodeSelector),
+		"agentSandboxJobPodLabels":        nonNilStringMap(job.PodLabels),
+		"agentSandboxJobPodAnnotations":   nonNilStringMap(job.PodAnnotations),
 		"agentSandboxJobResources":        resourcesView(job.Resources),
 		"agentSandboxJobTolerations":      nonNilTolerations(job.Tolerations),
 		"agentSandboxJobImagePullSecrets": nonNilStrings(job.ImagePullSecrets),

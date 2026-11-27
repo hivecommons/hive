@@ -2,11 +2,13 @@ package dashboard
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"reflect"
 	"strings"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/ioscan"
 )
@@ -158,6 +160,17 @@ func (s *Server) handleGovernorSecurity(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if jobDefaults.jobChanged {
+		next := s.deps.Config.AgentSandbox
+		next.Job = jobDefaults.job
+		for name, agent := range s.deps.Config.Agents {
+			effectiveJob := agent.SandboxJob(next)
+			if err := cruxconfig.ValidateSandboxJobMetadata(&effectiveJob); err != nil {
+				jsonError(w, fmt.Sprintf("agent %s: %v", name, err), http.StatusBadRequest)
+				return
+			}
+		}
 	}
 
 	cfg := s.deps.Config

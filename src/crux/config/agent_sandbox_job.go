@@ -37,6 +37,8 @@ type SandboxJobConfig struct {
 	WorkspaceClaim      string                 `yaml:"workspace_claim,omitempty" json:"workspace_claim,omitempty"`
 	WorkspaceClaimMount string                 `yaml:"workspace_claim_mount,omitempty" json:"workspace_claim_mount,omitempty"`
 	NodeSelector        map[string]string      `yaml:"node_selector,omitempty" json:"node_selector,omitempty"`
+	PodLabels           map[string]string      `yaml:"pod_labels,omitempty" json:"pod_labels,omitempty"`
+	PodAnnotations      map[string]string      `yaml:"pod_annotations,omitempty" json:"pod_annotations,omitempty"`
 	Affinity            *SandboxJobAffinity    `yaml:"affinity,omitempty" json:"affinity,omitempty"`
 	Tolerations         []SandboxJobToleration `yaml:"tolerations,omitempty" json:"tolerations,omitempty"`
 	Resources           SandboxJobResources    `yaml:"resources,omitempty" json:"resources,omitempty"`
@@ -170,6 +172,7 @@ func (a *AgentConfig) SandboxRuntime(global AgentSandboxConfig) string {
 // account) — an agent that needs an accelerator names its own scheduling. The
 // claim fields and the TTL are cluster facts, not per-agent choices, so they
 // fall back to the global block when the per-agent one leaves them empty.
+// Pod labels and annotations instead inherit per key, with agent values winning.
 func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 	var g SandboxJobConfig
 	if global.Job != nil {
@@ -179,6 +182,8 @@ func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 		return g
 	}
 	out := *a.Sandbox.Job
+	out.PodLabels = mergeSandboxPodMetadata(g.PodLabels, out.PodLabels)
+	out.PodAnnotations = mergeSandboxPodMetadata(g.PodAnnotations, out.PodAnnotations)
 	// The Job listeners are hive-wide: a per-agent block cannot enable them.
 	out.GitHubReadProxy, out.InferenceProxy = g.GitHubReadProxy, g.InferenceProxy
 	if strings.TrimSpace(out.WorkspaceClaim) == "" {
