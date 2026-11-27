@@ -106,6 +106,14 @@ type npsRelayAckRequest struct {
 // then the hub's config file (when one is set). Either empty disables the
 // pull.
 func (s *HubServer) npsRelayPullSettings() (relayURL, secret string) {
+	hubCfg := s.npsHubConfig()
+	return hubCfg.EffectiveNPSRelayURL(), hubCfg.EffectiveNPSRelayPullSecret()
+}
+
+// npsHubConfig loads the hub section of the hub's config file (when one is
+// set) so the NPS env-over-config resolvers can apply. A missing or unset
+// config yields the zero value, which leaves the env vars authoritative.
+func (s *HubServer) npsHubConfig() config.HubConfig {
 	var hubCfg config.HubConfig
 	if strings.TrimSpace(s.configPath) != "" {
 		cfg, err := config.LoadWithDashboardOverlayForHub(s.configPath)
@@ -113,10 +121,23 @@ func (s *HubServer) npsRelayPullSettings() (relayURL, secret string) {
 		case err == nil:
 			hubCfg = cfg.Hub
 		case !errors.Is(err, os.ErrNotExist) && s.logger != nil:
-			s.logger.Warn("nps relay pull: could not load hub config; using env only", "path", s.configPath, "error", err)
+			s.logger.Warn("nps: could not load hub config; using env only", "path", s.configPath, "error", err)
 		}
 	}
-	return hubCfg.EffectiveNPSRelayURL(), hubCfg.EffectiveNPSRelayPullSecret()
+	return hubCfg
+}
+
+// npsEnabledOnHub reports whether NPS is switched on for this hub: the
+// hub.nps_enabled / HIVE_NPS_ENABLED gate, or an NPS relay pull configured.
+// The admin dashboard hides the NPS card when this is false and no response
+// has been stored (#20197), so a hub that never opted in shows no empty
+// "NPS 0 · 0 responses" card.
+func (s *HubServer) npsEnabledOnHub() bool {
+	hubCfg := s.npsHubConfig()
+	if hubCfg.NPSFeedbackEnabled() {
+		return true
+	}
+	return hubCfg.EffectiveNPSRelayURL() != "" && hubCfg.EffectiveNPSRelayPullSecret() != ""
 }
 
 // StartNPSRelayPull runs the periodic relay pull until ctx is cancelled. It

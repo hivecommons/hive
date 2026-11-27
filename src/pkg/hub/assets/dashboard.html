@@ -982,8 +982,9 @@
         <!-- NPS feedback from every hive's dashboard (#9610). Double gated:
              this section is hidden until the admin check passes, and
              /api/admin/nps is behind requireAdmin. Free text is rendered with
-             textContent only, never as markup. Empty/disabled fleets still show
-             the existing no-responses state instead of hiding the section. -->
+             textContent only, never as markup. A hub with NPS switched off and
+             no stored response hides the whole section (#20197); an enabled
+             hub with no responses yet keeps the no-responses state. -->
         <div id="nps-container"></div>
       </div>
     </div>
@@ -1003,9 +1004,10 @@
             <div>
               <div class="hub-admins-title">Hub admins</div>
               <div class="fs-sm text-muted">Root admins come from hub configuration. Root admins can add or remove UI-granted admins.</div>
+              <div id="hub-admins-id-hint" class="fs-sm text-muted">Enter the admin's GitHub login.</div>
             </div>
             <form id="hub-admins-add" class="hub-admins-add" onsubmit="grantHubAdmin(event)">
-              <input id="hub-admins-login" class="hub-admins-login" type="text" placeholder="GitHub login" autocomplete="off">
+              <input id="hub-admins-login" class="hub-admins-login" type="text" placeholder="GitHub login" aria-label="GitHub login" autocomplete="off">
               <button class="hv-btn btn-primary" type="submit">Add admin</button>
             </form>
           </div>
@@ -1099,17 +1101,21 @@
           (worker-count reductions apply on the next hub restart).
         </div>
         <div id="scale-globals" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--sp-5);margin-bottom:var(--sp-6)"></div>
-        <div class="customers-share-setting">
+        <!-- Optional feature panels (#20197): each panel is hidden while its
+             feature is off, so a disabled feature takes no space. The one
+             optional-features-off line names what is off and how to turn it on. -->
+        <div id="customers-share-setting" class="customers-share-setting" hidden>
           <h3>Customers profile sharing</h3>
           <p>In force: <strong id="customers-share-effective">Unknown</strong> · Default: Off</p>
           <p id="customers-share-counts" class="customers-share-counts" hidden></p>
           <p>Set <code>HIVE_HUB_CUSTOMERS_SHARE_ENABLED</code> on the hub to enable the personal profile and consent page. The environment is authoritative; this setting cannot be changed here. A hive receives a person's real name, organization or country only after that person consents for that hive, and only values they entered themselves. Counts above are per hive; no person or value is shown.</p>
         </div>
-        <div class="customers-share-setting">
+        <div id="ask-setting" class="customers-share-setting" hidden>
           <h3>Ask AI help <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hub-deployment.md#ask-ai-help" target="_blank" rel="noopener noreferrer" aria-label="Help: Ask AI help">?</a></h3>
           <p>In force: <strong id="ask-effective">Unknown</strong> · Default: Off</p>
           <p>Set <code>HIVE_ASK_ENABLED</code> and the Kapa values on the hub to show an Ask panel on this dashboard. When on, a signed-in person's question and the label of the section they are in are sent to Kapa.ai after they confirm a notice; nothing else is sent. The environment is authoritative; this setting cannot be changed here.</p>
         </div>
+        <p id="optional-features-off" class="fs-sm text-muted" hidden></p>
         <div style="font-size:0.85rem;color:var(--text);margin:var(--sp-5) var(--sp-0) var(--sp-4);font-weight:600">Per-cluster limits</div>
         <div class="table-wrap"><table style="width:100%;font-size:0.85rem"><thead><tr>
           <th style="text-align:left">Cluster</th><th style="text-align:right">Hives</th><th style="text-align:right">Pool avail</th>
@@ -11870,6 +11876,27 @@
         }).join(' · ');
       } catch (e) { /* transient: next poll retries */ }
     }
+    /* Optional feature panels (#20197): a panel shows only while its feature
+       is on; every feature that is off is named once in the
+       optional-features-off line with the env var that turns it on. */
+    var OPTIONAL_FEATURE_PANELS = [
+      {key: 'customers_share_enabled', panel: 'customers-share-setting', label: 'Customers profile sharing', env: 'HIVE_HUB_CUSTOMERS_SHARE_ENABLED'},
+      {key: 'ask_enabled', panel: 'ask-setting', label: 'Ask AI help', env: 'HIVE_ASK_ENABLED'}
+    ];
+    function applyOptionalFeaturePanels(eff) {
+      eff = eff || {};
+      var off = [];
+      OPTIONAL_FEATURE_PANELS.forEach(function(f) {
+        var on = eff[f.key] === true;
+        var panel = document.getElementById(f.panel);
+        if (panel) panel.hidden = !on;
+        if (!on) off.push(f.label + ' (' + f.env + ')');
+      });
+      var line = document.getElementById('optional-features-off');
+      if (!line) return;
+      line.hidden = off.length === 0;
+      line.textContent = off.length ? 'Optional features off: ' + off.join(', ') + '. See the hub deployment docs to enable them.' : '';
+    }
     async function loadScaleSettings() {
       if (!_isAdmin) return;
       try {
@@ -11887,6 +11914,7 @@
           typeof eff.customers_share_enabled !== 'boolean' ? 'Unknown' : (eff.customers_share_enabled ? 'On' : 'Off');
         document.getElementById('ask-effective').textContent =
           typeof eff.ask_enabled !== 'boolean' ? 'Unknown' : (eff.ask_enabled ? 'On' : 'Off');
+        applyOptionalFeaturePanels(eff);
         loadCustomerConsentCounts(eff.customers_share_enabled === true);
         document.getElementById('scale-controls-summary').textContent =
           'wave ' + eff.upgrade_wave_size + ' · workers ' + eff.provision_workers +
@@ -13006,6 +13034,32 @@
       }).join('');
     }
 
+    /* hubAdminIdentityField (#20198): the "Add admin" field asks for the
+       identity form the hub's sign-in provider stores. A GitHub hub stores a
+       GitHub login; any other provider stores provider:subject, for example
+       custom:<subject> on a custom-OIDC hub. An unknown provider list (older
+       hub) keeps the GitHub wording. */
+    function hubAdminIdentityField(providers) {
+      providers = Array.isArray(providers) ? providers.map(function(p) { return String(p || '').toLowerCase(); }).filter(Boolean) : [];
+      var others = providers.filter(function(p) { return p !== 'github'; });
+      if (!others.length) {
+        return {label: 'GitHub login', placeholder: 'GitHub login', hint: "Enter the admin's GitHub login."};
+      }
+      var example = others[0] + ':<subject>';
+      if (providers.indexOf('github') !== -1) {
+        return {label: 'Admin identity', placeholder: 'GitHub login or ' + example,
+          hint: 'Enter a GitHub login, or provider:subject for other sign-in providers (e.g. ' + example + ').'};
+      }
+      return {label: 'Admin identity', placeholder: 'Admin identity (e.g. ' + example + ')',
+        hint: 'Enter the admin identity as provider:subject (e.g. ' + example + ').'};
+    }
+    function applyHubAdminIdentityField(field) {
+      var input = document.getElementById('hub-admins-login');
+      if (input) { input.placeholder = field.placeholder; input.setAttribute('aria-label', field.label); }
+      var hint = document.getElementById('hub-admins-id-hint');
+      if (hint) hint.textContent = field.hint;
+    }
+
     async function loadHubAdmins() {
       if (!_isAdmin) return;
       try {
@@ -13013,6 +13067,7 @@
         if (!resp.ok) return;
         var data = await resp.json();
         if (typeof data.root_admin === 'boolean') _isRootAdmin = data.root_admin;
+        applyHubAdminIdentityField(hubAdminIdentityField(data.login_providers));
         renderHubAdmins(data.admins || []);
       } catch(e) {}
     }
@@ -13203,7 +13258,8 @@
           return;
         }
         _adminLoaded = true;
-        document.getElementById('nps-section').hidden = false;
+        /* nps-section is unhidden by loadAdminNPS, and only when NPS is on
+           for this hub or has responses (#20197). */
         document.getElementById('admin-section').style.display = '';
         var navFleet = document.getElementById('nav-fleet');
         if (navFleet) navFleet.style.display = '';
@@ -13512,13 +13568,27 @@
       }
     }
 
+    /* npsCardVisible (#20197): the NPS card is shown only when NPS is on for
+       this hub (enabled) or responses are already stored. A hub that never
+       opted in gets no empty "NPS 0 · 0 responses" card. A payload without
+       the enabled flag (older hub) keeps the card. */
+    function npsCardVisible(data) {
+      if (!data) return false;
+      if (data.enabled === false && !((Number(data.total) || 0) > 0)) return false;
+      return true;
+    }
+
     async function loadAdminNPS() {
       try {
         var resp = await fetch('/api/admin/nps');
         /* 403 means not admin: leave the container empty, so a non-admin
            learns nothing about this surface, not even that it exists. */
         if (!resp.ok) return;
-        renderAdminNPS(await resp.json());
+        var data = await resp.json();
+        var section = document.getElementById('nps-section');
+        if (!npsCardVisible(data)) { if (section) section.hidden = true; return; }
+        if (section) section.hidden = false;
+        renderAdminNPS(data);
       } catch(e) {}
     }
 
