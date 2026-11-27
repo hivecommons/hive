@@ -1,1 +1,0 @@
-- An issue create left Unknown by an ambiguous GitHub response is no longer reported as a stuck effect-ledger op while it is still inside its one-hour unresolved TTL, since the next refused retry past the TTL expires it on its own; it is reported only if it is still refused after that (#20100).

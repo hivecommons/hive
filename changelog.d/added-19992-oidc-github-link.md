@@ -1,1 +1,0 @@
-- A person signed in to the hub through OpenID Connect can link the GitHub login they control by completing GitHub OAuth on the hub; a spoke then shows them that login's contributor profile. An owner can unlink or revoke a link but cannot create one, and the link never changes roles or owner-authored merge checks (#19992).
