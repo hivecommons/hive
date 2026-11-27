@@ -152,4 +152,11 @@ func (b *boot) wireForgeRemotes() {
 	if w := b.cfg.ForgejoSharedWriteTokenWarning(); w != "" && b.logger != nil {
 		b.logger.Warn(w, "fix", "forgejo.integration")
 	}
+	if in := b.cfg.Forgejo.Integration; in != nil && in.ServeKeyList && b.logger != nil {
+		for _, tier := range agentmode.KnownTokenTiers {
+			if strings.TrimSpace(in.Audiences[string(tier)]) == "" {
+				b.logger.Warn("forgejo integration audience is not configured for token tier; git uses a less-privileged tier if available, otherwise clone and push fail", "tier", tier, "fix", "forgejo.integration.audiences")
+			}
+		}
+	}
 }
