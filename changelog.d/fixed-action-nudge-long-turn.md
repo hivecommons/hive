@@ -1,0 +1,1 @@
+- Hive no longer types the "You produced a plan but executed nothing" action nudge after a kicked turn that ran for more than 5 minutes, or when the pane shows fewer tool markers than at kick time (cleared or reset), since neither case is a prose-only reply (#20214).

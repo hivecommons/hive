@@ -746,6 +746,12 @@ const (
 	// post-Enter window (kick echoed, spinner not yet rendered) as a
 	// completed prose-only response.
 	inferenceActionNudgeGrace = 2 * time.Minute
+	// inferenceActionNudgeMaxTurn is the longest kicked turn the no-action
+	// check still treats as a possible prose-only reply. A prose-only answer
+	// to a kick finishes in seconds to a couple of minutes; a turn that kept
+	// the CLI busy longer than this did real work (#20214), even when the
+	// pane no longer shows the tool markers (cleared or reset mid-turn).
+	inferenceActionNudgeMaxTurn = 5 * time.Minute
 	// inferenceActionNudgeMessage is typed into the CLI when the model
 	// answered a kick with prose only — a plan addressed to a reader with
 	// zero tool executions (observed live with weak OSS models on
@@ -908,8 +914,17 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 		m.mu.Unlock()
 		return
 	}
-	if countToolMarkers(m.captureTmuxPaneForAgent(agent)) > agent.lastInferKickMarks {
-		// Real tool activity since the kick — the agent is acting. Disarm.
+	if sinceKick > inferenceActionNudgeMaxTurn {
+		// A long turn is evidence of work, not a prose-only reply (#20214).
+		agent.lastInferKickPane = ""
+		m.mu.Unlock()
+		return
+	}
+	if marks := countToolMarkers(m.captureTmuxPaneForAgent(agent)); marks != agent.lastInferKickMarks {
+		// More markers: real tool activity since the kick, the agent is
+		// acting. Fewer markers: the pane was cleared or reset since the
+		// baseline, so the count says nothing about this turn (#20214).
+		// Either way, disarm rather than nudge.
 		agent.lastInferKickPane = ""
 		m.mu.Unlock()
 		return

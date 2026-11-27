@@ -1456,6 +1456,61 @@ func TestNudgeIfKickStalled_ActionNudge(t *testing.T) {
 	}
 }
 
+// TestNudgeIfKickStalled_ActionNudgeSkippedAfterLongTurn: a kicked turn that
+// kept the CLI busy for many minutes did work, so its end must not be read as
+// a prose-only reply even when the pane shows no new tool markers (#20214).
+func TestNudgeIfKickStalled_ActionNudgeSkippedAfterLongTurn(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"vinf": {Backend: "vllm"},
+	}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["vinf"]
+	m.mu.RUnlock()
+
+	reportPane := "⏺ Pipeline health: 3 agents idle, 1 bead recorded.\n" +
+		"✻ Worked for 29m 22s\n" +
+		"❯ \n" +
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+
+	agent.lastInferKickAt = time.Now().Add(-29 * time.Minute)
+	agent.lastInferKickPane = paneContentHash("pane as captured at kick delivery")
+	agent.lastInferKickMarks = 0
+	m.nudgeIfKickStalled("vinf", reportPane)
+	if agent.ActionNudges != 0 || agent.actionNudgeSent {
+		t.Fatalf("a %s turn must not get an action nudge, got %d", 29*time.Minute, agent.ActionNudges)
+	}
+	if agent.lastInferKickPane != "" {
+		t.Fatal("a long turn should disarm the watchdog")
+	}
+}
+
+// TestNudgeIfKickStalled_ActionNudgeSkippedWhenMarkersDrop: a marker count
+// below the kick baseline means the pane was cleared or reset, so the count
+// cannot show whether tools ran and the nudge must not fire (#20214).
+func TestNudgeIfKickStalled_ActionNudgeSkippedWhenMarkersDrop(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"vinf": {Backend: "vllm"},
+	}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["vinf"]
+	m.mu.RUnlock()
+
+	clearedPane := "❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+
+	// No tmux session in tests, so the capture is empty and counts 0 markers;
+	// a positive baseline simulates "the pane had markers at kick time".
+	agent.lastInferKickAt = time.Now().Add(-inferenceActionNudgeGrace - time.Minute)
+	agent.lastInferKickPane = paneContentHash("pane as captured at kick delivery")
+	agent.lastInferKickMarks = 4
+	m.nudgeIfKickStalled("vinf", clearedPane)
+	if agent.ActionNudges != 0 || agent.actionNudgeSent {
+		t.Fatalf("a marker count below the baseline must not get an action nudge, got %d", agent.ActionNudges)
+	}
+	if agent.lastInferKickPane != "" {
+		t.Fatal("a cleared pane should disarm the watchdog")
+	}
+}
+
 func TestCountToolMarkers(t *testing.T) {
 	cases := []struct {
 		name string
