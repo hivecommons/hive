@@ -412,6 +412,11 @@ GitHub, as the push relay does:
   one left behind after 30 minutes. Each scan serves at most one request per
   agent, oldest first. `HIVE_FORGE_CLONE_MAX_BUNDLE_BYTES` caps a bundle (2 GiB
   by default).
+- The hive needs no `CAP_CHOWN` for this. Where it can give the bundle away
+  with `chown` it does; where it cannot (the stock pod, whose hive process
+  keeps only an ambient `CAP_NET_ADMIN`), it writes the bundle as the agent's
+  UID through the image's `su-exec` helper, so the result is the same 0600
+  agent-owned file.
 
 A later `git fetch origin` has no credential either; run `hive-clone --fetch`.
 Publish work with `hive-push-branch`, which pushes through the push relay.

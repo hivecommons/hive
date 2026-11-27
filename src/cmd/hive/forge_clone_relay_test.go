@@ -8,10 +8,12 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -73,8 +75,14 @@ func newCloneHarness(t *testing.T) *cloneHarness {
 		}
 		return agentmode.TokenTierContributor, nil
 	})
-	prevExec, prevDef, prevChown := forgeCloneExec, forgeRepoDefaultBranch, forgeCloneChown
-	t.Cleanup(func() { forgeCloneExec, forgeRepoDefaultBranch, forgeCloneChown = prevExec, prevDef, prevChown })
+	prevExec, prevDef, prevChown, prevAsAgent := forgeCloneExec, forgeRepoDefaultBranch, forgeCloneChown, forgeCloneWriteAsAgent
+	t.Cleanup(func() {
+		forgeCloneExec, forgeRepoDefaultBranch, forgeCloneChown, forgeCloneWriteAsAgent = prevExec, prevDef, prevChown, prevAsAgent
+	})
+	// A test never runs the real su-exec.
+	forgeCloneWriteAsAgent = func(context.Context, int, string, io.Reader) error {
+		return errors.New("su-exec is not available in tests")
+	}
 	forgeCloneExec = func(_ context.Context, dir string, env []string, args ...string) (string, error) {
 		h.calls = append(h.calls, gitCall{dir: dir, env: env, args: args})
 		switch args[0] {
@@ -470,6 +478,68 @@ func TestForgeCloneRelayRetriesAndCaps(t *testing.T) {
 	}
 	if bundles, _ := filepath.Glob(filepath.Join(h.relay.cloneDir, "*"+forgeCloneBundleSuffix)); len(bundles) != 0 {
 		t.Fatalf("a bundle the agent does not own was left: %v", bundles)
+	}
+}
+
+// A hive without an effective CAP_CHOWN (the stock pod) gets EPERM from the
+// chown and still hands the agent a 0600 bundle it owns, written as the
+// agent through su-exec (#20195).
+func TestForgeCloneRelayDeliversWithoutChown(t *testing.T) {
+	h := newCloneHarness(t)
+	forgeCloneChown = func(f *os.File, uid int) error {
+		h.chowned = append(h.chowned, uid)
+		return &fs.PathError{Op: "chown", Path: f.Name(), Err: syscall.EPERM}
+	}
+	var asAgent []int
+	forgeCloneWriteAsAgent = func(_ context.Context, uid int, path string, src io.Reader) error {
+		asAgent = append(asAgent, uid)
+		// What `umask 077 && set -C && cat > "$1"` does as uid.
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(f, src); err != nil {
+			_ = f.Close()
+			return err
+		}
+		return f.Close()
+	}
+	path := writeRelayRequest(t, h.relay.cloneDir, "worker-1.json", goodClone())
+	h.relay.scanOnce(context.Background())
+
+	var resp forgeCloneResponse
+	readRelayResult(t, path, &resp)
+	if !resp.OK {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if len(asAgent) != 1 || asAgent[0] != os.Getuid() {
+		t.Fatalf("written as %v, want the request file's owner %d", asAgent, os.Getuid())
+	}
+	fi, err := os.Lstat(resp.Bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o600 || forgeCloneFileUID(fi) != os.Getuid() {
+		t.Fatalf("bundle %v owned by %d, want a regular 0600 file owned by %d", fi.Mode(), forgeCloneFileUID(fi), os.Getuid())
+	}
+	if got, _ := os.ReadFile(resp.Bundle); string(got) != fakeBundle {
+		t.Fatalf("bundle = %q", got)
+	}
+	if bundles, _ := filepath.Glob(filepath.Join(h.relay.cloneDir, "*"+forgeCloneBundleSuffix)); len(bundles) != 1 {
+		t.Fatalf("bundles in the queue: %v, want just the agent's", bundles)
+	}
+
+	// When the agent-side write fails too, nothing is left behind.
+	forgeCloneWriteAsAgent = func(context.Context, int, string, io.Reader) error { return errors.New("su-exec: permission denied") }
+	_ = os.Remove(resp.Bundle)
+	path = writeRelayRequest(t, h.relay.cloneDir, "worker-2.json", goodClone())
+	h.relay.scanOnce(context.Background())
+	readRelayResult(t, path, &resp)
+	if resp.OK || !strings.Contains(resp.Error, "writing it as the agent") {
+		t.Fatalf("failed fallback: resp %+v", resp)
+	}
+	if bundles, _ := filepath.Glob(filepath.Join(h.relay.cloneDir, "*"+forgeCloneBundleSuffix)); len(bundles) != 0 {
+		t.Fatalf("a bundle was left after a failed fallback: %v", bundles)
 	}
 }
 
