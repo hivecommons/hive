@@ -204,6 +204,9 @@ func TestHubColonyOnlyMergeRefusesUnclassifiable(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = st.Close() }()
+			if migrated, err := hubColonyOnlyMigrated(st); err != nil || !migrated {
+				t.Errorf("a refused merge dropped the colony-only document: %v, %v", migrated, err)
+			}
 			rec, ok, err := crmGetRecord(st, crmPersonID(users[0]))
 			if err != nil || !ok {
 				t.Fatalf("colony record = %v, %v", ok, err)
