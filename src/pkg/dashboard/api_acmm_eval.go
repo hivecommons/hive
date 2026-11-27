@@ -15,7 +15,9 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/reviewrules"
 	"github.com/hivecommons/hive/pkg/worksource"
 )
 
@@ -29,7 +31,8 @@ const (
 	acmmReviewApplyID             = "acmm:copilot-review-apply"
 	acmmHiveReviewFixLoopProvider = "Hive review-fix loop"
 
-	acmmCrossSessionKnowledgeID = "acmm:cross-session-knowledge"
+	acmmCrossSessionKnowledgeID    = "acmm:cross-session-knowledge"
+	acmmHiveKnowledgeStoreProvider = "Hive knowledge store"
 )
 
 // acmmLoadReviewArtifact reads Hive's recorded review verdicts. It is a
@@ -37,6 +40,40 @@ const (
 // real /data/review-verdicts.json.
 var acmmLoadReviewArtifact = func() (review.Artifact, error) {
 	return review.LoadArtifact("")
+}
+
+// acmmGitSourceFacts lists the facts of every ready knowledge git source. A
+// git source is a repository's Markdown, so its facts reached the store
+// through a merged commit rather than straight from an agent. It is a
+// variable so tests can hand the evaluator facts without cloning a repository.
+var acmmGitSourceFacts = func(api *knowledge.KnowledgeAPI) []knowledge.Fact {
+	if api == nil {
+		return nil
+	}
+	var facts []knowledge.Fact
+	seen := make(map[string]bool)
+	for _, info := range api.GitSources() {
+		if !info.Ready || seen[info.Name] {
+			continue
+		}
+		seen[info.Name] = true
+		facts = append(facts, api.GitSourceFacts(info.Name, "")...)
+	}
+	return facts
+}
+
+// acmmReviewRuleFacts lists the entries of the review-rules channel the
+// review-feedback sweep writes reviewer-stated rules into (#19046), or nil
+// when that channel is not connected.
+func acmmReviewRuleFacts(api *knowledge.KnowledgeAPI) []knowledge.Fact {
+	if api == nil {
+		return nil
+	}
+	store := api.GetVaultStore(reviewrules.VaultDir())
+	if store == nil {
+		return nil
+	}
+	return store.ListPages("")
 }
 
 // acmmRefreshDebounce is the floor under `?refresh=1` (#5877): an operator-
@@ -588,6 +625,8 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 	now := time.Now()
 	reviewArtifact, reviewErr := acmmLoadReviewArtifact()
 	reviewReady := reviewErr == nil
+	knowledgeCredited, knowledgeReason := hiveKnowledgeStoreCredit(s.knowledgePrimerStatus(),
+		acmmGitSourceFacts(s.deps.Knowledge), acmmReviewRuleFacts(s.deps.Knowledge))
 
 	for _, repo := range repos {
 		ctx, cancel := context.WithTimeout(context.Background(), acmmPerRepoTimeout)
@@ -638,6 +677,18 @@ func (s *Server) evaluateAllRepos() ACMMEvaluation {
 					res.SatisfiedBy = acmmHiveReviewFixLoopProvider
 					res.SatisfiedReason = reason
 				}
+			}
+			// Hive's own knowledge store is the same kind of verified evidence
+			// for cross-session knowledge (#20128): kicks are primed from it,
+			// and it holds reviewed facts. It is hive-wide, so it credits every
+			// repository alike.
+			if !passed && c.ID == acmmCrossSessionKnowledgeID && knowledgeCredited {
+				res.Passed = true
+				res.Waived = false
+				res.WaiverSatisfiedBy = ""
+				res.WaiverReason = ""
+				res.SatisfiedBy = acmmHiveKnowledgeStoreProvider
+				res.SatisfiedReason = knowledgeReason
 			}
 			results = append(results, res)
 			if res.Passed {
@@ -853,6 +904,36 @@ func hiveAgentLoopCredit(snap collect.ActivitySnapshot, ready bool, fullRepo str
 		return true, fmt.Sprintf("managed repo with Hive agent activity in the last %d days", acmmHiveAgentLoopLookbackDay)
 	}
 	return false, ""
+}
+
+// hiveKnowledgeStoreCredit reports whether Hive's own knowledge store
+// satisfies acmm:cross-session-knowledge: the kick primer is registered, so
+// agent sessions are primed from the store, and the store holds at least one
+// approved fact that a person reviewed. Only two origins count: git-source
+// facts, which reached the repository through a merged commit, and reviewer
+// rules from the review-rules channel. Bead-synth facts and every other
+// vault are left out, because the bead synthesizer writes approved facts with
+// no human review.
+func hiveKnowledgeStoreCredit(primer KnowledgePrimerStatus, gitFacts, ruleFacts []knowledge.Fact) (bool, string) {
+	if !primer.Registered {
+		return false, ""
+	}
+	git := 0
+	for _, f := range gitFacts {
+		if f.EffectiveState() == knowledge.StateApproved {
+			git++
+		}
+	}
+	rules := 0
+	for _, f := range ruleFacts {
+		if f.Type == knowledge.PinnedFactType && f.EffectiveState() == knowledge.StateApproved {
+			rules++
+		}
+	}
+	if git+rules == 0 {
+		return false, ""
+	}
+	return true, fmt.Sprintf("Hive primes agent kicks from its knowledge store, which holds %d approved git-source fact(s) and %d approved reviewer rule(s); bead-synth facts are not counted, and the store is hive-wide rather than per repository", git, rules)
 }
 
 // hiveReviewFixLoopCredit reports whether Hive's recorded review verdicts
