@@ -1,0 +1,1 @@
+- Hub dashboard: the NPS card, Customers profile sharing and Ask AI help panels no longer take space when their feature is off (one "Optional features off" line names what is off), and the Hub admins field asks for the identity form of the hub's sign-in provider, such as `custom:<subject>` on a custom-OIDC hub, instead of always saying GitHub login.

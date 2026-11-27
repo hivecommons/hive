@@ -11,6 +11,36 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.383.5)
+
+### Fixed
+
+- A hive whose every repository is on another forge (such as Forgejo) no longer fails the `github_auth` health check for having no GitHub credentials; the check now passes as not applicable, so the hub row is not red.
+
+## 2026-11-27 (v5.383.4)
+
+### Fixed
+
+- The boot-time seed of the primary repo's `docs/knowledge/` git source now runs on spokes whose dashboard config was saved: `knowledge.git_sources` is omitted when unset, and a dashboard disconnect is recorded as `knowledge.git_sources_disconnected: true` instead of an empty list (#20173).
+
+## 2026-11-27 (v5.383.3)
+
+### Fixed
+
+- Self-upgrade retry, backoff, give-up and boot logs no longer carry an empty `last_error=` when the failed attempt recorded no error (the patch or restart succeeded but the image never changed); they now name that cause. The bounded retry and backoff WARNs no longer file fleet self-reports as `unclassified_error_repeated`; giving up after the last attempt still logs an ERROR that is reported.
+
+## 2026-11-27 (v5.383.2)
+
+### Fixed
+
+- A merge request refused because its workflow change does not qualify for the pin-only exception no longer files an `unclassified_error_repeated` selfreport when agents re-request the same PR; the refusal is expected policy enforcement and the WARN stays in local logs (#20169).
+
+## 2026-11-27 (v5.383.1)
+
+### Fixed
+
+- Scanner CI-triage notes that carry a copied `<!-- hive:scanner-note -->` marker are now folded into the one scanner note per PR and dropped when the head and failing checks are unchanged, instead of each posting a new comment.
+
 ## 2026-11-27 (v5.383.0)
 
 ### Added

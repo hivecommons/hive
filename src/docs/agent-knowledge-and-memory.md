@@ -56,16 +56,18 @@ organic source on a running hive), plus any HTTP wiki layers in
 `knowledge.layers`. The repo's own docs are *not* a source unless you index
 them through a git source, connector or code map
 ([knowledge-curator.md](knowledge-curator.md)) — with one seeded default:
-a hive whose `knowledge.git_sources` key is absent gets one entry for its
+a hive whose `knowledge.git_sources` list is absent or empty gets one entry for its
 primary repo's knowledge directory at boot
 (`seedKnowledgeGitSource`, `src/cmd/hive/boot_knowledge_seed.go`). The
 probe asks GitHub for the repo's default branch, then for
 `knowledge.bead_synthesizer.publish.path` if set, else `docs/knowledge/`
 then `src/docs/knowledge/`; the first that exists becomes
 `<repo>-knowledge` at the `project` layer. Nothing is written to
-`hive.yaml`; an operator list — including an explicit `git_sources: []`,
-which is what a dashboard disconnect saves — is never touched, and a
-missing dir, non-GitHub forge or absent client skips with a DEBUG line.
+`hive.yaml`; a non-empty operator list is never touched. A dashboard
+disconnect sets `knowledge.git_sources_disconnected: true`, which keeps the
+seed off even once the list is empty; `git_sources` is omitted from a save
+when unset, so an empty list means "never configured", not "disconnected".
+A missing dir, non-GitHub forge or absent client skips with a DEBUG line.
 
 **How it is scoped.**
 

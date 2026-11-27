@@ -194,6 +194,26 @@ func TestClaudeCredentialRebridgeStaysInLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+func TestSelfUpgradeBoundedRetryStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for range 6 {
+		logger.Warn(selfUpgradeRetryMessage, "target", "69abb14", "current", "42ac801", "attempt", 2, "max_attempts", 5, "last_error", "")
+		logger.Warn(selfUpgradeRetryDeferredMessage, "target", "69abb14", "current", "42ac801", "attempts", 1, "retry_in", "30s", "last_error", "")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("bounded self-upgrade retries produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "self-upgrade retr"); n != 12 {
+		t.Fatalf("local logs lost the retry warnings: got %d, want 12: %s", n, out.String())
+	}
+	// Exhausting the budget is the defect and must stay reportable.
+	logger.Error("self-upgrade FAILED: giving up after repeated attempts (image never changed)", "target", "69abb14")
+	logger.Error(selfUpgradeRetryMessage, "target", "69abb14")
+	if len(*seen) != 2 {
+		t.Fatalf("self-upgrade give-up and ERROR-level retries must remain reportable: %+v", *seen)
+	}
+}
+
 func TestUnauthorizedLoginRejectedStaysInLogsWithoutFleetReport(t *testing.T) {
 	logger, seen, out := newFeed(t)
 	const msg = "device-flow login rejected: user not authorized for this hive"
