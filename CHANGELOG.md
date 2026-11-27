@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.382.0)
+
+### Added
+
+- Forgejo: a pod-run agent can clone a private Forgejo repo. The new `hive-clone` asks the hive's clone relay, which fetches the repo with a one-hour `forgejo.integration` JWT for the agent's own tier in a hive-owned git directory and hands the agent a git bundle that only its UID can read, so the token never enters the agent's environment, arguments, files or logs. The relay needs per-agent UIDs and `forgejo.integration`, clones only managed repos in the agent's scope, and fetches nothing when a mint fails; proxy credential injection is unchanged ([#19997](https://github.com/hivecommons/hive/issues/19997)).
+
 ## 2026-11-27 (v5.381.5)
 
 ### Fixed
