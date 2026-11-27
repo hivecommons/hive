@@ -977,6 +977,15 @@ func IsBenignMessage(msg string) bool {
 	if strings.TrimSpace(m) == "merge-request watcher: refused to merge, ci not confirmed" {
 		return true
 	}
+	// A human-merge-path PR that does not qualify for the pin-only exception
+	// (#16265) is refused by policy: the request is denied, the PR is held for
+	// a person, and the companion "DENIED (policy)" line is already benign.
+	// Agents re-request the same PR, so the rejection detail crossed the repeat
+	// threshold on its own (hivecommons/hive#20169). Match only the rejection
+	// notice; hold and changed-file listing failures stay reportable.
+	if strings.TrimSpace(m) == "merge-request watcher: pin-only exception rejected" {
+		return true
+	}
 	// Pending expiry is a bounded retry, logged per perspective/PR. A burst
 	// across unrelated reviews is not a repeated runtime defect (#13850).
 	// Match only the retry notification: "review dispatch exhausted; holding
