@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.381.3)
+
+### Fixed
+
+- State files that went through a fixed `.tmp` name or skipped `fsync` (dashboard history and merge-eligibility files, hive state buckets, CLI-memory and connector facts, inbox facts and transcripts, marketplace bundles, contributor readings, remote AGENTS.md copies, merged ledger) now share one atomic write: a unique temp file, fsync, rename and directory fsync, so concurrent writers and crashes can no longer leave a partial or missing file.
+
 ## 2026-11-27 (v5.381.2)
 
 ### Fixed
