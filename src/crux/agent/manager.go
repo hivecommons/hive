@@ -218,16 +218,19 @@ type AgentProcess struct {
 	KicksUndeliverable int
 	// BusySince is the first undeliverable-kick time in the current busy run.
 	BusySince time.Time
-	// LastTranscriptActivity is the newest events.jsonl mtime seen under this
-	// agent's own Copilot session-state tree.
+	// LastTranscriptActivity is the newest transcript mtime found under the
+	// agent's backend-specific session tree.
 	LastTranscriptActivity time.Time
-	CodeWork               *crux.CodeWork
-	BusyCondition          string
-	BusyConditionMessage   string
-	Paused                 bool
-	PausedAt               time.Time
-	PausedReason           string
-	PausedTrigger          string
+	// LastInferenceActivity is the last authenticated inference request seen
+	// by the translator, independent of the transcript scanner.
+	LastInferenceActivity time.Time
+	CodeWork              *crux.CodeWork
+	BusyCondition         string
+	BusyConditionMessage  string
+	Paused                bool
+	PausedAt              time.Time
+	PausedReason          string
+	PausedTrigger         string
 	// PausedBy is the acting user behind the pause when one is known — the
 	// authenticated dashboard user for a dashboard-api pause, empty for
 	// system-initiated pauses (login-detector, fleet-breaker, acmm-pack).

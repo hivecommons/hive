@@ -1,0 +1,1 @@
+- Avoid restarting working agents when their backend transcripts or inference requests show activity, and do not infer transcript silence from a missing transcript ([#20213](https://github.com/hivecommons/hive/issues/20213)).

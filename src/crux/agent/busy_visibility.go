@@ -3,12 +3,15 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agent/resumehandle"
 )
 
 const (
@@ -41,9 +44,11 @@ const (
 const copilotQuestionFormMessage = "Copilot CLI asked the user a question; no human is attached — dismissed with Escape so the kick can be delivered"
 
 type transcriptActivityScan struct {
-	name   string
-	uid    int
-	target kickTranscriptTarget
+	name    string
+	home    string
+	backend string
+	uid     int
+	target  kickTranscriptTarget
 }
 
 type transcriptActivityResult struct {
@@ -156,8 +161,8 @@ func (m *Manager) markKickUndeliverableLocked(agent *AgentProcess, now time.Time
 	// streaming, each attempt waits out the prompt timeout, and three of those
 	// inside one long review turn used to file an upstream issue that cleared
 	// itself the moment the turn ended. Only self-report once the agent's own
-	// transcript has been silent for the busy-no-activity threshold, the same
-	// bar busyCondition applies before it calls the pane stuck.
+	// transcript and inference requests have been silent for the
+	// busy-no-activity threshold, the same bar busyCondition applies.
 	silentFor, live := kickUndeliverableTranscriptLiveness(agent, now)
 	if live {
 		if m.logger != nil {
@@ -165,11 +170,11 @@ func (m *Manager) markKickUndeliverableLocked(agent *AgentProcess, now time.Time
 				"agent", agent.Name,
 				"reason", reason,
 				"kicks_undeliverable", agent.KicksUndeliverable,
-				"transcript_silent_for", roundDurationForHumans(silentFor))
+				"activity_silent_for", roundDurationForHumans(silentFor))
 		}
 		return
 	} else if silentFor > 0 {
-		reason = fmt.Sprintf("%s; transcript silent for %s", reason, roundDurationForHumans(silentFor))
+		reason = fmt.Sprintf("%s; activity silent for %s", reason, roundDurationForHumans(silentFor))
 	}
 	// Decision B on #12787: a stall that busyNoActivityStall is about to
 	// restart is not yet a defect worth a fleet issue — most self-recover.
@@ -182,7 +187,7 @@ func (m *Manager) markKickUndeliverableLocked(agent *AgentProcess, now time.Time
 				"agent", agent.Name,
 				"reason", reason,
 				"kicks_undeliverable", agent.KicksUndeliverable,
-				"transcript_silent_for", roundDurationForHumans(silentFor))
+				"activity_silent_for", roundDurationForHumans(silentFor))
 		}
 		return
 	}
@@ -230,13 +235,10 @@ func (m *Manager) reportBusyNoActivityRestartFailed(name, reason string, err err
 			kicks, err, reason, restarts), "")
 }
 
-// kickUndeliverableTranscriptLiveness reports how long the agent's transcript
-// has been silent and whether that is short enough to call the busy pane a
-// turn in progress. Agents without a transcript cache (non-Copilot backends,
-// or a scan that has not run yet) report (0, false): the caller cannot tell a
-// live turn from a stall, so it keeps self-reporting as before.
+// kickUndeliverableTranscriptLiveness reports whether observed transcript or
+// inference activity is recent enough to indicate a turn in progress.
 func kickUndeliverableTranscriptLiveness(agent *AgentProcess, now time.Time) (time.Duration, bool) {
-	last := agent.LastTranscriptActivity
+	last := lastBusyActivity(agent)
 	if last.IsZero() {
 		return 0, false
 	}
@@ -245,6 +247,15 @@ func kickUndeliverableTranscriptLiveness(agent *AgentProcess, now time.Time) (ti
 		silentFor = 0
 	}
 	return silentFor, silentFor < agent.Config.EffectiveBusyNoActivityThreshold()
+}
+
+// lastBusyActivity never treats an unknown transcript as evidence of silence.
+func lastBusyActivity(agent *AgentProcess) time.Time {
+	last := agent.LastTranscriptActivity
+	if !agent.LastInferenceActivity.Before(agent.BusySince) && agent.LastInferenceActivity.After(last) {
+		last = agent.LastInferenceActivity
+	}
+	return last
 }
 
 // markCopilotQuestionFormLocked surfaces a question-form dismissal through the
@@ -312,22 +323,25 @@ func (m *Manager) refreshBusyVisibilityLocked(agent *AgentProcess, now time.Time
 		"message", message,
 		"kicks_undeliverable", agent.KicksUndeliverable,
 		"busy_since", agent.BusySince.UTC().Format(time.RFC3339),
-		"last_transcript_activity", formatTimeForLog(agent.LastTranscriptActivity))
+		"last_transcript_activity", formatTimeForLog(agent.LastTranscriptActivity),
+		"last_inference_activity", formatTimeForLog(agent.LastInferenceActivity))
 }
 
-// pendingTranscriptActivityScansLocked returns the Copilot agents whose
-// transcript cache is stale. Caller holds m.mu; filesystem scans happen after
-// releasing it.
+// pendingTranscriptActivityScansLocked returns agents whose transcript cache
+// is stale. Filesystem scans happen after releasing m.mu.
 func (m *Manager) pendingTranscriptActivityScansLocked(now time.Time) []transcriptActivityScan {
 	scans := make([]transcriptActivityScan, 0, len(m.agents))
 	for _, agent := range m.agents {
-		if effectiveBackend(agent) != "copilot" {
-			continue
-		}
 		if !agent.lastTranscriptScanAt.IsZero() && now.Sub(agent.lastTranscriptScanAt) < transcriptLivenessScanInterval {
 			continue
 		}
-		scans = append(scans, transcriptActivityScan{name: agent.Name, uid: agent.UID, target: m.kickTranscriptTargetLocked(agent)})
+		target := m.kickTranscriptTargetLocked(agent)
+		backend := target.backend
+		home := AgentHome(agent.Name, agent.UID, backend)
+		if m.routableBackend(backend) {
+			backend = "claude"
+		}
+		scans = append(scans, transcriptActivityScan{name: agent.Name, uid: agent.UID, backend: backend, home: home, target: target})
 	}
 	return scans
 }
@@ -341,7 +355,45 @@ const transcriptScanConcurrency = 4
 // scanAgentTranscript walks one agent's session tree; a variable so tests can
 // observe how the passes are scheduled.
 var scanAgentTranscript = func(scan transcriptActivityScan, cache *transcriptSessionCache, now time.Time) (time.Time, bool) {
-	return newestCopilotTranscriptActivityCached(AgentHome(scan.name, scan.uid, "copilot"), cache, now)
+	if scan.backend == "copilot" {
+		return newestCopilotTranscriptActivityCached(scan.home, cache, now)
+	}
+	switch scan.backend {
+	case "claude":
+		return newestJSONLActivity(filepath.Join(scan.home, ".claude", "projects"))
+	case "codex":
+		return newestJSONLActivity(filepath.Join(codexHomePath(scan.name), "sessions"))
+	}
+	handle, ok := resumehandle.CaptureResumeHandleIn(scan.home, codexHomePath(scan.name), scan.backend, scan.target.workDir, now)
+	return handle.LastActive, ok
+}
+
+// newestJSONLActivity considers subagent transcripts as well as parent sessions.
+// An incomplete scan must not be mistaken for evidence of silence.
+func newestJSONLActivity(root string) (time.Time, bool) {
+	const maxEntries = 2000
+	var newest time.Time
+	entries := 0
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		entries++
+		if entries > maxEntries {
+			return fmt.Errorf("transcript scan exceeded %d entries", maxEntries)
+		}
+		if entry.Type().IsRegular() && strings.HasSuffix(entry.Name(), ".jsonl") {
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if info.ModTime().After(newest) {
+				newest = info.ModTime()
+			}
+		}
+		return nil
+	})
+	return newest, err == nil && !newest.IsZero()
 }
 
 // scanTranscriptActivity stats each agent's sessions, up to
@@ -389,6 +441,8 @@ func (m *Manager) applyTranscriptActivityResultsLocked(results []transcriptActiv
 		agent.lastTranscriptScanAt = scannedAt
 		if result.ok {
 			agent.LastTranscriptActivity = result.at
+		} else {
+			agent.LastTranscriptActivity = time.Time{}
 		}
 		if agent.LastKick != nil && agent.LastKick.Equal(result.since) {
 			agent.CodeWork = cloneCodeWork(result.codeWork)
@@ -396,11 +450,9 @@ func (m *Manager) applyTranscriptActivityResultsLocked(results []transcriptActiv
 	}
 }
 
-// StartTranscriptActivityRefresh keeps every Copilot agent's
-// LastTranscriptActivity fresh on its own goroutine, so readers such as
-// AllStatuses (the dashboard status build and the hub heartbeat collect)
-// only ever copy a cached value and never wait on the session-state walk.
-// That walk stats one events.jsonl per session directory; on an NFS /data
+// StartTranscriptActivityRefresh keeps agents' LastTranscriptActivity fresh
+// on its own goroutine, so status readers never wait on a session-tree walk.
+// The Copilot walk stats one events.jsonl per session directory; on an NFS /data
 // with thousands of accumulated sessions a cold walk takes 8–12 s, which
 // blew the heartbeat's 10 s collect budget on every beat and left the hub
 // reading the hive as unhealthy. Runs until ctx is cancelled.
@@ -455,7 +507,7 @@ func (m *Manager) refreshTranscriptActivity(caches map[string]*transcriptSession
 	}
 	took := now().Sub(started)
 	if pace != nil && pace.observe(took, transcriptLivenessScanInterval) && m.logger != nil {
-		m.logger.Warn("copilot transcript activity scan outlived its interval; agent liveness reads may lag",
+		m.logger.Warn("transcript activity scan outlived its interval; agent liveness reads may lag",
 			"took", took.Round(time.Millisecond).String(), "agents", len(scans), "interval", transcriptLivenessScanInterval.String())
 	}
 	return len(results)
@@ -463,8 +515,8 @@ func (m *Manager) refreshTranscriptActivity(caches map[string]*transcriptSession
 
 func busyCondition(agent *AgentProcess, now time.Time) (string, string) {
 	threshold := agent.Config.EffectiveBusyNoActivityThreshold()
-	lastActivity := agent.LastTranscriptActivity
-	if lastActivity.IsZero() {
+	lastActivity := lastBusyActivity(agent)
+	if !agent.LastTranscriptActivity.IsZero() && agent.BusySince.After(lastActivity) {
 		lastActivity = agent.BusySince
 	}
 	silentFor := time.Duration(0)
@@ -487,7 +539,7 @@ func busyCondition(agent *AgentProcess, now time.Time) (string, string) {
 			since = agent.BusySince.UTC().Format("15:04Z")
 		}
 		return busyNoActivityCondition, fmt.Sprintf(
-			"pane shows Working but no transcript activity for %s; %d kicks undeliverable since %s",
+			"pane shows Working but no transcript or inference activity for %s; %d kicks undeliverable since %s",
 			roundDurationForHumans(silentFor), agent.KicksUndeliverable, since)
 	}
 
@@ -550,6 +602,9 @@ func busyNoActivityStall(agent *AgentProcess, pane string, now time.Time) string
 	if now.Sub(agent.lastSessionStallRestart) < sessionStallRestartCooldown {
 		return ""
 	}
+	if _, live := kickUndeliverableTranscriptLiveness(agent, now); live {
+		return ""
+	}
 	if offPrompt && !agent.busyNoActivityRestartAt.IsZero() {
 		return fmt.Sprintf("%s: %s after the previous busy-no-activity restart %s ago; %d kicks undeliverable",
 			busyNoActivityCondition, paneState, roundDurationForHumans(now.Sub(agent.busyNoActivityRestartAt)), agent.KicksUndeliverable)
@@ -563,8 +618,8 @@ func busyNoActivityStall(agent *AgentProcess, pane string, now time.Time) string
 	if !repeat && agent.KicksUndeliverable < busyNoActivityRecoveryKicks {
 		return ""
 	}
-	lastActivity := agent.LastTranscriptActivity
-	if lastActivity.IsZero() {
+	lastActivity := lastBusyActivity(agent)
+	if !agent.LastTranscriptActivity.IsZero() && agent.BusySince.After(lastActivity) {
 		lastActivity = agent.BusySince
 	}
 	if lastActivity.IsZero() {
@@ -578,7 +633,7 @@ func busyNoActivityStall(agent *AgentProcess, pane string, now time.Time) string
 	if silentFor < bar {
 		return ""
 	}
-	return fmt.Sprintf("%s: %s with no transcript activity for %s; %d kicks undeliverable",
+	return fmt.Sprintf("%s: %s with no transcript or inference activity for %s; %d kicks undeliverable",
 		busyNoActivityCondition, paneState, roundDurationForHumans(silentFor), agent.KicksUndeliverable)
 }
 

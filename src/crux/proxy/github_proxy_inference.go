@@ -343,6 +343,9 @@ func (p *GitHubProxy) inferenceTranslatorHandlerFor(identify func(*http.Request)
 			http.Error(w, `{"type":"error","error":{"type":"authentication_error","message":"caller could not be identified"}}`, http.StatusUnauthorized)
 			return
 		}
+		if agentName != "" && classifyInferencePath(r.Method, r.URL.Path) == inferencePathMessages {
+			p.recordInferenceActivity(agentName)
+		}
 
 		p.logger.Info("inference request",
 			"agent", agentName,
@@ -619,6 +622,9 @@ func (p *GitHubProxy) handleAnthropicReroute(conn net.Conn, r *http.Request, hos
 // handleInferenceRequest translates a single Anthropic API request and
 // forwards it to the inference backend.
 func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, agentName string, route *InferenceRoute) {
+	if agentName != "" && classifyInferencePath(req.Method, req.URL.Path) == inferencePathMessages {
+		p.recordInferenceActivity(agentName)
+	}
 	route = p.routeWithEntitledModel(routeWithCurrentKey(route), agentName)
 	_ = conn.SetReadDeadline(time.Now().Add(httpReadTimeout))
 	body, err := io.ReadAll(req.Body)
