@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.380.0)
+
+### Added
+
+- A person signed in to the hub through OpenID Connect can link the GitHub login they control by completing GitHub OAuth on the hub; a spoke then shows them that login's contributor profile. An owner can unlink or revoke a link but cannot create one, and the link never changes roles or owner-authored merge checks (#19992).
+- Claude CLI agents can opt into earlier auto-compaction with a per-agent window, including sandbox Job kicks; inference-routed agents with a known context window can instead use a hive-wide percentage ([#20077](https://github.com/hivecommons/hive/issues/20077)).
+
+### Fixed
+
+- Colony: colony-only review fixes, and test the shadow default over a colony-mode store (#20099)
+- **Hub signing follows master-key rotation.** After a rotation the hub kept signing SSO handoff tokens and heartbeat response signatures with the pre-rotation master, and once that generation retired the reconcile sweep rebuilt the retired generation's keys from `HIVE_HUB_SECRET` and pushed them back onto spokes. Both would have broken sign-in and heartbeat verification on every swept spoke at retirement. The hub now signs with keys from its generation set (the current generation, or the still-live previous one for a spoke the sweep last saw on it), and keeps the generation set authoritative after retirement and across restarts. See the rotation section of `src/docs/hub-deployment.md`. ([#20102](https://github.com/hivecommons/hive/issues/20102))
+- The hub no longer runs a whole pod lifetime in `json` mode because the previous pod still held `colony.db`'s lock at boot. It now retries the open with doubling backoff for up to `HIVE_HUB_CUSTOMER_STORE_LOCK_WAIT` (default `2m`), logs each retry, and falls back to `json` only after that. Run the hub Deployment with `strategy: Recreate`; `src/deploy/check-hub-manifest.py` now fails on any other strategy, because under a rolling update the old pod keeps the lock until the new one is Ready ([#20103](https://github.com/hivecommons/hive/issues/20103)).
+- An issue create left Unknown by an ambiguous GitHub response is no longer reported as a stuck effect-ledger op while it is still inside its one-hour unresolved TTL, since the next refused retry past the TTL expires it on its own; it is reported only if it is still refused after that (#20100).
+
 ## 2026-11-26 (v5.379.0)
 
 ### Added
