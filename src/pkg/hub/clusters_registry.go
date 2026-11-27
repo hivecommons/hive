@@ -213,6 +213,15 @@ func loadClustersChecked(logger *slog.Logger) (map[string]ClusterConfig, cluster
 	data, outcome := readClustersFile(clustersConfigPath, logger)
 	switch outcome {
 	case clustersAbsent:
+		if hubSelfHosted() {
+			// HIVE_HUB_MODE=self-hosted (#20196): this hub provisions no hives,
+			// so there is no hub-reachable cluster to synthesize. An empty
+			// registry keeps a phantom "OKE (default)" out of Usage, Cluster
+			// Health and Scale Controls.
+			logger.Info("no clusters config found, self-hosted hub: using an empty cluster registry",
+				"path", clustersConfigPath, "mode", hubModeSelfHosted)
+			return map[string]ClusterConfig{}, clustersAbsent
+		}
 		logger.Info("no clusters config found, using default hive-oke cluster", "path", clustersConfigPath)
 		return defaultClusterRegistry(), clustersAbsent
 	case clustersUntrusted:
