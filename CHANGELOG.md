@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.381.1)
+
+### Fixed
+
+- **Colony-only hub boots now forget users deleted from `/data/saas/users`, and a changed consent is replaced in one colony transaction.** A colony-only boot skips the boot sync, so a user removed while the hub was down stayed in `colony.db`; the forget pass now runs on its own there, with the same mass-deletion guard. A consent change was a delete and a write, so a failure between them left no consent for the scope, which reads as a withdrawal (#20112, #20113).
+- Colony: the consent sweep removes users.migrated, consents.migrated, consents.ignored and consents.pre-restore copies 90 days after they were set aside, and a consents directory newer than the colony-only migration is merged into colony narrow-only (a withdrawal on either side wins, nothing widens a grant) instead of refusing the boot (#20114, #20115)
+- **A hub image older than colony-only no longer writes into a colony-only `colony.db`.** While the hub store is colony-only, `colony.db` records a schema version every colony release refuses, so such an image falls back to `json` mode without its boot sync emptying colony's typed facts and consents; current images and `hive colony export` open it as before, and a rollback from colony-only clears it (#20116).
+
 ## 2026-11-27 (v5.381.0)
 
 ### Added

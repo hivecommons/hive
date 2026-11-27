@@ -1,1 +1,0 @@
-- Colony: the consent sweep removes users.migrated, consents.migrated, consents.ignored and consents.pre-restore copies 90 days after they were set aside, and a consents directory newer than the colony-only migration is merged into colony narrow-only (a withdrawal on either side wins, nothing widens a grant) instead of refusing the boot (#20114, #20115)
