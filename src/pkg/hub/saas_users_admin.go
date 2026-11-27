@@ -176,6 +176,13 @@ func saveSaaSUser(u *SaaSUser) error {
 	if st, ok := crmColonyOnly(); ok {
 		return crmOnlySaveUser(st, u, writeSaaSUserFile)
 	}
+	if u.CRMInColony && crmFieldsOf(u) != (crmFields{}) {
+		// A record stripped in colony-only, saved while colony-only is not
+		// running (a fallback): its CRM fields are in colony.db, which this
+		// write cannot reach, so a change to them is refused rather than
+		// written where colony-only would later read over it.
+		return errCRMHeldInColony
+	}
 	if err := writeSaaSUserFile(u); err != nil {
 		return err
 	}
@@ -711,6 +718,13 @@ func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 			len(ownedHives), strings.Join(ownedHives, ", ")))
 		return
 	}
+	// A colony.db the hub could not open may hold this person's only CRM
+	// and consent copy: the delete waits for the store, never leaves it.
+	if crmStoreUnavailable() {
+		s.logger.Warn("admin delete user: customer store not open; delete refused", "target", username)
+		writeJSONError(w, http.StatusServiceUnavailable, "customer store unavailable; retry once the hub has opened it")
+		return
+	}
 	// Remove consents first. If storage fails, leave the user in place so a
 	// subsequent deletion can retry; never report deletion with consents left.
 	consentPath, err := customerConsentPath(u)
@@ -736,7 +750,7 @@ func (s *HubServer) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request
 			writeJSONError(w, http.StatusInternalServerError, "failed to erase user's customer record")
 			return
 		}
-	} else if err != nil {
+	} else {
 		s.logger.Warn("admin delete user: customer store erase failed", "target", username, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "failed to erase user's customer record")
 		return

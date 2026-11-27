@@ -70,6 +70,9 @@ const (
 	// hubRestoredAsideSuffix names a consents directory set aside by a
 	// rollback restore.
 	hubRestoredAsideSuffix = ".pre-restore"
+	// hubRestoringSuffix names the directory a restore writes the consent
+	// files into before renaming it into place.
+	hubRestoringSuffix = ".restoring"
 	// hubIgnoredSuffix names a consents directory that reappeared beside a
 	// colony-only store and was set aside.
 	hubIgnoredSuffix = ".ignored"
@@ -134,6 +137,57 @@ type hubCRMRecord struct {
 	Version  int                        `json:"version"`
 	Fields   crmFields                  `json:"fields"`
 	Consents map[string]customerConsent `json:"consents,omitempty"`
+	// Stripped records that a user JSON was written without these fields:
+	// colony, not the JSON, then holds them. It is decided here, on the
+	// colony side, so a JSON rewritten without crm_in_colony (by an image
+	// that predates colony-only) is never read as an emptied record.
+	Stripped bool `json:"stripped,omitempty"`
+}
+
+// fillFrom returns f with every empty field taken from held: what a stripped
+// record keeps when its JSON was rewritten without crm_in_colony. A value
+// the JSON holds wins.
+func (f crmFields) fillFrom(held crmFields) crmFields {
+	str := func(dst *string, src string) {
+		if *dst == "" {
+			*dst = src
+		}
+	}
+	str(&f.FullName, held.FullName)
+	str(&f.FullNameSource, held.FullNameSource)
+	str(&f.SlackID, held.SlackID)
+	str(&f.Notes, held.Notes)
+	str(&f.Company, held.Company)
+	str(&f.CompanySource, held.CompanySource)
+	str(&f.Country, held.Country)
+	if !f.CountrySetByUser {
+		f.CountrySetByUser = held.CountrySetByUser
+	}
+	str(&f.CountrySource, held.CountrySource)
+	str(&f.Affiliation, held.Affiliation)
+	str(&f.AffiliationSource, held.AffiliationSource)
+	str(&f.AffiliationConfidence, held.AffiliationConfidence)
+	if f.CNCFContributions == 0 {
+		f.CNCFContributions = held.CNCFContributions
+	}
+	str(&f.ProfileBio, held.ProfileBio)
+	str(&f.ProfileLocation, held.ProfileLocation)
+	str(&f.PublicActivity, held.PublicActivity)
+	str(&f.TopRepo, held.TopRepo)
+	str(&f.TopRepoURL, held.TopRepoURL)
+	str(&f.TopRepoUpdatedAt, held.TopRepoUpdatedAt)
+	return f
+}
+
+// crmFieldsFor is what u's CRM fields are, given colony's record: a record
+// stripped in colony whose JSON lost crm_in_colony keeps colony's values for
+// every field the JSON left empty.
+func crmFieldsFor(u *SaaSUser, rec hubCRMRecord, have bool) crmFields {
+	f := crmFieldsOf(u)
+	if have && rec.Stripped && !u.CRMInColony {
+		f = f.fillFrom(rec.Fields)
+	}
+	return f
 }
 
 // hubColonyOnlyDoc is the hub.colony-only store attachment.
@@ -142,6 +196,20 @@ type hubColonyOnlyDoc struct {
 	MigratedAt time.Time `json:"migrated_at"`
 	// Renamed names what the migration renamed or copied (base names).
 	Renamed []string `json:"renamed,omitempty"`
+}
+
+// errCRMHeldInColony refuses a CRM change to a record whose fields colony
+// holds while colony-only is not running.
+var errCRMHeldInColony = errors.New("hub customer store: this record's customer fields are held in colony.db, which is not open in colony-only mode")
+
+// crmStoreUnavailable reports a colony.db on disk that this boot did not
+// open (a fallback to json): a delete must not skip forgetting the person.
+func crmStoreUnavailable() bool {
+	if st, _ := hubCRM.active(); st != nil {
+		return false
+	}
+	_, err := os.Stat(hubCustomerStorePath())
+	return err == nil
 }
 
 // crmColonyOnly returns the open store when the hub runs colony-only.
@@ -206,10 +274,18 @@ func crmPutRecord(st *store.Store, u *SaaSUser, rec hubCRMRecord) error {
 // its CRM fields back from colony. It reports whether u now holds its CRM
 // fields (a save may then write them).
 func crmOnlyOverlay(st *store.Store, u *SaaSUser) bool {
-	if !u.CRMInColony {
-		return true // the JSON still holds them
-	}
 	rec, ok, err := crmGetRecord(st, crmPersonID(u))
+	if !u.CRMInColony {
+		if err != nil {
+			// The JSON holds them, but a stripped colony copy may hold
+			// more: a save must not decide without it.
+			slog.Warn("hub customer store: colony-only read failed; CRM fields read from json and left untouched by saves",
+				"error", crmErrClass(err))
+			return false
+		}
+		crmFieldsFor(u, rec, ok).applyTo(u)
+		return true
+	}
 	if err != nil || !ok {
 		slog.Warn("hub customer store: colony-only record missing; CRM fields read empty and left untouched by saves",
 			"error", crmErrClass(err))
@@ -233,9 +309,10 @@ func crmOnlySaveUser(st *store.Store, u *SaaSUser, write func(*SaaSUser) error) 
 		// they are, and the JSON stays stripped.
 		return write(&out)
 	}
-	rec, _, err := crmGetRecord(st, id)
+	rec, have, err := crmGetRecord(st, id)
 	if err == nil {
-		rec.Fields = crmFieldsOf(u)
+		rec.Fields = crmFieldsFor(u, rec, have)
+		rec.Stripped = true
 		err = crmPutRecord(st, u, rec)
 	}
 	if err != nil {
@@ -248,7 +325,9 @@ func crmOnlySaveUser(st *store.Store, u *SaaSUser, write func(*SaaSUser) error) 
 	}
 	// The typed slots follow, as in colony mode; the attachment above is
 	// what colony-only reads.
-	syncErr := syncPerson(st, u)
+	full := *u
+	rec.Fields.applyTo(&full)
+	syncErr := syncPerson(st, &full)
 	hubCRM.markCRM(id, syncErr)
 	if syncErr != nil && !errors.Is(syncErr, errCRMSkipped) {
 		slog.Warn("hub customer store: typed mirror write failed; the colony-only record is kept", "error", crmErrClass(syncErr))
@@ -356,19 +435,27 @@ func customerConsentPaths() ([]string, error) {
 		}
 		var out []string
 		seen := map[string]bool{}
+		unreadable := 0
 		for _, f := range files {
 			u, err := readHubUserForSync(f.Path)
-			if err != nil {
-				continue
+			if err == nil {
+				var rec hubCRMRecord
+				rec, _, err = crmGetRecord(st, crmPersonID(u))
+				if err == nil && len(rec.Consents) == 0 {
+					continue
+				}
 			}
-			rec, _, err := crmGetRecord(st, crmPersonID(u))
-			if err != nil || len(rec.Consents) == 0 {
+			if err != nil {
+				unreadable++
 				continue
 			}
 			if p, err := customerConsentPath(u); err == nil && !seen[p] {
 				seen[p] = true
 				out = append(out, p)
 			}
+		}
+		if unreadable > 0 {
+			slog.Warn("hub customer store: colony-only consent listing skipped unreadable records", "count", unreadable)
 		}
 		sort.Strings(out)
 		return out, nil
@@ -570,14 +657,19 @@ func migrateHubColonyOnly(st *store.Store, now time.Time) error {
 				rec.Consents = records
 			}
 		}
+		have, ok, err := crmGetRecord(st, id)
+		if err != nil {
+			return err
+		}
 		if u.CRMInColony {
 			// Stripped by an earlier colony-only run that was rolled back
 			// incompletely: colony holds the fields.
-			have, ok, err := crmGetRecord(st, id)
-			if err != nil || !ok {
+			if !ok {
 				return fmt.Errorf("hub customer store: a stripped user record has no colony copy")
 			}
 			rec.Fields = have.Fields
+		} else {
+			rec.Fields = crmFieldsFor(u, have, ok)
 		}
 		wants = append(wants, want{u: u, rec: rec})
 	}
@@ -728,25 +820,43 @@ func hubCustomerFiles(st *store.Store, usersDir string) (map[string][]byte, map[
 		if err != nil {
 			return nil, nil, err
 		}
-		if u.CRMInColony {
-			if !ok {
-				return nil, nil, errors.New("hub customer store: a stripped user record has no colony copy")
-			}
+		rewrite := true
+		switch {
+		case u.CRMInColony && !ok:
+			// No colony copy (a delete whose last step failed, or a lost
+			// record): nothing holds the fields, so the record is written
+			// as what it is, an account without them. users.migrated may
+			// still hold an older copy.
+			slog.Warn("hub customer store: a stripped user record has no colony copy; restored without CRM fields (see users.migrated)")
+			u.CRMInColony = false
+		case u.CRMInColony:
 			rec.Fields.applyTo(&u)
 			u.CRMInColony = false
+		case ok && rec.Stripped:
+			// Rewritten without crm_in_colony: colony fills what it lacks.
+			crmFieldsFor(&u, rec, ok).applyTo(&u)
+		default:
+			rewrite = false
+		}
+		users[e.Name()] = data
+		if rewrite {
 			out, err := json.MarshalIndent(&u, "", "  ")
 			if err != nil {
 				return nil, nil, err
 			}
-			data = out
+			users[e.Name()] = out
 		}
-		users[e.Name()] = data
 		if ok && len(rec.Consents) > 0 {
 			out, err := json.MarshalIndent(rec.Consents, "", "  ")
 			if err != nil {
 				return nil, nil, err
 			}
-			consents[e.Name()] = out
+			// Named as json mode reads it (customerConsentPath).
+			name := e.Name()
+			if p, err := customerConsentPath(&u); err == nil {
+				name = filepath.Base(p)
+			}
+			consents[name] = out
 		}
 	}
 	return users, consents, nil
@@ -775,10 +885,23 @@ func restoreHubFromColonyOnly(st *store.Store, now time.Time) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	switch state {
-	case consentsNewer:
+	if state == consentsNewer {
 		return false, errConsentsNewer
-	case consentsOlder:
+	}
+	// The consent files are written into consents.restoring and renamed
+	// into place whole, so a crash part-way never leaves a partial
+	// consents directory that a later boot would have to refuse. A
+	// leftover consents.restoring is this restore's own unfinished copy of
+	// what colony holds.
+	staging := dir + hubRestoringSuffix
+	if err := os.RemoveAll(staging); err != nil {
+		return false, err
+	}
+	if err := writeHubCustomerFiles(saasUsersDir, staging, users, consents); err != nil {
+		return false, err
+	}
+	if state != consentsAbsent {
+		// Older, or the same as colony: set aside, never overwritten.
 		aside, err := uniqueSibling(dir, hubRestoredAsideSuffix, now)
 		if err != nil {
 			return false, err
@@ -787,8 +910,10 @@ func restoreHubFromColonyOnly(st *store.Store, now time.Time) (bool, error) {
 			return false, err
 		}
 	}
-	if err := writeHubCustomerFiles(saasUsersDir, dir, users, consents); err != nil {
-		return false, err
+	if len(consents) > 0 {
+		if err := os.Rename(staging, dir); err != nil {
+			return false, err
+		}
 	}
 	ids := make([]string, 0, len(users))
 	for name, data := range users {
@@ -850,7 +975,6 @@ func checkReappearedConsents(dir string, want map[string][]byte, migratedAt time
 	}
 	newest := fi.ModTime()
 	same := true
-	seen := 0
 	for _, e := range entries {
 		info, err := e.Info()
 		if err != nil {
@@ -875,10 +999,11 @@ func checkReappearedConsents(dir string, want map[string][]byte, migratedAt time
 		if string(data) != string(w) {
 			same = false
 		}
-		seen++
 	}
 	switch {
-	case same && seen == len(want):
+	case same:
+		// Every file it holds is colony's own, byte for byte (an export
+		// copied into place, or part of one): it says nothing colony lacks.
 		return consentsSame, nil
 	case newest.After(migratedAt):
 		return consentsNewer, nil
@@ -897,17 +1022,18 @@ func writeHubCustomerFiles(usersDir, consentsDir string, users, consents map[str
 			return err
 		}
 	}
-	names := make([]string, 0, len(users))
-	for n := range users {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		if err := writeFileAtomicMode(filepath.Join(usersDir, n), users[n], hubUserFileMode); err != nil {
-			return err
+	for _, set := range []struct {
+		dir   string
+		files map[string][]byte
+		mode  os.FileMode
+	}{{usersDir, users, hubUserFileMode}, {consentsDir, consents, hubConsentFileMode}} {
+		names := make([]string, 0, len(set.files))
+		for n := range set.files {
+			names = append(names, n)
 		}
-		if c, ok := consents[n]; ok {
-			if err := writeFileAtomicMode(filepath.Join(consentsDir, n), c, hubConsentFileMode); err != nil {
+		sort.Strings(names)
+		for _, n := range names {
+			if err := writeFileAtomicMode(filepath.Join(set.dir, n), set.files[n], set.mode); err != nil {
 				return err
 			}
 		}
@@ -956,6 +1082,11 @@ type HubCustomerExportReport struct {
 // that exists is never overwritten unless force is set.
 func ExportHubCustomerStore(saasDir, outDir string, force bool) (HubCustomerExportReport, error) {
 	var rep HubCustomerExportReport
+	if absClean(saasDir) == absClean(outDir) {
+		// Writing over the live files would leave the colony-only marker
+		// behind them; the restore on the next boot does that in place.
+		return rep, errors.New("hub customer store: export into a directory other than the hub data directory")
+	}
 	path := filepath.Join(saasDir, store.DefaultFileName)
 	if _, err := os.Stat(path); err != nil {
 		// Never create an empty colony.db by exporting from the wrong place.
@@ -996,6 +1127,13 @@ func ExportHubCustomerStore(saasDir, outDir string, force bool) (HubCustomerExpo
 	}
 	rep.Users, rep.Consents = len(users), len(consents)
 	return rep, nil
+}
+
+func absClean(p string) string {
+	if a, err := filepath.Abs(p); err == nil {
+		return a
+	}
+	return filepath.Clean(p)
 }
 
 // scrubHubMigrated removes a deleted user's copies from users.migrated*,

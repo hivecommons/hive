@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"path/filepath"
 
 	"github.com/hivecommons/hive/pkg/hub"
 )
@@ -19,11 +20,15 @@ func init() {
 	colonyExportFormats[colonyExportFormatHub] = colonyExportFormat{defaultDir: hubDataDir, export: exportColonyHub}
 }
 
-// exportColonyHub writes <out>/users and <out>/consents (out defaults to the
-// data directory itself) and prints a counts-only report.
+// hubExportDefaultSubdir is where the export goes without --out: beside the
+// live files, never over them.
+const hubExportDefaultSubdir = "hub-export"
+
+// exportColonyHub writes <out>/users and <out>/consents (out defaults to
+// <dir>/hub-export) and prints a counts-only report.
 func exportColonyHub(dir, out string, force bool, stdout io.Writer) error {
 	if out == "" {
-		out = dir
+		out = filepath.Join(dir, hubExportDefaultSubdir)
 	}
 	rep, err := hub.ExportHubCustomerStore(dir, out, force)
 	if err != nil {

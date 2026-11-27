@@ -386,6 +386,12 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 			case !rep.Parity:
 				logger.Warn("hub customer store: colony-only needs a clean boot sync; running in colony mode")
 				mode = hubCustomerStoreColony
+			case rep.Skipped > 0:
+				// A user colony does not hold would lose their consent
+				// records with the rename.
+				logger.Warn("hub customer store: colony-only needs every user in colony; running in colony mode",
+					"skipped", rep.Skipped)
+				mode = hubCustomerStoreColony
 			default:
 				if err := migrateHubColonyOnly(st, time.Now()); err != nil {
 					logger.Warn("hub customer store: colony-only migration not verified; running in colony mode, json kept",

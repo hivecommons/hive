@@ -6,6 +6,9 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -448,8 +451,9 @@ func TestHubColonyOnlyRefusesNewerConsents(t *testing.T) {
 }
 
 // The by-hand rollback copies the export into place: a consents directory
-// that matches colony exactly is not a conflict, and the restore finishes,
-// drops the document and clears the colony-only copies.
+// that holds only colony's own files is not a conflict (it is set aside,
+// kept), and the restore finishes, drops the document and clears the
+// colony-only copies.
 func TestHubColonyOnlyRestoreAcceptsMatchingConsents(t *testing.T) {
 	defer helperSetupTempDirs(t)()
 	users := fixtureUsers(t)
@@ -481,8 +485,11 @@ func TestHubColonyOnlyRestoreAcceptsMatchingConsents(t *testing.T) {
 	if _, ok := colonyPerson(t, st, users[0]).Attachments[crmAttachRecord]; ok {
 		t.Error("the colony-only copy outlived the restore")
 	}
-	if _, err := os.Stat(customerConsentDir() + hubRestoredAsideSuffix); !os.IsNotExist(err) {
-		t.Errorf("a matching consents directory was set aside: %v", err)
+	if _, err := os.Stat(filepath.Join(customerConsentDir()+hubRestoredAsideSuffix, "ada-example.json")); err != nil {
+		t.Errorf("the matching consents directory was not kept aside: %v", err)
+	}
+	if _, err := os.Stat(customerConsentDir() + hubRestoringSuffix); !os.IsNotExist(err) {
+		t.Errorf("the restore left its staging directory: %v", err)
 	}
 	if c := readMatchConsent(t, users[0], "own"); !c.Fields.RealName {
 		t.Errorf("consent after the restore = %+v", c)
@@ -699,5 +706,171 @@ func TestScrubHubMigratedSetAsideDirs(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(d, "bob-example.json")); err != nil {
 			t.Errorf("another user's copy was removed from %s: %v", filepath.Base(d), err)
 		}
+	}
+}
+
+// A record rewritten without crm_in_colony (an image that predates
+// colony-only saves it with empty CRM fields) never empties the colony copy:
+// colony fills every field the JSON lacks, in reads, saves and a restore.
+func TestHubColonyOnlyFlaglessRewriteKeepsColonyFields(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	st := useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	if err := saveSaaSUser(loadSaaSUser("ada-example")); err != nil {
+		t.Fatal(err)
+	}
+	// What an older image writes: account data only, no flag.
+	raw, err := readHubUserForSync(mustUserPath(t, users[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw.CRMInColony = false
+	raw.LastLogin = "2026-11-25T00:00:00Z"
+	data, _ := json.Marshal(raw)
+	if err := os.WriteFile(mustUserPath(t, users[0]), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := loadSaaSUser("ada-example")
+	if got.FullName != "Ada Example" || got.Notes != users[0].Notes || got.Company != "Example Org" {
+		t.Fatalf("read of a flagless rewrite = %+v", got)
+	}
+	// A raw save (no overlay) must not empty colony either.
+	raw2, _ := readHubUserForSync(mustUserPath(t, users[0]))
+	if err := saveSaaSUser(raw2); err != nil {
+		t.Fatal(err)
+	}
+	if rec, ok, _ := crmGetRecord(st, crmPersonID(users[0])); !ok || rec.Fields.FullName != "Ada Example" || !rec.Stripped {
+		t.Fatalf("colony record after a flagless raw save = %+v, %v", rec, ok)
+	}
+	// A value the JSON holds still wins.
+	got = loadSaaSUser("ada-example")
+	got.Company = "Changed Org"
+	if err := saveSaaSUser(got); err != nil {
+		t.Fatal(err)
+	}
+	closeHubCustomerStore()
+	// Rewritten without the flag again, then rolled back: the restore
+	// writes colony's fields into the JSON before dropping colony's copy.
+	raw3, _ := readHubUserForSync(mustUserPath(t, users[0]))
+	raw3.CRMInColony = false
+	data, _ = json.Marshal(raw3)
+	if err := os.WriteFile(mustUserPath(t, users[0]), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	useHubCustomerStore(t, hubCustomerStoreColony)
+	onDisk := userFileJSON(t, users[0])
+	if onDisk["full_name"] != "Ada Example" || onDisk["company"] != "Changed Org" || onDisk["notes"] != users[0].Notes {
+		t.Errorf("restored record = %v", onDisk)
+	}
+}
+
+// While colony-only is not running, a CRM change to a stripped record is
+// refused (colony-only would later read over it); an account-only save of
+// the same record goes through.
+func TestHubColonyOnlyFallbackRefusesCRMEdits(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	fixtureUsers(t)
+	useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	if err := saveSaaSUser(loadSaaSUser("ada-example")); err != nil {
+		t.Fatal(err)
+	}
+	closeHubCustomerStore() // a fallback: json mode with no store open
+	u := loadSaaSUser("ada-example")
+	if !u.CRMInColony {
+		t.Fatal("fixture: record not stripped")
+	}
+	u.LastLogin = "2026-11-25T00:00:00Z"
+	if err := saveSaaSUser(u); err != nil {
+		t.Fatalf("account-only save refused: %v", err)
+	}
+	u.Company = "Fallback Org"
+	if err := saveSaaSUser(u); !errors.Is(err, errCRMHeldInColony) {
+		t.Fatalf("CRM edit in a fallback = %v, want errCRMHeldInColony", err)
+	}
+}
+
+// A delete while colony.db exists but is not open is refused, so the
+// person is never left in colony to come back on a new sign-up.
+func TestHubColonyOnlyDeleteRefusedWithStoreClosed(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	closeHubCustomerStore()
+	srv := newHandlerHub()
+	req := httptest.NewRequest(http.MethodDelete, "/api/saas/admin/users/ada-example", nil)
+	req.SetPathValue("username", "ada-example")
+	w := httptest.NewRecorder()
+	srv.handleAdminDeleteUser(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("delete with the store closed = %d, want 503", w.Code)
+	}
+	if loadSaaSUser("ada-example") == nil {
+		t.Fatal("the user was deleted without forgetting them in colony")
+	}
+	st := useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	deleteAdminUser(t, srv, "ada-example")
+	if _, err := st.Get(crmPersonID(users[0])); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted user still in colony: %v", err)
+	}
+}
+
+// A consents directory left part-written (only colony's own files) is not
+// a conflict, so a crashed restore never wedges the next boot.
+func TestHubColonyOnlyPartialRestoreDirAccepted(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	st := useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	_, consents, err := hubCustomerFiles(st, saasUsersDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeHubCustomerStore()
+	if err := os.MkdirAll(customerConsentDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(customerConsentDir(), "ada-example.json"), consents["ada-example.json"], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A leftover staging directory from the crash is the restore's own.
+	if err := os.MkdirAll(customerConsentDir()+hubRestoringSuffix, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	useHubCustomerStore(t, hubCustomerStoreColony)
+	if c := readMatchConsent(t, users[0], "own"); !c.Fields.RealName {
+		t.Errorf("consent after the restore = %+v", c)
+	}
+}
+
+// A stripped record whose colony copy is gone (a delete whose last step
+// failed) does not block the rollback: it is restored without CRM fields.
+func TestHubColonyOnlyRestoreSkipsMissingCopy(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	users := fixtureUsers(t)
+	st := useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	if err := saveSaaSUser(loadSaaSUser("ada-example")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Forget(crmPersonID(users[0])); err != nil {
+		t.Fatal(err)
+	}
+	closeHubCustomerStore()
+	st = useHubCustomerStore(t, hubCustomerStoreColony)
+	if ok, _ := hubColonyOnlyMigrated(st); ok {
+		t.Fatal("the rollback did not finish")
+	}
+	if onDisk := userFileJSON(t, users[0]); onDisk["crm_in_colony"] == true {
+		t.Errorf("record still flagged after the rollback: %v", onDisk)
+	}
+}
+
+// The export never writes over the live hub data directory.
+func TestHubColonyOnlyExportRefusesInPlace(t *testing.T) {
+	defer helperSetupTempDirs(t)()
+	fixtureUsers(t)
+	useHubCustomerStore(t, hubCustomerStoreColonyOnly)
+	closeHubCustomerStore()
+	dir := filepath.Dir(saasUsersDir)
+	if _, err := ExportHubCustomerStore(dir, dir+string(filepath.Separator), true); err == nil {
+		t.Fatal("an export over the live files was allowed")
 	}
 }
