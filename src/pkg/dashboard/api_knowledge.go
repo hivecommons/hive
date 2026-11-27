@@ -1177,6 +1177,9 @@ func (s *Server) handleGitSourcesDisconnect(w http.ResponseWriter, r *http.Reque
 		filtered = append(filtered, gs)
 	}
 	s.deps.Config.Knowledge.GitSources = filtered
+	// Remember the disconnect: with git_sources now possibly empty, the
+	// boot seed would otherwise re-add the primary repo's knowledge dir.
+	s.deps.Config.Knowledge.GitSourcesDisconnected = true
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after git source disconnect", "error", err)
 	}

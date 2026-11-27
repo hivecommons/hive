@@ -30,7 +30,7 @@ type KnowledgeConfig struct {
 	Engine          string                `yaml:"engine"`
 	Layers          []KnowledgeLayer      `yaml:"layers"`
 	Vaults          []VaultConfig         `yaml:"vaults"`
-	GitSources      []GitSourceConfigYAML `yaml:"git_sources"`
+	GitSources      []GitSourceConfigYAML `yaml:"git_sources,omitempty"`
 	Documents       []DocSourceConfigYAML `yaml:"documents"`
 	Connectors      []KnowledgeConnector  `yaml:"connectors,omitempty"`
 	Context7        KnowledgeContext7     `yaml:"context7,omitempty"`
@@ -67,6 +67,12 @@ type KnowledgeConfig struct {
 	// route serves whichever chain the hive runs in-process (phase 1, with
 	// the advisor_llm ranking pass when configured).
 	SidecarAdvise bool `yaml:"sidecar_advise,omitempty"`
+	// GitSourcesDisconnected records that an operator disconnected a git
+	// source from the dashboard, so the boot-time seed of the primary repo's
+	// knowledge dir (seedKnowledgeGitSource) stays off once the list is empty.
+	// GitSources is omitempty, so a save of a list nobody set writes no key
+	// and an empty list means "never configured" (hivecommons/hive#20173).
+	GitSourcesDisconnected bool `yaml:"git_sources_disconnected,omitempty"`
 }
 
 // PublicKnowledgeConfig is the dashboard-persisted owner override for the
