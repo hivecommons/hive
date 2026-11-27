@@ -65,6 +65,19 @@ func TestHandlerSkipsBenignAndExplicitClasses(t *testing.T) {
 	}
 }
 
+func TestAgentTokenRefreshWarningUsesExplicitCondition(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for range 5 {
+		logger.Warn("agent token refresh failed", "agent", "quality", "error", "creating scoped token: POST /app/installations/123/access_tokens: 401 Bad credentials")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("refresh warning duplicated the explicit condition: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 5 {
+		t.Fatalf("wrapped handler saw %d records, want 5", n)
+	}
+}
+
 func TestSignedCommitOwnershipSkipStaysInLogsWithoutFleetReport(t *testing.T) {
 	logger, seen, out := newFeed(t)
 	const msg = "signed-commit reconciler: skipped; the PR keeps an unsigned commit"
