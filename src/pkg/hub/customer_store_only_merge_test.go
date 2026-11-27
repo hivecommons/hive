@@ -6,6 +6,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -189,6 +190,15 @@ func TestHubColonyOnlyMergeRefusesUnclassifiable(t *testing.T) {
 				t.Errorf("a refused merge set the directory aside: %v", err)
 			}
 			closeHubCustomerStore()
+			// The store is still colony-only, so the refused merge must leave
+			// it guarded against older images (#20116). Release the guard the
+			// way this hub does before it opens the file.
+			if err := openAsOlderImage(t); !errors.Is(err, store.ErrSchemaTooNew) {
+				t.Fatalf("older image open after a refused merge = %v, want ErrSchemaTooNew", err)
+			}
+			if err := releaseHubColonyOnlyGuard(hubCustomerStorePath(), hubCustomerStoreLockTimeout); err != nil {
+				t.Fatal(err)
+			}
 			st, err := store.Open(hubCustomerStorePath(), store.Options{})
 			if err != nil {
 				t.Fatal(err)
