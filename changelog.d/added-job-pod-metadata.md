@@ -1,1 +1,0 @@
-- Sandbox Jobs accept operator-configured pod labels and annotations for network policy and admission controls ([#20155](https://github.com/hivecommons/hive/issues/20155)).
