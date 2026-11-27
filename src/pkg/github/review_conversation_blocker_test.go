@@ -19,10 +19,23 @@ func TestReviewConversationBlocker(t *testing.T) {
 	status := &statusCommentServer{}
 	comments := status.start(t).Config.Handler
 	var resolved, pageFailed atomic.Bool
-	var optional, policyUnreadable atomic.Bool
+	var optional, policyUnreadable, slashBase atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.EscapedPath(), "%25") {
+			t.Errorf("branch name escaped twice: %s", r.URL.EscapedPath())
+		}
 		switch r.URL.Path {
+		case "/repos/o/r/rules/branches/release/x":
+			if r.URL.EscapedPath() != "/repos/o/r/rules/branches/release%2Fx" {
+				t.Errorf("rules path = %s, want the branch escaped once", r.URL.EscapedPath())
+			}
+			fmt.Fprint(w, `[]`)
+		case "/repos/o/r/branches/release/x/protection":
+			if r.URL.EscapedPath() != "/repos/o/r/branches/release%2Fx/protection" {
+				t.Errorf("protection path = %s, want the branch escaped once", r.URL.EscapedPath())
+			}
+			fmt.Fprint(w, `{"required_conversation_resolution":{"enabled":true}}`)
 		case "/repos/o/r/rules/branches/main":
 			fmt.Fprint(w, `[{"type":"pull_request","parameters":{"required_review_thread_resolution":true}}]`)
 		case "/repos/o/r/rules/branches/optional":
@@ -50,6 +63,9 @@ func TestReviewConversationBlocker(t *testing.T) {
 			base := "main"
 			if optional.Load() {
 				base = "optional"
+			}
+			if slashBase.Load() {
+				base = "release/x"
 			}
 			switch req.Variables["after"] {
 			case nil:
@@ -133,6 +149,44 @@ func TestReviewConversationBlocker(t *testing.T) {
 	policyUnreadable.Store(false)
 	refresh("")
 	checkNotice(false)
+	// A slash-named base requiring resolution via classic protection.
+	optional.Store(false)
+	slashBase.Store(true)
+	pr.BaseRef = "release/x"
+	refresh("1 unresolved review thread")
+	checkNotice(true)
+}
+
+// A PR with issue comments but no review threads cannot carry a notice, so
+// the clear path must not list its comments every cycle.
+func TestReviewConversationBlockerSkipsClearWithoutThreads(t *testing.T) {
+	ctx := context.Background()
+	var commentLists atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/graphql":
+			fmt.Fprint(w, `{"data":{"repository":{"pullRequests":{"nodes":[{"number":5,"comments":{"totalCount":3},"reviewThreads":{"totalCount":0}}]}}}}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments"):
+			commentLists.Add(1)
+			fmt.Fprint(w, `[]`)
+		default:
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	c.SetAppBotLogin("hive-app[bot]")
+	c.SetWritebackGate(writeback.New(writeback.Config{}, writeback.Deps{}, ""))
+	pr := PullRequest{Repo: "o/r", Number: 5, BaseRef: "main", HeadSHA: "head", MergeableState: "blocked", Author: "hive-app[bot]", AppAuthored: true}
+	newProtectionCollector(c).attach(ctx, &pr, nil)
+	if pr.CommentCount != 3 || pr.ReviewThreadCount != 0 {
+		t.Fatalf("counts = %d comments / %d threads, want 3 / 0", pr.CommentCount, pr.ReviewThreadCount)
+	}
+	c.PostReviewConversationBlockers(ctx, []PullRequest{pr})
+	if n := commentLists.Load(); n != 0 {
+		t.Fatalf("listed issue comments %d times for a PR without review threads", n)
+	}
 }
 
 func TestReviewConversationBlockerNotice(t *testing.T) {

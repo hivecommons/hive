@@ -89,13 +89,10 @@ func (pc *protectionCollector) attach(ctx context.Context, pr *PullRequest, repo
 		pr.CommentCount = rs.comments
 		pr.ReviewThreadCount = rs.reviewThreads
 		pr.LinkedIssues = rs.linkedIssues
+		// A PR with no review threads cannot have had a conversation notice,
+		// so it is left unknown and the clear path never lists its comments.
 		if rs.reviewThreads > 0 {
 			f.UnresolvedReviewThreads, f.reviewThreadCommentIDs, pr.reviewConversationKnown = pc.reviewConversationBlocker(ctx, pr)
-		} else if rs.comments > 0 {
-			// Both totals come from the same query. A positive issue-comment
-			// count rules out the review-decision-only fallback (and means
-			// there could be a status section to clear).
-			pr.reviewConversationKnown = true
 		}
 	}
 

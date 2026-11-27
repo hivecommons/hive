@@ -102,7 +102,7 @@ func (c *Client) reviewConversationRule(ctx context.Context, owner, repo, branch
 		}
 		page = resp.NextPage
 	}
-	protection, _, err := c.client.Repositories.GetBranchProtection(ctx, owner, repo, url.PathEscape(branch))
+	protection, _, err := c.client.Repositories.GetBranchProtection(ctx, owner, repo, branch) // go-github escapes it.
 	if err == nil && protection != nil {
 		if protection.RequiredConversationResolution != nil && protection.RequiredConversationResolution.Enabled {
 			return conversationRuleRequired
@@ -197,7 +197,8 @@ func (c *Client) PostReviewConversationBlockers(ctx context.Context, prs []PullR
 	for i := range prs {
 		pr := &prs[i]
 		reason := pr.ReviewConversationBlockReason()
-		// No need to list comments to clear a section on a PR with none.
+		// Clearing lists comments, so only try where a notice could exist:
+		// a PR with review threads (reviewConversationKnown) and comments.
 		if !c.IsHiveAuthorLogin(pr.Author) || reason == "" && (!pr.reviewConversationKnown || pr.CommentCount == 0) {
 			continue
 		}
