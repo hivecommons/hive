@@ -3218,8 +3218,7 @@
       var kind = hiveForgeKind(h);
       if (!kind) return githubHostPill(hiveForgeHost(h));
       var label = FORGE_KIND_LABELS[kind];
-      return '<span title="' + escAttr(label) + '" style="font-size:var(--fs-xs);padding:1px 7px;border-radius:var(--r-pill);border:1px solid var(--purple);color:var(--purple)">' +
-        esc(hiveForgeHost(h) || label) + '</span>';
+      return forgeHostPillHTML(hiveForgeHost(h) || label, 'var(--purple)', label);
     }
 
     // hiveForgeLabel names the forge a hive's repos live on, for tooltips.
@@ -11368,9 +11367,14 @@
          two instances are distinguishable at a glance without reading the
          text. An absent host is treated as public, matching the label below. */
       var isGHE = !!githubHost && githubHost !== PAST_REQUESTS_DEFAULT_GITHUB_HOST;
-      var border = isGHE ? 'var(--blue);color:var(--blue)' : 'var(--green);color:var(--green)';
-      return '<span style="font-size:var(--fs-xs);padding:1px 7px;border-radius:var(--r-pill);border:1px solid ' + border + '">' +
-        esc(githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST) + '</span>';
+      return forgeHostPillHTML(githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST, isGHE ? 'var(--blue)' : 'var(--green)', '');
+    }
+
+    // forgeHostPillHTML is the outlined host pill shared by githubHostPill and
+    // hiveForgePill: text in colour (a var(--…) token), with an optional title.
+    function forgeHostPillHTML(text, colour, title) {
+      return '<span' + (title ? ' title="' + escAttr(title) + '"' : '') + ' style="font-size:var(--fs-xs);padding:1px 7px;border-radius:var(--r-pill);border:1px solid ' + colour + ';color:' + colour + '">' +
+        esc(text) + '</span>';
     }
 
     // otherHivesCell summarises the rest of a requester's fleet: which other

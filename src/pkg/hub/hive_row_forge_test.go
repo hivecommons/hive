@@ -45,6 +45,7 @@ func runHiveRowForgeJS(t *testing.T, hives map[string]string) map[string]hiveRow
 		jsVarLine(t, "GITHUB_REPO_ICON_SVG"),
 		jsVarLine(t, "FORGE_KIND_LABELS"),
 		jsFunc(t, "ghRepoURL"),
+		jsFunc(t, "forgeHostPillHTML"),
 		jsFunc(t, "githubHostPill"),
 		jsFunc(t, "hiveForgeHost"),
 		jsFunc(t, "hiveForgeKind"),
