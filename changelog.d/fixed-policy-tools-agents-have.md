@@ -1,1 +1,0 @@
-- Default agent policies now name only tools the agent image provides: the image ships `issue-coauthor` on `PATH` (and `hive-open-pr` uses it), the PR overlap note is posted once instead of edited, the hotspot report points at `GET /api/hotspots` only, and `scanner-holdgated.md` describes the `ready-for-review` label instead of `hold`.

@@ -11,6 +11,21 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-26 (v5.379.0)
+
+### Added
+
+- Hive Chat config assist gains `chat.config_assist.model`, the model for the proposal turn (falls back to `chat.grounded_answers.model`, then the reviewer model), with a model picker on the Settings panel, which is now owner-only for reading too so other roles see an owner-only note instead of a switch that fails on save (#20092).
+
+### Changed
+
+- **A spoke that took the `colony` default goes back to `shadow` on its next upgrade.** A hive that ran v5.376.0 with no `customers.store` set picked up the short-lived `colony` default. The spoke default is now `shadow` until parity is confirmed on the project's own hive, so on its next upgrade such a hive reads from JSON again while still writing colony alongside it. Nothing is lost: every mode keeps writing the JSON files. To stay on `colony`, set `customers.store: colony` or `HIVE_CUSTOMERS_STORE=colony` before upgrading ([#19972](https://github.com/hivecommons/hive/issues/19972)).
+
+### Fixed
+
+- Hive Chat config assist Apply now re-checks the proposal against its own allowlist on every Apply and Undo, refusing seed-owned keys (`github`, `hub`, `variables`, `acmm_level`, `hive_id`) and secret fields with `403`, answers a non-owner with an explicit owner-only `403`, and audits every successful Apply as `chat_config_applied` and every Undo as `chat_config_undo` with the user, section, field and old and new value fingerprints instead of the values (#19985).
+- Default agent policies now name only tools the agent image provides: the image ships `issue-coauthor` on `PATH` (and `hive-open-pr` uses it), the PR overlap note is posted once instead of edited, the hotspot report points at `GET /api/hotspots` only, and `scanner-holdgated.md` describes the `ready-for-review` label instead of `hold`.
+
 ## 2026-11-26 (v5.378.0)
 
 ### Added
