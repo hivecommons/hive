@@ -109,12 +109,19 @@ func TestReviewConversationBlockerNotice(t *testing.T) {
 	if writes != 0 {
 		t.Fatalf("wrote %d notices despite a write-back restriction", writes)
 	}
+	c.SetWritebackGate(writeback.New(writeback.Config{}, writeback.Deps{}, ""))
 	c.PostReviewConversationBlockers(ctx, prs)
+	c.PostReviewConversationBlockers(ctx, prs)
+	// A different blocker can appear and then leave the original one open.
+	// The earlier body must be allowed again to replace the intermediate one.
+	prs[0].Protection.reviewThreadCommentIDs[0] = 4000000000
+	c.PostReviewConversationBlockers(ctx, prs)
+	prs[0].Protection.reviewThreadCommentIDs[0] = 3000000000
 	c.PostReviewConversationBlockers(ctx, prs)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.creates != 1 || s.edits != 0 {
-		t.Fatalf("notice created %d times and edited %d times, want one create", s.creates, s.edits)
+	if s.creates != 1 || s.edits != 2 {
+		t.Fatalf("notice created %d times and edited %d times, want one create and two edits", s.creates, s.edits)
 	}
 	body, _ := s.comments[0]["body"].(string)
 	if section, ok := prstatus.Get(body, reviewConversationStatusSection); !ok || !strings.Contains(section, "#discussion_r3000000000") || !strings.Contains(section, "1 unresolved review thread") {

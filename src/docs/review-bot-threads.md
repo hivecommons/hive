@@ -20,6 +20,8 @@ threads. The count includes threads GitHub still marks unresolved after the
 lines they refer to become outdated. Other merge rules may also be unmet.
 The Hive status comment can link to the blocking threads on Hive-authored PRs
 when repository pause and write-back policy permit the notice.
+Hive updates that section in place when the blocker changes and skips edits
+when the section already matches.
 
 On v5, `classification.review_bots` only reconciles threads opened by configured
 external review bots. It does not resolve the Hive reviewer's own threads, even

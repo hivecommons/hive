@@ -195,9 +195,10 @@ func TestKindSets(t *testing.T) {
 			if !k.RateCapExempt() {
 				t.Errorf("%s: label kinds must be exempt from the hourly cap", k)
 			}
-		case k.IsIssueFileKind(), k == KindSupersessionClose, k == KindIssueClose, k == KindHoldGateNotice, k == KindParentIssueEdit, k == KindCIRerun:
+		case k.IsIssueFileKind(), k == KindSupersessionClose, k == KindIssueClose,
+			k == KindHoldGateNotice, k == KindReviewConversationNotice, k == KindParentIssueEdit, k == KindCIRerun:
 			if k.ContentDeduped() {
-				t.Errorf("%s re-checks the gate with a constant preview; it must not be content-deduped", k)
+				t.Errorf("%s handles its own idempotence; it must not be content-deduped", k)
 			}
 		default:
 			if !k.ContentDeduped() {
