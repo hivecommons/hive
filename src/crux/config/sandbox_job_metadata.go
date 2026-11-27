@@ -6,6 +6,23 @@ import (
 	"strings"
 )
 
+// Pod metadata keys the Job launcher (crux/kubejob) sets itself. Operators
+// may not set them through pod_labels or pod_annotations. kubejob builds its
+// label keys from these constants, and the dashboard JS mirror is checked
+// against them by pkg/dashboard tests.
+const (
+	SandboxPodJobNameLabel        = "job-name"
+	SandboxPodManagedByLabel      = "app.kubernetes.io/managed-by"
+	SandboxPodReservedLabelPrefix = "hive.kubestellar.io/"
+)
+
+// IsReservedSandboxPodMetadataKey reports whether key (case-insensitive) is
+// one the Job launcher owns.
+func IsReservedSandboxPodMetadataKey(key string) bool {
+	lower := strings.ToLower(key)
+	return lower == SandboxPodManagedByLabel || lower == SandboxPodJobNameLabel || strings.HasPrefix(lower, SandboxPodReservedLabelPrefix)
+}
+
 const (
 	maxSandboxPodMetadataEntries = 128
 	maxSandboxPodAnnotationBytes = 256 * 1024
@@ -53,8 +70,7 @@ func ValidateSandboxJobMetadata(job *SandboxJobConfig) error {
 		}
 		size := 0
 		for key, value := range field.values {
-			lower := strings.ToLower(key)
-			if lower == "app.kubernetes.io/managed-by" || lower == "job-name" || strings.HasPrefix(lower, "hive.kubestellar.io/") {
+			if IsReservedSandboxPodMetadataKey(key) {
 				return fmt.Errorf("job.%s key %q is reserved", field.name, key)
 			}
 			if !validSandboxMetadataKey(key, field.annotation) {

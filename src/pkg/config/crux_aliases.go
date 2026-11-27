@@ -271,3 +271,10 @@ var (
 	// controls share with config load (hivecommons/hive#20155).
 	ValidateSandboxJobMetadata = cruxconfig.ValidateSandboxJobMetadata
 )
+
+// Reserved sandbox Job pod metadata keys (see crux/config).
+const (
+	SandboxPodJobNameLabel        = cruxconfig.SandboxPodJobNameLabel
+	SandboxPodManagedByLabel      = cruxconfig.SandboxPodManagedByLabel
+	SandboxPodReservedLabelPrefix = cruxconfig.SandboxPodReservedLabelPrefix
+)

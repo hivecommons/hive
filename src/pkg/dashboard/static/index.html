@@ -82017,6 +82017,11 @@ function burnAreaChart() {
     const SANDBOX_K8S_NAME_MAX = 63;
     const SANDBOX_K8S_PREFIX_MAX = 253;
     const SANDBOX_MAP_MAX_ENTRIES = 64;
+    /* Pod metadata keys the Job launcher sets itself. Mirrors the
+       SandboxPod* constants in crux/config/sandbox_job_metadata.go; a Go
+       test keeps the two in step. */
+    const SANDBOX_RESERVED_POD_LABELS = ['job-name', 'app.kubernetes.io/managed-by'];
+    const SANDBOX_RESERVED_POD_LABEL_PREFIX = 'hive.kubestellar.io/';
     const SANDBOX_TOLERATIONS_MAX = 32;
     const SANDBOX_PULL_SECRETS_MAX = 32;
     const SANDBOX_PREFLIGHT_COMMANDS_MAX = 32;
@@ -82082,24 +82087,29 @@ function burnAreaChart() {
       return '';
     }
 
+    function sandboxReservedPodKey(k) {
+      const lower = k.toLowerCase();
+      return SANDBOX_RESERVED_POD_LABELS.includes(lower) || lower.startsWith(SANDBOX_RESERVED_POD_LABEL_PREFIX);
+    }
+
     /* key=value lines into a map. kind 'label' takes label values (may be
-       empty), kind 'quantity' takes resource quantities like 2, 500m, 16Gi. */
+       empty), 'podLabel' is a label that must not use a reserved key, and
+       kind 'quantity' takes resource quantities like 2, 500m, 16Gi. */
     function sandboxParseMapLines(text, kind) {
       const value = {};
       const errors = [];
       String(text || '').split(/\r?\n/).forEach((raw, i) => {
-        const line = kind === 'annotation' ? raw : raw.trim();
+        const line = raw.trim();
         if (!line) return;
         const idx = line.indexOf('=');
         if (idx <= 0) { errors.push(`line ${i + 1}: write key=value`); return; }
         const k = line.slice(0, idx).trim();
-        const v = kind === 'annotation' ? line.slice(idx + 1) : line.slice(idx + 1).trim();
+        const v = line.slice(idx + 1).trim();
         const keyErr = sandboxQualifiedNameError(k);
         if (keyErr) { errors.push(`line ${i + 1}: ${keyErr}`); return; }
         if (kind === 'quantity' && !SANDBOX_QUANTITY_RE.test(v)) { errors.push(`line ${i + 1}: "${v}" is not a quantity (for example 2, 500m, 16Gi)`); return; }
-        if (kind === 'label' && v && (v.length > SANDBOX_K8S_NAME_MAX || !SANDBOX_K8S_NAME_RE.test(v))) { errors.push(`line ${i + 1}: "${v}" is not a valid label value`); return; }
-        if ((kind === 'podLabel' || kind === 'annotation') && (k === 'job-name' || k === 'app.kubernetes.io/managed-by' || k.startsWith('hive.kubestellar.io/'))) { errors.push(`line ${i + 1}: "${k}" is reserved`); return; }
-        if (kind === 'podLabel' && v && (v.length > SANDBOX_K8S_NAME_MAX || !SANDBOX_K8S_NAME_RE.test(v))) { errors.push(`line ${i + 1}: "${v}" is not a valid label value`); return; }
+        if (kind === 'podLabel' && sandboxReservedPodKey(k)) { errors.push(`line ${i + 1}: "${k}" is reserved`); return; }
+        if ((kind === 'label' || kind === 'podLabel') && v && (v.length > SANDBOX_K8S_NAME_MAX || !SANDBOX_K8S_NAME_RE.test(v))) { errors.push(`line ${i + 1}: "${v}" is not a valid label value`); return; }
         value[k] = v;
       });
       if (Object.keys(value).length > SANDBOX_MAP_MAX_ENTRIES) errors.push(`at most ${SANDBOX_MAP_MAX_ENTRIES} entries`);

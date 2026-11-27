@@ -90,16 +90,16 @@ const (
 	jobNameMax = 63
 
 	containerName = "kick"
-	jobLabelKey   = "job-name"
+	jobLabelKey   = config.SandboxPodJobNameLabel
 	// managedByLabel marks Jobs this launcher created so an operator (or a
 	// future sweeper) can list them without guessing at name prefixes.
-	managedByLabel = "app.kubernetes.io/managed-by"
+	managedByLabel = config.SandboxPodManagedByLabel
 	managedByValue = "hive-kubejob"
 	// jobLabel marks a Job's pods with the Job name so a per-Job
 	// NetworkPolicy can select them without relying on the controller's
 	// own job-name label, whose key changed across Kubernetes releases.
-	jobLabel         = "hive.kubestellar.io/job"
-	agentLabel       = "hive.kubestellar.io/agent"
+	jobLabel         = config.SandboxPodReservedLabelPrefix + "job"
+	agentLabel       = config.SandboxPodReservedLabelPrefix + "agent"
 	namePrefix       = "hive-kick-"
 	restartNever     = "Never"
 	deletePropagate  = "Background"

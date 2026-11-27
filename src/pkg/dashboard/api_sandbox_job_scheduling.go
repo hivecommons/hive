@@ -97,8 +97,23 @@ func validateK8sQualifiedName(field, s string) error {
 }
 
 // stringMapFromBody reads a JSON object of strings. Numbers are accepted and
-// formatted, so a quantity typed as 2 is "2". nil or {} is nil.
+// formatted, so a quantity typed as 2 is "2". nil or {} is nil. Keys and
+// values are trimmed.
 func stringMapFromBody(field string, v interface{}) (map[string]string, error) {
+	return readStringMapFromBody(field, v, true)
+}
+
+// sandboxMetadataMapFromBody reads pod labels or annotations. It is
+// stringMapFromBody without trimming, so annotation values keep their
+// whitespace and an untrimmed key is reported as invalid, not silently fixed.
+func sandboxMetadataMapFromBody(field string, v interface{}) (map[string]string, error) {
+	return readStringMapFromBody(field, v, false)
+}
+
+// readStringMapFromBody is the shared core of stringMapFromBody and
+// sandboxMetadataMapFromBody. Every value is written to the Job manifest, so
+// any entry that looks like a credential is refused.
+func readStringMapFromBody(field string, v interface{}, trim bool) (map[string]string, error) {
 	if v == nil {
 		return nil, nil
 	}
@@ -111,11 +126,17 @@ func stringMapFromBody(field string, v interface{}) (map[string]string, error) {
 	}
 	out := make(map[string]string, len(obj))
 	for k, raw := range obj {
-		key := strings.TrimSpace(k)
+		key := k
+		if trim {
+			key = strings.TrimSpace(k)
+		}
 		var val string
 		switch x := raw.(type) {
 		case string:
-			val = strings.TrimSpace(x)
+			val = x
+			if trim {
+				val = strings.TrimSpace(x)
+			}
 		case float64:
 			val = strconv.FormatFloat(x, 'f', -1, 64)
 		default:
@@ -128,31 +149,6 @@ func stringMapFromBody(field string, v interface{}) (map[string]string, error) {
 	}
 	if len(out) == 0 {
 		return nil, nil
-	}
-	return out, nil
-}
-
-func sandboxMetadataMapFromBody(field string, v interface{}) (map[string]string, error) {
-	if v == nil {
-		return nil, nil
-	}
-	obj, ok := v.(map[string]interface{})
-	if !ok {
-		return nil, fmt.Errorf("%s must be an object of strings", field)
-	}
-	if len(obj) > maxSandboxJobMapEntries {
-		return nil, fmt.Errorf("%s takes at most %d entries", field, maxSandboxJobMapEntries)
-	}
-	if len(obj) == 0 {
-		return nil, nil
-	}
-	out := make(map[string]string, len(obj))
-	for key, raw := range obj {
-		value, ok := raw.(string)
-		if !ok {
-			return nil, fmt.Errorf("%s: the value of %q must be a string", field, key)
-		}
-		out[key] = value
 	}
 	return out, nil
 }
