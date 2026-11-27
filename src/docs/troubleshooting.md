@@ -92,6 +92,8 @@ Hive reads `/etc/hive/hive.yaml` by default, or `HIVE_CONFIG`/`--config` when se
 
 In Kubernetes, edit the ConfigMap/Secret source and restart the pod; dashboard edits are stored in the `/data` PVC overlay. In Docker Compose, edit the bind-mounted `src/hive.yaml` or the dashboard overlay and restart `hive`.
 
+**`at least one agent must be configured` after you fixed the seed.** The seed (the ConfigMap or the mounted `hive.yaml`) is only read on the first boot. After that, `/data/hive.yaml.runtime` wins, and a stale `/data/hive.yaml.bak` is the fallback when the runtime file is missing. A seed with no `agents` block can leave a runtime file with no agents too, so adding agents to the seed alone does not fix the next boot. After you add an `agents` block to the seed, delete both `/data/hive.yaml.runtime` and `/data/hive.yaml.bak` from the `/data` volume and restart, so the next boot reads the fixed seed again. Deleting them drops any settings saved from the dashboard, which a hive that never started has none of. See [Agent configuration](agent-configuration.md) for which file wins at each boot.
+
 ### Validate without booting: `hive validate`
 
 **Access: deployment/container shell.** Validate before applying a config,
