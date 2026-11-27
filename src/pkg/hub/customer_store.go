@@ -350,13 +350,6 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 			} else if aside {
 				logger.Warn("hub customer store: a consents directory reappeared beside the colony-only store; set aside as consents.ignored, colony stays the truth")
 			}
-			// The boot sync does not run on a colony-only store, so its
-			// forget pass runs here on its own.
-			if forgotten, held, err := forgetHubOrphansColonyOnly(ctx, st); err != nil {
-				logger.Warn("hub customer store: colony-only forget pass failed; nobody erased this boot", "error", crmErrClass(err))
-			} else if forgotten > 0 || held > 0 {
-				logger.Info("hub customer store: colony-only forget pass", "forgotten", forgotten, "orphans_held", held)
-			}
 		}
 	}
 	if mode != hubCustomerStoreJSON && exists {
@@ -367,6 +360,16 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 			_ = st.Close()
 			logger.Warn("hub customer store: backup failed; json mode", "error", crmErrClass(err))
 			return hubCustomerStoreJSON
+		}
+	}
+	if mode == hubCustomerStoreColonyOnly && migrated {
+		// The boot sync does not run on a colony-only store, so its forget
+		// pass runs here on its own, after the backup, so a backup from just
+		// before every erasure exists.
+		if forgotten, held, err := forgetHubOrphansColonyOnly(ctx, st); err != nil {
+			logger.Warn("hub customer store: colony-only forget pass failed; nobody erased this boot", "error", crmErrClass(err))
+		} else if forgotten > 0 || held > 0 {
+			logger.Info("hub customer store: colony-only forget pass", "forgotten", forgotten, "orphans_held", held)
 		}
 	}
 	if mode != hubCustomerStoreJSON && !migrated {
