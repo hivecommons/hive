@@ -562,6 +562,46 @@ func depBotRedIssueRuns(pr github.PullRequest, checks []string) []github.Depende
 	return out
 }
 
+// depBotRedSince is the latest time one of checks last failed on pr's head,
+// from the CI activity the enumeration already read: for each check, when
+// its newest failing run on the head completed (the filters of
+// depBotRedIssueRuns), and of those the latest. It is false when the
+// activity is missing or for another head, when a check has no failing run
+// on the head, or when one of its failing runs has no time. The parked path
+// only ever uses it to start the red clock earlier than its own first
+// sighting (depBotParkedRedClock), never later.
+func depBotRedSince(pr github.PullRequest, checks []string) (time.Time, bool) {
+	a := pr.CIActivity
+	if a == nil || len(checks) == 0 || (a.Head != "" && !strings.EqualFold(a.Head, pr.HeadSHA)) {
+		return time.Time{}, false
+	}
+	var latest time.Time
+	for _, name := range checks {
+		var at time.Time
+		for _, c := range a.Checks {
+			if c.Name != name || (c.Head != "" && !strings.EqualFold(c.Head, pr.HeadSHA)) {
+				continue
+			}
+			if !strings.EqualFold(c.State, "completed") || (c.Conclusion != "failure" && c.Conclusion != "action_required") {
+				continue
+			}
+			if c.Since == nil || c.Since.IsZero() {
+				return time.Time{}, false
+			}
+			if c.Since.After(at) {
+				at = *c.Since
+			}
+		}
+		if at.IsZero() {
+			return time.Time{}, false
+		}
+		if at.After(latest) {
+			latest = at
+		}
+	}
+	return latest, true
+}
+
 func depBotRedIssueChecksURL(pr github.PullRequest) string {
 	u := strings.TrimSpace(pr.URL)
 	if u == "" {
@@ -1403,11 +1443,17 @@ func (s *depBotConflictStore) forgetRedHeads(key string) {
 	s.saveRedIssuesLocked()
 }
 
-// pruneRedHeads drops the history of PRs not in the open snapshot. A PR
-// missing from a partial snapshot loses its history: fail closed.
+// pruneRedHeads drops the history (and the logged parked-head wait) of PRs
+// not in the open snapshot. A PR missing from a partial snapshot loses its
+// history: fail closed.
 func (s *depBotConflictStore) pruneRedHeads(open map[string]github.PullRequest) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for k := range s.redWaitLogged {
+		if _, ok := open[k]; !ok {
+			delete(s.redWaitLogged, k)
+		}
+	}
 	changed := false
 	for k := range s.redHeads {
 		if _, ok := open[k]; !ok {
@@ -1626,7 +1672,10 @@ func (p *depBotRedIssuePass) noteRedHeads(store *depBotConflictStore, seen map[s
 // (budget, a failed read). The hand-off ends only when the PR goes green,
 // so without this the newer head, the one the cross-head rule is about,
 // would never be judged. A newer head waits the same red-CI grace and
-// transient re-run as the hand-off. After the filer's cheap refusals and
+// transient re-run as the hand-off, counted from its first sighting, or
+// from when its failing checks last failed when that is earlier and the
+// sighting is at least depBotParkedHeadTriageFloor old
+// (depBotParkedRedClock); each change in the wait is logged once. After the filer's cheap refusals and
 // inside the per-pass budget, it reads the label events on every attempt
 // (as the stale-red pass does, keeping only a "not own" answer): a
 // needs-human a person took off and put back is not the sweep's, and
@@ -1662,14 +1711,27 @@ func (p *depBotRedIssuePass) fileForParkedHead(ctx context.Context, store *depBo
 	}
 	rerun := depBotTransientRerunFor(dbrLedger(), repo, pr)
 	if !sameHead {
-		red := now.Sub(store.observe(key, pr.HeadSHA, depBotHandoffRedCI, now))
+		// The observation is pruned on any pass that does not wait, so
+		// alone it restarts the grace after a gap or a judgement reopened
+		// for newer rules; the checks' failure time may start the clock
+		// earlier (depBotParkedRedClock). The observation still runs, as
+		// the re-run clock rides on it.
+		clock := depBotParkedRedClock{observed: store.observe(key, pr.HeadSHA, depBotHandoffRedCI, now)}
+		clock.checks, clock.checksOK = depBotRedSince(pr, depBotRedIssueChecks(pr))
+		since := clock.since(now)
+		red := now.Sub(since)
 		var owed time.Duration
 		if rerun.State == depBotRerunOwed {
 			owed = now.Sub(store.rerunOwedSince(key, pr.HeadSHA, now))
 		}
-		if red < depBotRedCIGrace || rerun.holdsHandoff(red, owed) {
+		if why, remaining := depBotParkedHeadWait(clock, now, red, owed, rerun); why != "" {
+			if store.noteRedWait(key, depBotRedWait{Head: pr.HeadSHA, Why: why, Since: since}) {
+				logger.Info("dependency-bot red CI: parked head waiting before the repository issue check",
+					"repo", repo, "pr", pr.Number, "head", pr.HeadSHA, "red_since", since.UTC(), "remaining", remaining.Round(time.Minute), "why", why)
+			}
 			return true
 		}
+		store.forgetRedWait(key)
 	}
 	if out := p.judge(ctx, store, repo, key, pr, rerun, true, now, logger); out.Retry {
 		retryRedHead(store, repo, key, pr, out, logger)
@@ -1677,4 +1739,94 @@ func (p *depBotRedIssuePass) fileForParkedHead(ctx context.Context, store *depBo
 	}
 	store.markRedHeadJudged(key, pr.HeadSHA)
 	return false
+}
+
+// depBotParkedHeadTriageFloor is how long a parked newer head is counted
+// red from the sweep's own first sighting before its checks' failure time
+// may start the clock earlier. A head first seen already red past the grace
+// (a hive outage, the switch just turned on) would otherwise be judged, for
+// good, on that first pass, before the transient triage or the hive's
+// re-run had a chance to land on it.
+const depBotParkedHeadTriageFloor = 30 * time.Minute
+
+// depBotParkedRedClock is a parked newer head's red clock: observed is the
+// sweep's first sighting of the head red, checks the time its failing
+// checks last failed (depBotRedSince; checksOK when known).
+type depBotParkedRedClock struct {
+	observed time.Time
+	checks   time.Time
+	checksOK bool
+}
+
+// since is when the head counts as red from, at now: the earlier of the
+// checks' time and the first sighting, but the checks' time only once the
+// sighting is depBotParkedHeadTriageFloor old. It is never later than the
+// first sighting.
+func (c depBotParkedRedClock) since(now time.Time) time.Time {
+	if c.checksOK && c.checks.Before(c.observed) && now.Sub(c.observed) >= depBotParkedHeadTriageFloor {
+		return c.checks
+	}
+	return c.observed
+}
+
+// reaches is the first time at which the head counts as red for d.
+func (c depBotParkedRedClock) reaches(d time.Duration) time.Time {
+	end := c.observed.Add(d)
+	if c.checksOK && c.checks.Before(c.observed) {
+		at := c.checks.Add(d)
+		if floor := c.observed.Add(depBotParkedHeadTriageFloor); at.Before(floor) {
+			at = floor
+		}
+		if at.Before(end) {
+			end = at
+		}
+	}
+	return end
+}
+
+// depBotParkedHeadWait says why a parked newer head red for red at now (its
+// transient re-run owed for owed) still waits, and for at most how long by
+// clock: "transient-rerun" while rerun holds the hand-off, "grace" inside
+// the red-CI grace, "" when it waits no longer.
+func depBotParkedHeadWait(clock depBotParkedRedClock, now time.Time, red, owed time.Duration, rerun depBotTransientRerun) (string, time.Duration) {
+	if rerun.holdsHandoff(red, owed) {
+		return "transient-rerun", max(clock.reaches(depBotRedCIGrace+depBotTransientRerunBackstop).Sub(now), depBotTransientRerunBackstop-owed, 0)
+	}
+	if red < depBotRedCIGrace {
+		return "grace", max(clock.reaches(depBotRedCIGrace).Sub(now), 0)
+	}
+	return "", 0
+}
+
+// depBotRedWait is the parked-head wait last logged for a PR: its head, why
+// it waited and the red clock's start.
+type depBotRedWait struct {
+	Head  string
+	Why   string
+	Since time.Time
+}
+
+// noteRedWait reports whether the parked-head wait w on key differs from
+// the one last logged for it (another head, reason or start), and
+// remembers it, in memory only, so an unchanged wait is logged once.
+func (s *depBotConflictStore) noteRedWait(key string, w depBotRedWait) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if p, ok := s.redWaitLogged[key]; ok && strings.EqualFold(p.Head, w.Head) && p.Why == w.Why && p.Since.Equal(w.Since) {
+		return false
+	}
+	if s.redWaitLogged == nil {
+		s.redWaitLogged = map[string]depBotRedWait{}
+	}
+	s.redWaitLogged[key] = w
+	return true
+}
+
+// forgetRedWait drops key's logged wait once its head waits no longer, so
+// a later wait is logged even when it repeats the head, reason and start
+// of the last one (noteRedWait already logs any wait that changes them).
+func (s *depBotConflictStore) forgetRedWait(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.redWaitLogged, key)
 }
