@@ -350,6 +350,13 @@ func openHubCustomerStore(ctx context.Context, logger *slog.Logger, mode string)
 			} else if aside {
 				logger.Warn("hub customer store: a consents directory reappeared beside the colony-only store; set aside as consents.ignored, colony stays the truth")
 			}
+			// The boot sync does not run on a colony-only store, so its
+			// forget pass runs here on its own.
+			if forgotten, held, err := forgetHubOrphansColonyOnly(ctx, st); err != nil {
+				logger.Warn("hub customer store: colony-only forget pass failed; nobody erased this boot", "error", crmErrClass(err))
+			} else if forgotten > 0 || held > 0 {
+				logger.Info("hub customer store: colony-only forget pass", "forgotten", forgotten, "orphans_held", held)
+			}
 		}
 	}
 	if mode != hubCustomerStoreJSON && exists {
@@ -731,36 +738,9 @@ func syncHubCustomerStore(ctx context.Context, st *store.Store) (hubCustomerStor
 	rep.JSONUsers = len(onDisk)
 
 	// Erase people whose JSON record is gone (deleted while colony.db was
-	// not open). Keyed by file name, so a record that exists but does not
-	// parse is never treated as deleted.
-	var orphans []string
-	if err := st.List(func(p store.Person) error {
-		if !onDisk[p.ID] {
-			orphans = append(orphans, p.ID)
-		}
-		return nil
-	}); err != nil {
+	// not open).
+	if rep.Forgotten, rep.OrphansHeld, err = forgetHubOrphans(st, onDisk); err != nil {
 		return rep, err
-	}
-	// A burst of orphans is held, not erased: it looks like a missing or
-	// half-restored users directory, and erasure tombstones for good.
-	var people int
-	if stats, err := st.Stats(); err == nil {
-		people = stats.People
-	}
-	limit := max(hubCustomerStoreOrphanFloor, people*hubCustomerStoreMaxOrphanPercent/100)
-	if len(orphans) > limit {
-		rep.OrphansHeld = len(orphans)
-		slog.Warn("hub customer store: too many people without a json record; none erased this boot",
-			"orphans", len(orphans), "limit", limit, "colony_people", people)
-		orphans = nil
-	}
-	for _, id := range orphans {
-		if _, err := st.Forget(id); err != nil && !errors.Is(err, store.ErrNotFound) {
-			return rep, err
-		}
-		delete(hubCRM.dirty, id)
-		rep.Forgotten++
 	}
 
 	stats, err := st.Stats()
@@ -771,6 +751,68 @@ func syncHubCustomerStore(ctx context.Context, st *store.Store) (hubCustomerStor
 	rep.ColonyHeld = stats.Held
 	rep.Parity = rep.ColonyPeople == rep.Synced && rep.Failed == 0 && rep.OrphansHeld == 0
 	return rep, nil
+}
+
+// forgetHubOrphans erases every person colony holds whose id is not in
+// onDisk, the user records found in /data/saas/users. onDisk is keyed by file
+// name as well as person id, so a record that exists but does not parse is
+// never treated as deleted. The caller holds hubCRM.mu.
+func forgetHubOrphans(st *store.Store, onDisk map[string]bool) (forgotten, held int, err error) {
+	var orphans []string
+	if err := st.List(func(p store.Person) error {
+		if !onDisk[p.ID] {
+			orphans = append(orphans, p.ID)
+		}
+		return nil
+	}); err != nil {
+		return 0, 0, err
+	}
+	// A burst of orphans is held, not erased: it looks like a missing or
+	// half-restored users directory, and erasure tombstones for good.
+	var people int
+	if stats, err := st.Stats(); err == nil {
+		people = stats.People
+	}
+	limit := max(hubCustomerStoreOrphanFloor, people*hubCustomerStoreMaxOrphanPercent/100)
+	if len(orphans) > limit {
+		slog.Warn("hub customer store: too many people without a json record; none erased this boot",
+			"orphans", len(orphans), "limit", limit, "colony_people", people)
+		return 0, len(orphans), nil
+	}
+	for _, id := range orphans {
+		if _, err := st.Forget(id); err != nil && !errors.Is(err, store.ErrNotFound) {
+			return forgotten, 0, err
+		}
+		delete(hubCRM.dirty, id)
+		forgotten++
+	}
+	return forgotten, 0, nil
+}
+
+// forgetHubOrphansColonyOnly is the forget pass of a colony-only boot, which
+// skips the boot sync: a user deleted while the hub was down, or removed from
+// /data/saas/users by an operator, is erased from colony too. A users
+// directory that cannot be listed erases nothing.
+func forgetHubOrphansColonyOnly(ctx context.Context, st *store.Store) (forgotten, held int, err error) {
+	files, err := listHubUserFiles()
+	if err != nil {
+		return 0, 0, err
+	}
+	onDisk := make(map[string]bool, 2*len(files))
+	for _, f := range files {
+		if err := ctx.Err(); err != nil {
+			return 0, 0, err
+		}
+		onDisk[f.ID] = true
+		if u, err := readHubUserForSync(f.Path); err == nil {
+			if id := crmPersonID(u); id != "" {
+				onDisk[id] = true
+			}
+		}
+	}
+	hubCRM.mu.Lock()
+	defer hubCRM.mu.Unlock()
+	return forgetHubOrphans(st, onDisk)
 }
 
 // errCRMSkipped marks a person colony refuses on purpose: a forgotten
@@ -889,41 +931,68 @@ func syncPerson(st *store.Store, u *SaaSUser) error {
 
 // syncCRMConsents makes colony's consent records for person id match the
 // hub's, delivery bookkeeping included (colony v0.4.0). A consent the hub
-// pruned is deleted from colony too.
+// pruned is deleted from colony too. The whole set is replaced in one colony
+// transaction: SetConsent keeps stored delivery bookkeeping when the record
+// names none, so a changed consent needs a delete and a write, and done as
+// two transactions a failure between them would leave no consent for the
+// scope, which reads as a withdrawal.
 func syncCRMConsents(st *store.Store, id string, records map[string]customerConsent) error {
-	p, err := st.Get(id)
+	consents := crmConsentsFromRecords(records)
+	err := st.Batch(func(b *store.Batch) error {
+		p, err := b.Get(id)
+		if err != nil {
+			return err
+		}
+		if crmConsentsMatch(p.Consents, consents) {
+			return nil
+		}
+		_, err = b.Replace(crmRecordWithConsents(p, consents, time.Now().UTC()))
+		return err
+	})
 	if errors.Is(err, store.ErrNotFound) {
 		return nil
 	}
-	if err != nil {
-		return err
+	return err
+}
+
+// crmConsentsMatch reports whether colony's consents already equal the
+// hub's, scope for scope.
+func crmConsentsMatch(have, want []store.Consent) bool {
+	if len(have) != len(want) {
+		return false
 	}
-	consents := crmConsentsFromRecords(records)
+	for _, c := range want {
+		i := slices.IndexFunc(have, func(h store.Consent) bool { return h.Scope == c.Scope })
+		if i < 0 || !crmConsentEqual(have[i], c) {
+			return false
+		}
+	}
+	return true
+}
+
+// crmRecordWithConsents is p as a Replace record, with consents in place of
+// its own. A consent with no UpdatedAt is stamped now, as SetConsent does.
+func crmRecordWithConsents(p store.Person, consents []store.Consent, now time.Time) store.Record {
+	held := make([]store.Identity, 0, len(p.Held))
+	for _, h := range p.Held {
+		held = append(held, h.Identity)
+	}
+	cs := make([]store.Consent, 0, len(consents))
 	for _, c := range consents {
-		have, ok := p.Consent(c.Scope)
-		if ok && crmConsentEqual(have, c) {
-			continue
+		if c.UpdatedAt.IsZero() {
+			c.UpdatedAt = now
 		}
-		if ok {
-			// SetConsent keeps stored delivery bookkeeping when the record
-			// names none; the hub's record is the whole truth, so replace it.
-			if _, err := st.DeleteConsent(id, c.Scope); err != nil {
-				return err
-			}
-		}
-		if err := st.SetConsent(id, c); err != nil {
-			return err
-		}
+		cs = append(cs, c)
 	}
-	for _, have := range p.Consents {
-		if slices.ContainsFunc(consents, func(c store.Consent) bool { return c.Scope == have.Scope }) {
-			continue
-		}
-		if _, err := st.DeleteConsent(id, have.Scope); err != nil {
-			return err
-		}
+	return store.Record{
+		Person:      store.PersonSpec{ID: p.ID, Status: p.Status, Identities: p.Identities, Held: held},
+		Facts:       p.Facts,
+		Consents:    cs,
+		Dismissed:   p.Dismissed,
+		Answers:     p.Answers,
+		Attachments: p.Attachments,
+		CreatedAt:   p.CreatedAt,
 	}
-	return nil
 }
 
 // upsertCRMPrimary creates the person with its sign-in identity. A sign-in
