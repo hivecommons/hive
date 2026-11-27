@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-27 (v5.383.0)
+
+### Added
+
+- Sandbox Jobs accept operator-configured pod labels and annotations for network policy and admission controls ([#20155](https://github.com/hivecommons/hive/issues/20155)).
+
 ## 2026-11-27 (v5.382.2)
 
 ### Fixed
