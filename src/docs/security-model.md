@@ -357,7 +357,10 @@ token per agent matching its mode: advisory agents get read-only tokens,
 measured agents can write issues, hold-gated and full agents can write code.
 The repo allowlist is enforced at the proxy and repeated in every task
 prompt. Below L6, no agent token can merge. Agent policy requires DCO
-sign-off; pair it with a DCO check on your repos for a hard gate.
+sign-off; pair it with a DCO check on your repos for a hard gate. With
+proxy-side credential injection on, the proxy also checks lane sign-offs on
+in-pod pushes as a best-effort guard; see
+[env-vars.md](env-vars.md#proxy-credential-injection).
 
 **The `gh` wrapper and relays.** `/usr/local/bin/gh` is a wrapper that
 applies per-agent restriction rules and injects the agent's token; agents

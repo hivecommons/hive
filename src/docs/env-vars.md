@@ -360,6 +360,20 @@ Unset is off; `false` explicitly records the opt-out on the pod spec.
 boot and shown as Security-tab coherence warnings because real tokens remain
 in the agent cache.
 
+**Pushes are inspected too.** With injection on, the proxy decrypts
+`github.com` traffic, so it also reads in-pod `git push` bodies and applies the
+push broker's sign-off rules to them
+([#19297](https://github.com/hivecommons/hive/issues/19297)): a commit the lane
+authored and committed must carry the lane's `Signed-off-by`, and a lane
+sign-off on a commit someone else authored or committed is refused. It fails
+closed, so a push whose body is over 64 MiB, whose pack cannot be parsed, or
+that holds a commit object over 1 MiB is refused as well. Every refusal carries
+the reason code `push_signoff` (see
+[github-cli-compact.md](github-cli-compact.md)). This is a best-effort guard,
+not the enforcement point: commits made through the REST or GraphQL APIs are
+not inspected, Forgejo hosts are not checked, and GitHub-side DCO stays the
+hard gate. Without injection, in-pod pushes are tunnelled unread.
+
 <details>
 <summary>Token handling, verification and provisioning history</summary>
 
