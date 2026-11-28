@@ -290,6 +290,49 @@ func TestFoldRecordedDecisionReviewReadFailureKeepsSupersedingApproval(t *testin
 	}
 }
 
+// The record's own review being dismissed in a list GitHub did serve settles
+// it, even while another trusted approval's reach to the head cannot be
+// read: that other approval can never make the dismissed one live again, so
+// the record is dropped and the direction stands.
+func TestFoldRecordedDecisionDismissedApprovalDroppedDespiteOtherUnreadReach(t *testing.T) {
+	approval := delegatedReview(2, "bob", "APPROVED", "sha7", "2026-10-28T02:00:00Z")
+	other := delegatedReview(3, "carol", "COMMENTED", "sha7", "2026-10-28T01:30:00Z")
+	inner := newSelfSweepGuardAPI(t, selfSweepFixture{reviews: []map[string]any{approval, other}})
+	t.Cleanup(inner.Close)
+	failCommit := &atomic.Bool{}
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if failCommit.Load() && r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7" {
+			http.Error(w, "commit unavailable", http.StatusInternalServerError)
+			return
+		}
+		inner.Config.Handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(api.Close)
+	c := newAutoMergeSweepClient(api.URL)
+	store := review.NewHumanChangeRequests("")
+	c.humanChangeRequests = store
+	recordDirection(t, store, "acme/widget", 7, "sha7", "bob", 0, true, time.Date(2026, 10, 28, 1, 0, 0, 0, time.UTC))
+	first := delegatedDirectionObservations("acme", "widget", 7, "sha7", delegatedAsked.WithDecisionAnswer("bob", "sha7", review.DecisionDirectiveChanges), "bob", "")
+	c.foldRecordedDecision(context.Background(), first)
+	if a := review.HumanApprovalFor(store, "acme/widget", 7, "sha7"); a == nil || !a.SupersedesDelegated || a.SourceID != 2 {
+		t.Fatalf("pass 1: approval not recorded over the direction: %+v", a)
+	}
+
+	// bob dismisses; carol approves, but her approval's reach to the head
+	// cannot be read (the head commit read fails).
+	approval["state"] = "DISMISSED"
+	approval["submitted_at"] = "2026-10-28T03:00:00Z"
+	other["state"] = "APPROVED"
+	other["submitted_at"] = "2026-10-28T03:30:00Z"
+	failCommit.Store(true)
+	second := delegatedDirectionObservations("acme", "widget", 7, "sha7", delegatedAsked.WithDecisionAnswer("bob", "sha7", review.DecisionDirectiveApprove), "", "bob")
+	c.foldRecordedDecision(context.Background(), second)
+	if got, ok := store.Lookup("acme/widget", 7, review.HumanChangeRequestSourceReview, 2); ok {
+		t.Fatalf("dismissed approval kept because another approval's reach could not be read: %+v", got)
+	}
+	assertDirectionStands(t, store, second, "acme/widget", 7, "sha7", "bob")
+}
+
 // A person's change request the hive carried over its own base merge stands
 // on the new head as theirs, so a later approval does not supersede the
 // delegated direction beside it: the head keeps waiting on the author.

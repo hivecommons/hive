@@ -411,7 +411,8 @@ func (t *StageTracker) forgetHumanMergeNoChangeRequest(key string) {
 // never revalidated here.
 //
 // The record is dropped only on a definite answer: the review list was
-// read and every approval in it was placed against head. A failed review
+// read and either the record's own review no longer stands as an approval
+// in it, or every approval in it was placed against head. A failed review
 // read, or an approval whose reach to head could not be read
 // (reviewReachesHeadKnown), keeps the record until a read settles it, so a
 // GitHub outage or rate-limit window never revokes a person's approval
@@ -428,9 +429,19 @@ func (c *Engine) reconcileReviewBackedApproval(ctx context.Context, owner, repo 
 	// latestTrustedHumanReview's APPROVED pick, keeping track of whether
 	// every read behind it succeeded.
 	reviews, definite := c.standingTrustedHumanReviewsRead(ctx, owner, repo, number)
+	// own: the record's review still stands as an approval in a list that
+	// was read. When the list was read and it does not, the record is
+	// definitely revoked (dismissed, or the reviewer's latest opinion
+	// changed): no other approval's unread reach can make it live again.
+	own := false
+	for _, rv := range reviews {
+		if rv.GetID() == standing.SourceID && strings.EqualFold(rv.GetState(), "APPROVED") {
+			own = true
+		}
+	}
 	var live *gh.PullRequestReview
 	for _, rv := range reviews {
-		if !strings.EqualFold(rv.GetState(), "APPROVED") {
+		if !own || !strings.EqualFold(rv.GetState(), "APPROVED") {
 			continue
 		}
 		reach, known := c.reviewReachesHeadKnown(ctx, owner, repo, number, head, rv)
