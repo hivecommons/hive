@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.1)
+
+### Fixed
+
+- Creating an agent with a custom prompt in the Create Agent dialog now saves the prompt as `<name>.md` and points `kick_template` at it, so the new agent runs your prompt instead of the built-in one; `POST /api/agents` takes the text in `agent.prompt_template` and refuses a `kick_template` that is not a bare file name with a 400 (#20205).
+
+## 2026-11-28 (v5.384.0)
+
+### Added
+
+- Hubs that provision no hives can set `HIVE_HUB_MODE=self-hosted`. With no cluster registry file, such a hub now uses an empty cluster registry instead of synthesizing an `OKE (default)` cluster, so Usage, Cluster Health and Scale Controls no longer show a phantom `hive-oke` cluster. The mode is reported to the dashboard as `hub_mode` in `/api/auth/user` ([#20196](https://github.com/hivecommons/hive/issues/20196)).
+
 ## 2026-11-27 (v5.383.7)
 
 ### Fixed

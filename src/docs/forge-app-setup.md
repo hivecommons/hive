@@ -381,6 +381,14 @@ hive-clone --repo <owner/repo> [--dir <path>]          # new checkout
 hive-clone --repo <owner/repo> --fetch [--dir <path>]  # update a checkout
 ```
 
+For an AGit pull request without a head branch, add `--pr <number>` to
+either command. The relay fetches only that PR's `refs/pull/<number>/head`,
+and the checkout receives it as `refs/hive/pull/<number>/head`. Inspect it
+with `git diff origin/main...refs/hive/pull/<number>/head` (substitute the
+PR's base branch for `main`), or check it out detached. It is a pull ref,
+not a writable source branch. If the forge cannot fetch the requested ref,
+the request fails rather than returning a checkout without the PR.
+
 The hive's clone relay serves the request on a hive whose repos are all off
 GitHub, as the push relay does:
 

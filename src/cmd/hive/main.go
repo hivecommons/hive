@@ -4996,6 +4996,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}(),
 				HiveID:            b.cfg.HiveID,
 				Org:               b.cfg.Project.Org,
+				ProjectName:       b.cfg.Project.Name,
 				AIAuthor:          b.cfg.Project.AIAuthor,
 				AIAuthorEffective: b.cfg.EffectiveAIAuthor(),
 				StartedAt:         b.processStartedAt.UTC().Format(time.RFC3339),
@@ -5447,6 +5448,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						// exactly as cheap as Org above.
 						Repos:                   b.cfg.Project.Repos,
 						PrimaryRepo:             b.cfg.Project.PrimaryRepo,
+						ProjectName:             b.cfg.Project.Name,
 						ACMMLevel:               acmmLvl,
 						Agents:                  agents,
 						GitHash:                 gitShort,
@@ -6116,6 +6118,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					Org:                     b.cfg.Project.Org,
 					Repos:                   b.cfg.Project.Repos,
 					PrimaryRepo:             b.cfg.Project.PrimaryRepo,
+					ProjectName:             b.cfg.Project.Name,
 					ACMMLevel:               acmmLvl,
 					Agents:                  agents,
 					Governor:                spoke.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs, OpenIssues: openIssues, OpenPRs: openPRs},

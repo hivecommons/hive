@@ -1,0 +1,1 @@
+- Show self-registered spokes' project names and disambiguate duplicate hive titles on the hub dashboard.
