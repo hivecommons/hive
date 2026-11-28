@@ -8,7 +8,7 @@ import (
 
 // unownableHint tells the operator who can actually repair the ownership the
 // watcher is reporting.
-const unownableHint = "chown needs root (CAP_CHOWN); the watcher runs unprivileged after the entrypoint's privilege drop, so these entries are repaired by the entrypoint's root phase or out of band, never by retrying here"
+const unownableHint = "chown needs root (CAP_CHOWN); the watcher runs unprivileged after the entrypoint's privilege drop, so retrying here never helps; the entrypoint regroups agent trees at the next start; until then, as root, run `chgrp -hR node <path>` when only the group is wrong, or `chown -hR <agent-uid>:node <path>` when another uid (root included) owns the entry"
 
 // cannotChown reports whether this process certainly cannot chown an entry
 // owned by ownerUID, so attempting it would only ever return EPERM.

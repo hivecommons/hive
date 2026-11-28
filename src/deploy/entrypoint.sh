@@ -141,13 +141,18 @@ hive_run_uid_isolation_migration() {
 
   printf '%s\n' "$AGENT_UID_LINES" | while IFS="$(printf '\t')" read -r _agent_name _agent_uid; do
     [ -n "$_agent_name" ] || continue
-    _agent_dir="/data/agents/${_agent_name}"
+    _agent_data_root="${HIVE_DATA_ROOT:-/data}"
+    _agent_dir="${_agent_data_root}/agents/${_agent_name}"
     _agent_marker="$(hive_uid_isolation_marker_path "$_agent_uid")"
     _agent_expected="${HIVE_UID_ISOLATION_REVISION}:${_agent_uid}"
     _agent_owner="$(stat -c '%u' "$_agent_dir" 2>/dev/null || echo 0)"
+    _agent_group="$(stat -c '%G' "$_agent_dir" 2>/dev/null || true)"
 
+    # #20162: the group is part of "current". A kubelet fsGroup re-group
+    # (OnRootMismatch) can put the pod fsGroup gid on the whole PVC after the
+    # marker was written; setgid agent dirs then hand that gid to every clone.
     if hive_uid_isolation_marker_matches "$_agent_marker" "$_agent_expected" \
-       && [ "$_agent_owner" = "$_agent_uid" ]; then
+       && [ "$_agent_owner" = "$_agent_uid" ] && [ "$_agent_group" = node ]; then
       echo "[entrypoint] UID isolation: ${_agent_name} already current — skipping"
     else
       echo "[entrypoint] UID isolation: repairing ${_agent_name} (uid ${_agent_uid}) in background"
@@ -155,6 +160,30 @@ hive_run_uid_isolation_migration() {
       if [ -d "$_agent_dir" ] && ! [ -L "$_agent_dir" ]; then
         chmod g+rwX "$_agent_dir" 2>/dev/null || true
       fi
+      # #20162: put agent trees back in group node (the layout the re-own,
+      # useradd -g node and forgejwt assume). The synchronous re-own selects
+      # by uid only (kept off the startup path), so entries that kept the
+      # right uid but took the fsGroup gid are regrouped here. `chgrp -h`
+      # never follows a link, matching the re-own; modes are left untouched.
+      # The agent dir's OWN group is part of the "already current" test above,
+      # so it is regrouped LAST and only once everything beneath it (and the
+      # agent's home) regrouped cleanly: a partial pass leaves it off node and
+      # the next boot re-walks instead of trusting the published marker.
+      _agent_home_dir="${_agent_data_root}/home/agents/${_agent_name}"
+      _agent_regroup_ok=true
+      if [ -d "$_agent_home_dir" ] && ! [ -L "$_agent_home_dir" ]; then
+        find "$_agent_home_dir" -xdev \! -group node -exec chgrp -h node {} + 2>/dev/null \
+          || _agent_regroup_ok=false
+      fi
+      if [ -d "$_agent_dir" ] && ! [ -L "$_agent_dir" ]; then
+        find "$_agent_dir" -xdev -mindepth 1 \! -group node -exec chgrp -h node {} + 2>/dev/null \
+          || _agent_regroup_ok=false
+        if [ "$_agent_regroup_ok" = true ] && [ "$(stat -c '%G' "$_agent_dir" 2>/dev/null)" != node ]; then
+          chgrp -h node "$_agent_dir" 2>/dev/null || _agent_regroup_ok=false
+        fi
+      fi
+      [ "$_agent_regroup_ok" = true ] \
+        || echo "[entrypoint] WARN: regroup of ${_agent_name} to node was incomplete; ${_agent_dir} keeps its group so the next boot retries"
       hive_publish_uid_isolation_marker "$_agent_marker" "$_agent_expected" || true
       echo "[entrypoint] UID isolation: ${_agent_name} pass complete"
     fi
@@ -300,7 +329,11 @@ hive_reown_marker_path() {
 #
 #   - incremental: `find \! -uid` selects only entries NOT already owned by
 #     <uid>, so a restarted pod resumes where it was killed instead of
-#     re-chowning what it already did;
+#     re-chowning what it already did. It deliberately ignores the group: this
+#     runs on PID 1's synchronous startup path, and a kubelet fsGroup re-group
+#     (#20162) moves every entry of every tree, so a group predicate here would
+#     re-walk all of them before the server binds. The background UID
+#     isolation worker regroups those entries to node instead;
 #   - skipped once complete: a marker recording <uid> is written only after a
 #     walk finishes with no error. A later boot whose marker matches AND whose
 #     top-level entry is still owned by <uid> costs one stat;
@@ -2186,10 +2219,16 @@ BASHRC
       # Invalidate a stale/incomplete marker synchronously, then leave the
       # recursive work to the background migration. Manager.Start waits for
       # this protected marker before the agent can enter its tree.
+      # #20162: the dir's group is part of "current", matching the worker's
+      # skip test. A re-grouped tree (pod fsGroup gid, not node) drops the
+      # marker here so the agent is held until the background regroup finishes
+      # instead of running beside it and creating entries mid-walk.
       AGENT_DIR_OWNER=$(stat -c '%u' "/data/agents/${agent_name}" 2>/dev/null || echo "0")
+      AGENT_DIR_GROUP=$(stat -c '%G' "/data/agents/${agent_name}" 2>/dev/null || true)
       AGENT_ISOLATION_MARKER=$(hive_uid_isolation_marker_path "$AGENT_UID")
       AGENT_ISOLATION_EXPECTED="${HIVE_UID_ISOLATION_REVISION}:${AGENT_UID}"
       if [ "$AGENT_DIR_OWNER" != "$AGENT_UID" ] \
+         || [ "$AGENT_DIR_GROUP" != node ] \
          || ! hive_uid_isolation_marker_matches "$AGENT_ISOLATION_MARKER" "$AGENT_ISOLATION_EXPECTED"; then
         rm -f "$AGENT_ISOLATION_MARKER" 2>/dev/null || true
       fi

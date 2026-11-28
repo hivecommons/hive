@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 const (
@@ -81,8 +83,12 @@ type liveHiveDeployment struct {
 	Spec struct {
 		Template struct {
 			Spec struct {
-				InitContainers []liveContainer `json:"initContainers"`
-				Containers     []liveContainer `json:"containers"`
+				InitContainers  []liveContainer `json:"initContainers"`
+				Containers      []liveContainer `json:"containers"`
+				SecurityContext *struct {
+					FSGroup             *int64 `json:"fsGroup"`
+					FSGroupChangePolicy string `json:"fsGroupChangePolicy"`
+				} `json:"securityContext"`
 			} `json:"spec"`
 		} `json:"template"`
 	} `json:"spec"`
@@ -159,6 +165,20 @@ func startupProbePatchJSON(deployJSON []byte) (string, []string, error) {
 			"value": img,
 		})
 		changes = append(changes, "initContainers["+c.Name+"].image="+img)
+	}
+
+	// #20162: spokes provisioned before the template set fsGroupChangePolicy
+	// default to Always, so kubelet re-groups the whole PVC on every mount and
+	// the entrypoint holds every agent behind a chgrp walk on each restart.
+	// Only a pod that sets fsGroup without a policy is touched; the SCC lane
+	// (no fsGroup) and an explicit policy are left alone.
+	if sc := podSpec.SecurityContext; sc != nil && sc.FSGroup != nil && sc.FSGroupChangePolicy == "" {
+		ops = append(ops, map[string]any{
+			"op":    "add",
+			"path":  "/spec/template/spec/securityContext/fsGroupChangePolicy",
+			"value": spoke.HostedFsGroupChangePolicy,
+		})
+		changes = append(changes, "securityContext.fsGroupChangePolicy="+spoke.HostedFsGroupChangePolicy)
 	}
 
 	if len(ops) == 0 {

@@ -275,3 +275,67 @@ func TestStartupProbePort(t *testing.T) {
 		}
 	}
 }
+
+// #20162: the self-upgrade patch backfills fsGroupChangePolicy onto a spoke
+// provisioned before the template set it, in the same template update as the
+// upgrade, and leaves the SCC lane (no fsGroup) and an explicit policy alone.
+func TestBackfillFsGroupChangePolicy(t *testing.T) {
+	dep := func(sc string) []byte {
+		return []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive"}]` + sc + `}}}}`)
+	}
+	image := []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"hive","image":"new"}]}}}}`)
+	restart := []byte(`{"spec":{"template":{"metadata":{"annotations":{"a":"b"}}}}}`)
+	for _, tc := range []struct {
+		name string
+		body []byte
+		sc   string
+		want bool
+	}{
+		{"image/fsgroup-no-policy", image, `,"securityContext":{"fsGroup":1002}`, true},
+		{"restart/fsgroup-no-policy", restart, `,"securityContext":{"fsGroup":1002}`, true},
+		{"nil/fsgroup-no-policy", nil, `,"securityContext":{"fsGroup":1002}`, true},
+		{"image/already-set", image, `,"securityContext":{"fsGroup":1002,"fsGroupChangePolicy":"OnRootMismatch"}`, false},
+		{"image/explicit-always", image, `,"securityContext":{"fsGroup":1002,"fsGroupChangePolicy":"Always"}`, false},
+		{"image/no-fsgroup", image, `,"securityContext":{"runAsNonRoot":true}`, false},
+		{"nil/no-security-context", nil, ``, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := backfillFsGroupChangePolicy(tc.body, dep(tc.sc))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.want {
+				if string(got) != string(tc.body) {
+					t.Fatalf("patch changed without a backfill: %s", got)
+				}
+				return
+			}
+			var p struct {
+				Spec struct {
+					Template struct {
+						Metadata json.RawMessage `json:"metadata"`
+						Spec     struct {
+							Containers      []map[string]any `json:"containers"`
+							SecurityContext map[string]any   `json:"securityContext"`
+						} `json:"spec"`
+					} `json:"template"`
+				} `json:"spec"`
+			}
+			if err := json.Unmarshal(got, &p); err != nil {
+				t.Fatal(err)
+			}
+			if p.Spec.Template.Spec.SecurityContext["fsGroupChangePolicy"] != HostedFsGroupChangePolicy {
+				t.Fatalf("missing fsGroupChangePolicy: %s", got)
+			}
+			if _, ok := p.Spec.Template.Spec.SecurityContext["fsGroup"]; ok {
+				t.Fatalf("backfill must not rewrite fsGroup: %s", got)
+			}
+			if string(tc.body) == string(image) && (len(p.Spec.Template.Spec.Containers) != 1 || p.Spec.Template.Spec.Containers[0]["image"] != "new") {
+				t.Fatalf("image change lost: %s", got)
+			}
+			if string(tc.body) == string(restart) && len(p.Spec.Template.Metadata) == 0 {
+				t.Fatalf("restart annotation lost: %s", got)
+			}
+		})
+	}
+}
