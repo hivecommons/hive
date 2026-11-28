@@ -60,6 +60,14 @@ type githubMerger interface {
 	MergePRVia(ctx context.Context, repo string, number int, mergeMethod, expectSHA, auditPath string) (github.MergePRResult, error)
 }
 
+// githubApprovalLabelGate is the open change-request gate of *github.Client
+// (hivecommons/hive#20067): a label write that approves a PR (`lgtm`,
+// `approved`, the auto-merge label) is refused while a writer's change
+// request is open. Label writes that approve nothing pass straight through.
+type githubApprovalLabelGate interface {
+	GateApprovalLabels(ctx context.Context, repo string, number int, labels []string) error
+}
+
 // githubRefDeleter is the subset of go-github's *gh.GitService the merge path
 // uses to honour MergeOptions.DeleteBranch. GitHub has no "delete the source
 // branch" flag on its merge call — unlike GitLab's
@@ -89,6 +97,7 @@ type gitHubForge struct {
 	pulls  githubPullReader
 	merger githubMerger
 	refs   githubRefDeleter
+	gate   githubApprovalLabelGate
 	org    string
 
 	// consolidator, when set, routes CreateIssue through the consolidating
@@ -113,6 +122,7 @@ func newGitHubForge(token string, opts Options) *gitHubForge {
 		pulls:  client.GoGitHub().PullRequests,
 		merger: client,
 		refs:   client.GoGitHub().Git,
+		gate:   client,
 		org:    opts.Org,
 	}
 }
@@ -131,6 +141,9 @@ func newGitHubForgeWithReader(r githubReader, org string) *gitHubForge {
 	}
 	if m, ok := r.(githubMerger); ok {
 		f.merger = m
+	}
+	if g, ok := r.(githubApprovalLabelGate); ok {
+		f.gate = g
 	}
 	if d, ok := r.(githubRefDeleter); ok {
 		f.refs = d
@@ -245,6 +258,11 @@ func (f *gitHubForge) AddLabels(ctx context.Context, repo string, number int, la
 		return nil
 	}
 	owner, name := splitRepo(repo, f.org)
+	if f.gate != nil {
+		if err := f.gate.GateApprovalLabels(ctx, owner+"/"+name, number, labels); err != nil {
+			return fmt.Errorf("github: add labels to %s/%s#%d: %w", owner, name, number, err)
+		}
+	}
 	_, _, err := f.writer.AddLabelsToIssue(ctx, owner, name, number, labels)
 	if err != nil {
 		return fmt.Errorf("github: add labels to %s/%s#%d: %w", owner, name, number, err)

@@ -13,14 +13,35 @@ import (
 	"testing"
 )
 
-// newTestGitea builds a giteaForge pointed at a test server.
+// newTestGitea builds a giteaForge pointed at a test server. The PR review
+// listing the open change-request gate reads before a merge or an approval
+// label (hivecommons/hive#20067) is answered with no reviews here, so the
+// fakes below need not serve it; gitea_review_gate_test.go builds its forge
+// without this stub.
 func newTestGitea(t *testing.T, serverURL, org string) *giteaForge {
 	t.Helper()
 	f, err := newGiteaForge("test-token", Options{BaseURL: serverURL, Org: org})
 	if err != nil {
 		t.Fatalf("newGiteaForge: %v", err)
 	}
+	f.http.Transport = noReviewsTransport{}
 	return f
+}
+
+// noReviewsTransport answers GET .../pulls/{n}/reviews with an empty list and
+// sends every other request on.
+type noReviewsTransport struct{}
+
+func (noReviewsTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/pulls/") && strings.HasSuffix(r.URL.Path, "/reviews") {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader("[]")),
+			Request:    r,
+		}, nil
+	}
+	return http.DefaultTransport.RoundTrip(r)
 }
 
 const giteaRepoJSON = `{

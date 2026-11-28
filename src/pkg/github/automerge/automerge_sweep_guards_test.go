@@ -54,6 +54,9 @@ type selfSweepFixture struct {
 	mergeCalls    *int // incremented on every PUT .../merge
 	// reviews is the PR review list; nil serves an empty list.
 	reviews []map[string]any
+	// permissions maps a login to its collaborator permission for the open
+	// change-request gate (hivecommons/hive#20067); anyone else is 404.
+	permissions map[string]string
 	// Issue-author credit (hivecommons/hive#14581): issueAuthor is who the
 	// linked issue's GET reports as its author (default: a bot, so the
 	// merge credits nobody); commitMessages are the branch commits served
@@ -191,6 +194,15 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 				commits = append(commits, map[string]any{"sha": fmt.Sprintf("c%d", i), "commit": map[string]any{"message": msg}, "parents": []map[string]any{{"sha": "p"}}})
 			}
 			json.NewEncoder(w).Encode(commits)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/collaborators/") && strings.HasSuffix(r.URL.Path, "/permission"):
+			login := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/collaborators/"), "/permission")
+			perm, ok := fx.permissions[login]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(map[string]string{"message": "Not Found"})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"permission": perm})
 		case r.Method == http.MethodPut && r.URL.Path == "/repos/acme/widget/pulls/7/merge":
 			if fx.mergeCalls != nil {
 				*fx.mergeCalls++

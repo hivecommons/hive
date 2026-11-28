@@ -1598,6 +1598,9 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
+		if reason, ok := changesRequestedSkipReason(err); ok {
+			return AutoMergeSweepEvent{}, reason, nil
+		}
 		if c.requiredChecksExpected(attempt, err) {
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", eval.pr)
 		}

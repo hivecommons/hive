@@ -50,6 +50,13 @@ func (f *giteaForge) AddLabels(ctx context.Context, repo string, number int, lab
 	}
 	owner, name := f.ownerRepo(repo)
 	slug := fmt.Sprintf("%s/%s#%d", owner, name, number)
+	// `lgtm` / `approved` approves a PR for merging: an open change request
+	// from a writer refuses it (#20067). Other labels pass straight through.
+	if approvesForMerge(labels) {
+		if err := f.gateChangesRequested(ctx, owner, name, number, "label", false); err != nil {
+			return fmt.Errorf("%s: add labels to %s: %w", f.label, slug, err)
+		}
+	}
 	endpoint := fmt.Sprintf("/repos/%s/%s/issues/%d/labels", url.PathEscape(owner), url.PathEscape(name), number)
 
 	applied, err := f.postIssueLabels(ctx, endpoint, labels)

@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/forge"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/prosefilter"
+	"github.com/hivecommons/hive/pkg/reviewgate"
 )
 
 // The forge request relay (hivecommons/hive#19670, #19494 item 5).
@@ -383,6 +384,11 @@ func isPermanentForgeRefusal(err error) bool {
 	// looked the label up and tried to create it: a retry sends the same
 	// call (#19910).
 	if errors.Is(err, forge.ErrLabelsMissing) {
+		return true
+	}
+	// An approval label refused for an open change request (#20067) stays
+	// refused until the reviewer acts; a failed review read is retried.
+	if errors.Is(err, reviewgate.ErrChangesRequested) && !errors.Is(err, reviewgate.ErrUnreadable) {
 		return true
 	}
 	msg := err.Error()

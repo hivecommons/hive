@@ -419,6 +419,12 @@ func (c *Client) MergePRVia(ctx context.Context, repo string, number int, mergeM
 	if err := CheckIrreversible(ctx, owner+"/"+repo, number, true); err != nil {
 		return MergePRResult{}, fmt.Errorf("MergePR: %w", err)
 	}
+	// An open change request from a writer stops every merge path
+	// (hivecommons/hive#20067); only an operator's audited override lets
+	// the dashboard's own merge through.
+	if err := c.GateChangesRequested(ctx, owner+"/"+repo, number, ChangesRequestedGateActionMerge, auditPath); err != nil {
+		return MergePRResult{}, fmt.Errorf("MergePR: %w", err)
+	}
 	if mergeMethod = strings.TrimSpace(mergeMethod); mergeMethod == "" {
 		mergeMethod = "squash"
 	}

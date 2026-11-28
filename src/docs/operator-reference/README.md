@@ -628,6 +628,35 @@ verified owner or an authorized user with the `merger` role:
 | `merge-now` on a PR whose `mergeable_state` is `dirty` or `behind` — *Rebase, then merge as maintainer* | Never a GitHub 405. Records your approval first (/lgtm + /approve naming you), arms a rebase-then-merge follow-through (`/data/rebase-merge-followups.json`), kicks the rebase (update-branch on the hive's own PR when only behind; otherwise the fixer lane, which owns a parked PR with an armed follow-through), and answers `202 rebase-queued`. A 2-minute ticker then reads the PR: `mergeable_state: clean` on the rebased head → merges it with your approval attributed; still `dirty` after 2 h, CI red, or no rebase within the deadline → `failed` with the conflicting files and the options *Adopt into fresh branch* / *Close as superseded* (also left as a note on the PR). Refused on a fork whose author has not allowed maintainer edits (`head-not-pushable`). The approval is bound to the head you read: a new head on a contributor's PR counts as the rebase only when GitHub says the hive committed it — update-branch under the App (author resolved to the App bot on a commit GitHub reports as *verified*) or a committer GitHub resolves to the App bot; a committer matched by the pane identity email domain alone, with no GitHub login resolved, also needs GitHub to report the commit as *verified*, and the author counts only when GitHub resolves it to the App bot and reports the commit as *verified* — GitHub derives the author login from a free-text email anyone can set ([#15182](https://github.com/hivecommons/hive/issues/15182), [#15421](https://github.com/hivecommons/hive/issues/15421)). **Operational prerequisite:** the fixer's own rebase of a contributor PR is a plain unsigned git commit (the push broker sets `commit.gpgsign=false`, and the signed-commit reconciler only re-signs PRs the App bot authored), so on a `dirty` contributor PR the follow-through settles `failed` (`foreign-head`) unless the fixer host signs its pushes with a key GitHub verifies against a pane-domain address; *Approve the new head & merge* on the fixer's head is the way out until then. A head anyone else pushes after your click settles the follow-through as `failed` (`foreign-head`) with nothing merged, a note on the PR, and *Approve the new head & merge* / *Close as superseded* as the ways out. | `repo_item_decision_merge` with `status: rebase-queued`; `last_operator_action.action: merge-now`, outcome `pending` → `applied` / `failed`, `followed[]` steps `approval-recorded`, `rebase-kicked`, `rebased`, `ci-green`, `merged` / `failed`; row `rebase_merge.state`; toast *rebase queued, merge to follow*. |
 | `queue-merge` — *Approve and let hive merge* (lead) | Admits the head (`admitted_by: operator-approval:<you>`), leaves an `APPROVED` review in your name with a note, adds the automerge label, and leaves the merge to the hive's auto-merge sweep, which merges through its own App on the next tick once CI is green and the head has soaked. On an untrusted author's PR that admission is the one thing that lets the trusted-author lane merge it: the lane's `untrusted-author-role` skip yields to the recorded approval for that exact head, and the merge comment names you (*merged by Hive on behalf of @you …*). Refused on your own PR. | `repo_item_decision_queue_merge`; `last_operator_action.action: queue-merge`; toast *approved — hive will merge on the next tick once CI is green*. |
 
+**An open change request stops every approval and merge
+([#20067](https://github.com/hivecommons/hive/issues/20067)).** While a
+reviewer with write access or above has `CHANGES_REQUESTED` as their latest
+review, the hive does not approve the PR, does not add `lgtm` or `approved`,
+does not queue it and does not merge it: not the auto-merge sweep, the merge
+train or GitHub's merge queue, the review swarm's approval, the agents' label
+relay, *Let hive decide*, or any ACMM level including L6. Forgejo merges and
+approval labels are gated the same way. The forge's own rules decide
+"open": only the reviewer's latest `APPROVED` / `CHANGES_REQUESTED` /
+`DISMISSED` review counts (a comment does not clear it), a change request on
+an older head still counts, and the block lifts when that reviewer approves
+or the review is dismissed. A change request from someone without write
+access does not block. A review read that fails refuses (the gate fails
+closed) and the next pass retries. Each gated attempt is audited as
+`changes-requested-gate` with `outcome=blocked|overridden|unreadable`,
+`action=`, `path=`, `reviewers=` and `review_ids=`.
+
+`approve`, `merge-now` and `queue-merge` from the dashboard first answer
+409 (`status: changes-requested`, `needs_override_reason: true`) naming each
+open change request. The dashboard then asks you for a reason; resending the
+decision with `override_reason` and `override_review_ids` (the change
+requests it showed) records an override for exactly those change requests
+(audited as `repo_item_decision_changes_requested_override` with the reason,
+and again as `outcome=overridden` by each path it lets through). A change
+request posted since the 409 answers 409 again, and an override lapses after
+24 hours or a hive restart. The agents' label relay and the review swarm's
+approval never honour an override. The hive's own earlier change request
+does not block its own approval, which supersedes it on GitHub.
+
 **Approve is the trust override for that head
 ([#15136](https://github.com/hivecommons/hive/issues/15136)).** Before, an
 owner's Approve on an untrusted-author PR was reduced to the `/lgtm` +

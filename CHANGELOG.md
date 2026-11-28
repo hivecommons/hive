@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.6)
+
+### Fixed
+
+- Stop warning every cycle and flagging a stale advisory on the hub when a hive's primary repo is on Forgejo, Gitea or GitLab and `governor.advisory.target` is `github`: the digest has no GitHub issue there, so it is kept on the dashboard and not posted ([#20226](https://github.com/hivecommons/hive/issues/20226)).
+
 ## 2026-11-28 (v5.384.5)
 
 ### Fixed
