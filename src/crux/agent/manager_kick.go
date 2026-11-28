@@ -789,7 +789,13 @@ func (m *Manager) recordInferenceKick(agent *AgentProcess, at time.Time) {
 	agent.stallNudgeSent = false
 	// Baseline for the no-action check: markers already in scrollback from
 	// work done before this kick must not count as post-kick tool activity.
-	agent.lastInferKickMarks = countToolMarkers(m.captureTmuxPaneForAgent(agent))
+	// The capture is a moving window, so the baseline is anchored to lines
+	// that are already in scrollback rather than taken over the whole window
+	// (#20214).
+	capture := m.captureTmuxPaneForAgent(agent)
+	agent.lastInferKickAnchor = scrollbackAnchor(capture, visible)
+	agent.lastInferKickMarks, _ = toolMarkersAfterAnchor(capture, agent.lastInferKickAnchor)
+	agent.lastInferKickBusyAt = time.Time{}
 	agent.actionNudgeSent = false
 }
 
@@ -851,7 +857,15 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 		m.mu.Unlock()
 		return
 	}
-	if paneShowsActiveWork(pane) || !strings.Contains(pane, cliInputPromptMarker) {
+	if paneShowsActiveWork(pane) {
+		// Remember how long the kicked turn has kept the CLI busy, so the
+		// no-action check can tell a long turn from a quick prose reply
+		// however coarse the governor tick is (#20214).
+		agent.lastInferKickBusyAt = now
+		m.mu.Unlock()
+		return
+	}
+	if !strings.Contains(pane, cliInputPromptMarker) {
 		m.mu.Unlock()
 		return
 	}
@@ -914,17 +928,21 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 		m.mu.Unlock()
 		return
 	}
-	if sinceKick > inferenceActionNudgeMaxTurn {
+	if kickTurnLength(agent) >= inferenceActionNudgeMaxTurn {
 		// A long turn is evidence of work, not a prose-only reply (#20214).
+		// The length is how long the turn was seen busy, not the time
+		// since the kick: with a governor tick longer than the cutoff, the
+		// time since the kick would pass it before the first check.
 		agent.lastInferKickPane = ""
 		m.mu.Unlock()
 		return
 	}
-	if marks := countToolMarkers(m.captureTmuxPaneForAgent(agent)); marks != agent.lastInferKickMarks {
+	if marks, ok := toolMarkersAfterAnchor(m.captureTmuxPaneForAgent(agent), agent.lastInferKickAnchor); !ok || marks != agent.lastInferKickMarks {
 		// More markers: real tool activity since the kick, the agent is
-		// acting. Fewer markers: the pane was cleared or reset since the
-		// baseline, so the count says nothing about this turn (#20214).
-		// Either way, disarm rather than nudge.
+		// acting. Anchor gone or fewer markers: the pane was cleared or
+		// reset, or the kick-time lines scrolled out of the capture window,
+		// so the count says nothing about this turn (#20214). Either way,
+		// disarm rather than nudge.
 		agent.lastInferKickPane = ""
 		m.mu.Unlock()
 		return

@@ -1472,15 +1472,96 @@ func TestNudgeIfKickStalled_ActionNudgeSkippedAfterLongTurn(t *testing.T) {
 		"❯ \n" +
 		"  ⏵⏵ bypass permissions on (shift+tab to cycle)"
 
-	agent.lastInferKickAt = time.Now().Add(-29 * time.Minute)
+	kickAt := time.Now().Add(-29 * time.Minute)
+	agent.lastInferKickAt = kickAt
 	agent.lastInferKickPane = paneContentHash("pane as captured at kick delivery")
 	agent.lastInferKickMarks = 0
+
+	// A governor pass 10 minutes in saw the turn still working.
+	m.nudgeIfKickStalled("vinf", reportPane+"\n✶ Infusing… (9m 58s · ↓ 94 tokens)")
+	if want := kickAt.Add(10 * time.Minute); agent.lastInferKickBusyAt.Before(want) {
+		t.Fatalf("a busy pane should record when the turn was seen working, got %v", agent.lastInferKickBusyAt)
+	}
+	agent.lastInferKickBusyAt = kickAt.Add(10 * time.Minute)
+
 	m.nudgeIfKickStalled("vinf", reportPane)
 	if agent.ActionNudges != 0 || agent.actionNudgeSent {
-		t.Fatalf("a %s turn must not get an action nudge, got %d", 29*time.Minute, agent.ActionNudges)
+		t.Fatalf("a turn seen busy for 10m must not get an action nudge, got %d", agent.ActionNudges)
 	}
 	if agent.lastInferKickPane != "" {
 		t.Fatal("a long turn should disarm the watchdog")
+	}
+}
+
+// TestNudgeIfKickStalled_ActionNudgeAfterSlowTick: the turn-length cutoff is
+// measured from how long the turn was seen busy, not from the time since the
+// kick, so a prose-only reply first checked after a governor tick longer than
+// inferenceActionNudgeMaxTurn is still nudged (#20214).
+func TestNudgeIfKickStalled_ActionNudgeAfterSlowTick(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"vinf": {Backend: "vllm"},
+	}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["vinf"]
+	m.mu.RUnlock()
+
+	prosePane := "⏺ To fix the failing issues, follow these steps.\n" +
+		"✻ Worked for 26s\n" +
+		"❯ \n" +
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle)"
+
+	agent.lastInferKickAt = time.Now().Add(-inferenceActionNudgeMaxTurn - 5*time.Minute)
+	agent.lastInferKickPane = paneContentHash("pane as captured at kick delivery")
+	agent.lastInferKickMarks = 0
+	m.nudgeIfKickStalled("vinf", prosePane)
+	if agent.ActionNudges != 1 || !agent.actionNudgeSent {
+		t.Fatalf("a prose-only reply checked late must still be nudged, got %d", agent.ActionNudges)
+	}
+}
+
+// TestNudgeIfKickStalled_MarkersAnchoredInSlidingWindow: the scrollback
+// capture is a bounded window, so markers from before the kick scroll out of
+// it during a long prose reply. Counting only after the kick-time anchor keeps
+// the baseline comparable; a vanished anchor disarms (#20214).
+func TestNudgeIfKickStalled_MarkersAnchoredInSlidingWindow(t *testing.T) {
+	m := NewManager(map[string]config.AgentConfig{
+		"vinf": {Backend: "vllm"},
+	}, discardLogger(), ProjectContext{})
+	m.mu.RLock()
+	agent := m.agents["vinf"]
+	m.mu.RUnlock()
+
+	visible := "❯ [agent:scanner] report pipeline health\n❯ \n  ⏵⏵ bypass permissions on"
+	history := "⏺ Bash(git status)\n  ⎿ clean\n⏺ Bash(bd list)\n  ⎿ 3 beads\n⏺ Bash(gh pr list)\n  ⎿ none\n✻ Worked for 40s\n"
+	capture := history + visible
+	m.terminal = funcTerminal{
+		capturePane:        func(*AgentProcess) string { return capture },
+		captureVisiblePane: func(*AgentProcess) string { return visible },
+	}
+	m.mu.Lock()
+	m.recordInferenceKick(agent, time.Now().Add(-inferenceActionNudgeGrace-time.Minute))
+	m.mu.Unlock()
+	if agent.lastInferKickAnchor == "" {
+		t.Fatal("expected a scrollback anchor above the visible screen")
+	}
+
+	// The window slid: the oldest pre-kick marker line dropped out of the
+	// top while the prose reply was appended. The whole-window count fell,
+	// but nothing ran after the anchor, so this is still prose-only.
+	prose := "⏺ Pipeline health: 3 agents idle.\n❯ \n  ⏵⏵ bypass permissions on"
+	capture = strings.TrimPrefix(history, "⏺ Bash(git status)\n") + visible + "\n" + prose
+	m.nudgeIfKickStalled("vinf", prose)
+	if agent.ActionNudges != 1 {
+		t.Fatalf("prose-only reply must be nudged after the window slid, got %d", agent.ActionNudges)
+	}
+
+	// Anchor scrolled out entirely: the count is not comparable, disarm.
+	agent.lastInferKickPane = paneContentHash("pane as captured at kick delivery")
+	agent.actionNudgeSent = false
+	capture = prose
+	m.nudgeIfKickStalled("vinf", prose)
+	if agent.ActionNudges != 1 || agent.lastInferKickPane != "" {
+		t.Fatalf("a vanished anchor must disarm without a nudge, got %d", agent.ActionNudges)
 	}
 }
 

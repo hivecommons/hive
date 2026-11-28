@@ -5,6 +5,7 @@ import (
 	"hash/fnv"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/crux/agent/panesignal"
 	"github.com/hivecommons/hive/crux/config"
@@ -155,4 +156,56 @@ func paneAfterKickBaseline(pane, baseline string) string {
 		return strings.Join(paneLines[common:], "\n")
 	}
 	return pane
+}
+
+// scrollbackAnchorLines is how many non-blank lines identify the kick-time
+// position in the scrollback capture.
+const scrollbackAnchorLines = 5
+
+// scrollbackAnchor returns the last few non-blank lines of capture that sit
+// above the visible screen. The screen is redrawn (input box, footer,
+// spinner), but lines already in scrollback never change, so they mark where
+// post-kick output begins even after the bounded capture window slides
+// (#20214). Returns "" when the capture holds no more than one screen.
+func scrollbackAnchor(capture, visible string) string {
+	lines := strings.Split(strings.TrimRight(capture, "\n"), "\n")
+	screen := len(strings.Split(strings.TrimRight(visible, "\n"), "\n"))
+	if visible == "" || len(lines) <= screen {
+		return ""
+	}
+	lines = lines[:len(lines)-screen]
+	var anchor []string
+	for i := len(lines) - 1; i >= 0 && len(anchor) < scrollbackAnchorLines; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			anchor = append([]string{lines[i]}, anchor...)
+		}
+	}
+	return strings.Join(anchor, "\n")
+}
+
+// toolMarkersAfterAnchor counts tool markers in capture after the first
+// occurrence of anchor (the whole capture when anchor is ""). ok is false
+// when the anchor is no longer in the capture — it scrolled out of the
+// window or the pane was cleared — so no count is comparable. The first
+// occurrence is used so a repeated block can only widen the counted region.
+func toolMarkersAfterAnchor(capture, anchor string) (marks int, ok bool) {
+	if anchor == "" {
+		return countToolMarkers(capture), true
+	}
+	idx := strings.Index(capture, anchor)
+	if idx < 0 {
+		return 0, false
+	}
+	return countToolMarkers(capture[idx+len(anchor):]), true
+}
+
+// kickTurnLength is how long the kicked turn was seen busy: from kick
+// delivery to the last governor pass that found the CLI mid-response. It is a
+// lower bound that, unlike the time since the kick, does not grow while an
+// already-finished turn waits for the next tick. Caller must hold m.mu.
+func kickTurnLength(agent *AgentProcess) time.Duration {
+	if agent.lastInferKickBusyAt.IsZero() {
+		return 0
+	}
+	return agent.lastInferKickBusyAt.Sub(agent.lastInferKickAt)
 }
