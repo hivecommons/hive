@@ -1,1 +1,0 @@
-- Avoid restarting working agents when their own claude or codex transcript or their inference requests show activity; the busy-no-activity silence clock still starts at `busy_since` when neither is known ([#20213](https://github.com/hivecommons/hive/issues/20213)).
