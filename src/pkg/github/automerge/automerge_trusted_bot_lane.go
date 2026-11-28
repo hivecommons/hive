@@ -162,13 +162,17 @@ func (c *Engine) warnRequiredCheckNeverReported(owner, repo, name, action string
 
 // selfAuthoredSweepTier names the self-authored sweep's lane for pr on its
 // log lines: "trusted-bot" for an operator-enabled bot login, "self-authored"
-// for the App's own PRs, "" when neither (the prefilter then skips it).
+// for the App's own PRs, "promotion" for a matching branch-promotion pull
+// request, "" when none (the prefilter then skips it).
 func (c *Engine) selfAuthoredSweepTier(pr *gh.PullRequest) string {
 	if c == nil || pr == nil {
 		return ""
 	}
 	lane, ok := c.sweepLaneForAuthor(hgithub.SafeGetLogin(pr.GetUser()))
 	if !ok {
+		if _, promotion := c.promotionLanePR(context.Background(), pr); promotion {
+			return lanePromotion
+		}
 		return ""
 	}
 	return lane

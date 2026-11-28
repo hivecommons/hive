@@ -166,7 +166,13 @@ func nativeQueueWithdrawReason(reason string) bool {
 		"queue-approval-missing-head", "queue-approval-head-changed", "self-merge-ban", autoMergeReasonUntrustedMerger,
 		"changes-requested", autoMergeReasonHumanChangesRequested, contributorLaneReasonChangesRequested,
 		nativeQueueReasonPaused, "repo-auto-merge-disabled", relayLaneReasonDisabled,
-		"draft", "closed", releaseInProgressStatusContext, autoMergeReasonHumanMergePath, autoMergeReasonHumanMergeRequired:
+		"draft", "closed", releaseInProgressStatusContext, autoMergeReasonHumanMergePath, autoMergeReasonHumanMergeRequired,
+		// A queued promotion that no longer carries exactly the protected
+		// source tip's tree, or whose test merge does not (automerge_promotion_lane.go).
+		// promotion-merge-unknown is not here: the test merge is recomputed
+		// whenever the target moves, which a queue does all the time.
+		autoMergeReasonPromotionSourceMoved, autoMergeReasonPromotionNoLongerMatches, hgithub.PromotionReasonMergeTreeMismatch,
+		autoMergeReasonPromotionBehindTarget:
 		return true
 	}
 	return strings.HasPrefix(reason, "label:do-not-merge") || strings.HasPrefix(reason, "excluded-label:") ||

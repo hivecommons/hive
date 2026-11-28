@@ -86,6 +86,11 @@ func (c *Engine) RelayMergeRefusal(ctx context.Context, displayRepo string, numb
 	if _, hiveAuthored := c.sweepLaneForAuthor(author); hiveAuthored {
 		return "", nil
 	}
+	if c.promotionLaneOwns(ctx, owner, repo, pr) {
+		// The promotion lane merges it, through its own checks; the relay
+		// does not, and the refusal says the hive will (not a hand merge).
+		return relayMergeRefusal(author, "", c.currentContributorLanePolicy(), promotionLaneSkipReason, 0), nil
+	}
 	trusted := c.currentTrustedAuthorPolicy()
 	if decision := c.trustedAuthorDecision(author, trusted.RequireRole); decision.Allowed {
 		c.info("merge relay lane gate: trusted-author role admits PR", "repo", displayRepo, "pr", number, "author", author, "role", decision.Role)
@@ -138,6 +143,8 @@ func relayMergeRefusal(author, observedTier string, policy ContributorLanePolicy
 			fmt.Fprintf(&b, ", %s remaining", soakLeft.Round(time.Minute))
 		}
 		b.WriteString("; the lane merges it itself once the soak elapses)")
+	case reason == promotionLaneSkipReason:
+		b.WriteString(" (a branch-promotion pull request whose head tree is the protected source branch's; the self-authored sweep's promotion lane merges it itself)")
 	case strings.HasPrefix(reason, "pending: head pushed "):
 		b.WriteString(" (auto_merge.min_head_age; the lane merges it itself once the head is old enough)")
 	default:

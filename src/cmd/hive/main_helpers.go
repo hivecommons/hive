@@ -175,7 +175,8 @@ func enforceHoldGuard(
 	// the MERGE, not the branch. Runs after the snapshot step above so a PR
 	// held for the first time this tick is pinned before this ever touches
 	// its branch.
-	maintainHeldPRMergeability(ctx, ghClient, writer, store, org, actionable.PRs.Held, fetchCommits, heldPRConflictReturnsToAuthor(cfg), logger)
+	// A promotion branch is never updated (promotionBranchPR).
+	maintainHeldPRMergeability(ctx, ghClient, writer, store, org, withoutPromotionBranches(cfg, actionable.PRs.Held), fetchCommits, heldPRConflictReturnsToAuthor(cfg), logger)
 
 	// (2) Check every open PR that WAS hold-gated (has a snapshot) and no
 	// longer is (it enumerated as actionable): the hold lifted this window.

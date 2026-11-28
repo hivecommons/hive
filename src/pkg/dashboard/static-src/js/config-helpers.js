@@ -488,6 +488,27 @@
       markDirty('auto-merge', 'human_merge_pin_only', policies);
     }
 
+    // Settings → Features → Auto-merge → Branch promotions that merge
+    // without a person. Stages auto_merge.promotions in full: every row
+    // with anything filled in, grouped by repository; a repository with no
+    // filled row drops out, which removes its rules. A half-filled row is
+    // sent as is, so the server names what it is missing.
+    function markDirtyAutoMergePromotions() {
+      const rules = {};
+      document.querySelectorAll('#am-promotions .am-promotion-row').forEach(row => {
+        const val = (cls) => { const el = row.querySelector(cls); return el ? String(el.value || '').trim() : ''; };
+        const rule = {
+          source: val('.am-promotion-source'),
+          target: val('.am-promotion-target'),
+          head_ref_prefix: val('.am-promotion-prefix'),
+          authors: splitConfigLines(val('.am-promotion-authors'))
+        };
+        if (!row.dataset.repo || (!rule.source && !rule.target && !rule.head_ref_prefix && !rule.authors.length)) return;
+        (rules[row.dataset.repo] = rules[row.dataset.repo] || []).push(rule);
+      });
+      markDirty('auto-merge', 'promotions', rules);
+    }
+
     function markDirtyContributorLane() {
       const enabled = document.getElementById('am-contributor-lane-enabled');
       const verdict = document.getElementById('am-contributor-lane-require-reviewer-verdict');

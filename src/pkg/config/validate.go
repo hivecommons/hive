@@ -247,6 +247,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.AutoMerge.ValidateHumanMergePinOnly(); err != nil {
 		return err
 	}
+	if err := c.validateAutoMergePromotions(); err != nil {
+		return err
+	}
 	if err := c.AutoMerge.TrustedAuthors.Validate(); err != nil {
 		return err
 	}

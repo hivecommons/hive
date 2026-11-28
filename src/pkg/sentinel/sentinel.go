@@ -46,6 +46,37 @@ var AllRules = []string{
 	RuleRemoteCodeExecution,
 }
 
+// PromotionExemptRules are the rules a branch-promotion pull request whose
+// head tree is exactly the source branch's (auto_merge.promotions,
+// github.VerifyPromotion) does not raise again: only sensitive_path. Its
+// finding says no more than "this diff touches a sensitive file", and a
+// promotion carries every sensitive file the source branch changed, so it
+// would hold every promote for content the source already has.
+//
+// Every other rule still applies, on purpose. permission_escalation,
+// remote_code_execution, ci_gate_weakening, secret_exposure,
+// security_policy_edit and test_removal each describe what the content does,
+// and the source branch may carry it without the sentinel ever having
+// judged it (a direct or bypass push, or a change older than the sentinel),
+// while the target is often the more privileged branch. owner_self_nomination
+// reads this pull request's own author.
+var PromotionExemptRules = map[string]bool{
+	RuleSensitivePath: true,
+}
+
+// WithoutPromotionExempt splits findings into those PromotionExemptRules
+// drops and those that remain, both in their original order.
+func WithoutPromotionExempt(findings []Finding) (kept, dropped []Finding) {
+	for _, f := range findings {
+		if PromotionExemptRules[f.Rule] {
+			dropped = append(dropped, f)
+			continue
+		}
+		kept = append(kept, f)
+	}
+	return kept, dropped
+}
+
 // RuleDescriptions explains each rule in one line for the dashboard and the
 // alert comment.
 var RuleDescriptions = map[string]string{

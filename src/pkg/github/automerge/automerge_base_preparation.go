@@ -301,7 +301,7 @@ func preparationKeepsOwner(reason string, err error) bool {
 		return true
 	}
 	// Another lane declining authorship is not the owning lane withdrawing.
-	return reason == "not-app-authored" || reason == trustedAuthorReasonAppAuthored || reason == contributorLaneReasonAppAuthored || reason == trustedBotLaneSkipReason
+	return reason == "not-app-authored" || reason == trustedAuthorReasonAppAuthored || reason == contributorLaneReasonAppAuthored || reason == trustedBotLaneSkipReason || reason == promotionLaneSkipReason
 }
 
 func (c *Engine) observeBasePreparation(lane, owner, repo string, pr *gh.PullRequest, reason string, merged bool, evalErr error) {

@@ -1397,6 +1397,12 @@ only.
   each admits. `action-sha-ref` lets a bare `key: <40-hex>` line follow a
   `uses:` pin bumped in the same pull request; it needs `action-sha`, and the
   preview says so when an exception lists it without.
+  `promotions` takes `owner/repo` and that repository's whole list of
+  branch-promotion rules, `[{"source": "main", "target": "stable",
+  "authors": ["github-actions[bot]"], "head_ref_prefix": "auto/promote-"}]`;
+  `null` or `[]` removes the repository. The repository must be in
+  `project.repos`. Each rule needs every field, a source different from its
+  target and at least one author, and a target is named by one rule at most.
   An unknown field is refused.
 - **One repository's workflow fence scope:**
   `{"contributor_lane": {"workflow_fence_scope_repos": {"org/a": "human_merge_paths"}}}`
@@ -1420,6 +1426,21 @@ only.
   is widening too, and the preview names what merges as a result, for example
   "pin bumps (action-sha) to .github/workflows/*.yml in org/a by renovate[bot]
   will merge without a hand merge". Removing any of those is not. A
+  promotion rule is a new trust path, so adding one, or giving one an author
+  or a shorter head ref prefix, is widening, and the preview says what then
+  merges with no person: "promotions[org/a] adds a trust path, main to
+  stable, opened by github-actions[bot] from auto/promote-*", and that trust
+  carries over: the target inherits exactly the source's review guarantee
+  (a pull request required, with the approvals and bypass actors its owner
+  configured). The hive does not check classic `enforce_admins` or
+  `bypass_pull_request_allowances` and cannot see ruleset bypass actors, so
+  an admin or bypass actor who can push to the source without a pull request
+  reaches the target too. For the commit-tree shape it does not review the
+  promotion commit's author, message or trailers (`Signed-off-by`,
+  `[skip ci]`); with the merge method that commit lands in the target's
+  history as it is. Branch names are compared exactly (git refs are
+  case-sensitive), logins case-insensitively. Removing a rule or an author is
+  not widening. A
   repository whose fence scope becomes `human_merge_paths` (its own, or the
   hive-wide one after its own is removed) is named: "workflow edits outside
   human-merge paths in org/a merge without an owner Approve". The preview

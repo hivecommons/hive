@@ -68,6 +68,7 @@ const (
 	stageReasonForkGuard                   = prstage.StageReasonForkGuard
 	stageReasonSharedCIIncident            = prstage.StageReasonSharedCIIncident
 	trustedBotLaneSkipReason               = prstage.TrustedBotLaneSkipReason
+	promotionLaneSkipReason                = prstage.PromotionLaneSkipReason
 	workflowApprovalRequiredPrefix         = prstage.WorkflowApprovalRequiredPrefix
 	requiredCheckNeverReportedPrefix       = prstage.RequiredCheckNeverReportedPrefix
 	stageReasonUnauthorizedPrefix          = prstage.StageReasonUnauthorizedPrefix
@@ -252,7 +253,7 @@ func StageHumanApprovalReason(d stageDetail, head string) string {
 
 // stageHandoffReasons are reasons that mean "not this lane's PR".
 var stageHandoffReasons = map[string]bool{
-	"not-app-authored": true, trustedBotLaneSkipReason: true,
+	"not-app-authored": true, trustedBotLaneSkipReason: true, promotionLaneSkipReason: true,
 	trustedAuthorReasonAppAuthored: true, contributorLaneReasonAppAuthored: true, contributorLaneReasonNoAuthor: true, "missing-head-sha": true,
 	"fetch-pr": true, "fetch-pr-recheck": true,
 	// A merge to the destination was in flight, so the lane did not look at
