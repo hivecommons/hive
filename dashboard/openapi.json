@@ -36714,6 +36714,10 @@
                       "pr"
                     ],
                     "description": "What the number names; defaults to issue"
+                  },
+                  "override_reason": {
+                    "type": "string",
+                    "description": "approve, merge-now and queue-merge on a pull request with an open change request from a reviewer with write access: the operator's reason for proceeding anyway. Without it the decision is answered 409 with status changes-requested, the open change requests (reviewer, review_id) and needs_override_reason true. With it the override is recorded for exactly those change requests and audited as repo_item_decision_changes_requested_override with the reason."
                   }
                 }
               }

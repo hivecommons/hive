@@ -377,6 +377,11 @@ func (f *giteaForge) Merge(ctx context.Context, repo string, number int, opts Me
 	if have := pr.Head.SHA; expect != "" && have != "" && !strings.EqualFold(have, expect) {
 		return fmt.Errorf("%w: %s#%d head is %s, caller decided on %s", ErrConflict, slug, number, have, expect)
 	}
+	// An open change request from a writer refuses the merge, like the
+	// hold label, before the merge endpoint is called (#20067).
+	if err := f.gateChangesRequested(ctx, owner, name, number, "merge", true); err != nil {
+		return fmt.Errorf("%s: merge %s#%d: %w", f.label, slug, number, err)
+	}
 
 	endpoint := fmt.Sprintf("/repos/%s/%s/pulls/%d/merge", url.PathEscape(owner), url.PathEscape(name), number)
 	payload := giteaMergePayload{

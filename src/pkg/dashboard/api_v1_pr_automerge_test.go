@@ -32,6 +32,9 @@ func newAPIV1QueueServer(t *testing.T, role, tokenUser, prAuthor, headSHA string
 				"user":   map[string]string{"login": prAuthor},
 				"head":   map[string]string{"sha": headSHA},
 			})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7/reviews":
+			// No reviews: the open change-request gate (#20067) passes.
+			_ = json.NewEncoder(w).Encode([]any{})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/labels/"+ghpkg.AutoMergeQueuedLabel:
 			http.NotFound(w, r)
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/labels":
