@@ -1,0 +1,1 @@
+- Channel commit dates now pause every GitHub commit-date lookup after a 403/429 (until the rate-limit reset, capped at an hour) and warn once, instead of re-fetching and warning for each other channel SHA (#20298).

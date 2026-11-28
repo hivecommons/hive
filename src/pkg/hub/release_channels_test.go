@@ -118,6 +118,7 @@ func resetChannelCommitDateCache() {
 	commitDateMu.Lock()
 	commitDateBySHA = map[string]time.Time{}
 	commitDateBackoffUntil = map[string]time.Time{}
+	commitDateGlobalBackoffUntil = time.Time{}
 	commitDateMu.Unlock()
 }
 

@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -22,13 +23,38 @@ const commitDateCacheMax = 512
 // again. Every channel render would otherwise re-hit GitHub for it, spending
 // the budget that caused the failure; the row renders without a timestamp
 // meanwhile.
+//
+// A 403/429 is a client-wide condition (rate limit or a token without access),
+// not a per-SHA failure, so it also parks EVERY commit-date fetch until
+// commitDateGlobalBackoffUntil (the reset hint when GitHub sends one, capped
+// at an hour). Otherwise each other channel SHA would spend more of the
+// exhausted budget and log its own warning.
 const commitDateBackoff = 10 * time.Minute
 
 var (
-	commitDateMu           sync.RWMutex
-	commitDateBySHA        = map[string]time.Time{}
-	commitDateBackoffUntil = map[string]time.Time{}
+	commitDateMu                 sync.RWMutex
+	commitDateBySHA              = map[string]time.Time{}
+	commitDateBackoffUntil       = map[string]time.Time{}
+	commitDateGlobalBackoffUntil time.Time
 )
+
+// commitDateHTTPError is a non-200 reply to a commit-date fetch. Wait is how
+// long to park all commit-date fetches when Status is a 403/429; it comes from
+// commitMsgThrottleWait, so it is already defaulted and capped at an hour.
+type commitDateHTTPError struct {
+	SHA    string
+	Status int
+	Wait   time.Duration
+}
+
+func (e *commitDateHTTPError) Error() string {
+	return fmt.Sprintf("commit %s: HTTP %d", e.SHA, e.Status)
+}
+
+// throttled reports whether the reply is a client-wide 403/429.
+func (e *commitDateHTTPError) throttled() bool {
+	return e.Status == http.StatusForbidden || e.Status == http.StatusTooManyRequests
+}
 
 // fetchCommitDate reads one commit's committer date from GitHub. A var so
 // tests can supply dates without a network round-trip.
@@ -53,7 +79,11 @@ var fetchCommitDate = func(sha string, logger *slog.Logger) (time.Time, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return time.Time{}, fmt.Errorf("commit %s: HTTP %d", sha, resp.StatusCode)
+		return time.Time{}, &commitDateHTTPError{
+			SHA:    sha,
+			Status: resp.StatusCode,
+			Wait:   commitMsgThrottleWait(resp.Header, githubWarnNow()),
+		}
 	}
 	var result struct {
 		Commit struct {
@@ -86,19 +116,36 @@ func commitDateForSHA(sha string, logger *slog.Logger) time.Time {
 		return d
 	}
 	until, backedOff := commitDateBackoffUntil[key]
+	globalUntil := commitDateGlobalBackoffUntil
 	commitDateMu.RUnlock()
-	if backedOff && githubWarnNow().Before(until) {
+	now := githubWarnNow()
+	if now.Before(globalUntil) || (backedOff && now.Before(until)) {
 		return time.Time{}
 	}
 
 	d, err := fetchCommitDate(sha, logger)
 	if err != nil {
+		var httpErr *commitDateHTTPError
+		throttled := errors.As(err, &httpErr) && httpErr.throttled()
 		commitDateMu.Lock()
 		if len(commitDateBackoffUntil) >= commitDateCacheMax {
 			commitDateBackoffUntil = map[string]time.Time{}
 		}
 		commitDateBackoffUntil[key] = githubWarnNow().Add(commitDateBackoff)
+		var wait time.Duration
+		if throttled {
+			// Already defaulted and capped by commitMsgThrottleWait.
+			wait = httpErr.Wait
+			commitDateGlobalBackoffUntil = githubWarnNow().Add(wait)
+		}
 		commitDateMu.Unlock()
+		if throttled {
+			// One shared key: the throttle is client-wide, so N channel SHAs
+			// must not produce N warnings.
+			warnGitHubFetchOnce(logger, "commit-date:global", "channel commit date: fetch throttled, pausing all commit-date fetches; rows render without a timestamp",
+				"sha", sha, "error", err, "retry_in", wait.String())
+			return time.Time{}
+		}
 		if logger != nil {
 			warnGitHubFetchOnce(logger, "commit-date:"+key, "channel commit date: fetch failed — the row will render without a timestamp",
 				"sha", sha, "error", err)

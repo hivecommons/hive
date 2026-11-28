@@ -179,3 +179,58 @@ func TestCommitDateFailureBacksOffPerSHA(t *testing.T) {
 		t.Errorf("commit API calls = %d, want 2 after the back-off expired", calls)
 	}
 }
+
+// A 403/429 is client-wide: once one SHA is throttled, a DIFFERENT SHA must
+// not be fetched inside the window either, and the throttle WARNs once under
+// a shared key rather than once per SHA. Once the window passes, fetches
+// resume.
+func TestCommitDateThrottleBacksOffAllSHAs(t *testing.T) {
+	resetChannelCommitDateCache()
+	githubWarnMu.Lock()
+	githubWarnLast = map[string]time.Time{}
+	githubWarnMu.Unlock()
+	now := time.Date(2026, 11, 28, 10, 0, 0, 0, time.UTC)
+	githubWarnNow = func() time.Time { return now }
+	var fetched []string
+	fail := true
+	orig := fetchCommitDate
+	fetchCommitDate = func(sha string, _ *slog.Logger) (time.Time, error) {
+		fetched = append(fetched, sha)
+		if fail {
+			return time.Time{}, &commitDateHTTPError{SHA: sha, Status: http.StatusForbidden, Wait: commitDateBackoff}
+		}
+		return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), nil
+	}
+	t.Cleanup(func() {
+		waitChannelTargetRefreshes(t)
+		fetchCommitDate = orig
+		githubWarnNow = time.Now
+		resetChannelCommitDateCache()
+	})
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	if !commitDateForSHA("1cfdaec", logger).IsZero() {
+		t.Fatal("throttled lookup must yield the zero time")
+	}
+	for _, sha := range []string{"55bd2bc", "9eefa3a", "b535d31"} {
+		if !commitDateForSHA(sha, logger).IsZero() {
+			t.Fatalf("%s: lookup inside the global back-off must yield the zero time", sha)
+		}
+	}
+	if len(fetched) != 1 {
+		t.Errorf("commit API called for %v inside the global back-off, want only [1cfdaec]", fetched)
+	}
+	if n := strings.Count(buf.String(), "level=WARN"); n != 1 {
+		t.Errorf("WARN lines = %d, want 1", n)
+	}
+
+	now = now.Add(commitDateBackoff + time.Second)
+	fail = false
+	if commitDateForSHA("55bd2bc", logger).IsZero() {
+		t.Fatal("lookup after the global back-off expired must fetch again and succeed")
+	}
+	if len(fetched) != 2 {
+		t.Errorf("commit API calls = %v, want 2 after the back-off expired", fetched)
+	}
+}
