@@ -233,6 +233,23 @@ check_exit "comments with --record-verdict exits 2" 2 \
 check_exit "comments with --thread exits 2" 2 \
   env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo org/repo 31 --comment --body s --thread PRRT_x --comments-file "$CDIR/ok.json"
 
+# --- record_verdict says queued, not recorded (hivecommons/hive#20290) ---
+echo ""
+echo "--- --record-verdict reports the request as queued ---"
+rm -rf "$REQ_DIR"; mkdir -p "$REQ_DIR"
+printf '%s' '{"lane":"review-swarm","kind":"review","perspective":"correctness","verdict":"approve","repo":"org/repo","number":41,"summary":"ok","findings":[],"prs_opened":[],"beads_filed":[]}' > "$CDIR/verdict.json"
+VERDICT_OUTPUT="$(run_script "verdictbot" --repo "org/repo" 41 --record-verdict --verdict-file "$CDIR/verdict.json" || true)"
+if printf '%s\n' "$VERDICT_OUTPUT" | grep -Fq "hive-review: queued verdict for org/repo#41 for the relay (not recorded until the result file says accepted; no comment posted)"; then
+  echo "  PASS: record_verdict says queued for the relay"; PASS=$((PASS + 1))
+else
+  echo "  FAIL: record_verdict does not say queued for the relay"; echo "        got: '$VERDICT_OUTPUT'"; FAIL=$((FAIL + 1))
+fi
+if printf '%s\n' "$VERDICT_OUTPUT" | grep -Fq "recorded verdict for"; then
+  echo "  FAIL: record_verdict still claims the verdict was recorded"; FAIL=$((FAIL + 1))
+else
+  echo "  PASS: record_verdict does not claim the verdict was recorded"; PASS=$((PASS + 1))
+fi
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

@@ -285,7 +285,9 @@ os.replace(temporary, path)
 PY
 
 if [ "$EVENT" = "record_verdict" ]; then
-  echo "hive-review: recorded verdict for $REPO#$NUMBER (no comment posted)"
+  # The relay has not read the request yet and may still reject it, so this
+  # line must not claim the verdict is recorded (hivecommons/hive#20290).
+  echo "hive-review: queued verdict for $REPO#$NUMBER for the relay (not recorded until the result file says accepted; no comment posted)"
 elif [ -n "$THREAD" ]; then
   echo "hive-review: requested $EVENT on thread $THREAD of $REPO#$NUMBER as the App bot"
 elif [ "$REVISE" = "1" ]; then
