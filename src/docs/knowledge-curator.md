@@ -54,8 +54,9 @@ On connect, the source is cloned into `<knowledge-data-dir>/git-sources/<slug>`
 and the clone (or its `subpath`) is handed to a `FileStore`, which indexes
 markdown files under it. Git sources fetch complete branch history so freshness
 uses the last commit touching each file, rather than the checkout time. Existing
-shallow clones are unshallowed; if history cannot be fetched, connection fails
-rather than reporting a misleading date. Full history increases network and
+shallow clones are unshallowed; if fetching history fails, the source still
+connects and file freshness is unknown. A later sync still reindexes the
+pulled files but reports the history-fetch failure. Full history increases network and
 disk use for large repositories. If `subpath` does not exist after cloning,
 connection fails with `subpath "<x>" not found after clone`.
 
