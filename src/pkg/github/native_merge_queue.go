@@ -31,8 +31,12 @@ type NativeMergeQueueRemoval struct {
 
 // NativeMergeQueueState describes the queue on a PR's target branch.
 type NativeMergeQueueState struct {
-	ID                  string
-	HeadRefOid          string
+	ID         string
+	HeadRefOid string
+	// ReviewDecision is GitHub's verdict on the reviews the base requires:
+	// REVIEW_REQUIRED, CHANGES_REQUESTED or APPROVED, and empty when GitHub
+	// reports none (a base that requires no review).
+	ReviewDecision      string
 	IsMergeQueueEnabled bool
 	IsInMergeQueue      bool
 	MergeQueueEntry     *NativeMergeQueueEntry
@@ -47,7 +51,7 @@ func (c *Client) NativeMergeQueueAvailable() bool { return c != nil && c.appAuth
 func (c *Client) ReadNativeMergeQueue(ctx context.Context, id string) (NativeMergeQueueState, error) {
 	var out struct{ Node *NativeMergeQueueState }
 	err := c.graphQL(ctx, `query($id: ID!) { node(id: $id) { ... on PullRequest {
- id headRefOid isMergeQueueEnabled isInMergeQueue
+ id headRefOid reviewDecision isMergeQueueEnabled isInMergeQueue
  mergeQueueEntry { id position state enqueuer { __typename login } }
  timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) { nodes { ... on RemovedFromMergeQueueEvent { id reason actor { __typename login } } } }
  } } }`, map[string]any{"id": id}, &out)
