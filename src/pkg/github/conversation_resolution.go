@@ -239,10 +239,11 @@ func (c *Client) ownThreadsReadyReplied(t rawReviewThread) bool {
 // (trigger=ready-for-human-merge). With reply set it first replies once in
 // each of those threads to say why (a thread that already carries that
 // reply gets no second one); a reply that fails does not stop the resolve.
-// A paused repository, a base that does not require conversation
-// resolution, or one whose rule cannot be read resolves nothing (Skipped
-// names which).
-func (c *Client) ResolveOwnReviewThreadsForHumanMerge(ctx context.Context, repo string, number int, base string, reply bool) (OwnReviewThreadsOutcome, error) {
+// evidence is what the stage pass knows about the head it hands over, for
+// a thread the PR's author replied in. A paused repository, a base that
+// does not require conversation resolution, or one whose rule cannot be
+// read resolves nothing (Skipped names which).
+func (c *Client) ResolveOwnReviewThreadsForHumanMerge(ctx context.Context, repo string, number int, base string, reply bool, evidence OwnThreadsEvidence) (OwnReviewThreadsOutcome, error) {
 	var out OwnReviewThreadsOutcome
 	if c == nil {
 		return out, ErrNoGitHubClient
@@ -281,5 +282,5 @@ func (c *Client) ResolveOwnReviewThreadsForHumanMerge(ctx context.Context, repo 
 				"trigger", ownThreadsReadyTrigger)
 		}
 	}
-	return c.resolveOwnReviewThreads(ctx, repo, number, ownThreadsReadyTrigger, beforeResolve)
+	return c.resolveOwnReviewThreads(ctx, repo, number, ownThreadsReadyTrigger, evidence, beforeResolve)
 }

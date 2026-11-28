@@ -381,6 +381,10 @@ type ReportReceipt struct {
 	Head        string      `json:"head,omitempty"`
 	Decided     bool        `json:"decided,omitempty"`
 	ReceivedAt  time.Time   `json:"received_at"`
+	// DispatchedAt is the report's own DispatchedAt: when the planner asked
+	// for the review it answers. Zero when the report has none (an advisory
+	// review, or a binding that is not that dispatch's own answer).
+	DispatchedAt time.Time `json:"dispatched_at,omitzero"`
 }
 
 type CollectionStats struct {
@@ -1535,7 +1539,8 @@ func collectForPRs(dir string, opts AggregateOptions, prs []PullRequest) (Artifa
 		key := reviewKey(report.Repo, report.Number, report.HeadSHA, report.BodyDigest)
 		groups[key] = append(groups[key], *report)
 		receipts[key] = append(receipts[key], ReportReceipt{Perspective: report.Perspective, Agent: report.ReporterAgent,
-			Head: report.Head, Decided: report.Decided, ReceivedAt: ReportArrival(*report, receivedAt)})
+			Head: report.Head, Decided: report.Decided, ReceivedAt: ReportArrival(*report, receivedAt),
+			DispatchedAt: report.DispatchedAt})
 		stats.FilesRead++
 	}
 	groups = foldDigestlessReports(groups)

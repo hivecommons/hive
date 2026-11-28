@@ -30,7 +30,10 @@ import (
 //   - every unresolved thread is the hive's own and marked non-blocking:
 //     the lane resolves them (hgithub.Client.ResolveOwnReviewThreadsForMerge)
 //     and the next pass merges or enqueues the same head
-//     (review-threads-resolved, stage 100);
+//     (review-threads-resolved, stage 100). A thread the PR's author
+//     replied in, and nobody else, counts once the thread is outdated, or
+//     the note is from an earlier head and the hive's review of this one,
+//     asked for after the reply, approved it (ownThreadsEvidence);
 //   - a thread only a person can clear is open (another author's thread, a
 //     hive thread someone answered, a blocking hive finding): the PR parks at
 //     085 with unresolved-review-threads, and the lane does not call GitHub
@@ -73,7 +76,32 @@ const (
 // without it (a test fake, a client without GraphQL) gets the unexplained
 // path: retries, then a park.
 type ownReviewThreadResolver interface {
-	ResolveOwnReviewThreadsForMerge(ctx context.Context, repo string, number int) (hgithub.OwnReviewThreadsOutcome, error)
+	ResolveOwnReviewThreadsForMerge(ctx context.Context, repo string, number int, evidence hgithub.OwnThreadsEvidence) (hgithub.OwnReviewThreadsOutcome, error)
+}
+
+// The engine finds the resolver by a type assertion on its transport, so a
+// signature that drifts would silently turn every refusal into the
+// unexplained path. This keeps the client honest at compile time.
+var _ ownReviewThreadResolver = (*hgithub.Client)(nil)
+
+// ownThreadsEvidence is what the engine knows about head of repo
+// (owner/name) #number for the client's author-reply rule: the head itself
+// and, when the hive's own review of exactly that head is an approving,
+// merge-eligible verdict, when the reviews behind it were asked for
+// (ContributorLaneVerdict.ReviewAskedAt). It reads the reviewer verdict as
+// recorded, not a lane's reading of it: a person's decision or a
+// trusted-bot review skip is not the hive's review of the head. With no
+// verdict reader, or no approve, only the head is named and the client
+// accepts an outdated thread alone.
+func (c *Engine) ownThreadsEvidence(repo string, number int, head string) hgithub.OwnThreadsEvidence {
+	ev := hgithub.OwnThreadsEvidence{HeadSHA: strings.TrimSpace(head)}
+	if c == nil || c.contributorLaneVerdict == nil || ev.HeadSHA == "" || number <= 0 {
+		return ev
+	}
+	if v := c.contributorLaneVerdict(repo, number, ev.HeadSHA); v.Approved {
+		ev.HeadReviewAskedAt = v.ReviewAskedAt
+	}
+	return ev
 }
 
 func unresolvedThreadsKey(repo string, number int) string {
@@ -154,13 +182,13 @@ func (c *Engine) unresolvedThreadsRefusal(ctx context.Context, repo string, numb
 	head = strings.TrimSpace(head)
 	needsPerson := false
 	if r, ok := c.transport.(ownReviewThreadResolver); ok {
-		out, err := r.ResolveOwnReviewThreadsForMerge(ctx, repo, number)
+		out, err := r.ResolveOwnReviewThreadsForMerge(ctx, repo, number, c.ownThreadsEvidence(repo, number, head))
 		switch {
 		case err != nil:
 			c.warn("automerge: could not read review threads after an unresolved-conversations refusal", "repo", repo, "pr", number, "error", err)
 		case out.Cleared():
 			c.forgetUnresolvedThreads(repo, number)
-			c.info("automerge resolved the hive's own review threads", "repo", repo, "pr", number, "head", head, "resolved", out.Resolved)
+			c.info("automerge resolved the hive's own review threads", "repo", repo, "pr", number, "head", head, "resolved", out.Resolved, "own_author_answered", out.OwnAuthorAnswered)
 			return autoMergeReasonReviewThreadsResolved
 		default:
 			// A repo paused meanwhile resolves nothing however often the
@@ -168,7 +196,8 @@ func (c *Engine) unresolvedThreadsRefusal(ctx context.Context, repo string, numb
 			needsPerson = out.NeedsPerson() || out.Skipped == "paused"
 			c.info("automerge: unresolved review threads hold the merge", "repo", repo, "pr", number, "head", head,
 				"unresolved", out.Unresolved, "others", out.Others, "own_answered", out.OwnAnswered,
-				"own_blocking", out.OwnBlocking, "resolved", out.Resolved, "failed", out.Failed, "skipped", out.Skipped)
+				"own_blocking", out.OwnBlocking, "own_author_answered", out.OwnAuthorAnswered,
+				"resolved", out.Resolved, "failed", out.Failed, "skipped", out.Skipped)
 		}
 	}
 	if !needsPerson {

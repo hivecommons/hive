@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 
@@ -56,13 +58,38 @@ func TestFreeTextNonBlocking(t *testing.T) {
 	}
 }
 
-// typedRawThread is rawThread with each comment's GraphQL author type kept.
+// typedRawThread is rawThread with each comment's GraphQL author type, time
+// and commit kept.
 func typedRawThread(id string, resolved, outdated bool, comments ...gqlComment) rawReviewThread {
 	t := rawThread(id, resolved, outdated, comments...)
 	for i, cmt := range comments {
 		t.Comments.Nodes[i].Author.Typename = cmt.AuthorType
+		t.Comments.Nodes[i].CreatedAt = cmt.CreatedAt
+		t.Comments.Nodes[i].PublishedAt = cmt.PublishedAt
+		t.Comments.Nodes[i].OriginalCommit.OID = cmt.Commit
 	}
 	return t
+}
+
+// The pull request the author-reply cases are on: opened by the User
+// "author", who answered the hive's note at ownReplyAt. The note was left
+// on head0 and the PR's head is now head1.
+var (
+	ownReplyAt  = time.Date(2026, 11, 27, 16, 59, 0, 0, time.UTC)
+	ownAuthorPR = ownThreadsPR{authorLogin: "author", authorType: "User"}
+)
+
+// authorReply is the PR author's reply at ownReplyAt plus after.
+func authorReply(body string, after time.Duration) gqlComment {
+	return gqlComment{Author: "author", AuthorType: "User", Body: body, CreatedAt: ownReplyAt.Add(after)}
+}
+
+// approvedPR is ownAuthorPR with the hive's approve of the current head,
+// head1, received at ownReplyAt plus after.
+func approvedPR(after time.Duration) ownThreadsPR {
+	pr := ownAuthorPR
+	pr.head, pr.reviewAskedAt = "head1", ownReplyAt.Add(after)
+	return pr
 }
 
 func TestClassifyOwnReviewThread(t *testing.T) {
@@ -71,11 +98,34 @@ func TestClassifyOwnReviewThread(t *testing.T) {
 	// project.ai_author is never the hive's own here: it can be a person.
 	c.SetHiveIdentity(HiveIdentity{AIAuthor: "operator", AppLogin: "hive[bot]"})
 	own := func(body string) gqlComment { return gqlComment{Author: "hive", AuthorType: "Bot", Body: body} }
+	low := own(ownMarked("a note", "low"))
+	low.Commit = "head0"
+	onHead := func(sha string) gqlComment {
+		note := low
+		note.Commit = sha
+		return note
+	}
+	addressed := authorReply("Addressed in 0bb2918: the header names the new version.", 0)
+	stranger := gqlComment{Author: "maintainer", AuthorType: "User", Body: "keep this open", CreatedAt: ownReplyAt.Add(time.Minute)}
+	// drafted is the author's reply written inside a pending review at
+	// ownReplyAt and published an hour later.
+	drafted := authorReply("Addressed in 0bb2918.", 0)
+	drafted.PublishedAt = ownReplyAt.Add(time.Hour)
+	// truncated is a thread GitHub says holds more comments than were read.
+	truncated := func(th rawReviewThread, total int) rawReviewThread {
+		th.Comments.TotalCount = total
+		return th
+	}
+	// ghost is a comment whose author GitHub no longer names.
+	ghost := func(typ string) gqlComment { return gqlComment{AuthorType: typ, Body: "done"} }
 	for _, tc := range []struct {
 		name    string
 		thread  rawReviewThread
 		blockAt string
-		want    ownThreadClass
+		// pr is what is known of the pull request; the zero value (no
+		// author, no approval) is the rule before the author-reply case.
+		pr   ownThreadsPR
+		want ownThreadClass
 	}{
 		{name: "marked low", thread: typedRawThread("A", false, false, own(ownMarked("a note", "low"))), want: ownThreadNonBlocking},
 		{name: "marked info, prose says fix", thread: typedRawThread("A", false, false, own(ownMarked(ownBodyUnlabelledFx, "info"))), want: ownThreadNonBlocking},
@@ -100,9 +150,51 @@ func TestClassifyOwnReviewThread(t *testing.T) {
 		{name: "hive thread a person answered", thread: typedRawThread("A", false, true, own(ownBodyStyleInfo), gqlComment{Author: "author", AuthorType: "User", Body: "I disagree"}), want: ownThreadAnswered},
 		{name: "hive thread ai_author answered", thread: typedRawThread("A", false, false, own(ownBodyStyleInfo), gqlComment{Author: "operator", AuthorType: "User", Body: "ok"}), want: ownThreadAnswered},
 		{name: "hive thread the hive answered", thread: typedRawThread("A", false, false, own(ownBodyStyleInfo), own("done")), want: ownThreadNonBlocking},
+		// The author-reply rule: the PR author's reply, and nobody else's,
+		// on a non-blocking note that was acted on.
+		{name: "author replied, outdated", thread: typedRawThread("A", false, true, low, addressed), pr: ownAuthorPR, want: ownThreadAuthorAnswered},
+		{name: "author replied, legacy prose note, outdated", thread: typedRawThread("A", false, true, own(ownBodyStyleLow), addressed), pr: ownAuthorPR, want: ownThreadAuthorAnswered},
+		{name: "author replied, login in another case", thread: typedRawThread("A", false, true, low, gqlComment{Author: "AUTHOR", AuthorType: "User", Body: "done"}), pr: ownAuthorPR, want: ownThreadAuthorAnswered},
+		{name: "author replied, then the hive", thread: typedRawThread("A", false, true, low, addressed, own("thanks")), pr: ownAuthorPR, want: ownThreadAuthorAnswered},
+		{name: "bot author replied, outdated", thread: typedRawThread("A", false, true, low, gqlComment{Author: "renovate", AuthorType: "Bot", Body: "rebased"}), pr: ownThreadsPR{authorLogin: "renovate", authorType: "Bot"}, want: ownThreadAuthorAnswered},
+		{name: "author replied, approved after the reply", thread: typedRawThread("A", false, false, low, addressed), pr: approvedPR(10 * time.Minute), want: ownThreadAuthorAnswered},
+		{name: "author replied, approved after the reply, note left on that head in another case", thread: typedRawThread("A", false, false, onHead("HEAD1"), addressed), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
+		{name: "author replied, approved after the reply, note left on that head", thread: typedRawThread("A", false, false, onHead("head1"), addressed), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
+		{name: "author replied, approved after the reply, note commit unknown", thread: typedRawThread("A", false, false, onHead(""), addressed), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
+		{name: "author replied, approved after the reply, head not confirmed", thread: typedRawThread("A", false, false, low, addressed), pr: ownThreadsPR{authorLogin: "author", authorType: "User", reviewAskedAt: ownReplyAt.Add(10 * time.Minute)}, want: ownThreadAnswered},
+		{name: "author replied, no evidence", thread: typedRawThread("A", false, false, low, addressed), pr: ownAuthorPR, want: ownThreadAnswered},
+		{name: "author replied, approved before the reply", thread: typedRawThread("A", false, false, low, addressed), pr: approvedPR(-10 * time.Minute), want: ownThreadAnswered},
+		{name: "author replied, approved at the reply's time", thread: typedRawThread("A", false, false, low, addressed), pr: approvedPR(0), want: ownThreadAnswered},
+		{name: "author replied twice, approved between", thread: typedRawThread("A", false, false, low, addressed, authorReply("one more question", time.Hour)), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
+		{name: "author reply with no time, approved", thread: typedRawThread("A", false, false, low, gqlComment{Author: "author", AuthorType: "User", Body: "done"}), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
+		{name: "author replied on a blocking finding", thread: typedRawThread("A", false, true, own(ownMarked("x is nil here", "high")), addressed), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
+		{name: "author replied on a security note", thread: typedRawThread("A", false, true, own(ownMarked(ownBodyStyleInfo, reviewFindingSeveritySecurity)), addressed), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
+		{name: "author replied, block_at P3", thread: typedRawThread("A", false, true, low, addressed), blockAt: "P3", pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
+		{name: "another account replied, outdated and approved", thread: typedRawThread("A", false, true, low, stranger), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
+		{name: "author then another account", thread: typedRawThread("A", false, true, low, addressed, stranger), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
+		{name: "another account then the author", thread: typedRawThread("A", false, true, low, stranger, authorReply("done", time.Hour)), pr: approvedPR(2 * time.Hour), want: ownThreadAnswered},
+		{name: "a bot named like the author", thread: typedRawThread("A", false, true, low, gqlComment{Author: "author", AuthorType: "Bot", Body: "done"}), pr: ownAuthorPR, want: ownThreadAnswered},
+		{name: "author reply with no actor type", thread: typedRawThread("A", false, true, low, gqlComment{Author: "author", Body: "done"}), pr: ownThreadsPR{authorLogin: "author"}, want: ownThreadAnswered},
+		// A reply drafted in a pending review counts from when it was
+		// published, not from when it was written.
+		{name: "author reply published after the approve, written before it", thread: typedRawThread("A", false, false, low, drafted), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
+		{name: "author reply published before the approve", thread: typedRawThread("A", false, false, low, drafted), pr: approvedPR(2 * time.Hour), want: ownThreadAuthorAnswered},
+		// More comments than were read: a later reply may be anyone's.
+		{name: "own note, more comments than read", thread: truncated(typedRawThread("A", false, false, low, own("done")), 51), want: ownThreadAnswered},
+		{name: "author replied, outdated, more comments than read", thread: truncated(typedRawThread("A", false, true, low, addressed), 3), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
+		{name: "author replied, outdated, every comment read", thread: truncated(typedRawThread("A", false, true, low, addressed), 2), pr: ownAuthorPR, want: ownThreadAuthorAnswered},
+		{name: "person's thread, more comments than read", thread: truncated(typedRawThread("A", false, false, gqlComment{Author: "maintainer", AuthorType: "User", Body: "Nit: rename this."}), 51), want: ownThreadOther},
+		// A deleted author has no login: it is never the PR's author, even
+		// when the PR's author is unnamed too.
+		{name: "deleted author replied, PR author unnamed, no types", thread: typedRawThread("A", false, true, low, ghost("")), pr: ownThreadsPR{}, want: ownThreadAnswered},
+		{name: "deleted author replied, PR author unnamed, same type", thread: typedRawThread("A", false, true, low, ghost("User")), pr: ownThreadsPR{authorType: "User"}, want: ownThreadAnswered},
+		// A PR the hive's App opened: its replies are the hive's own, so the
+		// thread stays plainly non-blocking and needs no signal.
+		{name: "hive-authored PR, the hive replied, not outdated", thread: typedRawThread("A", false, false, low, own("Addressed in 0bb2918.")), pr: ownThreadsPR{authorLogin: "hive", authorType: "Bot"}, want: ownThreadNonBlocking},
+		{name: "person's thread the author replied in", thread: typedRawThread("A", false, true, gqlComment{Author: "maintainer", AuthorType: "User", Body: "Nit: rename this."}, addressed), pr: approvedPR(10 * time.Minute), want: ownThreadOther},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := classifyOwnReviewThread(tc.thread, c.isOwnThreadAuthor, tc.blockAt); got != tc.want {
+			if got := classifyOwnReviewThread(tc.thread, c.isOwnThreadAuthor, tc.blockAt, tc.pr); got != tc.want {
 				t.Fatalf("class = %v, want %v", got, tc.want)
 			}
 		})
@@ -110,7 +202,7 @@ func TestClassifyOwnReviewThread(t *testing.T) {
 	// No App identity: nothing is the hive's own.
 	noApp := testClient(t, "http://unused.invalid")
 	noApp.SetHiveIdentity(HiveIdentity{AIAuthor: "operator"})
-	if got := classifyOwnReviewThread(typedRawThread("A", false, false, gqlComment{Author: "operator", AuthorType: "User", Body: ownBodyStyleInfo}), noApp.isOwnThreadAuthor, ""); got != ownThreadOther {
+	if got := classifyOwnReviewThread(typedRawThread("A", false, false, gqlComment{Author: "operator", AuthorType: "User", Body: ownBodyStyleInfo}), noApp.isOwnThreadAuthor, "", ownThreadsPR{}); got != ownThreadOther {
 		t.Fatalf("without an App login: class = %v, want other", got)
 	}
 }
@@ -177,7 +269,7 @@ func TestResolveOwnReviewThreadsForMerge_AllOwn(t *testing.T) {
 		&gqlThread{ID: "T-done", Resolved: true, Comments: []gqlComment{{Author: "maintainer", AuthorType: "User", Body: "blocking"}}},
 	)
 	c := ownThreadsClient(t, m)
-	out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9)
+	out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9, OwnThreadsEvidence{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +292,7 @@ func TestResolveOwnReviewThreadsForMerge_OnlyOutdatedOwnNote(t *testing.T) {
 		&gqlThread{ID: "T-done", Resolved: true, Comments: []gqlComment{{Author: "maintainer", AuthorType: "User", Body: "Nit: rename."}}},
 	)
 	c := ownThreadsClient(t, m)
-	out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9)
+	out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9, OwnThreadsEvidence{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +333,7 @@ func TestResolveOwnReviewThreadsForMerge_LeavesOthersAlone(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			m := ownThreadsMock(ownNote(), tc.other)
 			c := ownThreadsClient(t, m)
-			out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9)
+			out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9, OwnThreadsEvidence{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -252,11 +344,163 @@ func TestResolveOwnReviewThreadsForMerge_LeavesOthersAlone(t *testing.T) {
 	}
 }
 
+// ownAuthorPRThread is the hive's own note, left on head0, with replies, on
+// a pull request by the User "author" whose head is now "head1".
+func ownAuthorPRThread(id string, outdated bool, note string, replies ...gqlComment) *gqlThread {
+	comments := append([]gqlComment{{Author: "hive", AuthorType: "Bot", Body: note, Commit: "head0"}}, replies...)
+	return &gqlThread{ID: id, Outdated: outdated, Comments: comments, PRAuthor: "author", PRAuthorType: "User", HeadSHA: "head1"}
+}
+
+// collectOwnThreadAudits returns every audit entry c writes from here on.
+func collectOwnThreadAudits(c *Client) *[]string {
+	var mu sync.Mutex
+	audits := &[]string{}
+	c.SetAttributionAudit(func(action, detail, agent string) {
+		mu.Lock()
+		defer mu.Unlock()
+		*audits = append(*audits, action+" "+detail)
+	})
+	return audits
+}
+
+// The PR this rule comes from: the only open thread is the hive's own
+// outdated low note, the PR's author answered it "Addressed in <sha>" after
+// pushing the fix, and the hive's review of that head approves. The reply
+// used to leave the thread for a person (own_answered 1, parked at 085). It
+// is now resolved, counted as own_author_answered, and audited with the
+// rule that admitted it.
+func TestResolveOwnReviewThreadsForMerge_AuthorRepliedAndNoteActedOn(t *testing.T) {
+	low := ownMarked("**docs-currency (low):** the header still names 6.0.3.", "low")
+	addressed := authorReply("Addressed in 0bb2918: the header names the new version.", 0)
+	approved := OwnThreadsEvidence{HeadSHA: "head1", HeadReviewAskedAt: ownReplyAt.Add(10 * time.Minute)}
+	for _, tc := range []struct {
+		name     string
+		thread   *gqlThread
+		evidence OwnThreadsEvidence
+	}{
+		{"outdated, head approved", ownAuthorPRThread("T-low", true, low, addressed), approved},
+		{"outdated, no verdict known", ownAuthorPRThread("T-low", true, low, addressed), OwnThreadsEvidence{}},
+		{"outdated, approve is older than the reply", ownAuthorPRThread("T-low", true, low, addressed), OwnThreadsEvidence{HeadSHA: "head1", HeadReviewAskedAt: ownReplyAt.Add(-time.Hour)}},
+		{"not outdated, head approved after the reply", ownAuthorPRThread("T-low", false, low, addressed), approved},
+		{"not outdated, head approved, head spelled in another case", ownAuthorPRThread("T-low", false, low, addressed), OwnThreadsEvidence{HeadSHA: " HEAD1 ", HeadReviewAskedAt: approved.HeadReviewAskedAt}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := ownThreadsMock(tc.thread)
+			c := ownThreadsClient(t, m)
+			audits := collectOwnThreadAudits(c)
+			out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9, tc.evidence)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !out.Cleared() || out.NeedsPerson() || out.Unresolved != 1 || out.Resolvable != 1 || out.Resolved != 1 || out.OwnAuthorAnswered != 1 || out.OwnAnswered != 0 || !slices.Equal(m.resolved, []string{"T-low"}) {
+				t.Fatalf("outcome = %+v resolved=%v, want the author-answered note resolved and counted", out, m.resolved)
+			}
+			if n := auditsWith(*audits, AuditActionPRReviewed, "state=thread_resolved", "thread=T-low", "trigger=merge-refused-unresolved-conversations", "rule="+ownThreadsAuthorReplyRule); n != 1 {
+				t.Fatalf("resolve audits naming the rule = %d, want 1: %q", n, *audits)
+			}
+		})
+	}
+}
+
+// What the author-reply rule does not cover stays as it was: nothing is
+// resolved, the thread counts as own_answered, and a person is needed.
+func TestResolveOwnReviewThreadsForMerge_AuthorReplyNotEnough(t *testing.T) {
+	low := ownMarked("**docs-currency (low):** the header still names 6.0.3.", "low")
+	addressed := authorReply("Addressed in 0bb2918: the header names the new version.", 0)
+	stranger := gqlComment{Author: "maintainer", AuthorType: "User", Body: "keep this open", CreatedAt: ownReplyAt.Add(time.Minute)}
+	approved := OwnThreadsEvidence{HeadSHA: "head1", HeadReviewAskedAt: ownReplyAt.Add(10 * time.Minute)}
+	// noteOn moves the note in th to the commit sha ("" is unknown).
+	noteOn := func(th *gqlThread, sha string) *gqlThread {
+		th.Comments[0].Commit = sha
+		return th
+	}
+	// drafted is the author's reply written inside a pending review at
+	// ownReplyAt and published an hour later, after the approve.
+	drafted := authorReply("Addressed in 0bb2918.", 0)
+	drafted.PublishedAt = ownReplyAt.Add(time.Hour)
+	// moreThanRead makes GitHub report 51 comments in th, more than the
+	// page the query reads.
+	moreThanRead := func(th *gqlThread) *gqlThread {
+		th.TotalComments = 51
+		return th
+	}
+	for _, tc := range []struct {
+		name     string
+		thread   *gqlThread
+		evidence OwnThreadsEvidence
+	}{
+		{"reply from another account", ownAuthorPRThread("T-x", true, low, stranger), approved},
+		{"not outdated, the approved head is the one the note is on", noteOn(ownAuthorPRThread("T-x", false, low, addressed), "head1"), approved},
+		{"not outdated, head approved, the note's commit is unknown", noteOn(ownAuthorPRThread("T-x", false, low, addressed), ""), approved},
+		{"author then another account", ownAuthorPRThread("T-x", true, low, addressed, stranger), approved},
+		{"not outdated, no verdict known", ownAuthorPRThread("T-x", false, low, addressed), OwnThreadsEvidence{}},
+		{"not outdated, head approved before the reply", ownAuthorPRThread("T-x", false, low, addressed), OwnThreadsEvidence{HeadSHA: "head1", HeadReviewAskedAt: ownReplyAt.Add(-time.Hour)}},
+		{"not outdated, reply written before the approve but published after it", ownAuthorPRThread("T-x", false, low, drafted), approved},
+		{"outdated, more comments than were read", moreThanRead(ownAuthorPRThread("T-x", true, low, addressed)), approved},
+		{"not outdated, the approve is for another head", ownAuthorPRThread("T-x", false, low, addressed), OwnThreadsEvidence{HeadSHA: "head0", HeadReviewAskedAt: approved.HeadReviewAskedAt}},
+		{"not outdated, approve with no head named", ownAuthorPRThread("T-x", false, low, addressed), OwnThreadsEvidence{HeadReviewAskedAt: approved.HeadReviewAskedAt}},
+		{"blocking finding the author answered", ownAuthorPRThread("T-x", true, ownMarked("x is nil here", "high"), addressed), approved},
+		{"unmatched comment the author answered", ownAuthorPRThread("T-x", true, ownMarked(ownBodyStyleInfo, reviewFindingSeverityUnmatched), addressed), approved},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := ownThreadsMock(tc.thread)
+			c := ownThreadsClient(t, m)
+			audits := collectOwnThreadAudits(c)
+			out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9, tc.evidence)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out.Resolved != 0 || out.Cleared() || !out.NeedsPerson() || out.Unresolved != 1 || out.OwnAnswered != 1 || out.OwnAuthorAnswered != 0 || out.Resolvable != 0 || len(m.resolved) != 0 || len(*audits) != 0 {
+				t.Fatalf("outcome = %+v resolved=%v audits=%q, want the thread left for a person as own_answered", out, m.resolved, *audits)
+			}
+		})
+	}
+}
+
+// The author-reply rule is one more kind of resolvable thread, under the
+// same all-or-nothing rule: beside the hive's plain note both are resolved
+// and only the answered one is counted and audited under the rule; beside a
+// person's thread nothing is resolved, and the count still says one thread
+// qualified.
+func TestResolveOwnReviewThreadsForMerge_AuthorReplyBesideOtherThreads(t *testing.T) {
+	low := ownMarked("rename", "low")
+	answered := func() *gqlThread {
+		return ownAuthorPRThread("T-answered", true, low, authorReply("Addressed in 0bb2918.", 0))
+	}
+
+	m := ownThreadsMock(answered(), &gqlThread{ID: "T-plain", Comments: []gqlComment{{Author: "hive", AuthorType: "Bot", Body: low}}})
+	c := ownThreadsClient(t, m)
+	audits := collectOwnThreadAudits(c)
+	out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9, OwnThreadsEvidence{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Cleared() || out.Resolvable != 2 || out.Resolved != 2 || out.OwnAuthorAnswered != 1 {
+		t.Fatalf("outcome = %+v, want both resolved and one counted under the author-reply rule", out)
+	}
+	if n := auditsWith(*audits, "state=thread_resolved", "rule="+ownThreadsAuthorReplyRule); n != 1 || auditsWith(*audits, "state=thread_resolved", "thread=T-answered", "rule="+ownThreadsAuthorReplyRule) != 1 {
+		t.Fatalf("audits naming the rule = %d, want only T-answered: %q", n, *audits)
+	}
+	if n := auditsWith(*audits, "state=thread_resolved"); n != 2 {
+		t.Fatalf("resolve audits = %d, want 2: %q", n, *audits)
+	}
+
+	m = ownThreadsMock(answered(), &gqlThread{ID: "T-person", Comments: []gqlComment{{Author: "maintainer", AuthorType: "User", Body: "Nit: rename."}}})
+	c = ownThreadsClient(t, m)
+	out, err = c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9, OwnThreadsEvidence{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Resolved != 0 || len(m.resolved) != 0 || !out.NeedsPerson() || out.Others != 1 || out.OwnAuthorAnswered != 1 || out.OwnAnswered != 0 || out.Skipped != "not-every-thread-resolvable" {
+		t.Fatalf("beside a person's thread: outcome = %+v resolved=%v, want nothing resolved", out, m.resolved)
+	}
+}
+
 func TestResolveOwnReviewThreadsPaused(t *testing.T) {
 	m := ownThreadsMock(&gqlThread{ID: "T-own", Comments: []gqlComment{{Author: "hive", AuthorType: "Bot", Body: ownBodyStyleInfo}}})
 	c := ownThreadsClient(t, m)
 	c.SetRepoPausedFunc(func(string) bool { return true })
-	if out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9); err != nil || out.Skipped != "paused" || m.queryCount() != 0 {
+	if out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9, OwnThreadsEvidence{}); err != nil || out.Skipped != "paused" || m.queryCount() != 0 {
 		t.Fatalf("paused: %+v %v queries=%d", out, err, m.queryCount())
 	}
 }
@@ -279,7 +523,7 @@ func TestResolveOwnReviewThreadsForMerge_BlockAtP3ResolvesNothing(t *testing.T) 
 		c.SetReviewBacklogRouting(func() ReviewBacklogRouting {
 			return ReviewBacklogRouting{Severity: config.ReviewSeverityConfig{BlockAt: blockAt}}
 		})
-		out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9)
+		out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9, OwnThreadsEvidence{})
 		if err != nil {
 			t.Fatal(err)
 		}

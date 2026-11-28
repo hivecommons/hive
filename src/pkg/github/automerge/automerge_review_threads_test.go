@@ -37,10 +37,13 @@ type threadResolverFake struct {
 	// clearOnResolve makes a Cleared outcome lift the enqueue refusal, as
 	// resolving the last open thread does on GitHub.
 	clearOnResolve bool
+	// evidence is what the engine passed on each call.
+	evidence []hgithub.OwnThreadsEvidence
 }
 
-func (f *threadResolverFake) ResolveOwnReviewThreadsForMerge(context.Context, string, int) (hgithub.OwnReviewThreadsOutcome, error) {
+func (f *threadResolverFake) ResolveOwnReviewThreadsForMerge(_ context.Context, _ string, _ int, evidence hgithub.OwnThreadsEvidence) (hgithub.OwnReviewThreadsOutcome, error) {
 	f.calls++
+	f.evidence = append(f.evidence, evidence)
 	if f.err == nil && f.clearOnResolve && f.outcome.Cleared() {
 		f.enqueueErr = nil
 	}
@@ -92,6 +95,99 @@ func TestNativeQueueUnresolvedConversationsResolvesOwnThreadsThenEnqueues(t *tes
 	reason, err = c.tryNativeQueue(context.Background(), pr, claim)
 	if err != nil || !strings.Contains(reason, "queued (position 2, AWAITING_CHECKS)") || r.enqueues != 2 {
 		t.Fatalf("second pass: reason=%q err=%v enqueues=%d, want the PR queued", reason, err, r.enqueues)
+	}
+}
+
+// The PR this rule comes from: the only open thread was the hive's own
+// outdated low note, answered by the PR's author with "Addressed in <sha>",
+// and the hive's review of the head approves. The client resolves it under
+// the author-reply rule (own_author_answered 1), the lane reports
+// review-threads-resolved and the next pass enqueues the same head. The
+// lane hands the client the head it tried to merge and when the hive's
+// review approved it, from the reviewer verdict for exactly that head. On
+// the old rule the reply made the thread own_answered and the PR parked at
+// 085 for a person.
+func TestNativeQueueUnresolvedConversationsAuthorAnsweredNoteResolvesThenEnqueues(t *testing.T) {
+	approvedAt := time.Date(2026, 11, 27, 17, 9, 0, 0, time.UTC)
+	c, r, pr, claim, _ := threadResolverEngine(hgithub.OwnReviewThreadsOutcome{Unresolved: 1, Resolvable: 1, OwnAuthorAnswered: 1, Resolved: 1})
+	r.enqueueErr = errConversationMustBeResolved
+	var asked []string
+	c.contributorLaneVerdict = func(repo string, number int, head string) ContributorLaneVerdict {
+		asked = append(asked, fmt.Sprintf("%s#%d@%s", repo, number, head))
+		return ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve", ReviewAskedAt: approvedAt}
+	}
+	reason, err := c.tryNativeQueue(context.Background(), pr, claim)
+	if err != nil || reason != autoMergeReasonReviewThreadsResolved {
+		t.Fatalf("first pass: reason=%q err=%v, want %q and no error", reason, err, autoMergeReasonReviewThreadsResolved)
+	}
+	if len(r.evidence) != 1 || r.evidence[0].HeadSHA != "sha7" || !r.evidence[0].HeadReviewAskedAt.Equal(approvedAt) {
+		t.Fatalf("evidence = %+v, want head sha7 approved at %s", r.evidence, approvedAt)
+	}
+	if want := []string{"acme/widget#7@sha7"}; fmt.Sprint(asked) != fmt.Sprint(want) {
+		t.Fatalf("verdict asked for %v, want %v", asked, want)
+	}
+	if got := c.knownUnresolvedThreads(claim.Repo, 7, "sha7"); got != "" {
+		t.Fatalf("a cleared refusal must not be remembered, got %q", got)
+	}
+	reason, err = c.tryNativeQueue(context.Background(), pr, claim)
+	if err != nil || !strings.Contains(reason, "queued (position 2, AWAITING_CHECKS)") || r.enqueues != 2 {
+		t.Fatalf("second pass: reason=%q err=%v enqueues=%d, want the PR queued", reason, err, r.enqueues)
+	}
+}
+
+// The evidence names an approval only when the reviewer verdict for the
+// head is an approve with a recorded time. Anything else names the head
+// alone, and the client then accepts only an outdated thread. Every merge
+// path that can be refused for conversations passes the same evidence: the
+// direct merge and the serialized lane here, the native queue above.
+func TestUnresolvedThreadsRefusalPassesHeadEvidence(t *testing.T) {
+	approvedAt := time.Date(2026, 11, 27, 17, 9, 0, 0, time.UTC)
+	refusal := unresolvedConversations405("Repository rule violations found\n\nAll comments must be resolved.")
+	for _, tc := range []struct {
+		name    string
+		verdict *ContributorLaneVerdict
+		want    time.Time
+	}{
+		{"approved", &ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve", ReviewAskedAt: approvedAt}, approvedAt},
+		{"approve carried with no time", &ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}, time.Time{}},
+		{"changes requested", &ContributorLaneVerdict{Configured: true, Verdict: "changes_requested", ReviewAskedAt: approvedAt}, time.Time{}},
+		{"no verdict reader", nil, time.Time{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := func() (*Engine, *threadResolverFake) {
+				c := newAutoMergeSweepClient("http://unused.invalid")
+				r := &threadResolverFake{nativeQueueFake: &nativeQueueFake{Transport: c.transport}, outcome: hgithub.OwnReviewThreadsOutcome{Unresolved: 1, OwnAnswered: 1}}
+				c.transport = r
+				c.contributorLaneVerdict = nil
+				if tc.verdict != nil {
+					v := *tc.verdict
+					c.contributorLaneVerdict = func(string, int, string) ContributorLaneVerdict { return v }
+				}
+				return c, r
+			}
+			check := func(path string, r *threadResolverFake) {
+				t.Helper()
+				if len(r.evidence) != 1 || r.evidence[0].HeadSHA != "sha7" || !r.evidence[0].HeadReviewAskedAt.Equal(tc.want) {
+					t.Fatalf("%s: evidence = %+v, want head sha7 approved at %s", path, r.evidence, tc.want)
+				}
+			}
+			c, r := engine()
+			attempt := mergeAttempt{owner: "acme", repo: "widget", base: "main", number: 7, head: "sha7", state: "blocked", method: "squash"}
+			if got := c.refusedMerge(context.Background(), attempt, refusal); got != autoMergeReasonUnresolvedReviewThreads {
+				t.Fatalf("refusedMerge = %q, want %q", got, autoMergeReasonUnresolvedReviewThreads)
+			}
+			check("direct merge", r)
+
+			c, r = engine()
+			gate := func(context.Context, hgithub.LaneMergeRequest) (hgithub.LaneMergeResult, error) {
+				return hgithub.LaneMergeResult{Outcome: hgithub.LaneOutcomeLeft, Reason: "merge refused by GitHub: " + refusal.Error(), MergeError: refusal}, nil
+			}
+			event := AutoMergeSweepEvent{Repo: "acme/widget", Number: 7, HeadSHA: "sha7"}
+			if _, reason, err := c.mergeThroughLane(context.Background(), gate, "acme", "widget", "main", hgithub.PRAuditPathSweep, "squash", event, nil); err != nil || reason != autoMergeReasonUnresolvedReviewThreads {
+				t.Fatalf("serialized lane: reason=%q err=%v, want %q", reason, err, autoMergeReasonUnresolvedReviewThreads)
+			}
+			check("serialized lane", r)
+		})
 	}
 }
 

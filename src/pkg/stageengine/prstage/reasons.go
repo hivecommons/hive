@@ -155,8 +155,10 @@ const (
 	// AutoMergeReasonUnresolvedReviewThreads: at least one unresolved
 	// thread is not one the hive may resolve itself (a person's or another
 	// bot's thread, a hive thread someone replied in, or a hive finding not
-	// marked non-blocking). A person resolves them; the lane tries again on
-	// a new head or after 30 minutes.
+	// marked non-blocking; the PR author's own reply stops counting once
+	// the commented lines change or a newer head is approved after it). A
+	// person resolves them; the lane tries again on a new head or after 30
+	// minutes.
 	AutoMergeReasonUnresolvedReviewThreads = "unresolved-review-threads"
 	// AutoMergeReasonReviewThreadsResolved: every unresolved thread was the
 	// hive's own, marked non-blocking, and the lane resolved them; the next

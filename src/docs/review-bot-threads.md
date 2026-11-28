@@ -300,6 +300,72 @@ only on a repository that requires conversation resolution:
 A reviewer's verdict never resolves anything by itself, and nothing else (a
 person's thread, a blocking finding) is ever resolved; see the limits below.
 
+**When the pull request's author replied.** A reply from anyone but the hive
+normally keeps one of the hive's notes open for a person (below). The pull
+request's author is the one exception. An author, or the agent working for
+them, often answers a note with "Addressed in `<sha>`" after pushing the fix,
+and that reply alone used to turn a note the hive would have resolved into
+one a person had to resolve by hand. The hive now resolves such a thread too
+when all of these hold:
+
+- the note is the hive's own and marked non-blocking, as for any other thread
+  it resolves;
+- every reply in it is from the pull request's author or from the hive. A
+  reply from any other person or bot keeps it open, whoever replied first.
+  So does a thread with more comments than the hive reads in one query
+  (50): a later reply it cannot see may be someone else's;
+- one of two signals holds. Either the thread is outdated (GitHub marks it
+  so when the lines the note is anchored on changed in a later push), or
+  the pull request has moved to a newer head than the one the note was left
+  on and the hive's own review of that newer head, asked for after the
+  author's last reply in the thread, approved it.
+
+With neither signal the author's reply keeps the thread open, as before: a
+person, or a later review of a new head, settles it. A blocking finding
+stays open however it was answered. On a pull request the hive's App opened
+itself, the author's replies are the hive's own and were never counted as
+someone else's, so nothing changes there.
+
+The hive never reads what the reply says. Once either signal holds, "I
+disagree" or a question is treated exactly like "Addressed": the signals
+show that the commented lines changed, or that the hive approved a newer
+head after the reply, not that the author agreed with the note. An author
+who wants to stop the merge uses a hold label or a draft pull request, not a
+reply in the hive's thread. On a pull request opened under a shared bot
+identity (a workflow's bot login, for example), any reply from that identity
+counts as the author's, whoever was behind it.
+
+The author is matched by GitHub account type and login (case does not
+matter), both read in the same query as the threads. The approval is the
+reviewer's recorded verdict for exactly the head the lane is merging or
+handing over, and it counts only while that is still the pull request's head
+when the threads are read. Its time is when the first of the reviews behind
+it was asked for, not when a report arrived or the verdict was collected: a
+review takes minutes, and a reply written while it ran would be older than
+the report although the reviewer never saw it. The rule is that every
+review behind the approve was asked for after the reply, so each reviewer
+read the pull request with the reply in it. A review with no dispatch time
+(an advisory one, for example) cannot show that, and the signal is then
+off. The two times come from different clocks, the hive host's and
+GitHub's: a reply published within their difference of the review being
+asked for can fall on the wrong side, which a reviewer starting seconds
+later still reads. A reply's time is when it was published (one drafted
+inside a pending review counts from when the review was submitted). The note must also have been left on an
+earlier head, so the review that left a note can never pass for an answer to
+the reply under it. A verdict with a perspective whose report time is not
+known gives no approval time. A
+person's `/hive decision`, or a lane that merges without a review, is not an
+approval here. Neither is a verdict the hive carried onto a new head without
+a review session (after a hive merge of the base, or across a trivial
+change): nobody read that head. A hive with no reviewer verdicts has only
+the outdated signal.
+
+Threads resolved under this rule are counted as `own_author_answered` in the
+lane's log lines, and their audit entries carry `rule=pr-author-replied`.
+There is no setting for it: it only ever resolves the hive's own
+non-blocking note, which the hive would have resolved had nobody replied,
+and `review.severity.block_at: P3` still turns all of it off.
+
 **Opting out.** There is no separate switch. A hive that wants none of its
 own threads resolved sets `review.severity.block_at: P3` (every finding
 blocks): then no hive thread is non-blocking, and every such refusal parks
@@ -323,9 +389,10 @@ handling, and on a merge-queue base it already reports
 
 **What the lane does with the refusal:**
 
-- every unresolved thread is the hive's own and marked non-blocking: it
-  resolves them all and reports `review-threads-resolved`
-  (`100-merge-queue`); the next pass merges or enqueues the same head;
+- every unresolved thread is the hive's own and marked non-blocking (a
+  thread the author replied in counts under the rule above): it resolves
+  them all and reports `review-threads-resolved` (`100-merge-queue`); the
+  next pass merges or enqueues the same head;
 - any thread only a person can clear is open (below): it resolves nothing,
   parks the PR at `085-needs-decision` with `unresolved-review-threads`, and
   does not ask GitHub again for that head for 30 minutes (or until a new
@@ -341,6 +408,14 @@ handling, and on a merge-queue base it already reports
   between stages. While waiting, `review-threads-pending` is not a ready
   merge-train front: the train merges the PRs behind it.
 
+The lane logs each refusal it could not clear as `automerge: unresolved
+review threads hold the merge` with the counts: `unresolved`, `others`
+(another author's threads), `own_answered` (the hive's threads someone
+replied in that it may not resolve), `own_blocking`, `own_author_answered`
+(threads that qualified under the author-reply rule) and `resolved`. A
+cleared refusal is logged as `automerge resolved the hive's own review
+threads` with `resolved` and `own_author_answered`.
+
 See [stage-labels.md](labels-and-control-signals/stage-labels.md).
 
 **Which threads are the hive's own.** The thread's first comment is from a
@@ -354,7 +429,9 @@ count, because it can be a person's own account. A hive with no App identity
 - a thread a person or another bot opened (including a configured review bot:
   those stay with the reconciler above);
 - a hive thread anyone other than the hive has replied in: the conversation
-  is that person's too;
+  is that person's too. The one exception is a thread whose only other
+  replies are the pull request author's, once one of the two signals above
+  holds;
 - a hive finding that is not marked non-blocking, outdated or not. An
   outdated thread is not resolved for being outdated: some lanes merge with
   no approving review at all (the trusted-bot lane while
@@ -393,7 +470,8 @@ finding against the rule above; anything else is blocking.
 
 Each resolution is audited as `agent_pr_reviewed` with `state=thread_resolved`,
 `thread=<id>` and `trigger=merge-refused-unresolved-conversations` (or
-`trigger=ready-for-human-merge` at a person's merge, below).
+`trigger=ready-for-human-merge` at a person's merge, below). A thread
+resolved under the author-reply rule also carries `rule=pr-author-replied`.
 
 **Known limit.** The hive does not remember threads a person resolved and
 then re-opened. A person who unresolves one of the hive's non-blocking notes
@@ -402,7 +480,9 @@ refused merge, and, at `090-ready-for-human-merge`, on the next new head or
 after the hive restarts (the once-per-head mark is kept in memory). It is
 not replied in again there: the hive's earlier reply is still in the thread.
 Replying in the thread is what keeps it open: a hive thread with anyone
-else's reply is never resolved.
+else's reply is never resolved. For the pull request's author that holds
+until the commented lines change or the hive's review approves a newer head
+after the reply; a reply from anyone else keeps it open for good.
 
 ### At a person's merge
 
@@ -428,7 +508,9 @@ nothing):
   since they are useful reading. Cannot be read: nothing is resolved, the
   hive logs it once per cache fill, and a later pass asks again;
 - when it is required and every unresolved thread is the hive's own and
-  marked non-blocking, it replies once in each of those threads to say the
+  marked non-blocking (a thread the author replied in counts under the same
+  rule and evidence as on the merge paths, for the head being handed over),
+  it replies once in each of those threads to say the
   hive is resolving its own non-blocking note so the branch rule does not
   block the person's merge, then resolves it (a reply that fails does not
   stop the resolve, and a thread that already carries the reply gets no
