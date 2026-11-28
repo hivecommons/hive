@@ -13,6 +13,20 @@ records (`repo`, `pr`, `adopted_into_pr`, `reason`, `at`). The Contributors tile
 shows a nonzero count with the five most recent records in its tooltip.
 See [Abandoned contributor PRs](../operator-reference.md#abandoned-contributor-prs)
 for counting semantics.
+`GET /api/contributors` also lists, in each profile's `repo_push_holds`, the
+repositories that contributor is not offered tasks from right now because
+their agent could not push to their fork (`repo`, `reason`, `count`, `held_at`,
+`until`). A hold belongs to the contributor account, so every relay session of
+that contributor shares it. The field is absent when there is no active hold.
+See
+[Held: that repository, for that contributor](../contributor-relay.md#a-blocked-verdict-is-held-for-the-full-cooldown-and-marked-on-the-issue).
+`quota_holds` on the same profiles lists the holds that keep a contributor from
+being offered any task because their provider account is out of quota, one per
+relay session (`reason`, `count`, `held_at`, `until`, `reset_stated` when
+`until` is the reset time the provider gave, and `session` when the relay named
+one). The field is
+absent when there is no active hold. See
+[The hub holds a contributor whose provider is out of quota](../contributor-relay.md#the-hub-holds-a-contributor-whose-provider-is-out-of-quota).
 
 ## Endpoints
 

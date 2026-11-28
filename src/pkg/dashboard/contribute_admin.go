@@ -73,13 +73,17 @@ func (s *Server) handleContributorsList(w http.ResponseWriter, r *http.Request) 
 	}
 	var liveStates map[string]ContributorLiveState
 	var heartbeats map[string]time.Time
+	var pushHolds map[string][]ContributorRepoPushHoldView
+	var quotaHolds map[string][]ContributorQuotaHoldView
 	window := config.DefaultPresenceWindow
+	now := time.Now()
 	if s.contributeHub != nil {
 		liveStates = s.contributeHub.LiveStates()
 		heartbeats = s.contributeHub.LastHeartbeats()
 		window = s.contributeHub.presenceWindow()
+		pushHolds = s.contributeHub.RepoPushHolds(now)
+		quotaHolds = s.contributeHub.QuotaHolds(now)
 	}
-	now := time.Now()
 	for i := range profiles {
 		profiles[i].Online = countOnlineContributors(profiles[i:i+1], heartbeats, window, now) == 1
 		policy := s.contributorTokenPolicy()
@@ -97,6 +101,8 @@ func (s *Server) handleContributorsList(w http.ResponseWriter, r *http.Request) 
 			profiles[i].ActiveTasks = ls.Tasks
 			profiles[i].Sessions = ls.Sessions
 		}
+		profiles[i].RepoPushHolds = pushHolds[profiles[i].ContributorID]
+		profiles[i].QuotaHolds = quotaHolds[profiles[i].ContributorID]
 	}
 	jsonResponse(w, map[string]any{
 		"contributors":    profiles,

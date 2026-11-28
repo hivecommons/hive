@@ -225,6 +225,12 @@ func TestBlockedVerdictToolingFailure_WireShape(t *testing.T) {
 		Verdict:          "no_work_needed", VerdictBlocked: true,
 		VerdictReason: toolingBlockedReason,
 	})
+	// The reason says the push to the contributor's fork was rejected, so the
+	// hub also holds the repository back from this contributor and says so
+	// (contribute_repo_push_hold.go).
+	if notice := readMsg(t, conn); notice.Type != "notice" || !strings.Contains(notice.Message, assign.Repo) {
+		t.Fatalf("a fork push failure must be answered with the push hold notice, got %+v", notice)
+	}
 	// The booking is synchronous in the read loop; the reply to a later
 	// `ready` is the happens-before edge (see TestBlockedVerdict_WireShape).
 	conn.WriteJSON(WSMessage{Type: "ready", Seq: 3})
@@ -257,14 +263,23 @@ func TestBlockedVerdictToolingFailure_WireShape(t *testing.T) {
 	}
 
 	// Once that short cooldown lapses the issue is offered again — the whole
-	// point: another contributor with working tooling can take it.
+	// point: another contributor with working tooling can take it. The
+	// contributor whose push failed is not handed the repository back while
+	// their push hold stands.
 	hub.completedMu.Lock()
 	hub.completedTasks[key] = time.Now().Add(-(hub.completedTaskCooldown[key] + time.Minute))
 	hub.completedMu.Unlock()
 	conn.WriteJSON(WSMessage{Type: "ready", Seq: 4})
-	again := readMsg(t, conn)
-	if again.Type != "task_assign" || again.Number != 11776 {
-		t.Fatalf("issue must be re-offered after the short cooldown, got %+v", again)
+	if same := readMsg(t, conn); same.Type != "task_unavailable" || same.Reason != taskUnavailableNoMatchingWork {
+		t.Fatalf("the contributor who could not push must not be handed the repository again, got %+v", same)
+	}
+	other := &ContributorConnection{
+		profile:  &ContributorProfile{GitHubUsername: "working-tooling", ContributorID: "c-working-tooling", TrustTier: "newcomer"},
+		lastPong: time.Now(),
+	}
+	again := hub.selectTask(other)
+	if again == nil || again.Type != "task_assign" || again.Number != 11776 {
+		t.Fatalf("issue must be re-offered to another contributor after the short cooldown, got %+v", again)
 	}
 }
 

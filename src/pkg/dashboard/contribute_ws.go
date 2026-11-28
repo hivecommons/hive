@@ -1341,6 +1341,14 @@ type ContributeWSHub struct {
 	// contributorFlapState counts disconnect releases per issue for the
 	// contributor flap cool-off (hivecommons/hive#13579, contribute_flap.go).
 	contributorFlapState
+	// contributorRepoPushHoldState holds, per contributor identity and
+	// repository, the push hold booked when a task ended because the
+	// contributor could not push to their fork (contribute_repo_push_hold.go).
+	contributorRepoPushHoldState
+	// contributorQuotaHoldState holds, per contributor identity, the hold
+	// booked when a task failed because the contributor's provider account
+	// is out of quota (contribute_quota_hold.go).
+	contributorQuotaHoldState
 	// leases is the hub-owned, server-authoritative registry of the task the hub
 	// ISSUED to each contributor identity (hivecommons/hive C4). It is keyed by
 	// identity (identityOf: ContributorID, falling back to GitHubUsername) and holds
@@ -1446,6 +1454,8 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub.loadNoPRStreaks()
 	hub.loadNoWorkVerdicts()
 	hub.loadIdleCompletions()
+	hub.loadContributorRepoPushHolds()
+	hub.loadContributorQuotaHolds()
 	hub.loadAuthorReplyReleases()
 	hub.loadUnverifiedAlreadyDoneCleanups()
 	hub.loadStandbyOutcomes()
@@ -3397,6 +3407,14 @@ func (s *wsSession) handleQuotaHold(msg WSMessage) {
 			"held", held,
 			"reason", reason)
 	}
+	// The relay's report and the hub's own quota hold do not fight
+	// (contribute_quota_hold.go): while either says held the contributor is
+	// held. A relay that says its hold is over ends a hub hold whose length
+	// the hub only guessed; one carrying the provider's stated reset stands.
+	if changed && !held && s.h.releaseGuessedContributorQuotaHold(identityOf(s.contributor), time.Now()) {
+		s.h.logger.Info("[contribute-ws] "+contributorQuotaHoldReason+" ended: the relay reported its own quota hold released",
+			"username", contributorUsername(s.contributor))
+	}
 }
 
 // handleBusyElsewhere records the relay's report that it has started or
@@ -4839,6 +4857,18 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				// author-reply release can tell a question this task
 				// asked from an older one (contribute_author_reply.go).
 				h.stampIdleCompletionTaskStart(completedTask.identityKey(), runStart)
+				// A verified pull request proves this contributor can push
+				// to their fork of the repository: forget any push hold and
+				// its count. A no-PR idle whose reason says the push to the
+				// fork was rejected books one instead, so the contributor is
+				// not handed that repository again until it lapses
+				// (contribute_repo_push_hold.go).
+				switch {
+				case verifiedPR != "":
+					h.clearContributorRepoPushHold(contributorFlapIdentity(s.contributor), completedTask.Repo)
+				case verdict == completionVerdictIdle:
+					h.holdRepoIfForkPushFailed(s.contributor, completedTask, verdictReason)
+				}
 				// #7871: a no_work_needed reason usually names WHAT settled
 				// the issue. Verify the citation against GitHub and, if it
 				// holds, record it in the claim ledger so the issue is
@@ -4971,6 +5001,14 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			promotedModel := s.contributor.model
 			promotedEffort := s.contributor.reasoningEffort
 			countCompletion := !isEvidenceLessCompletion(verifiedPR, verdict, msg.CompletionSignal)
+			// A completion with evidence behind it also proves the provider
+			// account answers: forget any quota hold and its count
+			// (contribute_quota_hold.go). An evidence-less one does not: a
+			// CLI that printed its quota refusal and went back to an idle
+			// prompt is exactly the chrome-idle shape.
+			if countCompletion {
+				h.clearContributorQuotaHold(identityOf(s.contributor))
+			}
 			var promotion ContributorTierChange
 			promotedUser, promoted, saveErr := saveConnectionContributorProfile(s.contributor, func(p *ContributorProfile) bool {
 				if countCompletion {
@@ -5115,7 +5153,25 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 			if failedTask != nil {
 				h.revokeLease(identityOf(s.contributor), failedTask.TaskID)
 			}
-			if failedTask != nil {
+			// A failure that is the provider saying this contributor's
+			// account is out of quota says nothing about the issue: the
+			// contributor is held out of all work until the quota is back
+			// (contribute_quota_hold.go). The issue gets the release
+			// cooldown, the stamp for "let go, not failed": the same ten
+			// minutes, but no step toward quarantine and no reclaim
+			// cooldown, so it is offered to others once the window passes
+			// however many contributors ran out of quota on it. The ten
+			// minutes are kept so a queue of relays that are all out of
+			// quota cannot pass one issue around every scan; the quota hold
+			// always lasts five minutes longer than that.
+			quotaExhausted := isProviderQuotaExhaustion(msg.Reason)
+			if quotaExhausted {
+				h.holdContributorForQuota(s.contributor, failedTask, msg.Reason)
+				if failedTask != nil {
+					h.bookReleaseCooldownKey(failedTask.identityKey())
+				}
+			}
+			if failedTask != nil && !quotaExhausted {
 				// #2435: record a short failure cooldown (and advance the
 				// consecutive-failure/quarantine counter) so a just-failed
 				// issue is not immediately re-admissible and handed straight
@@ -5127,14 +5183,26 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 				// whose environment cannot run the task stops re-taking
 				// it (and flapping its claim) while others may still try.
 				h.bookReclaimCooldown(identityOf(s.contributor), failedTask.identityKey())
+				// A failure whose reason says the push to the contributor's
+				// fork was rejected holds the whole repository back from
+				// this contributor, not only this issue: every other issue
+				// there would fail the same way (contribute_repo_push_hold.go).
+				// The issue's own cooldown above is unchanged.
+				h.holdRepoIfForkPushFailed(s.contributor, failedTask, msg.Reason)
 			}
 			// #2547: keep the failure reason instead of only logging it, so an
 			// operator can tell a work item that failed on its merits from one
 			// that landed on a client whose environment could not run it. The
-			// kind is self-reported and advisory — recorded and displayed, never
-			// acted on. Note this is stored AFTER recordTaskFailure above and
-			// deliberately does not influence it: the cooldown must not depend
-			// on a client-controlled value (that is ROUTE, still undecided).
+			// KIND is self-reported and advisory — recorded and displayed, never
+			// acted on, and stored after the booking above so it cannot
+			// influence it. The REASON text is acted on above in exactly two
+			// cases, each of which can only cost the relay that sent it: a
+			// fork push failure holds that contributor out of one repository,
+			// and a provider-quota refusal holds that contributor out of all
+			// work for at least fifteen minutes and swaps the issue's failure
+			// booking for the release cooldown. A relay cannot use either to
+			// keep an issue hot: wording a failure as quota takes the sender
+			// out of the queue, and the issue still waits its ten minutes.
 			failureKind := NormalizeTaskFailureKind(msg.FailureKind)
 			s.contributor.mu.Lock()
 			s.contributor.lastFailure = &ContributorFailure{
@@ -5211,7 +5279,12 @@ func (s *wsSession) handleTaskFailed(msg WSMessage) {
 			// is not counted). Separate from the per-issue cooldown above:
 			// same failure, two ledgers, two questions ("is this issue
 			// poisoned?" vs "is this contributor's runtime dying?").
-			if !taskAssignedAt.IsZero() {
+			// A provider-quota failure is not counted: the quota hold
+			// replaces the streak's pause, and the streak is cleared so its
+			// ten minutes never stack on the hold.
+			if quotaExhausted {
+				h.resetContributorFailureStreak(identityOf(s.contributor))
+			} else if !taskAssignedAt.IsZero() {
 				h.recordContributorFastFailure(identityOf(s.contributor), time.Since(taskAssignedAt), msg.Reason)
 			}
 			failedAt := time.Now().UTC().Format(time.RFC3339)

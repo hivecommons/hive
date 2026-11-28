@@ -293,6 +293,39 @@
       return `<span class="contrib-abandoned" title="${esc(tooltip)}">Abandoned ${count}</span>`;
     }
 
+    // The repositories this contributor is not offered tasks from right now,
+    // because their agent could not push to their fork there (repo_push_holds
+    // on GET /api/contributors). One row per hold; the reported reason and the
+    // fix are in the tooltip.
+    function contributorPushHolds(c) {
+      const holds = Array.isArray(c.repo_push_holds) ? c.repo_push_holds : [];
+      return holds.map(h => {
+        const until = h.until ? formatDashboardDateTime(h.until, undefined, h.until) : 'it is lifted';
+        const count = Number(h.count) || 0;
+        const tooltip = (h.reason ? 'Reported: ' + h.reason + '\n' : '') +
+          'Not offered tasks from this repository until the hold ends: the agent could not push to the fork. ' +
+          'The contributor fixes it by syncing the fork (Sync fork on the fork\'s GitHub page) or by giving the token the workflow scope: gh auth refresh -h github.com -s workflow';
+        return `<div class="contrib-push-hold" title="${esc(tooltip)}">Push hold: ${esc(String(h.repo || ''))} until ${esc(String(until))}${count > 1 ? ' (hold ' + count + ')' : ''}</div>`;
+      }).join('');
+    }
+
+    // The holds that keep this contributor from being offered any task right
+    // now because their provider account is out of quota (quota_holds on
+    // GET /api/contributors), one row per relay session; the reported reason
+    // is in the tooltip.
+    function contributorQuotaHolds(c) {
+      const holds = Array.isArray(c.quota_holds) ? c.quota_holds : [];
+      return holds.map(h => {
+        const until = h.until ? formatDashboardDateTime(h.until, undefined, h.until) : 'it is lifted';
+        const count = Number(h.count) || 0;
+        const tooltip = (h.reason ? 'Reported: ' + h.reason + '\n' : '') +
+          'Not offered any task until then: the provider says the account is out of quota. ' +
+          (h.reset_stated ? 'The time is the reset the provider gave. ' : 'The provider gave no reset time the hive could read, so this is when the hive tries again. ') +
+          'A task that completes with something to show for it lifts the hold. Tasks that failed this way were not counted as failures of their issues.';
+        return `<div class="contrib-quota-hold" title="${esc(tooltip)}">Out of provider quota until ${esc(String(until))}${count > 1 ? ' (hold ' + count + ')' : ''}${h.session ? ' · session ' + esc(String(h.session)) : ''}</div>`;
+      }).join('');
+    }
+
     function renderContributors(contributors) {
       refreshSectionCardShell('contributors-section');
       setSectionSummary('contributors-section', contributorsSectionSummary(contributors, null));
@@ -371,6 +404,8 @@
               ${contributorAbandonedBadge(c)}
               <span>Failed: <strong style="color:${(c.total_tasks_failed || 0) > 0 ? 'var(--red)' : 'var(--fg)'}">${c.total_tasks_failed || 0}</strong></span>
             </div>
+            ${contributorQuotaHolds(c)}
+            ${contributorPushHolds(c)}
             ${(c.active_tasks && c.active_tasks.length > 0) ? '<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Current tasks</div>' + c.active_tasks.map(t => `<div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--sp-2);padding:6px 10px;background:rgba(56,139,253,0.08);border:1px solid rgba(56,139,253,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-info">${esc(t.kind)}</span> <a href="https://github.com/${esc(t.repo)}/issues/${t.number}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:underline;font-weight:600">${esc(t.repo)}#${t.number} ↗</a> — ${esc(t.title)}</div>`).join('') : (c.current_task ? `<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Current task</div><div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px;padding:8px 10px;background:rgba(56,139,253,0.08);border:1px solid rgba(56,139,253,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-info">${esc(c.current_task.kind)}</span> <a href="https://github.com/${esc(c.current_task.repo)}/issues/${c.current_task.number}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:underline;font-weight:600">${esc(c.current_task.repo)}#${c.current_task.number} ↗</a> — ${esc(c.current_task.title)}</div>` : (c.last_completed_task ? `<div style="font-size:0.65rem;color:var(--muted);margin-bottom:var(--sp-1);font-weight:600">Last completed</div><div style="font-size:var(--fs-sm);color:var(--muted);margin-bottom:10px;padding:6px 10px;background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:var(--r-sm);word-wrap:break-word;overflow-wrap:break-word"><span class="text-success">${esc(c.last_completed_task.kind)}</span> <a href="https://github.com/${esc(c.last_completed_task.repo)}/issues/${c.last_completed_task.number}" target="_blank" rel="noopener" style="color:var(--green);text-decoration:underline">${esc(c.last_completed_task.repo)}#${c.last_completed_task.number} ↗</a> — ${esc(c.last_completed_task.title)}</div>` : (c.active ? '<div style="font-size:var(--fs-sm);color:var(--green);margin-bottom:10px">Idle — waiting for task</div>' : '')))}
             ${c.sessions > 1 ? `<div style="font-size:0.7rem;color:var(--muted);margin-bottom:var(--sp-3)">${c.sessions} active sessions</div>` : ''}
             <div style="display:flex;gap:var(--sp-4);align-items:center;font-size:var(--fs-sm)">

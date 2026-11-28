@@ -695,6 +695,29 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		return h.taskUnavailable(taskUnavailableDailyLimit)
 	}
 
+	// A contributor whose provider account is out of quota is offered nothing
+	// until the quota is back (contribute_quota_hold.go). Checked after the
+	// operator gates and before the candidate scan, like the streak below,
+	// which it replaces for this kind of failure. The wire reason stays
+	// no_matching_work, so an existing relay backs off and prints the message
+	// at its slow cadence instead of a raw reason code every 30 seconds.
+	// Logged once per hold, not on every ready, and at Info: the refusal is
+	// the hold working as designed.
+	if hold, held, first := h.contributorQuotaHoldSkip(identityOf(c), time.Now()); held {
+		if first {
+			h.logger.Info("[contribute-ws] refusing task: "+contributorQuotaHoldReason,
+				"username", identityOf(c),
+				"hold_count", hold.Count,
+				"held_until", hold.Until.UTC().Format(time.RFC3339),
+				"reset_stated", hold.ResetStated)
+			h.recordDecision(decisionUsername(c), decisionRefused, "", "", 0,
+				contributorQuotaHoldReason+": provider quota exhausted, held until "+hold.Until.UTC().Format(time.RFC3339))
+		}
+		msg := h.taskUnavailable(taskUnavailableNoMatchingWork)
+		msg.Message = contributorQuotaHoldNotice(hold)
+		return msg
+	}
+
 	// #6450: pause claims for an identity whose recent assignments all died
 	// within seconds — a dying agent runtime. Checked after the operator gates
 	// (which are policy and must win the log/refusal narrative) and before the
@@ -829,6 +852,9 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 	var candidates []candidate
 	capabilityMismatchSeen := false
 	unmintableRepoSeen := false
+	// The repositories skipped below because this contributor cannot push to
+	// their fork of them (contribute_repo_push_hold.go).
+	var pushHeldRepos []contributorRepoPushHold
 	// #12805: the connection's acknowledged repository scope. Nil / mode "all"
 	// leaves selection exactly as before; "selected" skips every repo outside
 	// it here, before any lease or mint, so out-of-scope work stays available
@@ -862,6 +888,22 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			// would fail the same way; skip the whole repo until the cooldown lapses.
 			h.logger.Info("[contribute-ws] skip: repo excluded after a repo-scoped token mint failure",
 				"repo", repo.Full, "items", len(repo.ActionableIssues))
+			continue
+		}
+		// This contributor's last task in the repository ended because the
+		// push to their fork was rejected, and the hold booked for it still
+		// stands: every issue here would end the same way for them, so the
+		// whole repository is skipped. Only for this contributor (every
+		// session of the account): other contributors scan it as usual, and
+		// nothing is booked against its issues. Logged once per hold, not on
+		// every scan.
+		if hold, held, first := h.contributorRepoPushHoldSkip(contributorFlapIdentity(c), repo.Full, time.Now()); held {
+			pushHeldRepos = append(pushHeldRepos, hold)
+			if first {
+				h.logger.Info("[contribute-ws] skip: "+contributorRepoPushHoldReason,
+					"username", decisionUsername(c), "repo", repo.Full, "items", len(repo.ActionableIssues),
+					"hold_count", hold.Count, "held_until", hold.Until.UTC().Format(time.RFC3339))
+			}
 			continue
 		}
 		forEachActionableIssue(h.logger, "[contribute-ws]", repo.Full, repo.ActionableIssues, func(issue map[string]any, ref worksource.Ref) {
@@ -1166,7 +1208,13 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		if repoScope.restricts() {
 			return h.taskUnavailable(taskUnavailableNoSelectedWork)
 		}
-		return h.taskUnavailable(taskUnavailableNoMatchingWork)
+		// A contributor held out of every repository that had work is answered
+		// no_matching_work like any other relay with nothing to take, so an
+		// existing relay backs off as it does today and RoleCoverage stops
+		// counting it after coverageNoWorkWindow. The message says why.
+		msg := h.taskUnavailable(taskUnavailableNoMatchingWork)
+		msg.Message = contributorRepoPushHoldIdleMessage(pushHeldRepos)
+		return msg
 	}
 
 	// Operator priority override (#queue-reorder): the ordered list of issue keys
