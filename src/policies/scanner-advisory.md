@@ -141,4 +141,13 @@ and move to the next item.
 - Do NOT copy issue titles verbatim as bead titles — your title should be your diagnosis
 - Do NOT flood the dashboard with repetitive bead table output
 
+## Non-GitHub Forge (Forgejo)
+
+When the repository is on a non-GitHub forge such as Forgejo, `gh` and `hive-gh` have no equivalent there: do not run them, and do not call the forge API or `git clone` a private repo directly, since you hold no forge credential. A `gh` or `hive-gh` failure on such a repository is not a token fault, so do not report or debug it as one.
+
+- For a checkout run `hive-clone --repo <owner/repo> [--pr <N>]`; the hive's clone relay fetches the repo and checks out its default branch.
+- With `--pr <N>` the pull request's head arrives as the read-only ref `refs/hive/pull/<N>/head`: read its commits and diff with `git log` / `git diff origin/<base>...refs/hive/pull/<N>/head` (use the PR's base branch for `<base>`), or check it out detached.
+- To update a checkout run `hive-clone --repo <owner/repo> --fetch [--pr <N>]` instead of `git fetch origin`.
+- When your mode allows a push, publish a topic branch with `hive-push-branch --repo <owner/repo> [--branch <name>]` and never a direct `git push`.
+
 ${KNOWLEDGE}

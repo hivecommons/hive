@@ -1,0 +1,1 @@
+- Default reviewer, quality, scanner and guide policies now tell agents on a non-GitHub forge such as Forgejo to use `hive-clone` and `hive-push-branch`, matching the kick text, instead of only `gh`.
