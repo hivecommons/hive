@@ -139,6 +139,16 @@ func nativeQueueEnqueueRefusedReview(err error) bool {
 	return err != nil && mergeRefusedReviewRE.MatchString(err.Error())
 }
 
+// nativeQueueEnqueueNotApplied reports whether err proves GitHub queued
+// nothing, so the journal must not hold the enqueue as an uncertain outcome:
+// the unresolved-conversations refusal, the review wording, or a GraphQL
+// error GitHub typed as a refusal. It is the one place that decides it, for
+// the effect that journals the enqueue and for the lane that reads the
+// answer afterwards.
+func nativeQueueEnqueueNotApplied(err error) bool {
+	return err != nil && (hgithub.IsUnresolvedConversationsError(err) || nativeQueueEnqueueRefusedReview(err) || hgithub.IsGraphQLRefusal(err))
+}
+
 // nativeQueueEnqueueBackoff is the wait after the n-th failed enqueue in a
 // row on one head. refused says GitHub definitely turned that enqueue down,
 // which waits up to nativeQueueEnqueueBackoffMax; a failure with an

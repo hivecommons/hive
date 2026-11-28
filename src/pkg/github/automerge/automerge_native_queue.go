@@ -409,7 +409,7 @@ func (c *Engine) tryNativeQueueAfterRouting(ctx context.Context, pr *gh.PullRequ
 			entry, err := t.EnqueueNativePullRequest(ctx, state.ID, state.HeadRefOid)
 			if err != nil {
 				enqueueErr = err
-				if hgithub.IsUnresolvedConversationsError(err) || nativeQueueEnqueueRefusedReview(err) || hgithub.IsGraphQLRefusal(err) {
+				if nativeQueueEnqueueNotApplied(err) {
 					// A definite refusal: nothing was queued, so the
 					// journal must not hold it as an uncertain outcome.
 					return effects.Result{}, effects.NotApplied(err)
@@ -424,7 +424,9 @@ func (c *Engine) tryNativeQueueAfterRouting(ctx context.Context, pr *gh.PullRequ
 				c.forgetNativeQueueEnqueueFailure(attempt)
 				return c.unresolvedThreadsRefusal(ctx, claim.Repo, pr.GetNumber(), state.HeadRefOid), nil
 			}
-			refused := enqueueErr != nil && hgithub.IsGraphQLRefusal(enqueueErr)
+			// The same test the effect used to journal the enqueue as not
+			// applied, so the journal and the lane never disagree.
+			refused := nativeQueueEnqueueNotApplied(enqueueErr)
 			if nativeQueueEnqueueRefusedReview(err) || (enqueueErr != nil && hgithub.IsGraphQLUnprocessable(enqueueErr) && nativeQueueReviewOutstanding(state.ReviewDecision)) {
 				// GitHub turned the enqueue down and either says in words
 				// that a review is missing, or refused it on one of its
