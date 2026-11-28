@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.3)
+
+### Fixed
+
+- Hive no longer types the "You produced a plan but executed nothing" action nudge after a kicked turn that was seen working for more than 5 minutes, or when the output from before the kick has been cleared or has scrolled out of the captured window, since neither case is a prose-only reply (#20214). The turn length now comes from how long the turn was seen busy, so a slow governor tick no longer skips the check, and tool markers are counted only after the lines that were in scrollback when the kick was sent.
+- Allow pod-run agents to fetch a Forgejo AGit pull request head through `hive-clone --pr` without treating it as a writable branch.
+
 ## 2026-11-28 (v5.384.2)
 
 ### Fixed
