@@ -1597,6 +1597,8 @@ func runEvalCycle(
 				issueNum:       issueNum,
 				hasPinnedIssue: hasPinnedAdvisoryIssue,
 				ensureErr:      advisoryEnsureErr,
+				// #20226: a Forgejo-only hive has no GitHub issue to post to.
+				primaryNotOnGitHub: !cfg.RepoOnGitHub(primaryRepo),
 			}, advisoryPublishDeps{
 				postGitHub: ghClient.PostAdvisoryDigest,
 				postLinear: func(ctx context.Context, linearIssue, md string) error {

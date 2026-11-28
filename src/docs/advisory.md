@@ -431,6 +431,12 @@ digest comment. Also editable from **Governor Config → Advisory**.
   comment on the advisory issue of the primary repo, exactly as described at
   the top of this page. Leaving the key out means this; nothing about the
   GitHub path changes when the key is absent.
+  When the primary repo is on a non-GitHub forge (`project.forge` or its
+  `repo_policies[].forge` is `forgejo`, `gitea` or `gitlab`), there is no
+  GitHub issue to post to: the digest is still built and shown on the
+  dashboard, but no comment is written and no post error is recorded, so the
+  hub does not flag the hive as a stale advisory (#20226). Set
+  `target: linear` to publish it elsewhere.
 - `linear`: the digest is maintained as **one comment on a designated Linear
   issue**, named by `governor.advisory.linear_issue` (an identifier such as
   `ONB-123`). The comment body is identical to what the GitHub comment would
