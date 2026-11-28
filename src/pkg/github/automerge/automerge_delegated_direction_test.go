@@ -262,14 +262,15 @@ func TestFoldRecordedDecisionDismissedApprovalRestoresDelegatedDirection(t *test
 
 // A review list GitHub cannot serve (a rate-limit window, an incident) says
 // nothing about the approval: the record that superseded the delegated
-// direction stays, for the lanes' requires_human release and for the stage
-// pass alike, and the head does not fall back to the author's stage.
+// direction stays, so the stage pass does not fall back to the author's
+// stage. It does not release requires_human on that pass, though: an
+// approval the hive could not confirm never lifts the merge block by itself
+// (fail closed), and the next pass that reads the review releases it.
 func TestFoldRecordedDecisionReviewReadFailureKeepsSupersedingApproval(t *testing.T) {
 	c, store, _, failReviews := supersededDelegatedDirection(t)
 	failReviews.Store(true)
-	login, ok := c.trustedHumanApprovalForRequiresHuman(context.Background(), "acme", "widget", 7, "sha7", delegatedAsked)
-	if !ok || login != "bob" {
-		t.Fatalf("a failed review read revoked the recorded approval: %q %v", login, ok)
+	if login, ok := c.trustedHumanApprovalForRequiresHuman(context.Background(), "acme", "widget", 7, "sha7", delegatedAsked); ok {
+		t.Fatalf("an approval the hive could not read released requires_human as %q", login)
 	}
 	second := delegatedDirectionObservations("acme", "widget", 7, "sha7", delegatedAsked.WithDecisionAnswer("bob", "sha7", review.DecisionDirectiveApprove), "", "bob")
 	c.foldRecordedDecision(context.Background(), second)
@@ -287,6 +288,11 @@ func TestFoldRecordedDecisionReviewReadFailureKeepsSupersedingApproval(t *testin
 	}
 	if req := review.HumanChangeRequestFor(store, "acme/widget", 7, "sha7"); req != nil {
 		t.Fatalf("the planner reads the direction again: %+v", req)
+	}
+	// GitHub answers again: the standing review releases requires_human.
+	failReviews.Store(false)
+	if login, ok := c.trustedHumanApprovalForRequiresHuman(context.Background(), "acme", "widget", 7, "sha7", delegatedAsked); !ok || login != "bob" {
+		t.Fatalf("the confirmed approval does not release requires_human: %q %v", login, ok)
 	}
 }
 

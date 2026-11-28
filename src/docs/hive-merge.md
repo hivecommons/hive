@@ -2161,7 +2161,9 @@ no fixer is kicked for the direction again, unless a person's
 changes-requested review stands on the head or was carried onto it over the
 hive's base merge. The pass re-checks that approval against GitHub and drops
 it only when a read shows the review no longer stands, so a dismissal
-brings the direction back while a failed read keeps the approval. Both hold
+brings the direction back while a failed read keeps the approval (but an
+approval no read confirmed does not lift a requires_human merge block on
+its own). Both hold
 on that head only: once an approval has superseded the direction, the
 hive's base merge carries neither record to the new head. The self-authored
 sweep (the hive's own PRs and trusted bots' PRs, and the contributor lane's
