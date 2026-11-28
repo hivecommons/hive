@@ -111,6 +111,10 @@ type advisoryPublishRoute struct {
 	issueNum       int
 	hasPinnedIssue bool
 	ensureErr      error // this cycle's pinned-issue ensure failure, if any
+	// primaryNotOnGitHub: the primary repo lives on a non-GitHub forge
+	// (Forgejo, Gitea, GitLab), so the GitHub target has no issue to post
+	// to and never will (#20226).
+	primaryNotOnGitHub bool
 }
 
 // advisoryPublishDeps are the effects publishAdvisoryDigest may perform. Only
@@ -177,6 +181,10 @@ func (o advisoryPublishOutcome) String() string {
 // archived, so later cycles skip them instead of retrying and self-reporting.
 var archivedAdvisoryRepos sync.Map
 
+// nonGitHubAdvisoryRepos remembers repos already logged as having no GitHub
+// home for the digest, so the skip is announced once rather than every cycle.
+var nonGitHubAdvisoryRepos sync.Map
+
 // publishAdvisoryDigest writes an already-rendered digest comment to its
 // configured route and records the outcome (#1927, #2353, #2575, #4167).
 //
@@ -189,6 +197,9 @@ var archivedAdvisoryRepos sync.Map
 //     failure the error is classified: write-forbidden and auth failures call
 //     their hooks so the caller can raise the App banner honestly; a rate
 //     limit only logs. On success onWriteProven runs.
+//   - GitHub target whose primary repo is on another forge → skipped, with
+//     no error recorded: the digest has no GitHub home by design, so the
+//     hub must not flag it stale every cycle (#20226).
 //   - GitHub target with no pinned issue but something to say → failed, with
 //     the ensure cause in the recorded message (#4167).
 func publishAdvisoryDigest(
@@ -230,6 +241,18 @@ func publishAdvisoryDigest(
 		logger.Info("posted advisory digest", "linear_issue", route.linearIssue, "findings", digest.TotalCount, "via", "linear")
 		recordPosted(digest.TotalCount, digest.OverflowCount)
 		return advisoryPublishPosted
+	}
+
+	if route.primaryNotOnGitHub {
+		// A Forgejo-only (or other non-GitHub) hive: the GitHub target can
+		// never resolve an issue. Recording the #4167 error here would page
+		// the hub every cycle for a healthy hive, so skip quietly and say why
+		// once per repo.
+		if _, seen := nonGitHubAdvisoryRepos.LoadOrStore(route.primaryRepo, struct{}{}); !seen {
+			logger.Info("advisory digest not posted: primary repo is not on GitHub and governor.advisory.target has no destination for its forge; the digest stays on the dashboard",
+				"repo", route.primaryRepo, "findings", digest.TotalCount)
+		}
+		return advisoryPublishSkipped
 	}
 
 	if !route.hasPinnedIssue {
