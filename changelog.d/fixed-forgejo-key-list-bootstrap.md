@@ -1,1 +1,0 @@
-- Allow Forgejo spokes serving their own key list to start before integration audiences exist, warning about unconfigured tiers until setup is complete.
