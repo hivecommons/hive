@@ -248,6 +248,14 @@ type ReviewVerdict struct {
 	// Approved is true when the aggregate verdict for the head is approve and
 	// merge-eligible.
 	Approved bool
+	// ApprovedAt is the earliest time a report behind the approving
+	// verdict for the head was received: no report for the head arrived
+	// before it. Zero when Approved is false, or when a perspective of the
+	// verdict has no dated report for the head (an approve carried from an
+	// earlier head with no review session has none). Nothing routes on it:
+	// the merge lanes pass it to the client as evidence for the hive's own
+	// review threads (github.OwnThreadsEvidence).
+	ApprovedAt time.Time
 	// ReviewOff is true when no verdict for the head exists and none can
 	// come: a reviewer agent is configured, but this hive does not dispatch
 	// the review swarm (review.require_approval or review.fan_out is off).

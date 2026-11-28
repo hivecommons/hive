@@ -336,6 +336,7 @@ func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, n
 		return automerge.ContributorLaneVerdict{
 			Configured:         true,
 			Approved:           approved && match.MergeEligible && match.Verdict == review.VerdictApprove,
+			ApprovedAt:         headApprovedAt(match, approved),
 			Verdict:            string(match.Verdict),
 			DecisionRequested:  match.DecisionRequested,
 			DecisionQuestion:   match.DecisionQuestion,
@@ -350,6 +351,40 @@ func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, n
 		}
 	}
 	return automerge.ContributorLaneVerdict{Configured: true, Approved: approved}
+}
+
+// headApprovedAt is the earliest time the relay received one of the reports
+// behind match, the newest verdict for a head, when match is an approving,
+// merge-eligible verdict: no report for that head arrived before it. Zero
+// otherwise, and zero unless every perspective the verdict holds has a
+// dated report for the head: with one missing, the earliest known time
+// could be later than the true earliest. A verdict re-stamped from an
+// earlier head with no review session holds no report and has none. It is
+// not RecordedAt or FirstRecordedAt: those are when a collect merged the
+// verdict into the artifact, which can be minutes after the review was
+// posted, so a reply written in between would look older than the review
+// it answers.
+func headApprovedAt(match review.Aggregate, approved bool) time.Time {
+	if !approved || !match.MergeEligible || match.Verdict != review.VerdictApprove || len(match.Perspectives) == 0 {
+		return time.Time{}
+	}
+	reported := map[review.Perspective]bool{}
+	var first time.Time
+	for _, r := range match.ReportReceipts {
+		if r.ReceivedAt.IsZero() {
+			return time.Time{}
+		}
+		reported[r.Perspective] = true
+		if first.IsZero() || r.ReceivedAt.Before(first) {
+			first = r.ReceivedAt
+		}
+	}
+	for p := range match.Perspectives {
+		if !reported[p] {
+			return time.Time{}
+		}
+	}
+	return first
 }
 
 func sentinelTrustedAuthorFunc(cfg *config.Config, ghClient *github.Client) func(repo, login string) github.SentinelAuthorTrust {

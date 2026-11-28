@@ -172,7 +172,7 @@ func TestResolveOwnReviewThreadsForHumanMerge_RulesetRequired(t *testing.T) {
 	api := &conversationRuleAPI{rules: rulesRequireThreadResolution}
 	legacy := &gqlThread{ID: "T-legacy", Comments: []gqlComment{{Author: "hive", AuthorType: "Bot", Body: ownBodyStyleLow}}}
 	c, m, audits := readyThreadsClient(t, api, ownLowThread("T-low"), legacy)
-	out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true)
+	out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true, OwnThreadsEvidence{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestResolveOwnReviewThreadsForHumanMerge_RulesetRequired(t *testing.T) {
 		t.Fatalf("thread writes = %v, want %v", got, want)
 	}
 
-	out, err = c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true)
+	out, err = c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true, OwnThreadsEvidence{})
 	if err != nil || out.Resolved != 0 || out.Unresolved != 0 {
 		t.Fatalf("second pass: %+v %v, want nothing left", out, err)
 	}
@@ -241,12 +241,59 @@ func TestResolveOwnReviewThreadsForHumanMerge_OneThreadNeedsAPerson(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			api := &conversationRuleAPI{rules: rulesRequireThreadResolution}
 			c, m, audits := readyThreadsClient(t, api, ownLowThread("T-a"), ownLowThread("T-b"), tc.other)
-			out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true)
+			out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true, OwnThreadsEvidence{})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if out.Resolved != 0 || len(m.resolved) != 0 || len(m.replies) != 0 || len(*audits) != 0 || !out.NeedsPerson() || out.Skipped != "not-every-thread-resolvable" || !tc.check(out) {
 				t.Fatalf("outcome = %+v resolved=%v replies=%v audits=%q, want nothing resolved", out, m.resolved, m.replies, *audits)
+			}
+		})
+	}
+}
+
+// At a person's merge the author-reply rule applies with the same evidence:
+// the hive's own low note the PR's author answered is replied in and
+// resolved once it is outdated, or once the hive approved the head after
+// the reply, and it is left for a person with neither.
+func TestResolveOwnReviewThreadsForHumanMerge_AuthorReply(t *testing.T) {
+	low := ownMarked("**correctness (low):** rename this", "low")
+	addressed := authorReply("Addressed in 0bb2918.", 0)
+	approved := OwnThreadsEvidence{HeadSHA: "head1", HeadApprovedAt: ownReplyAt.Add(10 * time.Minute)}
+	for _, tc := range []struct {
+		name     string
+		outdated bool
+		evidence OwnThreadsEvidence
+		resolved bool
+	}{
+		{"outdated", true, OwnThreadsEvidence{}, true},
+		{"head approved after the reply", false, approved, true},
+		{"no evidence", false, OwnThreadsEvidence{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &conversationRuleAPI{rules: rulesRequireThreadResolution}
+			c, m, audits := readyThreadsClient(t, api, ownAuthorPRThread("T-x", tc.outdated, low, addressed))
+			out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true, tc.evidence)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !tc.resolved {
+				if out.Resolved != 0 || out.OwnAnswered != 1 || out.OwnAuthorAnswered != 0 || !out.NeedsPerson() || len(m.resolved) != 0 || len(m.replies) != 0 || len(*audits) != 0 {
+					t.Fatalf("outcome = %+v resolved=%v replies=%v audits=%q, want the thread left for a person", out, m.resolved, m.replies, *audits)
+				}
+				return
+			}
+			if !out.Cleared() || out.Resolved != 1 || out.OwnAuthorAnswered != 1 || out.OwnAnswered != 0 || !slices.Equal(m.resolved, []string{"T-x"}) {
+				t.Fatalf("outcome = %+v resolved=%v, want the author-answered note resolved and counted", out, m.resolved)
+			}
+			if r := m.replies["T-x"]; len(r) != 1 || r[0] != ownThreadsReadyReply {
+				t.Fatalf("replies = %q, want the hive's one reply before the resolve", r)
+			}
+			if got, want := api.opList(), []string{"reply:T-x", "resolve:T-x"}; !slices.Equal(got, want) {
+				t.Fatalf("thread writes = %v, want %v", got, want)
+			}
+			if n := auditsWith(*audits, AuditActionPRReviewed, "state=thread_resolved", "trigger=ready-for-human-merge", "rule="+ownThreadsAuthorReplyRule); n != 1 {
+				t.Fatalf("resolve audits naming the rule = %d, want 1: %q", n, *audits)
 			}
 		})
 	}
@@ -270,7 +317,7 @@ func TestResolveOwnReviewThreadsForHumanMerge_RuleNotRequiredOrUnknown(t *testin
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, m, audits := readyThreadsClient(t, tc.api, ownLowThread("T-a"))
-			out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true)
+			out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true, OwnThreadsEvidence{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -282,7 +329,7 @@ func TestResolveOwnReviewThreadsForHumanMerge_RuleNotRequiredOrUnknown(t *testin
 	// No base branch is unknown too, and reads nothing.
 	api := &conversationRuleAPI{rules: rulesRequireThreadResolution}
 	c, m, _ := readyThreadsClient(t, api, ownLowThread("T-a"))
-	if out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, " ", true); err != nil || out.Skipped != OwnThreadsSkippedRuleUnknown || m.queryCount() != 0 {
+	if out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, " ", true, OwnThreadsEvidence{}); err != nil || out.Skipped != OwnThreadsSkippedRuleUnknown || m.queryCount() != 0 {
 		t.Fatalf("no base: %+v %v graphql=%d", out, err, m.queryCount())
 	}
 	if rules, probe, protection := api.reads(); rules+probe+protection != 0 {
@@ -300,7 +347,7 @@ func TestResolveOwnReviewThreadsForHumanMerge_ClassicProtection(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, m, _ := readyThreadsClient(t, api, ownLowThread("T-a"))
-			out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true)
+			out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true, OwnThreadsEvidence{})
 			if err != nil || !out.Cleared() || len(m.resolved) != 1 || len(m.replies["T-a"]) != 1 {
 				t.Fatalf("outcome = %+v %v resolved=%v replies=%v, want the thread resolved", out, err, m.resolved, m.replies)
 			}
@@ -315,7 +362,7 @@ func TestResolveOwnReviewThreadsForHumanMerge_Paused(t *testing.T) {
 	api := &conversationRuleAPI{rules: rulesRequireThreadResolution}
 	c, m, audits := readyThreadsClient(t, api, ownLowThread("T-a"))
 	c.SetRepoPausedFunc(func(string) bool { return true })
-	out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true)
+	out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true, OwnThreadsEvidence{})
 	if err != nil || out.Skipped != "paused" || m.queryCount() != 0 || len(*audits) != 0 {
 		t.Fatalf("paused: %+v %v graphql=%d audits=%q", out, err, m.queryCount(), *audits)
 	}
@@ -330,7 +377,7 @@ func TestResolveOwnReviewThreadsForHumanMerge_Paused(t *testing.T) {
 func TestResolveOwnReviewThreadsForMerge_NoRuleReadNoReply(t *testing.T) {
 	api := &conversationRuleAPI{rules: rulesRequireThreadResolution}
 	c, m, audits := readyThreadsClient(t, api, ownLowThread("T-a"), ownLowThread("T-b"))
-	out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9)
+	out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9, OwnThreadsEvidence{})
 	if err != nil || !out.Cleared() || out.Resolved != 2 {
 		t.Fatalf("outcome = %+v %v, want both resolved", out, err)
 	}
@@ -350,7 +397,7 @@ func TestResolveOwnReviewThreadsForMerge_NoRuleReadNoReply(t *testing.T) {
 func TestResolveOwnReviewThreadsForHumanMerge_QuietPostsNoReply(t *testing.T) {
 	api := &conversationRuleAPI{rules: rulesRequireThreadResolution}
 	c, m, audits := readyThreadsClient(t, api, ownLowThread("T-a"), ownLowThread("T-b"))
-	out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", false)
+	out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", false, OwnThreadsEvidence{})
 	if err != nil || !out.Cleared() || len(m.resolved) != 2 {
 		t.Fatalf("outcome = %+v %v resolved=%v, want both resolved", out, err, m.resolved)
 	}
@@ -366,7 +413,7 @@ func TestResolveOwnReviewThreadsForHumanMerge_QuietPostsNoReply(t *testing.T) {
 func TestResolveOwnReviewThreadsForHumanMerge_ReplyFailureStillResolves(t *testing.T) {
 	api := &conversationRuleAPI{rules: rulesRequireThreadResolution, failReplies: true}
 	c, m, audits := readyThreadsClient(t, api, ownLowThread("T-a"))
-	out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true)
+	out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true, OwnThreadsEvidence{})
 	if err != nil || !out.Cleared() || !slices.Equal(m.resolved, []string{"T-a"}) {
 		t.Fatalf("outcome = %+v %v resolved=%v, want the thread resolved", out, err, m.resolved)
 	}
@@ -386,7 +433,7 @@ func TestResolveOwnReviewThreadsForHumanMerge_NoSecondReply(t *testing.T) {
 	replied := ownLowThread("T-a")
 	replied.Comments = append(replied.Comments, gqlComment{Author: "hive", AuthorType: "Bot", Body: ownThreadsReadyReply})
 	c, m, _ := readyThreadsClient(t, api, replied, ownLowThread("T-b"))
-	out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true)
+	out, err := c.ResolveOwnReviewThreadsForHumanMerge(context.Background(), "o/r", 9, "main", true, OwnThreadsEvidence{})
 	if err != nil || !out.Cleared() || len(m.resolved) != 2 {
 		t.Fatalf("outcome = %+v %v resolved=%v, want both resolved", out, err, m.resolved)
 	}

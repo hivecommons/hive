@@ -191,6 +191,73 @@ func TestContributorLaneVerdictFromArtifactPrefersNewestHeadAggregate(t *testing
 	}
 }
 
+// ApprovedAt is when the reports behind an approving verdict for the head
+// came in, the time the merge lanes compare with a PR author's reply in one
+// of the hive's own review threads. It is the earliest report's arrival,
+// not when a collect merged the verdict: a collect can run minutes after
+// the review was posted, and a reply written in between would then look
+// older than the review it answers. It is known only when every perspective
+// the verdict holds has a dated report for the head: with one missing, the
+// earliest known arrival could be later than the true earliest. A verdict
+// re-stamped from an earlier head with no session holds no report and has
+// none, and neither has a verdict that is not an approve.
+func TestContributorLaneVerdictFromArtifactApprovedAt(t *testing.T) {
+	received := time.Date(2026, 11, 27, 17, 9, 0, 0, time.UTC)
+	collected := received.Add(4 * time.Minute)
+	receipt := func(p review.Perspective, at time.Time) review.ReportReceipt {
+		return review.ReportReceipt{Perspective: p, Agent: "reviewer", ReceivedAt: at}
+	}
+	both := map[review.Perspective]review.Verdict{review.PerspectiveCorrectness: review.VerdictApprove, review.PerspectiveSecurity: review.VerdictApprove}
+	approve := func(mut func(*review.Aggregate)) review.Aggregate {
+		agg := review.Aggregate{Repo: "acme/widget", Number: 7, HeadSHA: "sha7", Verdict: review.VerdictApprove, MergeEligible: true,
+			Perspectives: map[review.Perspective]review.Verdict{review.PerspectiveCorrectness: review.VerdictApprove},
+			RecordedAt:   collected.Add(18 * time.Hour), FirstRecordedAt: collected,
+			ReportReceipts: []review.ReportReceipt{receipt(review.PerspectiveCorrectness, received)}}
+		if mut != nil {
+			mut(&agg)
+		}
+		return agg
+	}
+	for _, tc := range []struct {
+		name string
+		agg  review.Aggregate
+		want time.Time
+	}{
+		{"reviewed head", approve(nil), received},
+		{"two perspectives: the earliest report", approve(func(a *review.Aggregate) {
+			a.Perspectives = both
+			a.ReportReceipts = []review.ReportReceipt{receipt(review.PerspectiveSecurity, received.Add(3*time.Minute)), receipt(review.PerspectiveCorrectness, received)}
+		}), received},
+		{"two perspectives, one with no report", approve(func(a *review.Aggregate) { a.Perspectives = both }), time.Time{}},
+		{"no perspective recorded", approve(func(a *review.Aggregate) { a.Perspectives = nil }), time.Time{}},
+		{"delta session", approve(func(a *review.Aggregate) {
+			a.Delta = &review.DeltaReviewInfo{PreviousHead: "sha6", ChangedLines: 12}
+		}), received},
+		{"re-stamped with no session", approve(func(a *review.Aggregate) {
+			a.Delta = &review.DeltaReviewInfo{PreviousHead: "sha6", Trivial: true, BaseSync: true}
+			a.ReportReceipts = nil
+		}), time.Time{}},
+		{"a report with no arrival time", approve(func(a *review.Aggregate) {
+			a.ReportReceipts = append(a.ReportReceipts, receipt(review.PerspectiveCorrectness, time.Time{}))
+		}), time.Time{}},
+		{"approve that is not merge-eligible", approve(func(a *review.Aggregate) { a.MergeEligible = false }), time.Time{}},
+		{"changes requested", approve(func(a *review.Aggregate) { a.Verdict, a.MergeEligible = review.VerdictChangesRequested, false }), time.Time{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			artifact := review.Artifact{Items: []review.Aggregate{tc.agg}}
+			got := contributorLaneVerdictFromArtifact(artifact, "acme/widget", 7, "sha7", artifact.HasAggregateApproval("acme/widget", 7, "sha7"))
+			if !got.ApprovedAt.Equal(tc.want) {
+				t.Fatalf("ApprovedAt = %s, want %s (verdict %+v)", got.ApprovedAt, tc.want, got)
+			}
+		})
+	}
+	// An approve the caller could not confirm carries no time either.
+	artifact := review.Artifact{Items: []review.Aggregate{approve(nil)}}
+	if got := contributorLaneVerdictFromArtifact(artifact, "acme/widget", 7, "sha7", false); got.Approved || !got.ApprovedAt.IsZero() {
+		t.Fatalf("unconfirmed approve: Approved=%v ApprovedAt=%s, want neither", got.Approved, got.ApprovedAt)
+	}
+}
+
 // hivecommons/hive#13205: the reviewer wrote head_sha "98489e7" and the
 // aggregate was keyed by it, so the lane's full-head lookup found nothing
 // and logged contributor-lane:no-verdict every cycle although the swarm had

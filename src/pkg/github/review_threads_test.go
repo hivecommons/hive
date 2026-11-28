@@ -34,8 +34,17 @@ type gqlThread struct {
 	// PRAuthor is the login GitHub shows as the PR's author. Rendered in the
 	// node re-fetch so a fixture can state that a PR is human-authored (a
 	// relay PR, #7638); the guard must not read it — the thread's FIRST
-	// comment author is what decides.
+	// comment author is what decides. The per-PR reviewThreads query
+	// renders it too, with PRAuthorType, as the pull request's author: the
+	// hive's own threads read it there (review_own_threads.go).
 	PRAuthor string
+	// PRAuthorType, when set, is the PR author's __typename (User, Bot).
+	PRAuthorType string
+	// HeadSHA, when set, is rendered as the PR's headRefOid.
+	HeadSHA string
+	// TotalComments, when set, is rendered as the comments connection's
+	// totalCount: a thread with more comments than the query's page read.
+	TotalComments int
 }
 
 type gqlComment struct {
@@ -44,6 +53,12 @@ type gqlComment struct {
 	// AuthorType, when set, is rendered as the author's __typename (Bot,
 	// User), the way GraphQL reports an App's bot without "[bot]".
 	AuthorType string
+	// CreatedAt, when set, is rendered as the comment's createdAt.
+	CreatedAt time.Time
+	// PublishedAt, when set, is rendered as the comment's publishedAt.
+	PublishedAt time.Time
+	// Commit, when set, is rendered as the comment's originalCommit oid.
+	Commit string
 }
 
 // gqlMock serves POST /graphql for the review-thread code paths and records
@@ -80,20 +95,34 @@ func (m *gqlMock) renderThread(t *gqlThread) map[string]any {
 		if c.AuthorType != "" {
 			author["__typename"] = c.AuthorType
 		}
-		comments = append(comments, map[string]any{
+		cmt := map[string]any{
 			"author":     author,
 			"body":       c.Body,
 			"databaseId": t.DatabaseID + int64(i),
-		})
+		}
+		if !c.CreatedAt.IsZero() {
+			cmt["createdAt"] = c.CreatedAt.UTC().Format(time.RFC3339)
+		}
+		if !c.PublishedAt.IsZero() {
+			cmt["publishedAt"] = c.PublishedAt.UTC().Format(time.RFC3339)
+		}
+		if c.Commit != "" {
+			cmt["originalCommit"] = map[string]any{"oid": c.Commit}
+		}
+		comments = append(comments, cmt)
 	}
 	var line any
 	if t.Line > 0 {
 		line = t.Line
 	}
+	commentsConn := map[string]any{"nodes": comments}
+	if t.TotalComments > 0 {
+		commentsConn["totalCount"] = t.TotalComments
+	}
 	return map[string]any{
 		"id": t.ID, "isResolved": t.Resolved, "isOutdated": t.Outdated,
 		"path": t.Path, "line": line,
-		"comments": map[string]any{"nodes": comments},
+		"comments": commentsConn,
 		"pullRequest": map[string]any{
 			"number":     t.PRNumber,
 			"author":     map[string]any{"login": t.PRAuthor},
@@ -168,14 +197,26 @@ func (m *gqlMock) handler(t *testing.T) http.HandlerFunc {
 				break
 			}
 			nodes := make([]map[string]any, 0, len(ids))
-			head := ""
+			head, headSHA := "", ""
+			prAuthor := map[string]any{}
 			for _, id := range ids {
 				th := m.threads[id]
 				nodes = append(nodes, m.renderThread(th))
 				head = th.HeadRef
+				if th.HeadSHA != "" {
+					headSHA = th.HeadSHA
+				}
+				if th.PRAuthor != "" {
+					prAuthor["login"] = th.PRAuthor
+				}
+				if th.PRAuthorType != "" {
+					prAuthor["__typename"] = th.PRAuthorType
+				}
 			}
 			data = map[string]any{"repository": map[string]any{"pullRequest": map[string]any{
 				"headRefName": head,
+				"headRefOid":  headSHA,
+				"author":      prAuthor,
 				"reviewThreads": map[string]any{
 					"pageInfo": map[string]any{"hasNextPage": false, "endCursor": ""},
 					"nodes":    nodes,

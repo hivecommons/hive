@@ -337,7 +337,9 @@ conversation must be resolved before this pull request can be merged." (the
 base requires conversation resolution; GitHub uses both wordings) is not an
 enqueue failure: when every open
 thread is the hive's own and marked non-blocking the hive resolves them and
-enqueues on the next pass (`review-threads-resolved`); when a thread only a
+enqueues on the next pass (`review-threads-resolved`), including a thread
+only the pull request's author replied in, once the commented lines changed
+or the hive approved a newer head after the reply; when a thread only a
 person can clear is open the PR parks at `stage/085-needs-decision` with
 `unresolved-review-threads`, remembered per head for 30 minutes; and when
 nothing explains the refusal it retries after 5 minutes (`review-threads-pending`),

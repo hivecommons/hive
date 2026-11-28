@@ -209,7 +209,7 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 			d.BlockerReason = decisionBlockerSentinel
 		}
 	case unresolvedThreads:
-		d.Blocker = "The repository requires conversation resolution. The hive resolves its own non-blocking threads itself when nothing else is open; it leaves a person's or another bot's thread, a hive thread someone replied in and any hive finding not marked non-blocking (with review.severity.block_at: P3, every finding), and it also parks here when GitHub kept refusing with nothing left it could resolve. The hive tries the merge again within 30 minutes or on a new push."
+		d.Blocker = "The repository requires conversation resolution. The hive resolves its own non-blocking threads itself when nothing else is open; it leaves a person's or another bot's thread, a hive thread someone replied in and any hive finding not marked non-blocking (with review.severity.block_at: P3, every finding). A reply from the pull request's author alone stops counting once the commented lines change or the hive's review approves a newer head after the reply. It also parks here when GitHub kept refusing with nothing left it could resolve. The hive tries the merge again within 30 minutes or on a new push."
 		approveOK, approveWhy = false, "Approving does not resolve review threads on GitHub."
 	case queueRejected:
 		d.Blocker = "The merge group fails the same way at this head and base, so queueing it again buys the same failure. The hive retries it " +

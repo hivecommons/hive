@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"regexp"
 	"strings"
+	"time"
 
 	gh "github.com/google/go-github/v72/github"
 
@@ -44,10 +45,24 @@ import (
 // Both resolve the hive's own threads marked non-blocking, and only when
 // every unresolved thread on the PR is one of those.
 //
+// A reply from anyone but the hive used to keep such a thread open for a
+// person: the conversation is theirs too, and replying was how a person
+// kept a note open. The pull request's author is the one exception. An
+// author's agent answers a note with "Addressed in <sha>" after pushing the
+// fix, and that reply alone turned a note the hive would have resolved into
+// one a person had to resolve by hand. A non-blocking thread whose only
+// other replies are the PR author's is resolved too, once one of two
+// signals holds: the thread is outdated (the commented lines changed after
+// the note), or the note was left on an earlier head and the hive's own
+// review of the PR's current head approved it after the author's last
+// reply (OwnThreadsEvidence). With neither, the author's reply keeps the
+// thread open as before. The reply's text is never read: a reply that
+// disagrees is treated like "Addressed" once a signal holds.
+//
 // Never resolved by this path: a thread whose first comment is not the
-// hive's App (a person's or another bot's thread), a hive thread anyone else
-// has replied in, and a hive finding that is not marked non-blocking —
-// outdated or not.
+// hive's App (a person's or another bot's thread), a hive thread anyone but
+// the hive and the PR author has replied in, and a hive finding that is not
+// marked non-blocking — outdated or not, answered or not.
 
 // reviewFindingSeverityMarker is the hidden marker the relay appends to an
 // inline review comment, naming the severity of the verdict finding it
@@ -77,6 +92,11 @@ const ownThreadsTrigger = "merge-refused-unresolved-conversations"
 // ownThreadsReadyTrigger is the audit trigger detail when the threads are
 // resolved for a person's merge at 090-ready-for-human-merge.
 const ownThreadsReadyTrigger = "ready-for-human-merge"
+
+// ownThreadsAuthorReplyRule is the audit "rule" detail on a thread resolved
+// under the author-reply rule (ownThreadAuthorAnswered); other resolutions
+// carry no rule detail.
+const ownThreadsAuthorReplyRule = "pr-author-replied"
 
 // unresolvedConversationsRE matches GitHub's refusal when the base requires
 // conversation resolution. GitHub words the same rule more than one way:
@@ -126,12 +146,22 @@ type OwnReviewThreadsOutcome struct {
 	Unresolved int `json:"unresolved"`
 	// Resolvable counts the hive's own threads this pass may resolve.
 	Resolvable int `json:"resolvable"`
+	// OwnAuthorAnswered counts, among Resolvable, the threads resolvable
+	// only under the author-reply rule: the pull request's author replied,
+	// nobody else did, and one of its two signals holds. A pass resolves
+	// every Resolvable thread or none, so on a cleared PR it is how many
+	// threads that rule resolved.
+	OwnAuthorAnswered int `json:"own_author_answered"`
 	// Resolved counts threads this pass resolved.
 	Resolved int `json:"resolved"`
 	// OwnBlocking counts the hive's own threads that are blocking findings
 	// (or carry no non-blocking mark) and are not resolvable by this pass.
 	OwnBlocking int `json:"own_blocking"`
-	// OwnAnswered counts the hive's own threads someone else replied in.
+	// OwnAnswered counts the hive's own threads someone else replied in
+	// that this pass may not resolve: a reply from anyone but the pull
+	// request's author, the author's reply on a blocking finding or with
+	// neither signal of the author-reply rule, or a thread with more
+	// comments than were read.
 	OwnAnswered int `json:"own_answered"`
 	// Others counts threads a person or another bot opened.
 	Others int `json:"others"`
@@ -161,15 +191,102 @@ type ownThreadClass int
 const (
 	// ownThreadOther: the first comment is a person's or another bot's.
 	ownThreadOther ownThreadClass = iota
-	// ownThreadAnswered: the hive's thread, but someone else replied.
+	// ownThreadAnswered: the hive's thread, but someone else replied and
+	// the author-reply rule does not cover it.
 	ownThreadAnswered
 	// ownThreadBlocking: the hive's finding with no non-blocking mark,
 	// outdated or not.
 	ownThreadBlocking
-	// ownThreadNonBlocking: the hive's thread it marked non-blocking; the
-	// only class this path resolves.
+	// ownThreadNonBlocking: the hive's thread it marked non-blocking, with
+	// no reply but the hive's own. Resolved by this path.
 	ownThreadNonBlocking
+	// ownThreadAuthorAnswered: the hive's thread it marked non-blocking,
+	// replied in by the pull request's author and nobody else, with the
+	// thread outdated or a newer head approved after the reply
+	// (ownThreadsPR.actedOn). Resolved by this path and counted separately.
+	ownThreadAuthorAnswered
 )
+
+// OwnThreadsEvidence is what the caller knows about the head it is merging
+// or handing to a person, passed in so this package does not read the
+// review store. The zero value claims nothing, and an outdated thread is
+// then the only evidence the author-reply rule accepts.
+type OwnThreadsEvidence struct {
+	// HeadSHA is the head the caller acted on. HeadApprovedAt counts only
+	// while it is still the PR's head when the threads are read.
+	HeadSHA string
+	// HeadApprovedAt is the earliest time a report behind the hive's own
+	// approving, merge-eligible verdict for HeadSHA was received: no report
+	// for that head arrived before it. Zero when there is no such verdict,
+	// when it was carried from an earlier head with no review session, or
+	// when a perspective's report time is not known.
+	HeadApprovedAt time.Time
+}
+
+// ownThreadsPR is what classifyOwnReviewThread knows about the pull request
+// a thread is on. The zero value knows no author and no approval: every
+// reply that is not the hive's own then keeps a thread answered.
+type ownThreadsPR struct {
+	// authorLogin and authorType are the PR author's login and GraphQL
+	// actor type, from the query that read the threads.
+	authorLogin string
+	authorType  string
+	// head and approvedAt are OwnThreadsEvidence.HeadSHA and HeadApprovedAt
+	// once the caller's head is known to be the PR's current head; empty
+	// and zero otherwise.
+	head       string
+	approvedAt time.Time
+}
+
+// isAuthor reports whether a review-thread comment is the pull request
+// author's: the same actor type and the same login, compared without case.
+// Both come from one GraphQL read, so a bot author is spelled the same way
+// in each; the type is compared because a User and an App's bot can share a
+// login there. A PR whose author GitHub no longer names (a deleted account)
+// has no author here.
+func (p ownThreadsPR) isAuthor(cmt rawReviewComment) bool {
+	typ := strings.TrimSpace(p.authorType)
+	login := strings.TrimSuffix(strings.TrimSpace(p.authorLogin), "[bot]")
+	got := strings.TrimSuffix(strings.TrimSpace(cmt.Author.Login), "[bot]")
+	return typ != "" && login != "" && got != "" &&
+		strings.EqualFold(typ, strings.TrimSpace(cmt.Author.Typename)) && strings.EqualFold(login, got)
+}
+
+// actedOn reports whether one of the two signals the author-reply rule
+// accepts holds for t. Neither reads the reply: a reply that disagrees or
+// asks a question is treated like "Addressed" once a signal holds. Either
+// is enough:
+//
+//   - the thread is outdated: GitHub marks it so when the lines the note is
+//     anchored on changed in a later push;
+//   - the note was left on an earlier head, the hive's own review approved
+//     the PR's current head, and no report behind that verdict was received
+//     before the author's last reply was published (lastReply; dated is
+//     false when a reply's time is unknown, which rules this signal out).
+//     The review that left the note never counts, whatever its times say:
+//     it read the head the note is on. A note whose commit is unknown is
+//     treated as left on the current head.
+func (p ownThreadsPR) actedOn(t rawReviewThread, lastReply time.Time, dated bool) bool {
+	if t.IsOutdated {
+		return true
+	}
+	if !dated || p.approvedAt.IsZero() || !p.approvedAt.After(lastReply) {
+		return false
+	}
+	noteHead := strings.TrimSpace(t.Comments.Nodes[0].OriginalCommit.OID)
+	return noteHead != "" && p.head != "" && !strings.EqualFold(noteHead, p.head)
+}
+
+// ownThreadReplyTime is when a reply became visible: its publish time, or
+// its creation time when GitHub reports no publish time. A reply drafted
+// inside a pending review is created before it is published, and it is the
+// publish time an approval has to follow.
+func ownThreadReplyTime(cmt rawReviewComment) time.Time {
+	if !cmt.PublishedAt.IsZero() {
+		return cmt.PublishedAt
+	}
+	return cmt.CreatedAt
+}
 
 // isOwnThreadAuthor reports whether a review-thread comment is the hive's
 // own: a Bot-typed author whose login is the hive's App bot. GraphQL names
@@ -189,17 +306,43 @@ func (c *Client) isOwnThreadAuthor(cmt rawReviewComment) bool {
 }
 
 // classifyOwnReviewThread classifies one unresolved thread. isOwn decides
-// authorship; blockAt is review.severity.block_at.
-func classifyOwnReviewThread(t rawReviewThread, isOwn func(rawReviewComment) bool, blockAt string) ownThreadClass {
+// authorship; blockAt is review.severity.block_at; pr is what is known of
+// the pull request the thread is on. A reply from anyone but the hive and
+// the PR author is ownThreadAnswered whatever else holds. So is the
+// author's reply on a blocking finding, or on a non-blocking one with
+// neither signal (actedOn). So is a hive thread with more comments than
+// were read: a reply past the query's first page may be someone else's.
+func classifyOwnReviewThread(t rawReviewThread, isOwn func(rawReviewComment) bool, blockAt string, pr ownThreadsPR) ownThreadClass {
 	if len(t.Comments.Nodes) == 0 || isOwn == nil || !isOwn(t.Comments.Nodes[0]) {
 		return ownThreadOther
 	}
+	if t.Comments.TotalCount > len(t.Comments.Nodes) {
+		return ownThreadAnswered
+	}
+	authorReplied, dated := false, true
+	var lastReply time.Time
 	for _, cmt := range t.Comments.Nodes[1:] {
-		if !isOwn(cmt) {
+		if isOwn(cmt) {
+			continue
+		}
+		if !pr.isAuthor(cmt) {
 			return ownThreadAnswered
 		}
+		authorReplied = true
+		if at := ownThreadReplyTime(cmt); at.IsZero() {
+			dated = false
+		} else if at.After(lastReply) {
+			lastReply = at
+		}
 	}
-	if ownFindingNonBlocking(t.Comments.Nodes[0].Body, blockAt) {
+	nonBlocking := ownFindingNonBlocking(t.Comments.Nodes[0].Body, blockAt)
+	if authorReplied {
+		if nonBlocking && pr.actedOn(t, lastReply, dated) {
+			return ownThreadAuthorAnswered
+		}
+		return ownThreadAnswered
+	}
+	if nonBlocking {
 		return ownThreadNonBlocking
 	}
 	return ownThreadBlocking
@@ -327,20 +470,24 @@ func (c *Client) reviewBlockAt() string {
 // "All comments must be resolved": when every unresolved thread on the PR
 // is the hive's own and marked non-blocking, it resolves them all, so the
 // next merge attempt can succeed. Otherwise it resolves nothing and the
-// outcome counts what a person must look at. Each resolution is audited
-// like an agent's resolve_thread request (agent_pr_reviewed,
-// state=thread_resolved) with trigger=merge-refused-unresolved-conversations.
-func (c *Client) ResolveOwnReviewThreadsForMerge(ctx context.Context, repo string, number int) (OwnReviewThreadsOutcome, error) {
-	return c.resolveOwnReviewThreads(ctx, repo, number, ownThreadsTrigger, nil)
+// outcome counts what a person must look at. evidence is what the lane
+// knows about the head it tried to merge, for a thread the PR's author
+// replied in. Each resolution is audited like an agent's resolve_thread
+// request (agent_pr_reviewed, state=thread_resolved) with
+// trigger=merge-refused-unresolved-conversations.
+func (c *Client) ResolveOwnReviewThreadsForMerge(ctx context.Context, repo string, number int, evidence OwnThreadsEvidence) (OwnReviewThreadsOutcome, error) {
+	return c.resolveOwnReviewThreads(ctx, repo, number, ownThreadsTrigger, evidence, nil)
 }
 
 // resolveOwnReviewThreads is the one implementation of the rules above for
 // both points: it resolves every unresolved thread on repo#number when each
 // is the hive's own and marked non-blocking, and nothing otherwise. trigger
-// is the audit trigger detail. beforeResolve, when set, runs for each
-// thread just before its resolve call, only once every unresolved thread
-// qualified (the merge-refusal path passes nil and posts nothing).
-func (c *Client) resolveOwnReviewThreads(ctx context.Context, repo string, number int, trigger string, beforeResolve func(context.Context, rawReviewThread)) (OwnReviewThreadsOutcome, error) {
+// is the audit trigger detail. evidence feeds the author-reply rule; its
+// approval counts only when its head is the PR's head in the same read as
+// the threads. beforeResolve, when set, runs for each thread just before
+// its resolve call, only once every unresolved thread qualified (the
+// merge-refusal path passes nil and posts nothing).
+func (c *Client) resolveOwnReviewThreads(ctx context.Context, repo string, number int, trigger string, evidence OwnThreadsEvidence, beforeResolve func(context.Context, rawReviewThread)) (OwnReviewThreadsOutcome, error) {
 	var out OwnReviewThreadsOutcome
 	if c == nil {
 		return out, ErrNoGitHubClient
@@ -350,20 +497,32 @@ func (c *Client) resolveOwnReviewThreads(ctx context.Context, repo string, numbe
 		return out, nil
 	}
 	owner, name := c.splitRepo(repo)
-	_, threads, err := c.fetchReviewThreads(ctx, owner, name, number)
+	read, err := c.readReviewThreads(ctx, owner, name, number)
 	if err != nil {
 		return out, err
 	}
+	pr := ownThreadsPR{authorLogin: read.AuthorLogin, authorType: read.AuthorType}
+	if head := strings.TrimSpace(read.HeadSHA); head != "" && strings.EqualFold(head, strings.TrimSpace(evidence.HeadSHA)) {
+		pr.head, pr.approvedAt = head, evidence.HeadApprovedAt
+	}
 	blockAt := c.reviewBlockAt()
 	var resolvable []rawReviewThread
-	for _, t := range threads {
+	// byAuthorRule names the resolvable threads the author-reply rule
+	// admitted, for the audit entry.
+	byAuthorRule := map[string]bool{}
+	for _, t := range read.Threads {
 		if t.IsResolved {
 			continue
 		}
 		out.Unresolved++
-		switch classifyOwnReviewThread(t, c.isOwnThreadAuthor, blockAt) {
+		switch classifyOwnReviewThread(t, c.isOwnThreadAuthor, blockAt, pr) {
 		case ownThreadNonBlocking:
 			out.Resolvable++
+			resolvable = append(resolvable, t)
+		case ownThreadAuthorAnswered:
+			out.Resolvable++
+			out.OwnAuthorAnswered++
+			byAuthorRule[t.ID] = true
 			resolvable = append(resolvable, t)
 		case ownThreadOther:
 			out.Others++
@@ -394,18 +553,19 @@ func (c *Client) resolveOwnReviewThreads(ctx context.Context, repo string, numbe
 			continue
 		}
 		out.Resolved++
-		c.recordWriteAudit(AuditActionPRReviewed, meta,
-			WriteTarget{Repo: repo, Number: number},
-			"state", reviewStateThreadResolved,
-			"thread", id,
-			"trigger", trigger)
+		detail := []string{"state", reviewStateThreadResolved, "thread", id, "trigger", trigger}
+		if byAuthorRule[id] {
+			detail = append(detail, "rule", ownThreadsAuthorReplyRule)
+		}
+		c.recordWriteAudit(AuditActionPRReviewed, meta, WriteTarget{Repo: repo, Number: number}, detail...)
 	}
 	return out, nil
 }
 
 // NeedsPerson reports whether the outcome names a thread only a person can
-// clear: another author's thread, a hive thread someone answered, or a
-// blocking hive finding. An outcome with none of those (GitHub still
+// clear: another author's thread, a hive thread someone answered (not one
+// counted in OwnAuthorAnswered, which the hive resolves), or a blocking
+// hive finding. An outcome with none of those (GitHub still
 // counting a thread a person just resolved, or only resolve mutations that
 // failed) is worth another try rather than a park.
 func (o OwnReviewThreadsOutcome) NeedsPerson() bool {
