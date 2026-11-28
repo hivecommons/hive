@@ -1993,7 +1993,7 @@ A quota refusal now parks the loop:
 
 - **`ready` is withheld** for the duration, at the single point every frame passes through rather than at each of the eight call sites that send one. Frames about work already in flight — progress, completion, failure — still go out; only the request for *more* work stops.
 - **A pushed assignment is declined**, immediately and with the reason, so the hub can offer it to a contributor who can actually run it. Withholding `ready` stops the relay asking; it does not stop a hub offering.
-- **The window comes from the provider.** `Resets in 4h42m28s` is parsed off the banner, plus a small grace so the first re-ask is not one second early. A banner with no stated expiry — most backends print none — gets a bounded fallback instead, and the hold re-arms if the quota is genuinely still out. A parsed window is capped, because the duration is provider text the relay cannot validate and a malformed `Resets in 999h` must not wedge a contributor out of the fleet.
+- **The window comes from the provider.** `Resets in 4h42m28s` is parsed off the banner, plus a small grace so the first re-ask is not one second early. A banner with no stated expiry — most backends print none — gets a bounded fallback instead, and the hold re-arms if the quota is genuinely still out. Each re-arm with no task finished in between doubles that fallback, from 15 minutes up to the same six-hour cap, so a quota that stays out does not cost a failed task every 15 minutes. A parsed window is capped, because the duration is provider text the relay cannot validate and a malformed `Resets in 999h` must not wedge a contributor out of the fleet. A dated reset has its own, longer ceiling: see [A hold can last days](#a-hold-can-last-days).
 - **The operator is told once, clearly.** The banner previously lived only inside the agy pane while the relay log said `[environment]`; nobody reading the log could learn their quota was gone for four hours, or that switching model or backend was the remedy.
 - **The failure says what happened.** `[environment] … the agent CLI is not visibly working` reads as a broken contributor host. The CLI was working perfectly and the provider said no, so the reason now says so.
 
@@ -2011,6 +2011,121 @@ selects the suggested model or purchases credits.
 Only quota takes this path. An authorization refusal is not time-bounded, an operator has to change something, and parking the relay would hide it — a 403 still fails fast and stays available.
 
 The `failure_kind` on the wire is still `environment`: the hub's kinds are `environment` / `task` / `unspecified`, and the field is advisory — the hub records and displays it and does not route or change a work item's failure cooldown on it. A dedicated quota kind, and the cooldown exemption [#6541](https://github.com/hivecommons/hive/issues/6541) asks for, are a hub-side protocol change and are not part of this.
+
+#### Headless mode reads the CLI's last line
+
+A headless run has no pane to classify. When the one-shot CLI exits non-zero,
+the relay looks at the **last non-empty line** it printed, and only that line,
+matched from its first character, so the same sentence quoted earlier in task
+output or inside a shell command cannot park the relay
+(`headlessQuotaExhaustion` in `bin/lib/pane-classifier.js`). Each backend has
+its own rule and the rules are never mixed:
+
+| Backend  | Line                                                     | Release                                                                 |
+| -------- | -------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `codex`  | `ERROR: You've hit your usage limit. ...`                | Only on confirmed recovery; its clock time has no timezone              |
+| `claude` | `You've hit your weekly limit · resets Dec 1, 3pm (UTC)` | At the stated time; after a short bounded wait if no reset can be read  |
+
+The Claude rule exists because of one contributor on a production hive. Their
+Claude Code plan ran out of its weekly allowance, every task exited within two
+seconds with the line above, and the relay, not recognising it, reported an
+ordinary failure and asked for more. The hub gave it twelve assignments in
+thirty hours. Each one put a ten-minute failure cooldown on an issue nothing
+was wrong with, and three in a row park an issue for six hours.
+
+That line is the only one seen live. The rule also accepts the other wordings
+the CLI's own message builder has for the same refusal:
+
+| Sentence                                        | When                                              |
+| ----------------------------------------------- | ------------------------------------------------- |
+| `You've hit your weekly limit`                  | A named limit: one or two words before `limit`    |
+| `You've hit your limit`                         | No name: the fallthrough when overage is rejected |
+| `You've hit your org's monthly spend limit`     | An organization spend cap (also `usage limit`)     |
+| `You've hit your channel's monthly spend limit` | A channel spend cap (also `usage limit`)           |
+| `You're out of usage credits`                   | Usage credits are spent                           |
+
+The apostrophe may be straight or curly. After the sentence the line must end,
+or continue only with a full stop or the `·` that introduces the reset, so
+prose that merely starts the same way is not matched. `rate limit` is not
+matched either: that is a short throttle and stays an ordinary failure.
+
+The reset is read in the forms the CLI prints:
+
+| Printed                         | Meaning                                                       |
+| ------------------------------- | ------------------------------------------------------------- |
+| `resets 3pm (UTC)`              | At most 24 hours away, including a reset that has just passed |
+| `resets 3:30pm (UTC)`           | Any form, with minutes                                        |
+| `resets Dec 1, 3pm (UTC)`       | Further off, in the current year                              |
+| `resets Jan 2, 2027, 3pm (UTC)` | The year is printed when it is not the current one            |
+
+- **The zone is the CLI's own.** In a container that is `UTC`; on a workstation
+  it is a named zone such as `America/New_York`. The relay resolves whatever
+  zone is printed, so it does not matter whether the relay and the CLI agree on
+  a timezone. A wall time that a clock change skips or repeats may land an hour
+  to either side, which is close enough for a hold.
+- **A time-only reset that has just passed is not "tomorrow".** A task refused
+  at 14:59:59 for a 15:00 reset is read at 15:00:01. Within ten minutes after
+  the stated time the relay treats the reset as unread instead of parking for a
+  day over a limit that has just lifted. The price is the other direction: a
+  reset that really is 23 hours 50 minutes to 24 hours away reads the same, so
+  the relay takes one fallback hold and reads it correctly on the next refusal.
+- **A reset the relay cannot read gets the bounded fallback.** No reset on the
+  line, no zone, a zone the runtime does not know, a date more than eight days
+  away (a monthly spend limit can be), or the just-passed case above: the relay
+  parks for the fallback window (15 minutes) and then asks for work again. It
+  is never an open-ended hold that only a restart ends; that is kept for Codex,
+  whose clock time has no zone at all.
+- **The fallback backs off.** If the limit is still in force when the window
+  ends, that one task fails and the relay parks again, for twice as long: 15
+  minutes, 30, then 1, 2 and 4 hours, up to the six-hour ceiling. Any task that
+  finishes for a reason other than a quota refusal puts the window back to 15
+  minutes. The count is kept in the relay process, so a restart also starts
+  over. This applies to every backend whose refusal states no usable reset
+  time, not only Claude. The relay log states the wait each time and says that
+  it grows while the provider keeps refusing.
+
+The task the limit was first seen on is still handed back once, as an
+`environment` failure with the CLI's line in the reason. Nothing after it is
+attempted until the hold ends.
+
+#### A hold can last days
+
+A countdown such as `Resets in 4h42m28s` is capped at six hours. A dated reset
+is not a countdown, and a weekly limit is routinely several days from its
+reset; capped at six hours the relay would come back four times a day, and
+every one of those returns is a real assignment that fails. So a calendar
+reset the relay could read is held to its own ceiling of eight days instead,
+and the relay resumes by itself at the stated time plus the usual small grace.
+
+The relay log says so in plain words when the hold starts:
+
+```text
+┌─ PROVIDER QUOTA EXHAUSTED ─────────────────────────────────
+│ You've hit your weekly limit · resets Dec 1, 3pm (UTC)
+│ This is the provider refusing claude, not a fault of this machine.
+│ The claude account limit is reached. Not asking the hub for work until 2026-12-01 15:00 UTC (in 3d6h0m), the reset the provider stated.
+│ The relay stays connected and resumes by itself then. Nothing needs doing until that time.
+│ To work sooner: switch AGENT_MODEL/AGENT_BACKEND, or upgrade the plan. If the limit lifts early, restart the relay.
+└────────────────────────────────────────────────────────────
+```
+
+Three things to know about a long hold:
+
+- **It lives in the relay process.** Restarting the relay forgets it. The relay
+  then asks for work, and if the limit is still in force the first task fails
+  once and the hold starts again with the same reset. That is also how to
+  resume early when the provider lifts the limit before the stated time.
+- **It follows the wall clock.** The relay re-checks the time every five
+  minutes instead of trusting one long timer, because a timer can stop counting
+  while a machine is suspended. A laptop that sleeps overnight still resumes at
+  the stated time (or within five minutes of waking, if it was asleep then),
+  not a night late.
+- **The hub hears about it once per connection.** The `quota_hold` report
+  below carries no duration, so a hold of days needs nothing new from the hub.
+
+The interactive (tmux) path does not recognise this Claude sentence. How the
+Claude Code TUI draws the limit is not recorded in this repository's tests or
+fixtures, and a pane rule written from a guess could park a healthy relay.
 
 ### The contributor quota guard holds *before* the provider refuses
 
