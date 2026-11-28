@@ -212,15 +212,15 @@ type AgentProcess struct {
 	StartedAt *time.Time
 	LastKick  *time.Time
 	// KicksUndeliverable counts consecutive kicks that could not be delivered
-	// because the pane never became safe for input. It resets on successful
-	// delivery or restart and is surfaced so operators can distinguish "due
-	// now" from "due but still busy".
+	// because the pane never became safe for input. It resets on delivery or
+	// restart, so operators can tell "due now" from "due but still busy".
 	KicksUndeliverable int
 	// BusySince is the first undeliverable-kick time in the current busy run.
 	BusySince time.Time
-	// LastTranscriptActivity is the newest events.jsonl mtime seen under this
-	// agent's own Copilot session-state tree.
+	// LastTranscriptActivity is the newest backend transcript mtime seen;
+	// LastInferenceActivity is the last translator-authenticated request.
 	LastTranscriptActivity time.Time
+	LastInferenceActivity  time.Time
 	CodeWork               *crux.CodeWork
 	BusyCondition          string
 	BusyConditionMessage   string

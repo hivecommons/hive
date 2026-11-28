@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agentmode"
@@ -524,6 +525,7 @@ func (b *boot) hiveCallbackCapabilities() *cruxhost.Capabilities {
 	// The usage ledger is built by bootProxy, after this; the capability is
 	// served from the start and records into the ledger once it exists.
 	deps.Usage = lateUsageSink{get: b.inferenceSinkRef, logger: b.logger, once: &sync.Once{}}
+	deps.InferenceActivity = b.inferenceActivitySnapshot
 	if b.ghClient != nil {
 		deps.PullRequests = b.ghClient
 		// Per-repo open-PRs mode (repo_open_prs.go). The callback names no
@@ -565,6 +567,17 @@ func (b *boot) inferenceSinkRef() cruxhost.UsageSink {
 		return nil
 	}
 	return b.inferenceSink
+}
+
+// inferenceActivitySnapshot reads the proxy published after callback startup.
+func (b *boot) inferenceActivitySnapshot() map[string]time.Time {
+	b.inferenceSinkMu.Lock()
+	read := b.inferenceActivity
+	b.inferenceSinkMu.Unlock()
+	if read == nil {
+		return nil
+	}
+	return read()
 }
 
 // lateUsageSink is cruxhost.UsageSink over a ledger that may not exist yet:
