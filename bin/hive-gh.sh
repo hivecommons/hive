@@ -146,7 +146,9 @@ _verb "$subcmd" "$action" || exec gh "$@"
 # deletions, changedFiles (pr view) and stateReason, milestone (issue view).
 # A gate that reads one of those gets null. The
 # relay creates its queue only on a hive whose repos are all off GitHub, so
-# on a GitHub hive the queue is absent and nothing here changes.
+# on a GitHub hive the queue is absent and nothing here changes. A queue left
+# behind by a reload that adds a GitHub repo gets no answer, and the call
+# then goes to gh after HIVE_GH_FORGE_TIMEOUT.
 READ_DIR="${HIVE_GH_READ_REQUEST_DIR:-/var/run/hive-metrics/read-requests}"
 FIRST_AGENT_UID=2001
 
@@ -231,10 +233,16 @@ PY
       echo "hive-gh: the hive refused the read of $repo#$number: $(_field error)" >&2; exit 1
     fi
     if [ "$waited" -ge "$timeout" ]; then
-      local msg="no answer yet"
-      _trusted && msg="$(_field error)"
       rm -f "$req"
-      echo "hive-gh: timed out after ${timeout}s waiting for the hive to read $repo#$number: $msg" >&2; exit 1
+      # No answer at all means no relay is serving the queue: it outlives a
+      # reload that puts a repo on GitHub, where the relay stops reading it.
+      # Return (every answered path exits) so the call goes to gh as on a
+      # GitHub hive instead of failing.
+      if ! _trusted; then
+        echo "hive-gh: no answer from the hive's read relay after ${timeout}s; asking gh" >&2
+        return 0
+      fi
+      echo "hive-gh: timed out after ${timeout}s waiting for the hive to read $repo#$number: $(_field error)" >&2; exit 1
     fi
     sleep 1
     waited=$((waited + 1))
