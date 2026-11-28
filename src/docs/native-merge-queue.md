@@ -332,8 +332,10 @@ not re-read every sweep; a new head or the recheck window reads it again.
 Read and enqueue failures (`native-merge-queue-read`, `-enqueue`) stay at
 `stage/100-merge-queue`; a failure to read the queue's merge method is a
 read failure too, not a refusal, and is reported as `native-merge-queue-read`.
-An enqueue GitHub refuses with "All comments must be resolved" (the base
-requires conversation resolution) is not an enqueue failure: when every open
+An enqueue GitHub refuses with "All comments must be resolved" or "A
+conversation must be resolved before this pull request can be merged." (the
+base requires conversation resolution; GitHub uses both wordings) is not an
+enqueue failure: when every open
 thread is the hive's own and marked non-blocking the hive resolves them and
 enqueues on the next pass (`review-threads-resolved`); when a thread only a
 person can clear is open the PR parks at `stage/085-needs-decision` with

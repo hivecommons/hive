@@ -14,7 +14,9 @@ import (
 //
 // A base whose branch protection or ruleset requires conversation
 // resolution refuses a merge, or a merge-queue enqueue, while any review
-// thread on the PR is unresolved ("All comments must be resolved"). The
+// thread on the PR is unresolved ("All comments must be resolved", or "A
+// conversation must be resolved before this pull request can be merged.";
+// hgithub.IsUnresolvedConversationsError matches each wording). The
 // enqueue refusal used to surface as "effect outcome uncertain,
 // reconciliation required" and was retried on every sweep, forever, even
 // when the only open threads were the hive's own non-blocking notes

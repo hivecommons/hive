@@ -118,6 +118,10 @@ func TestClassifyOwnReviewThread(t *testing.T) {
 func TestIsUnresolvedConversationsError(t *testing.T) {
 	gql := &graphQLErrors{Errors: []graphQLError{{Type: "UNPROCESSABLE", Message: "Pull request All comments must be resolved."}}}
 	rest := &gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusMethodNotAllowed}, Message: "Repository rule violations found\n\nAll comments must be resolved."}
+	// GitHub's other enqueue wording for the same rule. It did not match, so
+	// the refusal came back as an uncertain outcome and was retried on every
+	// sweep.
+	gqlConversation := &graphQLErrors{Errors: []graphQLError{{Type: "UNPROCESSABLE", Message: "Pull request A conversation must be resolved before this pull request can be merged."}}}
 	for _, tc := range []struct {
 		err  error
 		want bool
@@ -128,8 +132,16 @@ func TestIsUnresolvedConversationsError(t *testing.T) {
 		{rest, true},
 		{fmt.Errorf("merging PR: %w", rest), true},
 		{errors.New("graphql: UNPROCESSABLE: Pull request All comments must be resolved"), true},
+		{gqlConversation, true},
+		{effects.NotApplied(gqlConversation), true},
+		{fmt.Errorf("effect outcome uncertain, reconciliation required: %w", gqlConversation), true},
+		{errors.New("effect outcome uncertain, reconciliation required: " + gqlConversation.Error()), true},
+		{&gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusMethodNotAllowed}, Message: "Repository rule violations found\n\nA conversation must be resolved before this pull request can be merged."}, true},
+		{errors.New("graphql: UNPROCESSABLE: Pull request All conversations must be resolved"), true},
 		{&graphQLErrors{Errors: []graphQLError{{Type: "UNPROCESSABLE", Message: "Pull request is in clean status"}}}, false},
 		{errors.New("expectedHeadOid mismatch"), false},
+		{&graphQLErrors{Errors: []graphQLError{{Type: "UNPROCESSABLE", Message: "Pull request Required status check \"build\" is expected."}}}, false},
+		{&gh.ErrorResponse{Response: &http.Response{StatusCode: http.StatusMethodNotAllowed}, Message: "Repository rule violations found\n\nChanges must be made through the merge queue"}, false},
 		{nil, false},
 	} {
 		if got := IsUnresolvedConversationsError(tc.err); got != tc.want {
@@ -176,6 +188,24 @@ func TestResolveOwnReviewThreadsForMerge_AllOwn(t *testing.T) {
 	slices.Sort(got)
 	if want := []string{"T-info", "T-low", "T-marked"}; !slices.Equal(got, want) {
 		t.Fatalf("resolved %v, want %v", got, want)
+	}
+}
+
+// The PR GitHub refused with "A conversation must be resolved before this
+// pull request can be merged.": the only open thread was the hive's own
+// outdated low note. It is resolved and the PR is cleared.
+func TestResolveOwnReviewThreadsForMerge_OnlyOutdatedOwnNote(t *testing.T) {
+	m := ownThreadsMock(
+		&gqlThread{ID: "T-low", Outdated: true, Comments: []gqlComment{{Author: "hive", AuthorType: "Bot", Body: ownMarked(ownBodyStyleLow, "low")}}},
+		&gqlThread{ID: "T-done", Resolved: true, Comments: []gqlComment{{Author: "maintainer", AuthorType: "User", Body: "Nit: rename."}}},
+	)
+	c := ownThreadsClient(t, m)
+	out, err := c.ResolveOwnReviewThreadsForMerge(context.Background(), "o/r", 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Cleared() || out.Unresolved != 1 || out.Resolved != 1 || !slices.Equal(m.resolved, []string{"T-low"}) {
+		t.Fatalf("outcome = %+v resolved=%v, want the one outdated hive note resolved", out, m.resolved)
 	}
 }
 
