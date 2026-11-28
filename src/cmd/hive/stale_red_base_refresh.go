@@ -113,6 +113,10 @@ func refreshStaleRedBehindPRs(
 			break
 		}
 		repo := fullRepoName(pr.Repo, cfg.Project.Org)
+		if promotionBranchPR(cfg, pr) {
+			// The hive never updates a promotion branch.
+			continue
+		}
 		if github.DependencyBotBranch(pr.HeadRef, pr.Author) && strings.EqualFold(pr.CIStatus, "success") {
 			// A green bot PR: its next red is a new failure
 			// (stale_red_bot_rebase.go).

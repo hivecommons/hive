@@ -99,7 +99,12 @@ const (
 	UnauthorizedStepMergeWorkflowPath = "merge-workflow-path"
 	TrustedAuthorReasonAppAuthored    = "trusted-author:app-authored"
 	TrustedBotLaneSkipReason          = "trusted-bot-lane"
-	WorkflowApprovalRequiredPrefix    = "workflow-approval-required:"
+	// PromotionLaneSkipReason: the trusted-author and contributor lanes
+	// hand a branch-promotion pull request (auto_merge.promotions) whose
+	// head tree is the source branch's to the self-authored sweep's
+	// promotion lane, which records its eligibility.
+	PromotionLaneSkipReason        = "promotion-lane"
+	WorkflowApprovalRequiredPrefix = "workflow-approval-required:"
 	// WorkflowRunsHeldPrefix: GitHub holds workflow runs on the head behind
 	// its approve-workflows gate and the hive did not approve them (its
 	// policy does not trust the head, auto-approval is off, or GitHub

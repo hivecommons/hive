@@ -1010,8 +1010,9 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 	remaining = automerge.DefaultAutoMergeSweepMaxMerges - len(result.Merged)
 	if remaining > 0 && opts.ContributorLanePolicy().Enabled {
 		laneResult, laneErr := automerge.SweepContributorLaneAutoMerges(ctx, ghClient, opts, automerge.AutoMergeSweepOptions{
-			MaxMerges: remaining,
-			Audit:     audit,
+			MaxMerges:              remaining,
+			Audit:                  audit,
+			SelfAuthoredLaneActive: cfg != nil && cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel),
 		})
 		if laneErr != nil {
 			logger.Warn("contributor-lane automerge sweep failed", "error", laneErr)
@@ -1497,6 +1498,9 @@ func sentinelSweepOptions(cfg *config.Config, ghClient *github.Client, dashSrv *
 		},
 		// Per-repo sensitive paths (project.repo_policies[].sentinel_sensitive_paths).
 		SensitivePathsForRepo: sentinelRepoSensitivePathsFunc(cfg),
+		// Branch-promotion rules (auto_merge.promotions), gated exactly like
+		// the promotion merge lane (promotionRulesFunc).
+		PromotionsForRepo: promotionRulesFunc(cfg),
 	}
 }
 

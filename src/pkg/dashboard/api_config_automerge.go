@@ -175,6 +175,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// RequireCurrentBase: an empty (non-nil) list clears it, absent
 		// leaves it untouched.
 		HumanMergeOwnerApproval []string `json:"human_merge_owner_approval"`
+		// Promotions is the FULL desired auto_merge.promotions map, replaced
+		// whole like HumanMergePinOnly: an empty (non-nil) map clears it, a
+		// repository with no rules is dropped, absent leaves it untouched.
+		Promotions map[string][]config.PromotionRule `json:"promotions"`
 		// TrustedBotSkipReview is auto_merge.trusted_bot_skip_review: the
 		// review swarm's verdict is advisory on the trusted-bot lane.
 		TrustedBotSkipReview *bool `json:"trusted_bot_skip_review"`
@@ -296,6 +300,15 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		humanMergePinOnly = policies
+	}
+	var promotions map[string][]config.PromotionRule
+	if body.Promotions != nil {
+		rules, msg := s.autoMergePromotions(body.Promotions)
+		if msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
+			return
+		}
+		promotions = rules
 	}
 	var trustedAuthorRepos []string
 	var trustedAuthorLabels []string
@@ -452,6 +465,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	if body.HumanMergeOwnerApproval != nil {
 		cfg.AutoMerge.HumanMergeOwnerApproval = humanMergeOwnerApproval
 	}
+	if body.Promotions != nil {
+		cfg.AutoMerge.Promotions = promotions
+	}
 	if body.TrustedBotSkipReview != nil {
 		v := *body.TrustedBotSkipReview
 		cfg.AutoMerge.TrustedBotSkipReview = &v
@@ -535,8 +551,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// A pin-only exception lets PRs past a human-merge path, so one that
 		// cannot be saved is not left running until the next restart drops it.
 		// A per-repository fence scope can let workflow edits past the fence,
-		// so it is rolled back the same way.
-		if body.NativeMergeQueue != nil || body.MergeTrain != nil || body.HumanMergePinOnly != nil || len(fenceScopeChanges) > 0 {
+		// so it is rolled back the same way, and so is a promotion rule, which
+		// lets the promotion lane merge pull requests with no person.
+		if body.NativeMergeQueue != nil || body.MergeTrain != nil || body.HumanMergePinOnly != nil || body.Promotions != nil || len(fenceScopeChanges) > 0 {
 			cfg.AutoMerge = previousAutoMerge
 			if len(fenceScopeChanges) > 0 {
 				cfg.Project.RepoPolicies = previousRepoPolicies
@@ -601,6 +618,15 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		policy.TrustedAuthors = emptyIfNilStrings(policy.TrustedAuthors)
 		humanMergePinOnly[repo] = policy
 	}
+	promotions := make(map[string][]config.PromotionRule, len(am.Promotions))
+	for repo, rules := range am.Promotions {
+		out := make([]config.PromotionRule, 0, len(rules))
+		for _, rule := range rules {
+			rule.Authors = emptyIfNilStrings(rule.Authors)
+			out = append(out, rule)
+		}
+		promotions[repo] = out
+	}
 	projectRepos := make([]string, 0, len(cfg.Project.Repos))
 	for _, repo := range cfg.Project.Repos {
 		if full := config.QualifyRepo(cfg.Project.Org, repo); full != "" {
@@ -649,6 +675,7 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		"human_merge_paths":                humanMergePaths,
 		"human_merge_pin_only":             humanMergePinOnly,
 		"human_merge_owner_approval":       humanMergeOwnerApproval,
+		"promotions":                       promotions,
 		"pin_only_kinds":                   config.PinOnlyKinds,
 		"project_repos":                    projectRepos,
 		"trusted_bot_authors":              trustedBots,
@@ -903,6 +930,54 @@ func (s *Server) autoMergeHumanMergePaths(paths map[string][]string) (map[string
 				out[full] = append(out[full], pattern)
 			}
 		}
+	}
+	if len(out) == 0 {
+		return nil, ""
+	}
+	return out, ""
+}
+
+// autoMergePromotions validates auto_merge.promotions sent by the dashboard
+// or admin MCP. Keys follow autoMergeWatchedRepo (stored as owner/repo,
+// named once); each rule is trimmed and its authors de-duplicated; a
+// repository with no rules is dropped; every remaining repository's rules
+// must pass config.ValidatePromotionRules, the rule hive.yaml loads under.
+// A non-empty msg is the 400 to return.
+func (s *Server) autoMergePromotions(in map[string][]config.PromotionRule) (map[string][]config.PromotionRule, string) {
+	keys := make([]string, 0, len(in))
+	for k := range in {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := map[string][]config.PromotionRule{}
+	seen := map[string]bool{}
+	for _, k := range keys {
+		full, msg := s.autoMergeWatchedRepo("promotions", strings.TrimSpace(k))
+		if msg != "" {
+			return nil, msg
+		}
+		if seen[strings.ToLower(full)] {
+			return nil, "promotions names " + full + " twice"
+		}
+		seen[strings.ToLower(full)] = true
+		if len(in[k]) == 0 {
+			continue
+		}
+		rules := make([]config.PromotionRule, 0, len(in[k]))
+		for _, rule := range in[k] {
+			for _, a := range rule.Authors {
+				if strings.TrimSpace(a) == "" {
+					return nil, "promotions: " + full + ": authors entries must be non-empty logins"
+				}
+			}
+			rule = rule.Normalized()
+			rule.Authors = autoMergeDedupeStrings(rule.Authors)
+			rules = append(rules, rule)
+		}
+		if err := config.ValidatePromotionRules(full, rules); err != nil {
+			return nil, err.Error()
+		}
+		out[full] = rules
 	}
 	if len(out) == 0 {
 		return nil, ""

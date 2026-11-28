@@ -54,6 +54,7 @@ const (
 	amList
 	amRepoPaths
 	amPinOnly
+	amPromotions      // per-repository branch-promotion rules (tools_automerge_promotions.go)
 	amFenceScopeRepos // per-repository map, sent as a patch (tools_automerge_fence_repos.go)
 )
 
@@ -86,6 +87,7 @@ const (
 	amWidenScope             // contributor_lane.auto_promotion_scope from repo to hive
 	amWidenPaths             // human_merge_paths loses a pattern
 	amWidenPinOnly           // human_merge_pin_only admits more repositories, paths, kinds or authors
+	amWidenPromote           // promotions adds a rule, an author or a looser head ref prefix
 )
 
 type amField struct {
@@ -114,6 +116,7 @@ var autoMergeFields = []amField{
 	{key: "human_merge_paths", kind: amRepoPaths, widen: amWidenPaths, why: "pull requests touching these paths no longer wait for a person to merge them"},
 	{key: "human_merge_pin_only", kind: amPinOnly, widen: amWidenPinOnly},
 	{key: "human_merge_owner_approval", kind: amList, entry: amEntryRepo, widen: amWidenAdd, why: "a trusted merger's approval of a pull request's head lets the hive merge it there although it touches a path a person must merge"},
+	{key: "promotions", kind: amPromotions, widen: amWidenPromote},
 	{key: "bot_takeover_enabled", kind: amBool, widen: amWidenOn, why: "the App re-authors trusted github-actions[bot] pull requests and merges its copy"},
 	{key: "dependency_bot_adopt_enabled", kind: amBool, widen: amWidenOn, why: "the hive adopts red trusted dependency-bot pull requests its review asked to change, and merges its fixed copy"},
 	{key: "dependency_bot_red_issue_enabled", kind: amBool, widen: amWidenNever, why: "the hive files one issue in the repository for a red dependency-bot pull request whose failing checks pass on the base; it merges nothing more"},
@@ -147,7 +150,7 @@ var autoMergeFields = []amField{
 
 func (autoMergeUpdateOp) Name() string { return WriteOpAutoMergeUpdate }
 func (autoMergeUpdateOp) Description() string {
-	return "Change merge settings (auto_merge) through PATCH /api/config/auto-merge, the endpoint the dashboard's merge controls use. Owner only. Pass only what changes, shaped like the endpoint's body. A list takes {\"add\": [...], \"remove\": [...]}; human_merge_paths takes {\"owner/repo\": [every pattern for that repository]}, with null or [] removing that repository. human_merge_pin_only takes {\"owner/repo\": {\"enabled\": true, \"paths\": [...], \"kinds\": [...], \"trusted_authors\": [...]}}, the whole exception for that repository, with null removing it; the repository needs human_merge_paths. contributor_lane.workflow_fence_scope_repos takes {\"owner/repo\": \"all\" | \"human_merge_paths\"}, one repository's own workflow fence scope, with null returning it to the hive-wide scope; only the named repositories change. The preview reads the current settings and sends each changed list or map whole, keeping every entry you did not name, shows each change before and after, and says which changes let the hive merge more on its own. write_confirm refuses if any of those settings changed after the preview. This operation never merges a pull request."
+	return "Change merge settings (auto_merge) through PATCH /api/config/auto-merge, the endpoint the dashboard's merge controls use. Owner only. Pass only what changes, shaped like the endpoint's body. A list takes {\"add\": [...], \"remove\": [...]}; human_merge_paths takes {\"owner/repo\": [every pattern for that repository]}, with null or [] removing that repository. human_merge_pin_only takes {\"owner/repo\": {\"enabled\": true, \"paths\": [...], \"kinds\": [...], \"trusted_authors\": [...]}}, the whole exception for that repository, with null removing it; the repository needs human_merge_paths. promotions takes {\"owner/repo\": [{\"source\": \"main\", \"target\": \"stable\", \"authors\": [...], \"head_ref_prefix\": \"auto/promote-\"}]}, that repository's whole list of branch-promotion rules, with null or [] removing it; a rule lets a matching pull request whose head tree and test merge equal the current tree of a source branch that takes changes only through a pull request merge with no person, so the target inherits exactly the source's review guarantee; adding one is disclosed as widening. contributor_lane.workflow_fence_scope_repos takes {\"owner/repo\": \"all\" | \"human_merge_paths\"}, one repository's own workflow fence scope, with null returning it to the hive-wide scope; only the named repositories change. The preview reads the current settings and sends each changed list or map whole, keeping every entry you did not name, shows each change before and after, and says which changes let the hive merge more on its own. write_confirm refuses if any of those settings changed after the preview. This operation never merges a pull request."
 }
 
 func (autoMergeUpdateOp) InputSchema() map[string]any {
@@ -184,6 +187,8 @@ func (f *amField) schema() map[string]any {
 		return map[string]any{"type": "string", "enum": f.enum}
 	case amFenceScopeRepos:
 		return amFenceReposSchema()
+	case amPromotions:
+		return autoMergePromotionsSchema()
 	case amRepoPaths:
 		return map[string]any{"type": "object", "description": "owner/repo to every glob pattern that repository should hold; null or [] removes the repository. Repositories you do not name are kept.", "additionalProperties": map[string]any{"anyOf": []any{list, map[string]any{"type": "null"}}}}
 	case amPinOnly:
@@ -316,6 +321,9 @@ type amRow struct {
 func (c amPlanned) rows() []amRow {
 	if c.field.kind == amFenceScopeRepos {
 		return amFenceReposRows(c, c.fenceHiveWide)
+	}
+	if c.field.kind == amPromotions {
+		return autoMergePromotionRows(c)
 	}
 	if c.field.kind == amPinOnly {
 		before := autoMergePinOnlyValue(c.before)
@@ -546,6 +554,8 @@ func (f *amField) apply(before, raw any, projectRepos []string) (any, error) {
 		return applyRepoPaths(before, raw, projectRepos)
 	case amPinOnly:
 		return autoMergeApplyPinOnly(before, raw, projectRepos)
+	case amPromotions:
+		return autoMergeApplyPromotions(before, raw, projectRepos)
 	case amFenceScopeRepos:
 		return amFenceReposApply(before, raw, projectRepos)
 	default:
@@ -1008,6 +1018,8 @@ func (f *amField) widening(before, after any, projectRepos []string) []string {
 		}
 	case amWidenPinOnly:
 		return autoMergePinOnlyWidening(before, after)
+	case amWidenPromote:
+		return autoMergePromotionsWidening(before, after)
 	case amWidenPaths:
 		was := repoPathsValue(before)
 		now, _ := after.(map[string][]string)

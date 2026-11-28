@@ -120,6 +120,15 @@ func (c *Engine) IntegrationEligibility(ctx context.Context, repo, base string, 
 				return nil, "normal self-authored flag/ACMM admission is disabled or unknown", nil
 			}
 			_, reason, err = c.trySweepSelfAuthoredPR(ctx, repo, owner, name, number, false)
+		} else if c.promotionLaneOwns(ctx, owner, name, pr) {
+			// A branch-promotion pull request belongs to the self-authored
+			// sweep's promotion lane (automerge_promotion_lane.go), under the
+			// same admission as the App's own; the contributor lane would
+			// only hand it back.
+			if options.IntegrationSelfAllowed == nil || !options.IntegrationSelfAllowed() {
+				return nil, "normal self-authored flag/ACMM admission is disabled or unknown", nil
+			}
+			_, reason, err = c.trySweepSelfAuthoredPR(ctx, repo, owner, name, number, false)
 		} else if policy := c.currentTrustedAuthorPolicy(); policy.repoAllowed(repo) {
 			if decision := c.trustedAuthorDecision(author, policy.RequireRole); decision.Allowed {
 				_, reason, err = c.trySweepTrustedAuthorPR(ctx, repo, owner, name, number, policy)

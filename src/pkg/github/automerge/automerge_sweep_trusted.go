@@ -48,6 +48,14 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	author := hgithub.SafeGetLogin(pr.GetUser())
 	lane, laneOK := c.sweepLaneForAuthor(author)
 	if !laneOK {
+		// A branch-promotion pull request whose head tree is the source
+		// branch's (automerge_promotion_lane.go): the content, not the
+		// author, admits it, and every gate below still applies.
+		if _, ok := c.promotionLanePRIn(ctx, owner, repo, pr); ok {
+			lane, laneOK = lanePromotion, true
+		}
+	}
+	if !laneOK {
 		// Neither the App's own PR nor a trusted bot's: this path never touches
 		// other PRs, matching the human-queue sweep's untouched behavior for
 		// PRs it does not own. Defense in depth — prefilterSelfAuthoredPR
@@ -56,13 +64,21 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		// between listing and evaluating it here.
 		return AutoMergeSweepEvent{}, "not-app-authored", nil
 	}
+	// The serialized lane brings its front up to date itself, and the hive
+	// never writes to a promotion branch (the workflow that opened it owns
+	// it), so a promotion on a serialized repository is a person's merge.
+	if lane == lanePromotion && serialized {
+		c.promotionHandBack(displayRepo, owner, repo, number, pr.GetHead().GetSHA(), autoMergeReasonPromotionSerialized)
+		return reject(autoMergeReasonPromotionSerialized)
+	}
 	selfLabels := labelNames(pr.Labels)
 	// The refetched PR is the one that merges: a title or label edited
 	// since listing re-applies the human-merge rule (hivecommons/hive#15442).
 	if reason := c.humanMergeRequiredReason(pr.GetTitle(), selfLabels); reason != "" {
 		return reject(c.humanMergeRequiredUnlessHumanChangesRequested(ctx, owner, repo, pr, reason))
 	}
-	blocked := c.labelBlockReason(selfLabels, true)
+	// The promotion lane's author is not trusted: a sentinel label blocks it.
+	blocked := c.labelBlockReason(selfLabels, lane != lanePromotion)
 	// A conflicting head — GitHub's mergeable_state or the needs-rebase
 	// label a lane already put on it — is asked the superseded question
 	// before the label block returns: a PR whose issue another merged PR
@@ -154,6 +170,17 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	queueSkipsBase := sync.OnceValue(func() bool {
 		return !serialized && c.nativeQueueSkipsCurrentBase(ctx, owner+"/"+repo, pr)
 	})
+	// A promotion branch is never updated: merging the target into it would
+	// take the head off the source branch, so it could never match again.
+	// GitHub reports "behind" only when the target requires up-to-date
+	// branches; such a promotion is a person's merge.
+	// Where GitHub's native merge queue handles the base (it tests the
+	// merged result itself, nativeQueueSkipsCurrentBase), a behind head is
+	// the queue's to handle, as on every lane.
+	if lane == lanePromotion && !queueSkipsBase() && (strings.EqualFold(pr.GetMergeableState(), "behind") || c.nativeQueueRejectedHeadBehind(ctx, owner+"/"+repo, pr)) {
+		c.promotionHandBack(displayRepo, owner, repo, number, evaluatedHeadSHA, autoMergeReasonPromotionBehindTarget)
+		return reject(autoMergeReasonPromotionBehindTarget)
+	}
 	if (strings.EqualFold(pr.GetMergeableState(), "behind") || c.nativeQueueRejectedHeadBehind(ctx, owner+"/"+repo, pr)) && !serialized && !queueSkipsBase() && !c.requireCurrentBaseFor(owner+"/"+repo) && !integrationCombinedBaseProvided(ctx) {
 		if !branchUpdateAllowed {
 			// Keep the cause: still behind, retried next tick, not CI
@@ -264,7 +291,11 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// head is the author's to fix and must not be re-based under them, and a
 	// head policy refuses would be updated for nothing. Sits before the desk
 	// so the desk is only asked about a head that would merge this tick.
-	if !serialized && c.requireCurrentBaseFor(owner+"/"+repo) && !queueSkipsBase() {
+	// The promotion lane replaces this gate with its own merge-result check
+	// (promotionMergeRecheck): GitHub's test merge must carry exactly the
+	// source tip's tree on the live target tip, which proves more than "the
+	// head contains the base", and needs no write to the promotion branch.
+	if lane != lanePromotion && !serialized && c.requireCurrentBaseFor(owner+"/"+repo) && !queueSkipsBase() {
 		if reviewReason := c.mergeReviewGate(ctx, displayRepo, owner, repo, lane, number, pr, evaluatedHeadSHA, priorApprover, priorChecked); reviewReason != "" {
 			return AutoMergeSweepEvent{}, reviewReason, nil
 		}
@@ -331,6 +362,20 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if hold := mergeTrainCandidateHold(ctx); hold != "" {
 		return AutoMergeSweepEvent{}, hold, nil
 	}
+	// Promotion lane: the content check is asked of GitHub again, past the
+	// routing memo, as the last gate before any merge or enqueue path, and
+	// the merge result is checked too. If the source branch moved since the
+	// pull request was routed here, or the test merge onto the target does
+	// not carry the source tip's tree, nothing merges this pass.
+	var promotion hgithub.PromotionCheck
+	if lane == lanePromotion {
+		check, reason := c.promotionMergeRecheck(ctx, displayRepo, owner, repo, current)
+		if reason != "" {
+			c.promotionHandBack(displayRepo, owner, repo, number, evaluatedHeadSHA, reason)
+			return AutoMergeSweepEvent{}, reason, nil
+		}
+		promotion = check
+	}
 	requiredNative, integrationReason, integrationErr := c.routeIntegrationMerge(ctx, current, mergeClaim)
 	if integrationReason != "" || integrationErr != nil {
 		return AutoMergeSweepEvent{}, integrationReason, integrationErr
@@ -352,6 +397,12 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// Queue-enabled bases use GitHub's native queue after the same gates.
 	// Other bases retain the direct merge and remembered refusal handling.
 	if reason, err := c.tryNativeQueueAfterRouting(ctx, current, mergeClaim, requiredNative); reason != "" || err != nil {
+		if lane == lanePromotion && reason == nativeQueueReason && err == nil && c.markTerminalHoldLogged(owner, repo, number, evaluatedHeadSHA, "promotion-enqueued") {
+			// GitHub merges a queued entry later; every pass re-checks it
+			// above and a mismatch withdraws it (nativeQueueWithdrawReason).
+			c.recordPromotionDecision(owner+"/"+repo, number, "enqueued", promotion)
+			c.info("promotion lane: enqueued "+promotion.Summary(), "repo", displayRepo, "pr", number, "head", evaluatedHeadSHA, "source", promotion.Rule.Source, "source_sha", promotion.SourceSHA, "tree", promotion.TreeSHA, "merge_commit", promotion.MergeSHA)
+		}
 		return AutoMergeSweepEvent{}, reason, err
 	}
 
@@ -397,6 +448,11 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	// sweep, the unaudited path made merging hives read as "no merge in Nd"
 	// red on /fleet (observed live on kubestellar/console, 2026-08-26).
 	c.transport.RecordPRMergedAudit(owner+"/"+repo, number, method, mergeResult.GetSHA(), hgithub.PRAuditPathSweep)
+	if lane == lanePromotion {
+		c.promotionVerifyMergedTree(ctx, displayRepo, owner, repo, number, mergeResult.GetSHA(), promotion)
+		c.recordPromotionDecision(owner+"/"+repo, number, "merged", promotion)
+		c.info("promotion lane: merged "+promotion.Summary(), "repo", displayRepo, "pr", number, "author", author, "head", evaluatedHeadSHA, "source", promotion.Rule.Source, "source_sha", promotion.SourceSHA, "tree", promotion.TreeSHA, "merge_sha", mergeResult.GetSHA(), "method", method)
+	}
 	event := AutoMergeSweepEvent{
 		Repo:     displayRepo,
 		Number:   number,
@@ -535,6 +591,14 @@ func (c *Engine) labelBlockReason(labels []string, trusted bool) string {
 }
 
 func (c *Engine) prefilterSelfAuthoredPR(pr *gh.PullRequest) string {
+	owner, repo := prBaseRepo(pr)
+	return c.prefilterSelfAuthoredPRIn(owner, repo, pr)
+}
+
+// prefilterSelfAuthoredPRIn is prefilterSelfAuthoredPR for a pull request
+// listed from owner/repo, which names the repository whose promotion rules
+// apply (a payload rebuilt from the ForgeState cache has no base repository).
+func (c *Engine) prefilterSelfAuthoredPRIn(owner, repo string, pr *gh.PullRequest) string {
 	if pr == nil {
 		return "missing-head-sha"
 	}
@@ -544,14 +608,24 @@ func (c *Engine) prefilterSelfAuthoredPR(pr *gh.PullRequest) string {
 	if pr.GetDraft() {
 		return "draft"
 	}
+	// trusted waives the sentinel label for the App's own and trusted-bot
+	// pull requests only. A promotion pull request's author is not trusted,
+	// so a sentinel label on it (a finding the promotion check did not set
+	// aside, or one placed before it matched) still blocks.
+	trusted := true
 	if _, ok := c.sweepLaneForAuthor(hgithub.SafeGetLogin(pr.GetUser())); !ok {
-		return "not-app-authored"
+		// The prefilter has no caller context; the lane repeats the check
+		// with its own before it merges anything.
+		if _, promotion := c.promotionLanePRIn(context.Background(), owner, repo, pr); !promotion {
+			return "not-app-authored"
+		}
+		trusted = false
 	}
 	labels := labelNames(pr.Labels)
 	if reason := c.humanMergeRequiredReason(pr.GetTitle(), labels); reason != "" {
 		return reason
 	}
-	if blocked := c.labelBlockReason(labels, true); blocked != "" {
+	if blocked := c.labelBlockReason(labels, trusted); blocked != "" {
 		return blocked
 	}
 	if c.transport.IsExemptLabels(labels) {
@@ -942,9 +1016,23 @@ func (c *Engine) isForkPR(pr *gh.PullRequest) bool {
 // it rebases a behind branch itself. A Dependabot branch is the exception on
 // the update-branch steps (dependabotUpdateBranchAllowed, #18441). A nil PR
 // is never a bot branch.
+//
+// A branch any configured auto_merge.promotions rule names (base, author
+// and head ref; no GitHub call) is left alone the same way, matched or not,
+// whether or not the promotion lane runs (promotionBranch): the workflow
+// that opened it owns it, and a hive merge of the target into it would take
+// the head off the source branch for good.
 func (c *Engine) leaveBaseSyncToDependencyBot(displayRepo, owner, repo string, pr *gh.PullRequest, step string) bool {
 	if pr == nil {
 		return false
+	}
+	if c.promotionBranch(owner, repo, pr) {
+		number, headSHA := pr.GetNumber(), pr.GetHead().GetSHA()
+		if c.markTerminalHoldLogged(owner, repo, number, headSHA, "promotion-branch:"+step) {
+			c.info("automerge: branch is a promotion branch; the hive never updates it",
+				"repo", displayRepo, "pr", number, "head", headSHA, "head_ref", pr.GetHead().GetRef(), "step", step)
+		}
+		return true
 	}
 	headRef, author := pr.GetHead().GetRef(), hgithub.SafeGetLogin(pr.GetUser())
 	if !hgithub.DependencyBotBranch(headRef, author) {
@@ -972,6 +1060,10 @@ func (c *Engine) leaveBaseSyncToDependencyBot(displayRepo, owner, repo string, p
 // nil reads as a same-repo, non-bot head. A dependency bot's branch other than
 // Dependabot's is never updated: it holds as "behind" until the bot rebases it.
 func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, baseSHA, reason string, pr *gh.PullRequest) (AutoMergeSweepEvent, string, error) {
+	if c.promotionBranch(owner, repo, pr) {
+		c.leaveBaseSyncToDependencyBot(displayRepo, owner, repo, pr, "update-branch")
+		return AutoMergeSweepEvent{}, autoMergeReasonPromotionBehindTarget, nil
+	}
 	if c.leaveBaseSyncToDependencyBot(displayRepo, owner, repo, pr, "update-branch") {
 		return AutoMergeSweepEvent{}, "behind", nil
 	}

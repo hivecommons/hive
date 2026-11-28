@@ -14,6 +14,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/sentinel"
 	"github.com/hivecommons/hive/pkg/writeback"
@@ -85,6 +86,18 @@ type SentinelSweepOptions struct {
 	// strict no-op. PRs the sentinel skips (unchanged heads, exempt authors)
 	// are not observed.
 	PatchObserver func(SentinelPatchObservation)
+	// PromotionsForRepo returns the auto_merge.promotions rules for one
+	// "owner/repo" (config.Config.PromotionRulesFor), and nil where the
+	// promotion merge lane does not run, so nothing is exempted where a
+	// person merges. A pull request one of them names whose source branch is
+	// protected and whose head tree is, read live, exactly the source
+	// branch's current tree (VerifyPromotion) is not flagged sensitive_path
+	// again (sentinel.PromotionExemptRules); every other rule still applies.
+	// Each exemption is logged and audited as a promotion_decision
+	// (decision=sentinel-exempt) with the head, source tip and tree, and the
+	// head is not remembered as evaluated, so the next pass checks it again.
+	// nil means no repository has a promotion rule.
+	PromotionsForRepo func(repo string) []config.PromotionRule
 }
 
 // sentinelEvaluatorForRepo is the evaluator config for one "owner/repo":
@@ -296,6 +309,39 @@ type sentinelHeadsSeen struct {
 	seen   map[string]string
 	path   string
 	logger *slog.Logger
+	// promoted remembers, per pull request, the head the promotion
+	// exemption last applied to and the source tip it matched
+	// (sentinelPromotionExemption). In memory only: after a restart a head
+	// is judged against the current source again.
+	promoted map[string]sentinelPromotionMark
+}
+
+// sentinelPromotionMark is one exempted promotion head and the source tip
+// it matched.
+type sentinelPromotionMark struct {
+	head, source, sourceSHA string
+}
+
+func (s *sentinelHeadsSeen) rememberPromotion(key string, mark sentinelPromotionMark) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.promoted == nil {
+		s.promoted = map[string]sentinelPromotionMark{}
+	}
+	s.promoted[key] = mark
+}
+
+func (s *sentinelHeadsSeen) promotion(key string) (sentinelPromotionMark, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	m, ok := s.promoted[key]
+	return m, ok
+}
+
+func (s *sentinelHeadsSeen) forgetPromotion(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.promoted, key)
 }
 
 // isSeen reports whether key was last evaluated at head without recording
@@ -319,6 +365,17 @@ func (s *sentinelHeadsSeen) unchanged(key, head string) bool {
 	s.seen[key] = head
 	s.saveLocked()
 	return false
+}
+
+// forget drops key's remembered head, so the next pass evaluates it again.
+func (s *sentinelHeadsSeen) forget(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.seen[key]; !ok {
+		return
+	}
+	delete(s.seen, key)
+	s.saveLocked()
 }
 
 // retain drops the remembered heads of PRs in owner/repo that are no longer
@@ -695,6 +752,16 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 	if len(findings) == 0 {
 		return SentinelSweepEvent{}, false, nil
 	}
+	findings, exempted := c.sentinelPromotionExemption(ctx, displayRepo, owner, repo, key, pr, findings, opts)
+	if exempted {
+		// Not a verdict on this head for good: the source branch can move
+		// on, a rule can be removed, the pull request can be retargeted.
+		// The next pass evaluates the head again.
+		c.sentinelHeads.forget(key)
+	}
+	if len(findings) == 0 {
+		return SentinelSweepEvent{}, false, nil
+	}
 	event := SentinelSweepEvent{Number: number, Author: author, Title: pr.GetTitle(), HeadSHA: head, Findings: findings, Blocked: decision.Block, TrustedReason: decision.TrustedReason}
 	digest := sentinelFlaggedDigest(findings, files)
 	markerBody := SentinelComment(decision, head, author, findings)
@@ -853,6 +920,113 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 	}
 	c.clearSentinelNoticeSection(ctx, displayRepo, number)
 	return event, true, nil
+}
+
+// sentinelPromotionExemption sets aside the sensitive_path finding
+// (sentinel.PromotionExemptRules) on a branch-promotion pull request: one an
+// auto_merge.promotions rule names (base, author, head ref) whose source
+// branch takes changes only through pull requests and whose head tree is,
+// read from GitHub now, exactly the source branch's current tree, in one of
+// the two accepted head shapes (VerifyPromotion).
+// A promotion carries every sensitive file the source changed, so the
+// finding would hold every promote. Every other finding is kept. Any
+// mismatch or read error keeps every finding: the pull request takes
+// today's path. The bool reports that the exemption applied, so the caller
+// does not remember the head as evaluated.
+//
+// The live check runs only for a pull request a rule names and only when
+// sensitive_path fired, so every other pull request costs nothing. The pull
+// request is read again after its files were listed (they are listed by
+// number): a head that moved in between keeps every finding.
+//
+// A head the exemption already applied to keeps it when the only change is
+// that the source branch moved on: the source tip it matched then is
+// remembered, and if that commit is still on the source (an ancestor of, or
+// equal to, the current tip; one compare), the head is an earlier reviewed
+// state of the source. Without this the flag a race put on the head would
+// outlive every later matching head, since only a person removes it. A
+// removed rule, a retarget, an unprotected source, a changed head or a
+// remembered tip no longer on the source (a rewrite) still flags.
+func (c *Client) sentinelPromotionExemption(ctx context.Context, displayRepo, owner, repo, key string, pr *gh.PullRequest, findings []sentinel.Finding, opts SentinelSweepOptions) ([]sentinel.Finding, bool) {
+	if opts.PromotionsForRepo == nil {
+		c.sentinelHeads.forgetPromotion(key)
+		return findings, false
+	}
+	if _, ok := PromotionRuleFor(opts.PromotionsForRepo(owner+"/"+repo), owner, repo, pr); !ok {
+		c.sentinelHeads.forgetPromotion(key)
+		return findings, false
+	}
+	kept, dropped := sentinel.WithoutPromotionExempt(findings)
+	if len(dropped) == 0 {
+		return findings, false
+	}
+	current, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:promotion_check"), owner, repo, pr.GetNumber())
+	if err != nil || current == nil || current.GetHead().GetSHA() != pr.GetHead().GetSHA() {
+		if c.logger != nil {
+			c.logger.Info("sentinel: promotion head moved or unreadable after its files were listed; findings stand", "repo", displayRepo, "pr", pr.GetNumber(), "head", pr.GetHead().GetSHA(), "error", err)
+		}
+		return findings, false
+	}
+	rule, ok := PromotionRuleFor(opts.PromotionsForRepo(owner+"/"+repo), owner, repo, current)
+	if !ok {
+		c.sentinelHeads.forgetPromotion(key)
+		return findings, false
+	}
+	check, err := VerifyPromotion(ctx, c.client, owner, repo, current, rule)
+	if !check.Matched && c.sentinelPromotionStillOnSource(ctx, owner, repo, key, rule, check) {
+		if c.logger != nil {
+			c.logger.Info("sentinel: the source moved on from the tip this head matched, which is still on the source; keeping the exemption", "repo", displayRepo, "pr", pr.GetNumber(), "head", check.HeadSHA, "source", rule.Source, "source_sha", check.SourceSHA, "reason", check.Reason)
+		}
+		c.RecordPromotionDecision(owner+"/"+repo, pr.GetNumber(), "sentinel-exempt-earlier-source", check)
+		return kept, true
+	}
+	if !check.Matched {
+		c.sentinelHeads.forgetPromotion(key)
+		if c.logger != nil {
+			c.logger.Info("sentinel: promotion check did not match; findings stand", "repo", displayRepo, "pr", pr.GetNumber(), "head", check.HeadSHA, "source", rule.Source, "source_sha", check.SourceSHA, "tree", check.TreeSHA, "head_tree", check.HeadTreeSHA, "reason", check.Reason, "error", err)
+		}
+		return findings, false
+	}
+	c.sentinelHeads.rememberPromotion(key, sentinelPromotionMark{head: check.HeadSHA, source: rule.Source, sourceSHA: check.SourceSHA})
+	exempt := sentinel.Rules(dropped)
+	remains := sentinel.Rules(kept)
+	if c.logger != nil {
+		c.logger.Info("sentinel: "+check.Summary(), "repo", displayRepo, "pr", pr.GetNumber(), "author", SafeGetLogin(pr.GetUser()), "head", check.HeadSHA, "source", rule.Source, "source_sha", check.SourceSHA, "tree", check.TreeSHA, "exempt_rules", strings.Join(exempt, ","), "remaining_rules", strings.Join(remains, ","))
+	}
+	c.RecordPromotionDecision(owner+"/"+repo, pr.GetNumber(), "sentinel-exempt", check)
+	return kept, true
+}
+
+// sentinelPromotionStillOnSource reports whether a head the exemption
+// already applied to failed this check only because a branch moved: the
+// same head, the same source, a check that read the protected source and
+// found a different tree or shape (not an unprotected source or a read
+// error), and either the source tip it matched then still an ancestor of,
+// or equal to, the current tip, or an unmoved source with a head that still
+// carries its tree (the target moved under a commit-tree head).
+func (c *Client) sentinelPromotionStillOnSource(ctx context.Context, owner, repo, key string, rule config.PromotionRule, check PromotionCheck) bool {
+	mark, ok := c.sentinelHeads.promotion(key)
+	if !ok || mark.head != check.HeadSHA || mark.source != rule.Source || check.SourceSHA == "" || check.Protection == "" {
+		return false
+	}
+	switch check.Reason {
+	case PromotionReasonTreeMismatch, PromotionReasonNotOnSource, PromotionReasonHeadShape:
+	default:
+		return false
+	}
+	if mark.sourceSHA == check.SourceSHA {
+		// The source has not moved. A commit-tree head that still carries
+		// the source tree fails only because the target moved under it (a
+		// hotfix landed while the promotion was open): its content is still
+		// exactly the reviewed source.
+		return check.Reason == PromotionReasonHeadShape && check.HeadTreeSHA != "" && check.HeadTreeSHA == check.TreeSHA
+	}
+	cmp, _, err := c.client.Repositories.CompareCommits(WithRESTCaller(ctx, "hive:promotion_check"), owner, repo, mark.sourceSHA, check.SourceSHA, &gh.ListOptions{PerPage: 1})
+	if err != nil {
+		return false
+	}
+	status := strings.ToLower(strings.TrimSpace(cmp.GetStatus()))
+	return cmp.GetBehindBy() == 0 && (status == "ahead" || status == "identical")
 }
 
 // sentinelWritebackItem is the gate's view of a PR read from GitHub.

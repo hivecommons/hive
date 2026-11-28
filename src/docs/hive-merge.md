@@ -870,6 +870,180 @@ reopen the PR. The bot takeover (re-authoring the PR as the App) is only for
 PRs `github-actions[bot]` opened itself; when that one attempt does not
 replace the PR, the hold is `required-check-never-ran:<check>`.
 
+### Branch-promotion pull requests
+
+Many repositories promote one protected branch to another with a pull
+request a workflow opens: `main` into `stable`, opened by
+`github-actions[bot]` from `auto/promote-main-to-stable`, for example. Every
+change in it already merged to `main`, so the check a person makes before
+merging it is mechanical: the head's tree is `main`'s tree, and the checks
+are green. `auto_merge.promotions` lets the hive make that check itself. It
+is off unless a repository is listed, and it only applies where the
+self-authored sweep runs (`auto_merge.self_authored` on, at the ACMM level
+that sweep needs); elsewhere every lane, and the sentinel, treat the pull
+request exactly as before.
+
+```yaml
+auto_merge:
+  promotions:
+    example-org/app:
+      - source: main
+        target: stable
+        authors: [github-actions[bot]]
+        head_ref_prefix: auto/promote-
+```
+
+**Trust carries over.** A rule says: whatever reaches `source` may reach
+`target` with no person. So `source` must take changes only through a pull
+request, and `target` then inherits exactly that guarantee: a pull request
+required, with the approvals (zero included) and the bypass actors the
+owner configured on `source`. A bypass actor who can push to `source` can
+reach `target` too.
+
+Two things the hive does not check, so decide them yourself:
+
+- **Who can push without a pull request.** On classic protection the hive
+  does not read `enforce_admins` or `bypass_pull_request_allowances`, and on
+  rulesets it cannot see the bypass actors. An admin or bypass actor who can
+  push to `source` without a pull request reaches `target` with no person
+  too.
+- **The promotion commit's own metadata.** For the commit-tree shape below,
+  the hive checks the commit's tree and parent, not its author, message or
+  trailers (`Signed-off-by`, `[skip ci]` and the like). With the merge
+  method, that commit lands in `target`'s history as it is.
+
+A pull request matches only when all of these hold, and anything else takes
+the path it takes today:
+
+- its base is `target`, its author is one of `authors` (an exact login, never
+  a pattern), its head ref starts with `head_ref_prefix`, and its head branch
+  lives in the same repository (never a fork);
+- `source` takes changes only through a pull request. Either its classic
+  branch protection (`GET /repos/{owner}/{repo}/branches/{source}/protection`,
+  which needs the App's administration read) requires pull request reviews,
+  any number of approvals, and does not allow force pushes; or
+  `GET /repos/{owner}/{repo}/rules/branches/{source}` returns an active
+  ruleset `pull_request` rule, any number of approvals. A protection read
+  that fails (403 without administration read, 404 for a ruleset-only
+  branch) falls through to the rules read. A ruleset `update` rule alone,
+  required status checks, signatures or linear history do not count, because
+  they do not route changes through a pull request. Ruleset force pushes are
+  not checked: a `pull_request` rule refuses every direct ref update by a
+  non-bypass actor. Anything else, or a failed rules read, is
+  `promotion-source-unprotected`;
+- its head commit's tree equals the tip tree of `source` as GitHub reports it
+  now;
+- the head has one of two shapes:
+  - it is the `source` tip or an ancestor of it (a workflow that pushes
+    `source` to the promotion branch): `GET .../compare/{tip}...{head}`
+    reports it `behind` with `ahead_by` 0; or
+  - it is a single commit whose only parent is the live `target` tip (a
+    workflow that runs `git commit-tree <source tree> -p <target>`): its
+    one commit carries the `source` tree onto the current `target`.
+
+  A head with the `source` tree in neither shape (built on an older `target`
+  tip, a chain of commits, a merge) is `promotion-head-shape`; one that brings
+  other commits is `promotion-head-not-on-source`.
+
+That is one REST call when the head is the `source` tip, plus the protection
+reads (one, or two for a ruleset-only `source`), and two or three more
+otherwise (the head commit, then the `target` branch or one compare). A read
+error is never a match. The transport's conditional requests only ever
+revalidate with GitHub, so the branch read is never a stale copy.
+
+For a matching pull request:
+
+- **The sentinel** does not raise `sensitive_path` on it: a promotion
+  carries every sensitive file the source changed. Every other behavior
+  still applies (`permission_escalation`, `remote_code_execution`,
+  `ci_gate_weakening`, `secret_exposure`, `security_policy_edit`,
+  `test_removal` and `owner_self_nomination`), because the source may carry
+  such content without the sentinel ever having judged it (a direct or
+  bypass push, or a change older than the sentinel) and the target is often
+  the more privileged branch. It logs `sentinel: promotion of
+  already-reviewed content, tree == main at <sha>`, and the head is checked
+  again on every pass. A `source` that only moved on keeps the exemption: the
+  tip the head matched is remembered, and while it is still on `source` (one
+  compare) the head is an earlier reviewed state of `source`. A removed rule,
+  a retarget, a `source` that no longer requires pull requests, or a
+  remembered tip that is gone from `source` (a rewrite) is flagged. An alert
+  label already on the pull request is never removed by the hive: a person
+  clears it. See
+  [Suspicious-activity alerts](operator-reference/sweeps-and-operations.md#suspicious-activity-alerts-sentinel).
+- **The merge** is the self-authored sweep's `promotion` lane. The
+  trusted-author and contributor lanes hand the pull request to it
+  (`promotion-lane`), in a pass where that sweep runs, instead of refusing it
+  for a missing linked issue or author tier; integration execution routes it
+  there too, and the merge relay refuses it as `promotion-lane` rather than
+  calling it a hand merge. None of them claims it unless a self-authored
+  sweep with an App login is running. It passes every gate the App's own pull requests
+  pass: required checks green on `target`, the hold, `blocked`, exempt and
+  sentinel labels, the `needs-owner-merge` title/label rule,
+  `human_merge_paths`, the approval desk, the merge train, the repository's
+  merge method (`squash_only`), and the head SHA re-read before the merge.
+  **The review verdict hold and the intent tier gate apply in full**, so a
+  reviewer's `requires_human` or `changes_requested` on the promotion head,
+  or an intent refusal, holds it; the swarm's verdict is not advisory here,
+  unlike on the trusted-bot lane.
+- **The hive never writes to a promotion branch**, matched or not, and
+  whether or not the promotion lane runs: every automerge lane's
+  update-branch, current-base, merge-forward and merge-train steps, the hold
+  guard's keep-mergeable update and the stale-red base refresh skip any
+  branch a configured rule names. The workflow that opened it owns it, and
+  merging `target` into it would take the head off `source` for good. A
+  target whose protection requires up-to-date branches reports a promotion
+  behind it (`promotion-behind-target`), unless GitHub's native merge queue
+  handles that base; a repository on the serialized lane, which updates its
+  front branch itself, gives `promotion-serialized-repo`.
+  `require_current_base` does not apply to this lane: the merge-result check
+  below replaces it and proves more.
+- **A refusal no later pass cures hands the promotion back to a person.**
+  `promotion-behind-target`, `promotion-serialized-repo` and
+  `promotion-merge-tree-mismatch` are remembered for that head: the lane
+  stops claiming it, the other lanes route it as any pull request, and it
+  shows as a hand merge (`decision=handed-back:<reason>`). A new head is
+  judged again.
+- **Right before the merge or enqueue call**, the lane asks GitHub again,
+  past any earlier answer, and also checks the merge result: GitHub's test
+  merge of the head (`merge_commit_sha`, once mergeability is known) must
+  have exactly the `source` tip's tree, with the live `target` tip and the
+  checked head as its parents. On a target that diverged from the source
+  (every squash promote) the merge is a three-way merge, and a change the
+  source reverted can survive on the target; then nothing merges
+  (`promotion-merge-tree-mismatch`). Mergeability not yet known, or a test
+  merge built on an older `target` tip, waits for the next pass
+  (`promotion-merge-unknown`). A `source` that moved merges nothing this pass
+  (`promotion-source-moved`). After a direct merge the landed commit's tree
+  is read and compared with the verified test merge tree; a difference is
+  logged and audited as `decision=merged-tree-mismatch` (nothing is rolled
+  back).
+- **A queued promotion** (native merge queue) is checked again on every
+  pass, and withdrawn from the queue once it no longer matches, its source
+  moved, or its test merge differs. A test merge GitHub is still
+  recomputing does not withdraw it: the queue moves the target all the time.
+
+The lane does not trust the author. `github-actions[bot]` in `authors` earns
+nothing in any other lane, a `release/ready` label or any other label is
+never read as trust, and an App or trusted-bot author keeps its own lane. Each
+decision is written to the audit log as `promotion_decision` with the
+repository, pull request, head SHA, source tip SHA and tree SHA, plus the
+test merge commit, its tree and the target tip when they were read:
+`decision=sentinel-exempt`, `decision=sentinel-exempt-earlier-source`,
+`decision=merged`, `decision=merged-tree-mismatch`, `decision=enqueued`,
+`decision=merge-refused:<reason>`, `decision=handed-back:<reason>` or
+`decision=queue-withdraw:promotion-no-longer-matches`. A merge is also the
+usual `pr_merged` entry with `lane=promotion` on its merge claim.
+
+Settings → Features → Auto-merge → **Branch promotions that merge without a
+person** edits the rules per repository (one row per rule, and an empty row
+to add one). The admin MCP sets them with `auto_merge.update` `promotions`,
+whose preview names each added rule as widening. The endpoint and the admin
+MCP refuse a repository outside `project.repos`; the endpoint, the admin MCP
+and hive.yaml refuse a rule with an empty field, a `source` equal to its
+`target`, a rule with no author, and a `target` named twice. A rule left in
+hive.yaml for a repository that has since left `project.repos` does not stop
+the config from loading; it is ignored.
+
 ### Event-driven sweeps on the ForgeState cache
 
 With `forgestate.enabled: true` the three sweep lanes (self-authored,

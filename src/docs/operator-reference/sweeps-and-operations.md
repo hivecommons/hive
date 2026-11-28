@@ -1133,6 +1133,40 @@ push re-arms it.
 | `sentinel.repos` | empty = all watched repos | Optional `owner/repo` allow-list. |
 | `sentinel.max_actions` | `20` | Caps label/comment/remediation actions per pass. |
 
+**Branch-promotion pull requests.** Where the promotion merge lane runs
+(the self-authored sweep: `auto_merge.self_authored` on, at its ACMM level),
+a pull request an `auto_merge.promotions` rule names (its base is the rule's
+`target`, its author one of the rule's `authors`, its head ref starts with
+`head_ref_prefix`, and its head branch is in the same repository) is checked
+against GitHub when `sensitive_path` fires. The pull request is read again
+after its files were listed, and a head that moved keeps every finding. Its
+`source` branch must take changes only through a pull request (classic
+protection requiring pull request reviews without force pushes, or an
+active ruleset `pull_request` rule), its head commit's tree must equal the
+current tip tree of `source`, and the head must be that tip or one of its
+ancestors, or a single commit on the live `target` tip. When that holds, `sensitive_path` alone is not
+raised again: the log line reads `sentinel: promotion of already-reviewed
+content, tree == main at <sha>`, and a `promotion_decision` audit entry
+(`decision=sentinel-exempt`) records the head, source tip and tree. Every
+other behavior still applies (`permission_escalation`,
+`remote_code_execution`, `ci_gate_weakening`, `secret_exposure`,
+`security_policy_edit`, `test_removal`, `owner_self_nomination`): the source
+may carry such content without the sentinel having judged it, and the
+target is often the more privileged branch. An exempted head is not
+remembered as evaluated, so every pass checks it again. A `source` that only
+moved on keeps the exemption while the tip the head matched is still on it
+(one compare); a removed rule, a retarget, a `source` that no longer
+requires pull requests, or a rewritten `source` is flagged. A
+tree that differs, a head with a commit the source lacks, an unprotected
+source, or any read error leaves every finding in place. An alert label
+already on the pull request is never removed by the hive: only a person
+clears it. Where the lane does not run, nothing is exempted, so a person who
+merges the promotion by hand sees every finding. The check costs one to
+three REST calls plus the pull request re-read, and only for a pull request
+a rule names on which `sensitive_path` fired. See
+[hive-merge.md](../hive-merge.md#branch-promotion-pull-requests) for the
+merge side.
+
 Owners edit all of this from **Settings → Security → Suspicious Activity**;
 the dashboard writes the owner-only `/api/config/governor/security` overlay.
 Every alert is also written to the dashboard audit log as `sentinel-alert`,
