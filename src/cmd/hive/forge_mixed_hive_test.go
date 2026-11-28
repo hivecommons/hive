@@ -233,3 +233,71 @@ func TestEnrichGitHubPRsHandsGitHubHiveTheSameSlice(t *testing.T) {
 		t.Error("enrich not called on a GitHub-only hive")
 	}
 }
+
+// TestGitHubPRViewKeepsOnlyGitHubPRsOnMixedHive pins hivecommons/hive#19709:
+// the GitHub-client steps of the eval cycle (review threads, PR follow-ups,
+// the hold guard's branch upkeep) see only the GitHub share of a mixed hive,
+// and the result they were derived from keeps its forge PRs.
+func TestGitHubPRViewKeepsOnlyGitHubPRsOnMixedHive(t *testing.T) {
+	cfg := mixedHiveConfig("https://fj.example")
+	prs := []github.PullRequest{{Repo: "widgets", Number: 1}, {Repo: "gh-repo", Number: 2}}
+	result := &github.ActionableResult{
+		PRs: github.PRResult{
+			Count:       len(prs),
+			Items:       prs,
+			Held:        []github.PullRequest{{Repo: "widgets", Number: 3}, {Repo: "gh-repo", Number: 4}},
+			Attributed:  []github.PullRequest{{Repo: "widgets", Number: 5}},
+			StaleDrafts: []github.PullRequest{{Repo: "gh-repo", Number: 6}, {Repo: "widgets", Number: 7}},
+		},
+	}
+	setHoldItems(result, []github.HoldItem{
+		{Repo: "widgets", Number: 3, Type: "pr"},
+		{Repo: "gh-repo", Number: 4, Type: "pr"},
+		{Repo: "widgets", Number: 9, Type: "issue"},
+	})
+
+	view := githubPRView(cfg, result)
+	if view == result {
+		t.Fatal("mixed hive got the result itself, not a GitHub-only view")
+	}
+	for name, list := range map[string][]github.PullRequest{
+		"items": view.PRs.Items, "held": view.PRs.Held, "attributed": view.PRs.Attributed, "stale drafts": view.PRs.StaleDrafts,
+	} {
+		for _, pr := range list {
+			if pr.Repo != "gh-repo" {
+				t.Errorf("%s: forge PR %s#%d reached the GitHub view", name, pr.Repo, pr.Number)
+			}
+		}
+	}
+	if view.PRs.Count != 1 || len(view.PRs.Held) != 1 || len(view.PRs.StaleDrafts) != 1 {
+		t.Errorf("view PRs = %+v, want one GitHub PR in items, held and stale drafts", view.PRs)
+	}
+	if view.Hold.Total != 1 || view.Hold.Items[0].Repo != "gh-repo" {
+		t.Errorf("view hold = %+v, want only gh-repo's held PR", view.Hold)
+	}
+	if result.PRs.Count != 2 || len(result.PRs.Held) != 2 || result.Hold.Total != 3 {
+		t.Errorf("source result was changed: prs=%+v hold=%+v", result.PRs, result.Hold)
+	}
+
+	if githubClientForRepo(cfg, &github.Client{}, "widgets") != nil {
+		t.Error("forge repo got a GitHub client for per-PR reads")
+	}
+	if githubClientForRepo(cfg, &github.Client{}, "gh-repo") == nil {
+		t.Error("GitHub repo lost its GitHub client")
+	}
+}
+
+// TestGitHubPRViewIsTheResultOnGitHubHive pins that a GitHub-only hive is
+// untouched: every step keeps acting on the result itself.
+func TestGitHubPRViewIsTheResultOnGitHubHive(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Project.Repos = []string{"a"}
+	result := &github.ActionableResult{PRs: github.PRResult{Items: []github.PullRequest{{Repo: "a", Number: 1}}}}
+	if githubPRView(cfg, result) != result {
+		t.Error("GitHub-only hive was handed a copy")
+	}
+	client := &github.Client{}
+	if githubClientForRepo(cfg, client, "a") != client {
+		t.Error("GitHub-only hive lost its client")
+	}
+}
