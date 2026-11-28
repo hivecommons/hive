@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.9)
+
+### Fixed
+
+- A PR on a repository that requires every review conversation to be resolved no longer sits unmerged forever behind the hive's own non-blocking review comments. Since the reviewer posts each line finding as its own thread ([#18531](https://github.com/hivecommons/hive/issues/18531)), nothing resolved those threads, so GitHub refused every merge-queue enqueue with "All comments must be resolved"; the hive logged it as "effect outcome uncertain, reconciliation required" and retried it on every sweep (projectbluefin/gutenprint-printer-app#254, projectbluefin/ps-printer-app#221, 2026-11-20). The automerge lanes (self-authored, trusted-bot, trusted-author, `/lgtm` queued and contributor, on the native-queue enqueue, the direct merge and the serialized lane) now name that refusal. When every open thread on the PR is the hive's own and marked non-blocking, the lane resolves them and the next pass merges. A person's thread, another bot's thread, a hive thread someone replied in and a hive finding not marked non-blocking (outdated or not) are never resolved: the PR parks at `085-needs-decision` with the new reason `unresolved-review-threads`, and the lane asks GitHub again only after a new push or 30 minutes. A refusal nothing explains waits at `review-threads-pending` (not a ready merge-train front) and is retried every 5 minutes, parking after three tries. A hive that wants none of its own threads resolved sets `review.severity.block_at: P3`: every finding then blocks, so every such refusal parks at 085. The review relay now marks each inline comment with the severity of the verdict finding it matches (or `unmatched`, read as blocking), so the lanes do not have to read the comment's prose. The agent `hive-merge` relay is unchanged.
+
 ## 2026-11-28 (v5.384.8)
 
 ### Fixed
