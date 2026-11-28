@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.7)
+
+### Fixed
+
+- The Activity Monitor now shows when unresolved review threads block a GitHub PR. When write-back policy permits, the Hive status comment links to the threads on Hive-authored PRs and clears the notice when the blocker is gone. On v5, resolve the Hive reviewer's own threads by hand ([#20165](https://github.com/hivecommons/hive/issues/20165)).
+- With `HIVE_HUB_RELEASE_TRACKING_DISABLED=true` the dashboard now shows "Release tracking is off" instead of a disabled Upgrade button and spinner that waited forever, and hides the hub `auto` checkbox, the all-"unknown" channel block and the "collecting…" image-pulls line (#20188).
+
 ## 2026-11-28 (v5.384.6)
 
 ### Fixed
