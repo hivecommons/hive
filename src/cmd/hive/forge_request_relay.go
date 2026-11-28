@@ -177,8 +177,10 @@ func (r *forgeRequestRelay) scanOnce(ctx context.Context) {
 	for _, path := range pendingRequestFiles(r.pushDir) {
 		r.handlePushBranch(ctx, path)
 	}
-	r.serveCloneQueue(ctx)
+	// Reads before clones: a clone can hold the scan for minutes, and
+	// hive-gh gives up on a read the relay has not answered in a few polls.
 	r.serveReadQueue(ctx)
+	r.serveCloneQueue(ctx)
 	for _, path := range pendingRequestFiles(r.prDir) {
 		r.handlePR(ctx, path)
 	}

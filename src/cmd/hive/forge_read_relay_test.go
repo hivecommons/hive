@@ -109,21 +109,22 @@ func (h *readHarness) readView(t *testing.T, req forgeReadRequest, into any) for
 	return resp
 }
 
-// Forgejo reports mergeable=false on a merged or closed pull request, and on
-// an open one both for a conflict and while its merge check is still pending,
-// so every false reads as gh's UNKNOWN, never CONFLICTING.
+// Forgejo reports mergeable=false on a merged, closed or draft pull request,
+// which reads as gh's UNKNOWN; only a false on an open, non-draft pull
+// request reads as CONFLICTING.
 func TestForgeReadViewMergeable(t *testing.T) {
 	for _, tc := range []struct {
-		state            string
-		merged, mergable bool
-		want             string
+		state                   string
+		merged, mergable, draft bool
+		want                    string
 	}{
-		{"open", false, true, "MERGEABLE"},
-		{"open", false, false, "UNKNOWN"},
-		{"closed", true, false, "UNKNOWN"},
-		{"closed", false, false, "UNKNOWN"},
+		{"open", false, true, false, "MERGEABLE"},
+		{"open", false, false, false, "CONFLICTING"},
+		{"open", false, false, true, "UNKNOWN"},
+		{"closed", true, false, false, "UNKNOWN"},
+		{"closed", false, false, false, "UNKNOWN"},
 	} {
-		api := &fakeReadAPI{pull: forge.PullView{Number: 7, State: tc.state, Merged: tc.merged, Mergeable: tc.mergable}}
+		api := &fakeReadAPI{pull: forge.PullView{Number: 7, State: tc.state, Merged: tc.merged, Mergeable: tc.mergable, Draft: tc.draft}}
 		b, err := forgeReadView(context.Background(), api, "acme/widgets", "pr", 7)
 		if err != nil {
 			t.Fatal(err)
@@ -133,8 +134,30 @@ func TestForgeReadViewMergeable(t *testing.T) {
 			t.Fatal(err)
 		}
 		if view["mergeable"] != tc.want {
-			t.Errorf("state=%s merged=%v mergeable=%v: got %v, want %s", tc.state, tc.merged, tc.mergable, view["mergeable"], tc.want)
+			t.Errorf("state=%s merged=%v mergeable=%v draft=%v: got %v, want %s", tc.state, tc.merged, tc.mergable, tc.draft, view["mergeable"], tc.want)
 		}
+	}
+}
+
+// A scan serves the read queue before the clone queue, so a slow clone
+// cannot hold a read past hive-gh's pickup window.
+func TestForgeReadRelayServesReadsBeforeClones(t *testing.T) {
+	h := newReadHarness(t)
+	prevRead, prevExec := forgeCloneReadRequest, forgeCloneExec
+	t.Cleanup(func() { forgeCloneReadRequest, forgeCloneExec = prevRead, prevExec })
+	var order []string
+	forgeCloneReadRequest = func(path string) ([]byte, int, error) {
+		order = append(order, filepath.Dir(path))
+		return prevRead(path)
+	}
+	forgeCloneExec = func(context.Context, string, []string, ...string) (string, error) {
+		return "", errors.New("no git in this test")
+	}
+	writeRelayRequest(t, h.relay.cloneDir, "worker-1.json", forgeCloneRequest{Agent: "worker", Repo: "widgets"})
+	writeRelayRequest(t, h.relay.readDir, "worker-2.json", forgeReadRequest{Agent: "worker", Repo: "widgets", Kind: "pr", Number: 50})
+	h.relay.scanOnce(context.Background())
+	if len(order) != 2 || order[0] != h.relay.readDir || order[1] != h.relay.cloneDir {
+		t.Fatalf("requests read from %v, want the read queue %s then the clone queue %s", order, h.relay.readDir, h.relay.cloneDir)
 	}
 }
 

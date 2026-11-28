@@ -260,14 +260,16 @@ func forgeReadView(ctx context.Context, api forge.ReadAPI, repo, kind string, nu
 			state = "MERGED"
 		}
 		// Forgejo's mergeable is a bare bool. It is false on a merged or
-		// closed pull request, and on an open one it is false both on a real
-		// conflict and while the server is still running its merge check (or
-		// for a WIP-titled pull request), so a false cannot be told apart
-		// from "not yet computed". Report it as GitHub's UNKNOWN rather than
-		// claiming CONFLICTING.
+		// closed pull request and on a draft (WIP) one, so those report
+		// GitHub's UNKNOWN. Only a false on an open, non-draft pull request
+		// is reported as CONFLICTING. A false while Forgejo is still running
+		// its own conflict check cannot be told apart from a real conflict.
 		mergeable := "UNKNOWN"
-		if pr.Mergeable {
+		switch {
+		case pr.Mergeable:
 			mergeable = "MERGEABLE"
+		case strings.EqualFold(pr.State, "open") && !pr.Merged && !pr.Draft:
+			mergeable = "CONFLICTING"
 		}
 		view = map[string]any{
 			"number": pr.Number, "title": pr.Title, "state": state, "isDraft": pr.Draft, "url": pr.URL,

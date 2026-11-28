@@ -152,6 +152,11 @@ _verb "$subcmd" "$action" || exec gh "$@"
 # polls) when no other request is queued ahead of it, else after
 # HIVE_GH_FORGE_TIMEOUT.
 READ_DIR="${HIVE_GH_READ_REQUEST_DIR:-/var/run/hive-metrics/read-requests}"
+# The same relay serves the clone (hive-clone) and push (hive-push-branch)
+# queues in its scan, and a clone can hold it for minutes, so a request
+# pending there also counts as queued ahead of a read.
+CLONE_DIR="${HIVE_GH_CLONE_REQUEST_DIR:-$(dirname "$READ_DIR")/clone-requests}"
+PUSH_DIR="${HIVE_GH_PUSH_REQUEST_DIR:-$(dirname "$READ_DIR")/push-requests}"
 FIRST_AGENT_UID=2001
 
 # _forge_repo prints owner/repo when the call targets a repo off github.com,
@@ -226,10 +231,16 @@ print("true" if v is True else "false" if v is False else v)
 PY
   }
   local waited=0 timeout="${HIVE_GH_FORGE_TIMEOUT:-120}" pickup="${HIVE_GH_FORGE_PICKUP_TIMEOUT:-30}"
-  # _queued_ahead reports another pending request in the queue, which a
-  # serving relay may still be working through (it reads a few per poll).
+  # _queued_ahead reports another pending request in the read queue, or a
+  # pending clone or push request, which a serving relay may still be
+  # working through (it reads a few per poll, and a clone can take minutes).
   _queued_ahead() {
-    [ -n "$(find "$READ_DIR" -maxdepth 1 -name '*.json' ! -name '*.result.json' ! -path "$req" -print -quit 2>/dev/null)" ]
+    local d
+    for d in "$READ_DIR" "$CLONE_DIR" "$PUSH_DIR"; do
+      [ -d "$d" ] || continue
+      [ -n "$(find "$d" -maxdepth 1 -name '*.json' ! -name '*.result.json' ! -path "$req" -print -quit 2>/dev/null)" ] && return 0
+    done
+    return 1
   }
   while :; do
     if [ -f "$result" ] && ! _trusted; then

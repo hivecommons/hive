@@ -236,6 +236,13 @@ if [ "$rc" -eq 0 ] && argv_has "--json" && argv_has "o/r"; then pass "a bare --r
 : >"$ARGV_LOG"
 out="$(PATH="${STUB_DIR}:${PATH}" STUB_ARGV_LOG="$ARGV_LOG" STUB_FIXTURE="$PR_FIXTURE" HIVE_GH_READ_REQUEST_DIR="$READ_DIR" HIVE_GH_FORGE_TIMEOUT=60 HIVE_GH_FORGE_PICKUP_TIMEOUT=1 timeout 15 bash "$SCRIPT" pr view 7 --repo o/r 2>&1)"; rc=$?
 if [ "$rc" -eq 0 ] && argv_has "--json" && argv_has "o/r" && grep -q "did not pick up" <<<"$out"; then pass "a bare --repo o/r goes to gh after the pickup window when nothing picks up the request"; else fail "bare --repo unpicked request to gh" "rc=$rc $out / gh argv: $(tr '\n' ' ' <"$ARGV_LOG")"; fi
+CLONE_REQ_DIR="${WORK}/clone-requests"
+mkdir -p "$CLONE_REQ_DIR"
+echo '{"agent":"worker-1","repo":"acme/widgets"}' >"${CLONE_REQ_DIR}/worker-1-1.json"
+: >"$ARGV_LOG"
+out="$(PATH="${STUB_DIR}:${PATH}" STUB_ARGV_LOG="$ARGV_LOG" STUB_FIXTURE="$PR_FIXTURE" HIVE_GH_READ_REQUEST_DIR="$READ_DIR" HIVE_GH_FORGE_TIMEOUT=3 HIVE_GH_FORGE_PICKUP_TIMEOUT=1 timeout 15 bash "$SCRIPT" pr view 7 --repo o/r 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q "did not pick up" <<<"$out" && grep -q "no answer from the hive's read relay after 3s" <<<"$out"; then pass "a pending clone request keeps hive-gh waiting past the pickup window"; else fail "pending clone request keeps hive-gh waiting" "rc=$rc $out"; fi
+rm -f "${CLONE_REQ_DIR}/worker-1-1.json"
 run_forge --full pr view 50 --repo acme/widgets >/dev/null
 if ! argv_has "--json" && argv_has "50"; then pass "--full still hands the call to gh untouched"; else fail "--full on forge repo"; fi
 if [ -z "$(find "$READ_DIR" -name '*.json' ! -name '*.result.json' ! -name '*.rejected')" ]; then pass "no request left behind by the gh paths"; else fail "stray request"; fi
