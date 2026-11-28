@@ -1,7 +1,10 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -388,6 +391,99 @@ func TestIdleCompletionWithUnverifiedReportedPRSaysSo(t *testing.T) {
 	}
 	if strings.Contains(run.VerdictReason, "without a pull request") {
 		t.Fatalf("reason %q says the agent opened no pull request, but one was reported", run.VerdictReason)
+	}
+}
+
+// idleNoSuchPRDeps returns Dependencies whose GitHub answers 404 to every
+// request: what the hub's lookup gets for a pull request that does not exist.
+func idleNoSuchPRDeps(t *testing.T) *Dependencies {
+	t.Helper()
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+	}))
+	t.Cleanup(ts.Close)
+	return &Dependencies{
+		GHClient: github.NewClientForTest(ts.URL, "acme", []string{"widgets"}, logger),
+		Logger:   logger,
+		Ctx:      context.Background(),
+	}
+}
+
+// A relay can report a pull request that does not exist: one that turned a
+// number the agent cited from another repository into a URL in the task's own.
+// GitHub answers the hub's lookup with 404 and the completion is booked idle.
+// When the relay also sent the agent's reason, that reason is what goes on
+// record, not the hub's "could not verify"; when it sent none, the record says
+// a pull request was reported and not verified. Either way the lookup's own
+// result stays in the run record beside it.
+func TestIdleCompletionWithNonexistentReportedPRKeepsTheAgentReason(t *testing.T) {
+	const agentReason = "the push to my fork was rejected, so no pull request could be opened"
+	for i, tc := range []struct {
+		name     string
+		reported string
+		want     string
+	}{
+		{"the relay sent the agent's reason", agentReason, agentReason},
+		{"the relay sent no reason", "", idleCompletionUnverifiedPR + ": github lookup failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, ts := setupWSTest(t)
+			defer ts.Close()
+			s.deps = idleNoSuchPRDeps(t)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/contribute/register", strings.NewReader(`{"github_username":"alice"}`))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			s.mux.ServeHTTP(w, req)
+			var reg map[string]string
+			if err := json.Unmarshal(w.Body.Bytes(), &reg); err != nil {
+				t.Fatalf("register response: %v", err)
+			}
+
+			conn, _, err := websocket.DefaultDialer.Dial(wsURL(ts), nil)
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			defer conn.Close()
+			readMsg(t, conn) // challenge
+			conn.WriteJSON(WSMessage{Type: "auth_response", RegistrationToken: reg["registration_token"], CLIBackend: "claude"})
+			readMsg(t, conn) // auth_ok
+
+			number := 33 + i
+			idleStatus(s, idleIssue(number))
+			conn.WriteJSON(WSMessage{Type: "ready", Seq: 2})
+			assign := readMsg(t, conn)
+			if assign.Type != "task_assign" {
+				t.Fatalf("expected task_assign, got %+v", assign)
+			}
+			prURL := "https://github.com/" + idleRepo + "/pull/1739"
+			conn.WriteJSON(WSMessage{Type: "task_complete", TaskID: assign.TaskID, Result: "completed", PRURL: prURL,
+				VerdictReason: tc.reported, CompletionSignal: completionSignalVerdict})
+			// The hub handles one frame at a time, so the answer to this
+			// `ready` is written only after the completion above has been
+			// booked. What the answer is does not matter here.
+			conn.WriteJSON(WSMessage{Type: "ready", Seq: 3})
+			readMsg(t, conn)
+
+			hub := s.contributeHub
+			runs, err := readTaskRunsForUser(hub.taskRunLogPath(), "alice", time.Hour, 10)
+			if err != nil || len(runs) != 1 {
+				t.Fatalf("task-run log: %d records, err %v; want the one completion", len(runs), err)
+			}
+			run := runs[0]
+			if run.Verdict != completionVerdictIdle || run.PRVerified || run.ReportedPRURL != prURL || run.PRVerifyReason != "github lookup failed" {
+				t.Fatalf("run record %+v, want an idle with the reported pull request unverified after a failed lookup", run)
+			}
+			if run.VerdictReason != tc.want {
+				t.Fatalf("run record reason %q, want %q", run.VerdictReason, tc.want)
+			}
+			if rec := idleRecord(t, hub, idleKey(number)); rec.Reason != tc.want || rec.Reporter != "alice" {
+				t.Fatalf("ledger booked %+v, want %q by alice", rec, tc.want)
+			}
+		})
 	}
 }
 
