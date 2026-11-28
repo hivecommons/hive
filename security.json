@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "label": "security scan",
+  "message": "clean",
+  "color": "brightgreen",
+  "cacheSeconds": 3600
+}
