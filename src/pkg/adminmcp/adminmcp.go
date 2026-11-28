@@ -545,6 +545,8 @@ type confirmGuardOp interface {
 // with a bare acknowledgement (review.settings: {"status":"updated"}). After
 // the write succeeds, ConfirmWrite asks the op to read the setting back and
 // returns what it read as "after", so the caller sees what the hive now holds.
+// An op with nothing to read back for a request returns nil, and the result
+// then carries no "after".
 type confirmResultOp interface {
 	ConfirmResult(ctx context.Context, args map[string]any, provider Provider) (any, error)
 }
@@ -662,7 +664,7 @@ func (h *Handler) ConfirmWrite(ctx context.Context, args map[string]any) (any, e
 		// the result, never as a failed write.
 		if after, err := reader.ConfirmResult(ctx, pending.Args, h.Provider); err != nil {
 			out["after_error"] = "the write succeeded, but reading the settings back failed: " + err.Error()
-		} else {
+		} else if after != nil {
 			out["after"] = after
 		}
 	}

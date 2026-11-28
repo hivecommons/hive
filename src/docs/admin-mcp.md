@@ -1403,7 +1403,21 @@ only.
   `null` or `[]` removes the repository. The repository must be in
   `project.repos`. Each rule needs every field, a source different from its
   target and at least one author, and a target is named by one rule at most.
-  An unknown field is refused.
+  A rule may also carry `"inherit_human_merge_paths": true` (optional,
+  default `false`): the repository's `human_merge_paths` then no longer
+  leaves that rule's promotions for a person. A rule is sent whole, so
+  leaving the key out turns it off. Any other field is refused. A hive on
+  an older build does not know the key: it accepts the rule and drops the
+  option. `write_confirm` therefore reads the rules back after a change
+  that turns the option on and reports them as `after`, next to the write's
+  result: `promotions` (the named repositories' rules as the hive holds
+  them) and `inherit_human_merge_paths_stored`. When a rule came back
+  without the option that is `false`, and `warning` says "the hive stored
+  the rule without inherit_human_merge_paths; it may run an older build;
+  the option is off" and names the rule. The write itself is not reported
+  as failed: the rule is in place, with the option off. If the read-back
+  fails, the result carries `after_error` instead, saying the option could
+  not be verified as stored.
 - **One repository's workflow fence scope:**
   `{"contributor_lane": {"workflow_fence_scope_repos": {"org/a": "human_merge_paths"}}}`
   gives `org/a` its own scope (`project.repo_policies[].workflow_fence_scope`,
@@ -1440,7 +1454,27 @@ only.
   `[skip ci]`); with the merge method that commit lands in the target's
   history as it is. Branch names are compared exactly (git refs are
   case-sensitive), logins case-insensitively. Removing a rule or an author is
-  not widening. A
+  not widening. Turning a rule's `inherit_human_merge_paths` on is widening,
+  whether the rule is new or already there, and the preview says so in plain
+  words: "promotions[org/a] turns on inherit_human_merge_paths for main to
+  stable, opened by github-actions[bot] from auto/promote-*: files on the
+  repository's human-merge list (auto_merge.human_merge_paths) reach stable
+  with no person. The hive proves only that the promotion's tree is main's
+  current tree; it does not check how or when a listed file's content
+  reached main." It then numbers the cases in which a listed file reaches
+  the target although no person merged that content under the list (the
+  path was listed after the content was on the source; a merge the list
+  does not bind, such as another bot's or GitHub's own auto-merge or a
+  person with merge rights; a `human_merge_pin_only` exception or a bypass
+  actor; a source protected less than the target; a change a person made
+  only on the target, overwritten by a single-commit promotion; a source
+  that is itself the target of a rule with the option on), says that
+  workflows triggered by a push to the target run as soon as the hive
+  merges, and lists what still applies (a person's hold or
+  `needs-owner-merge` label, the sentinel label, the review verdict hold,
+  the intent gate, required checks, `squash_only` and both tree checks).
+  [hive-merge.md](hive-merge.md#branch-promotion-pull-requests) explains
+  each case. Turning it off is narrowing and is not disclosed. A
   repository whose fence scope becomes `human_merge_paths` (its own, or the
   hive-wide one after its own is removed) is named: "workflow edits outside
   human-merge paths in org/a merge without an owner Approve". The preview

@@ -889,7 +889,7 @@ auto_merge:
     example-org/app:
       - source: main
         target: stable
-        authors: [github-actions[bot]]
+        authors: ["github-actions[bot]"]
         head_ref_prefix: auto/promote-
 ```
 
@@ -979,7 +979,8 @@ For a matching pull request:
   sweep with an App login is running. It passes every gate the App's own pull requests
   pass: required checks green on `target`, the hold, `blocked`, exempt and
   sentinel labels, the `needs-owner-merge` title/label rule,
-  `human_merge_paths`, the approval desk, the merge train, the repository's
+  `human_merge_paths` (unless the rule sets `inherit_human_merge_paths`,
+  described below), the approval desk, the merge train, the repository's
   merge method (`squash_only`), and the head SHA re-read before the merge.
   **The review verdict hold and the intent tier gate apply in full**, so a
   reviewer's `requires_human` or `changes_requested` on the promotion head,
@@ -1022,6 +1023,130 @@ For a matching pull request:
   moved, or its test merge differs. A test merge GitHub is still
   recomputing does not withdraw it: the queue moves the target all the time.
 
+**Files a person must merge (`inherit_human_merge_paths`).** By default a
+promotion that changes a file on the repository's
+[`human_merge_paths`](operator-reference/README.md#app-self-merge-sweep-auto_merge)
+list is left for a person, like any other pull request: the lane answers
+`human-merge-path` and adds `needs-owner-merge`. Where the listed files are
+the ones that change most often (release and build workflows, say), that
+leaves most promotions with a person. A rule can turn that one stop off:
+
+```yaml
+auto_merge:
+  promotions:
+    example-org/app:
+      - source: main
+        target: stable
+        authors: ["github-actions[bot]"]
+        head_ref_prefix: auto/promote-
+        inherit_human_merge_paths: true
+```
+
+**What the hive proves, and what it does not.** `human_merge_paths` is one
+list for the whole repository, not one per branch, and a promotion carries
+exactly `source`'s tree. The hive proves that much, live, twice: the head's
+tree and GitHub's test merge are `source`'s current tree, and `source` takes
+changes only through a pull request. It does **not** check how or when a
+listed file's content reached `source`. The option is therefore not a record
+that a person merged those files into `source`. It is your decision that,
+for this rule, being on `source` is enough.
+
+What you are agreeing to when you turn it on:
+
+- Files on the human-merge list reach `target` with no person looking at the
+  promotion.
+- A listed file can reach `target` although no person ever merged that
+  content under the list. The cases:
+  1. **The path was listed later.** The content was already on `source`
+     when you added the path to `human_merge_paths`.
+  2. **Something the list does not bind merged it.** The list binds only
+     the hive's own merges. Another bot's or GitHub's own auto-merge, or a
+     person with merge rights, can land a listed file on `source` without
+     the hive being asked.
+  3. **An exception or a bypass.** A
+     [`human_merge_pin_only`](operator-reference/README.md#human-merge-pin-only-rollout)
+     exception, or a bypass actor on `source`, landed it there.
+  4. **`source` is protected less than `target`.** The hive checks that
+     `source` requires a pull request, not that its protection matches
+     `target`'s.
+  5. **A change made only on `target` is overwritten.** When the promotion
+     is a single commit on the `target` tip, a file a person changed only on
+     `target` (a hot-fix to a listed workflow, say) is replaced by
+     `source`'s version. When the promotion's head is the `source` tip,
+     GitHub's test merge then differs from `source`'s tree and the lane
+     hands the promotion back to a person instead.
+  6. **Chained rules.** If `source` is itself the `target` of a rule with
+     the option on, the file reached `source` under the same option.
+  7. **Timing.** Workflows triggered by a push to `target` run as soon as
+     the hive merges. The merge into `source` is the last look a person
+     gets.
+- It applies only to a pull request the promotion lane owns: one that passed
+  the live tree check when it was routed and passes it again, with the
+  merge-result check, right before the merge. A head that stops matching
+  `source`, or one the lane handed back, takes the usual path, and
+  `human_merge_paths` stops it there as before.
+
+**A promotion that changes the promotion's own workflow.** There is no
+carve-out. With the option on, a promotion whose listed files include the
+workflow that opens promotions, or any other release workflow, merges like
+any other promotion. If you want a person on those files, leave the option
+off for that rule, or put `hold` on the promotions you want to look at.
+
+What it does not change:
+
+- A `hold` or `needs-owner-merge` label a person adds, a `/hold`, and a
+  breaking-change title still leave the promotion to a person.
+- `blocked`, exempt and sentinel labels, the review verdict hold, the intent
+  gate, required checks, `squash_only`, the head SHA re-read and both tree
+  checks apply exactly as before.
+- Every other lane and the merge-request relay still honor the list. If a
+  merger queues the promotion by hand, or an agent asks the relay to merge
+  it, that path refuses it for the listed file and labels it.
+- The complete changed-file list must still be readable. If GitHub cannot
+  return it, nothing merges this pass (`human-merge-path-evidence`), because
+  the hive records which listed files it let through.
+
+**A label the hive put on earlier.** The hive may have labelled a promotion
+`needs-owner-merge` for a listed file: its own lane did before you turned
+the option on, or another lane or the merge-request relay did since. The
+stage pass takes that label off, once per head, when the promotion lane owns
+the head under a rule with the option on, and leaves a comment saying what
+it checked. It checks the promotion against GitHub in that pass (the rule as
+it is now, the head's tree and the test merge), not from an earlier answer.
+It removes only a label the hive itself applied for this rule: the label's
+history must show the hive adding it next to the hive's own notice, and
+nobody else adding it since. A label a person added or re-added stays, a
+`hold` is never touched, and nothing is removed while something else holds
+the pull request. If the label is put back on the same head afterwards, it
+stays, and a person merges that promotion.
+
+The label comes off only when both of these hold:
+
+1. **Stage labels are on.** The removal runs in the stage pass, so stage
+   labels must be enabled (`governor.labels.stage.enabled`). They are by
+   default.
+2. **The write-back gate allows it.** The removal is a write-back of kind
+   `human_merge_path_release`, and a promotion is opened by a workflow bot,
+   not by the hive. The gate therefore allows it only when the repository's
+   write-back mode is `full` (`writeback.per_repo.<repo>.mode`), or the pull
+   request carries the write-back opt-in label (`hive-review` by default)
+   and the repository is at the level that kind needs (L5 by default).
+
+Otherwise the label stays, and the hive logs why once for that head. A
+person then either merges the promotion, or removes the label by hand, after
+which the lane merges it. The hive does not ask GitHub again on every pass:
+after an attempt that left the label on, it tries the same head again 30
+minutes later, so a change you make meanwhile (the write-back mode, the
+opt-in label, a `hold` you take off) is picked up within that time. A new
+head is tried at once, and so is a head whose test merge GitHub had not
+finished computing.
+
+To keep a promotion for yourself, add `hold`. You cannot "add" a
+`needs-owner-merge` label that is already on, so there is no label event
+that would tell your intent from the hive's own label. For the same reason,
+removing the hive's label is not a way to keep the promotion: with the
+label gone the lane merges it.
+
 The lane does not trust the author. `github-actions[bot]` in `authors` earns
 nothing in any other lane, a `release/ready` label or any other label is
 never read as trust, and an App or trusted-bot author keeps its own lane. Each
@@ -1032,12 +1157,27 @@ test merge commit, its tree and the target tip when they were read:
 `decision=merged`, `decision=merged-tree-mismatch`, `decision=enqueued`,
 `decision=merge-refused:<reason>`, `decision=handed-back:<reason>` or
 `decision=queue-withdraw:promotion-no-longer-matches`. A merge is also the
-usual `pr_merged` entry with `lane=promotion` on its merge claim.
+usual `pr_merged` entry with `lane=promotion` on its merge claim. A merge or
+enqueue that carried a listed file under `inherit_human_merge_paths` also
+records `human_merge_paths=promotion-rule-option` and
+`human_merge_path_files=<the listed files it changed>` on that entry, next
+to the tree SHA the head was checked against. The entry names the first ten
+files and then counts the rest (`and N more`); in a file name, a comma, an
+equals sign and white space are written as `_`. Turning the option on or off
+is recorded on the settings change itself: the `config_auto_merge` entry
+carries `promotion_inherit_on=<owner/repo>:<target>` or
+`promotion_inherit_off=<owner/repo>:<target>`.
 
 Settings → Features → Auto-merge → **Branch promotions that merge without a
 person** edits the rules per repository (one row per rule, and an empty row
-to add one). The admin MCP sets them with `auto_merge.update` `promotions`,
-whose preview names each added rule as widening. The endpoint and the admin
+to add one). Each row has a tick box, **Also merge files a person must
+merge**, for `inherit_human_merge_paths`. The admin MCP sets the rules with
+`auto_merge.update` `promotions`, whose preview names each added rule as
+widening, and names turning `inherit_human_merge_paths` on as widening too
+(turning it off is not). If the hive stores a rule without the option (a
+hive on an older build drops it), `write_confirm` still reports the write
+and adds a warning that the option is off. The
+endpoint and the admin
 MCP refuse a repository outside `project.repos`; the endpoint, the admin MCP
 and hive.yaml refuse a rule with an empty field, a `source` equal to its
 `target`, a rule with no author, and a `target` named twice. A rule left in

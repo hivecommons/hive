@@ -508,7 +508,7 @@ or from the dashboard (Settings → Repos → "Label-driven approvals
 project:
   label_driven_approval_labels: [triage/accepted]   # default
   label_driven_trust_org_members: true              # default (Prow's rule)
-  label_driven_trusted_bots: [kubestellar-prow[bot]]   # default
+  label_driven_trusted_bots: ["kubestellar-prow[bot]"] # default
   # label_driven_supersede_park_actors: ["github-actions[bot]"]   # default empty
   repo_policies:
     - repo: projectbluefin/common

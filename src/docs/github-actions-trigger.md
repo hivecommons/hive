@@ -17,7 +17,7 @@ github:
     source_label: action
     allowed_commands: [status, review]
     allow_apply: false
-    trusted_comment_authors: [github-actions[bot]]
+    trusted_comment_authors: ["github-actions[bot]"]
     identity_map:
       octo-ci-bot: alice
     oidc:

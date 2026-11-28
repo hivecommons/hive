@@ -46,6 +46,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
@@ -108,6 +109,69 @@ type PromotionCheck struct {
 	MergeSHA     string
 	MergeTreeSHA string
 	TargetSHA    string
+	// InheritedHumanMergePaths are the changed files on the repository's
+	// auto_merge.human_merge_paths list that the merge lane let through
+	// because Rule.InheritHumanMergePaths is on. What was proved for them is
+	// what was proved for the whole head: its tree is the source branch's
+	// current tree. How or when a listed file's content reached the source
+	// was not checked. Only the merge lane sets it, after the pre-merge
+	// checks held; the audit detail of that merge names them
+	// (PromotionAuditDetail).
+	InheritedHumanMergePaths []string
+}
+
+// PromotionHumanMergePathsRuleOption is the audit detail value recorded
+// under human_merge_paths when a promotion merged with files on the
+// repository's human-merge list under a rule whose inherit_human_merge_paths
+// is on. It names why the list did not stop the merge (the rule's option),
+// and claims nothing about how the files reached the source branch.
+const PromotionHumanMergePathsRuleOption = "promotion-rule-option"
+
+// promotionAuditFilesMax is how many listed files one promotion decision
+// names in its audit detail (the rest are counted), and
+// promotionAuditFileMaxLen how many characters of one name it keeps.
+const (
+	promotionAuditFilesMax   = 10
+	promotionAuditFileMaxLen = 200
+)
+
+// AuditDetailToken returns s safe to stand as one space-separated token in
+// a value of the flat "k=v, k=v" audit detail (InvocationMeta.AuditDetail).
+// A comma, an equals sign, white space and every character that does not
+// print (control and format characters) become "_", so a name taken from a
+// repository (a file path, a branch) can neither start a pair of its own
+// nor split the list it is in.
+func AuditDetailToken(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == ',' || r == '=' || r == ' ' || !unicode.IsPrint(r) {
+			return '_'
+		}
+		return r
+	}, s)
+}
+
+// promotionAuditFiles is the human_merge_path_files value: at most
+// promotionAuditFilesMax names, each made safe for the detail
+// (AuditDetailToken) and cut at promotionAuditFileMaxLen characters,
+// space-separated, then "and N more" when files were left out.
+func promotionAuditFiles(files []string) string {
+	shown := files
+	if len(shown) > promotionAuditFilesMax {
+		shown = shown[:promotionAuditFilesMax]
+	}
+	names := make([]string, 0, len(shown))
+	for _, f := range shown {
+		name := AuditDetailToken(f)
+		if r := []rune(name); len(r) > promotionAuditFileMaxLen {
+			name = string(r[:promotionAuditFileMaxLen]) + "..."
+		}
+		names = append(names, name)
+	}
+	out := strings.Join(names, " ")
+	if more := len(files) - len(shown); more > 0 {
+		out += fmt.Sprintf(" and %d more", more)
+	}
+	return out
 }
 
 // Summary is the one-line evidence a matching check records:
@@ -376,7 +440,14 @@ func VerifyPromotionMerge(ctx context.Context, client *gh.Client, owner, repo st
 }
 
 // PromotionAuditDetail is the audit detail pairs for one promotion
-// decision: decision, head, source, source_sha and tree.
+// decision: decision, head, source, source_sha and tree. A decision made
+// under a rule whose inherit_human_merge_paths is on, for a head that
+// changes files on the repository's human-merge list, also carries
+// human_merge_paths=promotion-rule-option and human_merge_path_files (the
+// first promotionAuditFilesMax files, space-separated, then "and N more";
+// promotionAuditFiles), so the log shows which merges carried such a file
+// to the target with no person, next to the tree the head was checked
+// against.
 func PromotionAuditDetail(decision string, check PromotionCheck) []string {
 	out := []string{
 		"decision", decision,
@@ -387,6 +458,9 @@ func PromotionAuditDetail(decision string, check PromotionCheck) []string {
 	}
 	if check.MergeSHA != "" {
 		out = append(out, "merge_commit", check.MergeSHA, "merge_tree", check.MergeTreeSHA, "target_sha", check.TargetSHA)
+	}
+	if len(check.InheritedHumanMergePaths) > 0 {
+		out = append(out, "human_merge_paths", PromotionHumanMergePathsRuleOption, "human_merge_path_files", promotionAuditFiles(check.InheritedHumanMergePaths))
 	}
 	return out
 }

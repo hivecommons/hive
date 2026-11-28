@@ -111,8 +111,10 @@ const (
 	// head, once the PR's current head touches none of those paths (a
 	// dependency bot moved the file to another PR, a contributor dropped the
 	// change), once a later head qualifies for auto_merge.human_merge_pin_only,
-	// or once a trusted merger approved the head on a repository listed in
-	// auto_merge.human_merge_owner_approval. It also covers the boot
+	// once a trusted merger approved the head on a repository listed in
+	// auto_merge.human_merge_owner_approval, or once the promotion lane owns
+	// the head under an auto_merge.promotions rule whose
+	// inherit_human_merge_paths is on. It also covers the boot
 	// migration that swaps the `hold` the rule applied before it used that
 	// label. A label a person set, a `hold` a person set, or a PR with another
 	// hold source is never touched.

@@ -170,3 +170,46 @@ func TestAutoMergePromotionsStaleRepositoryLoadsAndIsIgnored(t *testing.T) {
 		t.Fatalf("stale repository's rules apply: %+v", got)
 	}
 }
+
+// inherit_human_merge_paths is off unless a rule sets it, survives the
+// normalization every reader goes through, and is left out of the written
+// file while it is off. On v6 tip the field does not exist.
+func TestAutoMergePromotionsInheritHumanMergePaths(t *testing.T) {
+	cfg := promotionTestConfig(t, `auto_merge:
+  promotions:
+    acme/widget:
+      - source: main
+        target: stable
+        authors: ["github-actions[bot]"]
+        head_ref_prefix: auto/promote-
+      - source: main
+        target: beta
+        authors: ["github-actions[bot]"]
+        head_ref_prefix: auto/beta-
+        inherit_human_merge_paths: true
+`)
+	if err := cfg.validateAutoMergePromotions(); err != nil {
+		t.Fatalf("valid rules refused: %v", err)
+	}
+	rules := cfg.PromotionRulesFor("acme/widget")
+	if len(rules) != 2 || rules[0].InheritHumanMergePaths || !rules[1].InheritHumanMergePaths {
+		t.Fatalf("rules = %+v, want the option off by default and on for the beta rule", rules)
+	}
+	if n := (PromotionRule{Source: " main ", Target: "stable", Authors: []string{"a"}, HeadRefPrefix: "p", InheritHumanMergePaths: true}).Normalized(); !n.InheritHumanMergePaths || n.Source != "main" {
+		t.Fatalf("Normalized dropped the option: %+v", n)
+	}
+	out, err := yaml.Marshal(cfg.AutoMerge.Promotions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(string(out), "inherit_human_merge_paths"); got != 1 || !strings.Contains(string(out), "inherit_human_merge_paths: true") {
+		t.Fatalf("written rules name the option %d times, want once (only where it is on):\n%s", got, out)
+	}
+	var back map[string][]PromotionRule
+	if err := yaml.Unmarshal(out, &back); err != nil {
+		t.Fatal(err)
+	}
+	if r := back["acme/widget"]; len(r) != 2 || r[0].InheritHumanMergePaths || !r[1].InheritHumanMergePaths {
+		t.Fatalf("round trip = %+v, want the option kept per rule", back)
+	}
+}

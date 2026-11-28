@@ -261,7 +261,21 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if fence := carriedFenceGate(displayRepo, pr, c.info); fence != "" {
 		return AutoMergeSweepEvent{}, fence, nil
 	}
-	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
+	// A promotion rule with inherit_human_merge_paths on does not ask the
+	// repository's human-merge list for a head the promotion lane owns
+	// (automerge_promotion_human_merge_paths.go, which also says what that
+	// does and does not prove). Nothing is labelled; the listed files the
+	// head changes are kept for the merge's audit entry. The rule is read
+	// again right before the merge.
+	humanMergePathsInherited := lane == lanePromotion && c.promotionInheritsHumanMergePaths(owner, repo, pr)
+	var inheritedHumanMergePaths []string
+	if humanMergePathsInherited {
+		paths, humanReason, err := c.promotionInheritedHumanMergePaths(ctx, displayRepo, owner, repo, pr)
+		if err != nil || humanReason != "" {
+			return AutoMergeSweepEvent{}, humanReason, err
+		}
+		inheritedHumanMergePaths = paths
+	} else if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
 		return AutoMergeSweepEvent{}, humanReason, err
 	}
 	// Review verdict hold (#12374): a requires_human or reject verdict stops
@@ -375,6 +389,18 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 			return AutoMergeSweepEvent{}, reason, nil
 		}
 		promotion = check
+		if humanMergePathsInherited {
+			if !check.Rule.InheritHumanMergePaths {
+				// The rule lost inherit_human_merge_paths since the gate
+				// above was set aside: the human-merge list binds again,
+				// in full, before anything merges.
+				if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, current); err != nil || humanReason != "" {
+					return AutoMergeSweepEvent{}, humanReason, err
+				}
+			} else {
+				promotion.InheritedHumanMergePaths = inheritedHumanMergePaths
+			}
+		}
 	}
 	requiredNative, integrationReason, integrationErr := c.routeIntegrationMerge(ctx, current, mergeClaim)
 	if integrationReason != "" || integrationErr != nil {
@@ -451,7 +477,13 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if lane == lanePromotion {
 		c.promotionVerifyMergedTree(ctx, displayRepo, owner, repo, number, mergeResult.GetSHA(), promotion)
 		c.recordPromotionDecision(owner+"/"+repo, number, "merged", promotion)
-		c.info("promotion lane: merged "+promotion.Summary(), "repo", displayRepo, "pr", number, "author", author, "head", evaluatedHeadSHA, "source", promotion.Rule.Source, "source_sha", promotion.SourceSHA, "tree", promotion.TreeSHA, "merge_sha", mergeResult.GetSHA(), "method", method)
+		mergedLog := []any{"repo", displayRepo, "pr", number, "author", author, "head", evaluatedHeadSHA, "source", promotion.Rule.Source, "source_sha", promotion.SourceSHA, "tree", promotion.TreeSHA, "merge_sha", mergeResult.GetSHA(), "method", method}
+		if len(promotion.InheritedHumanMergePaths) > 0 {
+			// Only a merge that carried a listed file under the rule's
+			// inherit_human_merge_paths names them.
+			mergedLog = append(mergedLog, "human_merge_paths_inherited", promotion.InheritedHumanMergePaths)
+		}
+		c.info("promotion lane: merged "+promotion.Summary(), mergedLog...)
 	}
 	event := AutoMergeSweepEvent{
 		Repo:     displayRepo,

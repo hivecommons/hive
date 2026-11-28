@@ -213,6 +213,28 @@ func ReleaseApprovedHumanMergePathHold(ctx context.Context, client *gh.Client, a
 	return releaseHumanMergePathHold(ctx, client, allowed, owner, repo, number, appLogin, expectedHead, true, false)
 }
 
+// ReleaseInheritedHumanMergePathHold removes the HumanMergePathLabel the
+// human-merge-path gate put on PR number once the promotion lane owns
+// expectedHead under an auto_merge.promotions rule whose
+// inherit_human_merge_paths is on (the caller establishes both against
+// GitHub, in the same pass). Like the owner-approval release it may lift a
+// label recorded for expectedHead itself: the gate labelled this very head
+// before the rule was switched on, or another lane or the merge-request
+// relay labelled it since. The provenance rules are that release's,
+// unchanged: every application of the label must be the App's, the first of
+// them added within a minute before the App's single, unedited, head-stamped
+// notice, and the label the PR wears now the latest of them. A label a
+// person added or re-added at any point is never removed, and a `hold` is
+// never touched. As in that release, who removed the label in between is
+// not asked: a person's removal followed by the App's own re-application
+// leaves an App-applied label, and it is removed. allowed is the caller's
+// write-back decision for the item (nil fails closed). It only removes a
+// label: the lane still checks both trees, the checks and every other merge
+// gate before it merges.
+func ReleaseInheritedHumanMergePathHold(ctx context.Context, client *gh.Client, allowed func(writeback.Item) bool, owner, repo string, number int, appLogin, expectedHead string) (bool, error) {
+	return releaseHumanMergePathHold(ctx, client, allowed, owner, repo, number, appLogin, expectedHead, true, false)
+}
+
 // releaseHumanMergePathHold is the shared body. approved selects the
 // owner-approval rules described on ReleaseApprovedHumanMergePathHold;
 // otherwise the pin-only rules apply (humanMergePathHoldProven), with the
