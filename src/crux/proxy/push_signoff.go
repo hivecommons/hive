@@ -74,12 +74,20 @@ type pushCommit struct {
 const (
 	maxPushDelta   = 1 << 20 // largest delta or resolved commit held in memory
 	packTypeCommit = 1
+	// maxPushPackObjects caps the objects walked: real pushes stay far below
+	// it, while a 64 MiB body of minimal objects could claim millions.
+	maxPushPackObjects = 100000
 )
 
 type packObj struct {
 	typ  int    // resolved object type, 0 when unknown
 	data []byte // kept for commits only
 }
+
+// packTypeOnly holds one shared, data-less entry per non-commit type (index 0
+// is unknown), so trees, blobs and tags cost a map slot but no allocation. A
+// delta resolves to its base's type, so only a commit base needs its data.
+var packTypeOnly = [5]packObj{{typ: 0}, {typ: packTypeCommit}, {typ: 2}, {typ: 3}, {typ: 4}}
 
 var packTypeNames = map[int]string{1: "commit", 2: "tree", 3: "blob", 4: "tag"}
 
@@ -148,6 +156,9 @@ func parsePushCommits(body []byte) ([]pushCommit, error) {
 		return nil, fmt.Errorf("no packfile")
 	}
 	count := int(binary.BigEndian.Uint32(rest[8:12]))
+	if count > maxPushPackObjects {
+		return nil, fmt.Errorf("pack claims %d objects, over the %d checked", count, maxPushPackObjects)
+	}
 	packBytes := rest[12:]
 	rd := bytes.NewReader(packBytes)
 	br := bufio.NewReader(rd)
@@ -155,6 +166,7 @@ func parsePushCommits(body []byte) ([]pushCommit, error) {
 	byOff := map[int64]*packObj{}
 	bySha := map[string]*packObj{}
 	var commits []pushCommit
+	var zr io.ReadCloser // one inflater, reset per object
 	for i := 0; i < count; i++ {
 		start := offset()
 		typ, size, err := readPackObjectHeader(br)
@@ -190,11 +202,15 @@ func parsePushCommits(body []byte) ([]pushCommit, error) {
 		default:
 			return nil, fmt.Errorf("unknown pack object type %d", typ)
 		}
-		zr, err := zlib.NewReader(br)
+		if zr == nil {
+			zr, err = zlib.NewReader(br)
+		} else {
+			err = zr.(zlib.Resetter).Reset(br, nil)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("pack object %d: %w", i, err)
 		}
-		obj := &packObj{}
+		obj := &packTypeOnly[0]
 		var sha string
 		switch typ {
 		case 2, 3, 4:
@@ -203,7 +219,7 @@ func parsePushCommits(body []byte) ([]pushCommit, error) {
 			if _, err := io.Copy(h, zr); err != nil {
 				return nil, fmt.Errorf("pack object %d: %w", i, err)
 			}
-			obj.typ = typ
+			obj = &packTypeOnly[typ]
 			sha = string(h.Sum(nil))
 		case packTypeCommit:
 			// size is the pusher's claim; cap it before inflating into memory.
@@ -214,7 +230,7 @@ func parsePushCommits(body []byte) ([]pushCommit, error) {
 			if err != nil || int64(len(data)) != size {
 				return nil, fmt.Errorf("pack commit %d unreadable", i)
 			}
-			obj.typ, obj.data = packTypeCommit, data
+			obj = &packObj{typ: packTypeCommit, data: data}
 			sha = hashPackObject("commit", data)
 			commits = append(commits, parseCommitObject(data))
 		default: // 6, 7
@@ -230,7 +246,7 @@ func parsePushCommits(body []byte) ([]pushCommit, error) {
 				if _, err := io.Copy(io.Discard, zr); err != nil {
 					return nil, fmt.Errorf("pack object %d: %w", i, err)
 				}
-				obj.typ = base.typ
+				obj = &packTypeOnly[base.typ]
 			case base != nil && base.typ == packTypeCommit:
 				if size > maxPushDelta {
 					return nil, fmt.Errorf("pack object %d: delta of a commit too large to check", i)
@@ -243,7 +259,7 @@ func parsePushCommits(body []byte) ([]pushCommit, error) {
 				if err != nil {
 					return nil, fmt.Errorf("pack object %d: %w", i, err)
 				}
-				obj.typ, obj.data = packTypeCommit, data
+				obj = &packObj{typ: packTypeCommit, data: data}
 				sha = hashPackObject("commit", data)
 				commits = append(commits, parseCommitObject(data))
 			default:
@@ -263,11 +279,13 @@ func parsePushCommits(body []byte) ([]pushCommit, error) {
 				}
 			}
 		}
-		_ = zr.Close()
 		byOff[start] = obj
 		if sha != "" {
 			bySha[sha] = obj
 		}
+	}
+	if zr != nil {
+		_ = zr.Close()
 	}
 	return commits, nil
 }

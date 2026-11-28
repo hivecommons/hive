@@ -328,3 +328,63 @@ func TestPushSignoffGuardGitHubHostsOnly(t *testing.T) {
 		t.Fatal("a Forgejo host must not be treated as a GitHub host")
 	}
 }
+
+// The object count comes from the pusher-controlled pack header; a pack that
+// claims more than maxPushPackObjects is refused before any object is walked.
+func TestPushSignoffRefusalTooManyPackObjects(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
+	lane := "scanner <scanner@hive.kubestellar.io>"
+	pack := wrapPack(packObjBytes(1, nil, []byte(testCommit(lane, lane, "msg\n\nSigned-off-by: "+lane, 1))))
+	binary.BigEndian.PutUint32(pack[8:12], maxPushPackObjects+1)
+	body := append(pktCmd(" report-status"), pack...)
+	reason, refused, _ := pushSignoffRefusal(pushReq(body), "scanner", nil)
+	if !refused || !strings.Contains(reason, "objects") {
+		t.Fatalf("pack over the object cap: refused=%v reason=%q, want refused", refused, reason)
+	}
+}
+
+// A normal multi-commit pack, with trees, blobs and a delta of a commit mixed
+// in, still parses through the shared inflater and is judged per commit.
+func TestPushSignoffRefusalMultiCommitPack(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
+	lane := "scanner <scanner@hive.kubestellar.io>"
+	person := "Andy <andy@example.com>"
+	signed := "msg\n\nSigned-off-by: " + lane
+	for _, tc := range []struct {
+		name    string
+		last    string
+		refused bool
+	}{
+		{"all signed", testCommit(lane, lane, signed+"\n\nthird", 1), false},
+		{"last unsigned", testCommit(lane, lane, "unsigned", 1), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := testCommit(lane, lane, signed, 1)
+			objs := [][]byte{
+				packObjBytes(1, nil, []byte(base)),
+				packObjBytes(2, nil, []byte("tree payload")),
+				packObjBytes(3, nil, []byte("blob payload")),
+				packObjBytes(1, nil, []byte(testCommit(person, person, "person msg", 1))),
+			}
+			// OFS delta of the first commit, as git emits for a commit series.
+			n := 0
+			for _, o := range objs {
+				n += len(o)
+			}
+			off := []byte{byte(n & 0x7f)}
+			for n >>= 7; n > 0; n >>= 7 {
+				n--
+				off = append([]byte{byte(n&0x7f) | 0x80}, off...)
+			}
+			objs = append(objs, packObjBytes(6, off, insertOnlyDelta(len(base), tc.last)))
+			body := append(pktCmd(" report-status"), wrapPack(objs...)...)
+			commits, err := parsePushCommits(body)
+			if err != nil || len(commits) != 3 {
+				t.Fatalf("parsePushCommits = %d commits, err %v; want 3 commits", len(commits), err)
+			}
+			if reason, refused, _ := pushSignoffRefusal(pushReq(body), "scanner", nil); refused != tc.refused {
+				t.Fatalf("refused = %v (%s), want %v", refused, reason, tc.refused)
+			}
+		})
+	}
+}
