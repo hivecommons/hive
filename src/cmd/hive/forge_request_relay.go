@@ -113,6 +113,10 @@ type forgeRequestRelay struct {
 	// The clone queue (forge_clone_relay.go, #19997).
 	cloneAuthz forgeCloneAuthorizer
 	cloneDir   string
+
+	// The read queue (forge_read_relay.go, #20230). It is served with
+	// cloneAuthz.
+	readDir string
 }
 
 func newForgeRequestRelay(cfg func() *config.Config, prAuthz github.PRRequestAuthorizer, issueAuthz github.IssueRequestAuthorizer, logger *slog.Logger) *forgeRequestRelay {
@@ -131,6 +135,7 @@ func newForgeRequestRelay(cfg func() *config.Config, prAuthz github.PRRequestAut
 		reviewDir:  github.ReviewRequestDir,
 		mergeDir:   github.MergeRequestDir,
 		cloneDir:   forgeCloneRequestDir,
+		readDir:    forgeReadRequestDir,
 	}
 }
 
@@ -173,6 +178,9 @@ func (r *forgeRequestRelay) scanOnce(ctx context.Context) {
 	for _, path := range pendingRequestFiles(r.pushDir) {
 		r.handlePushBranch(ctx, path)
 	}
+	// Reads before clones: a clone can hold the scan for minutes, and
+	// hive-gh gives up on a read the relay has not answered in a few polls.
+	r.serveReadQueue(ctx)
 	r.serveCloneQueue(ctx)
 	for _, path := range pendingRequestFiles(r.prDir) {
 		r.handlePR(ctx, path)

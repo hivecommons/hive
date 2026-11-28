@@ -159,6 +159,94 @@ done
 if grep -q "Gate fields retained" <<<"$out" && grep -q "headRefOid" <<<"$out"; then pass "--fields enumerates retained gate fields"; else fail "--fields gate enumeration"; fi
 if grep -q "dropped:" <<<"$out"; then pass "--fields says what --full restores"; else fail "--fields dropped column"; fi
 
+echo "=== Forgejo repos: pr/issue view and pr checks go through the hive's read relay (#20230) ==="
+READ_DIR="${WORK}/read-requests"
+mkdir -p "$READ_DIR"
+# fake_relay <ok> answers the first request the way forge_read_relay.go does:
+# a 0600 view file named after the request and a result naming it, or a
+# refusal that renames the request.
+fake_relay() {
+  local ok="$1" i req base view
+  for i in $(seq 1 100); do
+    req="$(find "$READ_DIR" -maxdepth 1 -name '*.json' ! -name '*.result.json' ! -name '*.tmp' | head -n1)"
+    if [ -n "$req" ]; then
+      base="${req%.json}"
+      cp "$req" "${WORK}/last-read-request"
+      if [ "$ok" = true ]; then
+        view="${base}.x1.view"
+        (umask 077; jq -c '{number: .number, title: "from forge", kind: .kind, repo: .repo, headRefOid: "abc", forge: "forgejo"}' "$req" >"$view")
+        jq -n --arg v "$view" '{ok: true, view: $v}' >"${base}.result.json"
+        rm -f "$req"
+      else
+        jq -n '{ok: false, error: "read rejected: repo \"x\" is not managed by this hive"}' >"${base}.result.json"
+        mv "$req" "${req}.rejected"
+      fi
+      return 0
+    fi
+    sleep 0.1
+  done
+}
+run_forge() {
+  PATH="${STUB_DIR}:${PATH}" STUB_ARGV_LOG="$ARGV_LOG" STUB_FIXTURE="$PR_FIXTURE" HIVE_GH_READ_REQUEST_DIR="$READ_DIR" HIVE_GH_FORGE_TIMEOUT=10 bash "$SCRIPT" "$@" 2>&1
+}
+
+: >"$ARGV_LOG"
+fake_relay true &
+out="$(run_forge pr view 50 --repo acme/widgets)"; wait
+if [ "$(jq -r '.title + "/" + .kind + "/" + .repo + "/" + (.number|tostring)' <<<"$out" 2>/dev/null)" = "from forge/pr/acme/widgets/50" ] && [ ! -s "$ARGV_LOG" ]; then
+  pass "pr view on a forge repo is read through the relay, not gh"
+else fail "pr view through the relay" "$out / gh argv: $(tr '\n' ' ' <"$ARGV_LOG")"; fi
+if [ -z "$(find "$READ_DIR" -name '*.view')" ]; then pass "the delivered view is removed after it is printed"; else fail "view removed"; fi
+
+: >"$ARGV_LOG"
+fake_relay true &
+out="$(run_forge pr checks 50 -R fj.example/acme/widgets)"; wait
+if [ "$(jq -r '.kind + "/" + .repo' "${WORK}/last-read-request")" = "checks/acme/widgets" ] && [ ! -s "$ARGV_LOG" ]; then
+  pass "pr checks with HOST/OWNER/REPO goes to the relay as kind checks"
+else fail "pr checks through the relay" "$out"; fi
+
+CHECKOUT="${WORK}/checkout"
+git init -q "$CHECKOUT"
+git -C "$CHECKOUT" remote add origin https://fj.example/acme/widgets.git
+: >"$ARGV_LOG"
+fake_relay true &
+out="$(cd "$CHECKOUT" && run_forge issue view 3)"; wait
+if [ "$(jq -r '.kind + "/" + .repo + "/" + (.number|tostring)' "${WORK}/last-read-request")" = "issue/acme/widgets/3" ] && [ ! -s "$ARGV_LOG" ]; then
+  pass "issue view in a forge checkout takes the repo from origin"
+else fail "issue view from origin" "$out"; fi
+
+: >"$ARGV_LOG"
+fake_relay false &
+out="$(run_forge pr view 50 --repo acme/other)"; rc=$?; wait
+if [ "$rc" -ne 0 ] && grep -q "the hive refused the read" <<<"$out" && grep -q "not managed" <<<"$out"; then
+  pass "a refusal is reported with the relay's reason and a non-zero exit"
+else fail "refusal reported" "rc=$rc $out"; fi
+
+echo "=== GitHub repos are unchanged even where the read queue exists ==="
+run_forge pr view 7 --repo github.com/o/r >/dev/null
+if argv_has "--json" && argv_has "github.com/o/r"; then pass "--repo github.com/... still goes to gh"; else fail "github.com repo to gh" "$(tr '\n' ' ' <"$ARGV_LOG")"; fi
+git -C "$CHECKOUT" remote set-url origin https://github.com/o/r.git
+(cd "$CHECKOUT" && run_forge pr view 7 >/dev/null)
+if argv_has "--json"; then pass "a github.com origin still goes to gh"; else fail "github origin to gh" "$(tr '\n' ' ' <"$ARGV_LOG")"; fi
+run_forge pr view feat-branch --repo acme/widgets >/dev/null
+if argv_has "--json" && argv_has "feat-branch"; then pass "a non-numeric target still goes to gh"; else fail "branch target to gh"; fi
+: >"$ARGV_LOG"
+out="$(PATH="${STUB_DIR}:${PATH}" STUB_ARGV_LOG="$ARGV_LOG" STUB_FIXTURE="$PR_FIXTURE" HIVE_GH_READ_REQUEST_DIR="$READ_DIR" HIVE_GH_FORGE_TIMEOUT=1 bash "$SCRIPT" pr view 7 --repo o/r 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && argv_has "--json" && argv_has "o/r"; then pass "a bare --repo o/r falls through to gh when no relay serves the queue"; else fail "bare --repo with no relay to gh" "rc=$rc $out / gh argv: $(tr '\n' ' ' <"$ARGV_LOG")"; fi
+: >"$ARGV_LOG"
+out="$(PATH="${STUB_DIR}:${PATH}" STUB_ARGV_LOG="$ARGV_LOG" STUB_FIXTURE="$PR_FIXTURE" HIVE_GH_READ_REQUEST_DIR="$READ_DIR" HIVE_GH_FORGE_TIMEOUT=60 HIVE_GH_FORGE_PICKUP_TIMEOUT=1 timeout 15 bash "$SCRIPT" pr view 7 --repo o/r 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && argv_has "--json" && argv_has "o/r" && grep -q "did not pick up" <<<"$out"; then pass "a bare --repo o/r goes to gh after the pickup window when nothing picks up the request"; else fail "bare --repo unpicked request to gh" "rc=$rc $out / gh argv: $(tr '\n' ' ' <"$ARGV_LOG")"; fi
+CLONE_REQ_DIR="${WORK}/clone-requests"
+mkdir -p "$CLONE_REQ_DIR"
+echo '{"agent":"worker-1","repo":"acme/widgets"}' >"${CLONE_REQ_DIR}/worker-1-1.json"
+: >"$ARGV_LOG"
+out="$(PATH="${STUB_DIR}:${PATH}" STUB_ARGV_LOG="$ARGV_LOG" STUB_FIXTURE="$PR_FIXTURE" HIVE_GH_READ_REQUEST_DIR="$READ_DIR" HIVE_GH_FORGE_TIMEOUT=3 HIVE_GH_FORGE_PICKUP_TIMEOUT=1 timeout 15 bash "$SCRIPT" pr view 7 --repo o/r 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && ! grep -q "did not pick up" <<<"$out" && grep -q "no answer from the hive's read relay after 3s" <<<"$out"; then pass "a pending clone request keeps hive-gh waiting past the pickup window"; else fail "pending clone request keeps hive-gh waiting" "rc=$rc $out"; fi
+rm -f "${CLONE_REQ_DIR}/worker-1-1.json"
+run_forge --full pr view 50 --repo acme/widgets >/dev/null
+if ! argv_has "--json" && argv_has "50"; then pass "--full still hands the call to gh untouched"; else fail "--full on forge repo"; fi
+if [ -z "$(find "$READ_DIR" -name '*.json' ! -name '*.result.json' ! -name '*.rejected')" ]; then pass "no request left behind by the gh paths"; else fail "stray request"; fi
+
 echo
 echo "=== ${PASS} passed, ${FAIL} failed ==="
 [ "$FAIL" -eq 0 ]
