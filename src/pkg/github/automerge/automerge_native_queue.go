@@ -355,10 +355,24 @@ func (c *Engine) tryNativeQueueAfterRouting(ctx context.Context, pr *gh.PullRequ
 			return nativeQueueReasonMethod, fmt.Errorf("mixed authorship requires a merge commit; queue uses %s", method)
 		}
 	}
-	// GitHub already refused this head for unresolved review conversations
-	// (parked, or waiting out a retry): do not ask again every pass.
-	if !state.IsInMergeQueue {
+	attempt := nativeQueueMergeAttempt(claim.Repo, pr, state)
+	if state.IsInMergeQueue {
+		// Queued, by whoever: no failed enqueue of this head is left to
+		// wait out.
+		c.forgetNativeQueueEnqueueFailure(attempt)
+	} else {
+		// GitHub already refused this head for unresolved review
+		// conversations (parked, or waiting out a retry): do not ask again
+		// every pass.
 		if reason := c.knownUnresolvedThreads(claim.Repo, pr.GetNumber(), state.HeadRefOid); reason != "" {
+			return reason, nil
+		}
+		// Nor while GitHub's refusal of this head for a missing review is
+		// remembered, or a failed enqueue of it waits out its backoff.
+		// GitHub's reviewDecision alone never holds a head: only a
+		// refusal does, so an App the base's rules let past the review is
+		// enqueued as before.
+		if reason := c.knownNativeQueueEnqueueRefusal(attempt); reason != "" {
 			return reason, nil
 		}
 	}
@@ -387,10 +401,15 @@ func (c *Engine) tryNativeQueueAfterRouting(ctx context.Context, pr *gh.PullRequ
 			}
 			return result, nil
 		}
+		// enqueueErr is what GitHub answered the enqueue call with; it
+		// stays nil when the boundary never ran the effect (a denied or
+		// fenced write sent nothing).
+		var enqueueErr error
 		_, err = effects.ExecuteReconciling(ctx, c.mutation, claim, observe, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 			entry, err := t.EnqueueNativePullRequest(ctx, state.ID, state.HeadRefOid)
 			if err != nil {
-				if hgithub.IsUnresolvedConversationsError(err) {
+				enqueueErr = err
+				if hgithub.IsUnresolvedConversationsError(err) || nativeQueueEnqueueRefusedReview(err) || hgithub.IsGraphQLRefusal(err) {
 					// A definite refusal: nothing was queued, so the
 					// journal must not hold it as an uncertain outcome.
 					return effects.Result{}, effects.NotApplied(err)
@@ -402,10 +421,41 @@ func (c *Engine) tryNativeQueueAfterRouting(ctx context.Context, pr *gh.PullRequ
 		})
 		if err != nil {
 			if hgithub.IsUnresolvedConversationsError(err) {
+				c.forgetNativeQueueEnqueueFailure(attempt)
 				return c.unresolvedThreadsRefusal(ctx, claim.Repo, pr.GetNumber(), state.HeadRefOid), nil
+			}
+			refused := enqueueErr != nil && hgithub.IsGraphQLRefusal(enqueueErr)
+			if nativeQueueEnqueueRefusedReview(err) || (enqueueErr != nil && hgithub.IsGraphQLUnprocessable(enqueueErr) && nativeQueueReviewOutstanding(state.ReviewDecision)) {
+				// GitHub turned the enqueue down and either says in words
+				// that a review is missing, or refused it on one of its
+				// rules for the PR while its own review state says a
+				// review is outstanding: the PR waits on a person's
+				// approval, as it does on the direct merge path, and this
+				// head is not sent again while that stands. A FORBIDDEN or
+				// NOT_FOUND refusal is not that (the App may not enqueue,
+				// or the PR is gone) and backs off below under its own
+				// text.
+				c.forgetNativeQueueEnqueueFailure(attempt)
+				answer := err
+				if enqueueErr != nil {
+					answer = enqueueErr
+				}
+				c.noteNativeQueueReviewRefusal(attempt, answer)
+				return autoMergeReasonMergeRefusedReview, nil
+			}
+			if enqueueErr != nil {
+				// A failure no rule above names: the same head is not
+				// sent again until its backoff has passed.
+				reason := c.noteNativeQueueEnqueueFailure(attempt, enqueueErr, refused)
+				if refused {
+					// GitHub answered, and nothing was queued: a wait
+					// that names its cause, not an error.
+					return reason, nil
+				}
 			}
 			return nativeQueueReasonEnqueue, err
 		}
+		c.forgetNativeQueueEnqueueFailure(attempt)
 		if state.MergeQueueEntry != nil {
 			c.noteNativeQueueOwnEntry(claim.Repo, pr.GetNumber(), state.HeadRefOid, cycle)
 		}

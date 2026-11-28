@@ -102,3 +102,48 @@ func isGraphQLNotFound(err error) bool {
 	}
 	return false
 }
+
+// graphQLRefusalTypes are the GraphQL error types GitHub answers with when
+// it turned a request down before changing anything: the input did not
+// pass GitHub's own rules, the token may not do it, or the node is not
+// there.
+var graphQLRefusalTypes = map[string]bool{graphQLTypeUnprocessable: true, "FORBIDDEN": true, "NOT_FOUND": true}
+
+// graphQLTypeUnprocessable is the type of a request GitHub understood and
+// one of its rules for the object turned down.
+const graphQLTypeUnprocessable = "UNPROCESSABLE"
+
+// graphQLErrorsAllTyped reports whether err is a GraphQL errors array, not
+// empty, whose every entry carries a type in types.
+func graphQLErrorsAllTyped(err error, types map[string]bool) bool {
+	var ge *graphQLErrors
+	if !errors.As(err, &ge) || len(ge.Errors) == 0 {
+		return false
+	}
+	for _, e := range ge.Errors {
+		if !types[strings.ToUpper(strings.TrimSpace(e.Type))] {
+			return false
+		}
+	}
+	return true
+}
+
+// IsGraphQLRefusal reports whether err is GitHub definitely refusing a
+// GraphQL mutation: the endpoint answered with an errors array and every
+// entry carries one of graphQLRefusalTypes, so nothing was applied. A
+// network failure, a 5xx, an entry with no type (an internal error) and a
+// rate limit are not: the caller cannot tell from them whether the mutation
+// took effect. The type says that GitHub refused, not why; a caller that
+// needs the cause matches the message.
+func IsGraphQLRefusal(err error) bool {
+	return graphQLErrorsAllTyped(err, graphQLRefusalTypes)
+}
+
+// IsGraphQLUnprocessable reports whether err is the narrower refusal: every
+// entry of the errors array is typed UNPROCESSABLE, so GitHub turned the
+// request down on one of its rules for the object (a branch rule the pull
+// request does not meet, say), not because the token may not make it
+// (FORBIDDEN) or the node is not there (NOT_FOUND).
+func IsGraphQLUnprocessable(err error) bool {
+	return graphQLErrorsAllTyped(err, map[string]bool{graphQLTypeUnprocessable: true})
+}

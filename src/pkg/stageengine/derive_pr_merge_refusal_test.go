@@ -25,6 +25,10 @@ func TestClassifyStagePermanentMergeRefusals(t *testing.T) {
 		{name: "merge queue required", reason: autoMergeReasonMergeQueueRequired, want: stagelabels.MergeQueue},
 		{name: "native queued position", reason: "native-merge-queued: queued (position 2, AWAITING_CHECKS)", want: stagelabels.MergeQueue},
 		{name: "native enqueue failure", reason: "native-merge-queue-enqueue", want: stagelabels.MergeQueue},
+		// A failed enqueue the hive is waiting out carries GitHub's error
+		// text inside the same reason, which ends in the hive's own words:
+		// still the hive's to retry, whatever GitHub's text ends in.
+		{name: "native enqueue backoff", reason: "native-merge-queue-enqueue: last try failed (graphql: UNPROCESSABLE: Pull request cannot be queued-pending), next try 4m after it", want: stagelabels.MergeQueue},
 		{name: "native read failure", reason: "native-merge-queue-read", want: stagelabels.MergeQueue},
 		{name: "native queue method refused", reason: "native-merge-queue-method", want: stagelabels.NeedsDecision, wantHuman: true},
 		// The merge queue rejected the head once: the hive retries it, so

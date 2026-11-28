@@ -736,6 +736,9 @@ func TestMergeTrainReadinessMemory(t *testing.T) {
 		// on the next pass, so that head is ready.
 		prstage.AutoMergeReasonReviewThreadsPending:  mergeTrainReadinessUnready,
 		prstage.AutoMergeReasonReviewThreadsResolved: mergeTrainReadinessReady,
+		// Waiting out the backoff of a merge-queue enqueue GitHub did not
+		// accept: the same, stage 100 but not a ready front.
+		nativeQueueEnqueueBackoffReason(4*time.Minute, "graphql: UNPROCESSABLE: Pull request cannot be queued"): mergeTrainReadinessUnready,
 	} {
 		if got := mergeTrainReadinessOf(reason); got != want {
 			t.Fatalf("mergeTrainReadinessOf(%q) = %d, want %d", reason, got, want)

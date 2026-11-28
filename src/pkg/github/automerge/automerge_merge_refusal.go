@@ -112,6 +112,10 @@ type mergeAttempt struct {
 	number            int
 	head, state       string
 	method            string
+	// review is GitHub's reviewDecision for the PR, which only the
+	// native-queue path reads (nativeQueueMergeAttempt); a direct merge
+	// leaves it empty.
+	review string
 }
 
 type mergeRefusal struct {
@@ -135,16 +139,37 @@ type mergeRefusal struct {
 	repeated  bool
 	priorBase string
 	retries   int
+	// review is GitHub's reviewDecision when a native-queue enqueue was
+	// refused or failed; the mark re-arms when it changes (rearmedBy). A
+	// direct merge's refusal leaves it empty.
+	review string
+	// detail is the error text of a failed native-queue enqueue the lane
+	// is waiting out (noteNativeQueueEnqueueFailure). On that mark retries
+	// counts the failed enqueues in a row on the head, and refused says
+	// GitHub definitely turned the last one down, which lets the wait grow
+	// further (nativeQueueEnqueueBackoff).
+	detail  string
+	refused bool
+}
+
+// rearmedBy reports whether a is no longer the attempt r was remembered
+// for: the head moved, GitHub's mergeable_state for the PR changed, or its
+// reviewDecision did.
+func (r mergeRefusal) rearmedBy(a mergeAttempt) bool {
+	state := comparableMergeableState(a.state)
+	return !strings.EqualFold(r.head, strings.TrimSpace(a.head)) || (state != "" && state != r.state) ||
+		!strings.EqualFold(r.review, strings.TrimSpace(a.review))
 }
 
 // mergeRefusalPrunable reports whether a remembered refusal stored under
 // key may be dropped at now. A native-queue mark that waits for a new head
 // or base tip instead of the clock (behind, repeated, the spent retry) is
 // kept for sweepMemoryIdle, so a busy memory does not hand the same head
-// another merge-group run.
+// another merge-group run. So is a failed enqueue's backoff, whose wait
+// grows past the recheck window.
 func mergeRefusalPrunable(key string, r mergeRefusal, now time.Time) bool {
 	idle := mergeRefusalRecheck
-	if r.behind || r.repeated || strings.HasPrefix(key, nativeQueueRetryKeyPrefix) {
+	if r.behind || r.repeated || strings.HasPrefix(key, nativeQueueRetryKeyPrefix) || strings.HasPrefix(key, nativeQueueEnqueueKeyPrefix) {
 		idle = sweepMemoryIdle
 	}
 	return now.Sub(r.at) >= idle
@@ -250,17 +275,36 @@ func (c *Engine) knownMergeRefusal(a mergeAttempt) string {
 			delete(m.mergeRefusals, key)
 		}
 	}
+	if c.reviewRefusalKnown(a, now) {
+		return autoMergeReasonMergeRefusedReview
+	}
+	return ""
+}
+
+// reviewRefusalKnown reports whether the head of a is remembered as refused
+// for a missing approving review, dropping a mark that has re-armed: the
+// recheck window passed (mergeRefusalRecheck), the head moved, or GitHub's
+// mergeable_state (or, on the native-queue path, its reviewDecision) for
+// the PR changed. The direct merge and the native-queue enqueue share the
+// mark and its window. The caller holds mergeRefusalsMu.
+func (c *Engine) reviewRefusalKnown(a mergeAttempt, now time.Time) bool {
+	m := c.memory()
 	key := mergeRefusalReviewKey(a)
 	r, ok := m.mergeRefusals[key]
 	if !ok {
-		return ""
+		return false
 	}
-	state := comparableMergeableState(a.state)
-	if now.Sub(r.at) >= mergeRefusalRecheck || !strings.EqualFold(r.head, strings.TrimSpace(a.head)) || (state != "" && state != r.state) {
+	if now.Sub(r.at) >= mergeRefusalRecheck || r.rearmedBy(a) {
 		delete(m.mergeRefusals, key)
-		return ""
+		return false
 	}
-	return autoMergeReasonMergeRefusedReview
+	return true
+}
+
+// rememberReviewRefusal remembers that GitHub refused the head of a for a
+// missing approving review, for reviewRefusalKnown.
+func (c *Engine) rememberReviewRefusal(a mergeAttempt) {
+	c.rememberMergeRefusal(mergeRefusalReviewKey(a), mergeRefusal{head: strings.TrimSpace(a.head), state: comparableMergeableState(a.state), review: strings.TrimSpace(a.review)})
 }
 
 // refusedMerge classifies a failed merge call as a permanent refusal,
@@ -287,18 +331,15 @@ func (c *Engine) refusedMerge(ctx context.Context, a mergeAttempt, err error) st
 	if reason == "" || c == nil {
 		return reason
 	}
-	var key string
-	var r mergeRefusal
 	switch reason {
 	case autoMergeReasonMergeRefusedReview:
-		key, r.head, r.state = mergeRefusalReviewKey(a), strings.TrimSpace(a.head), comparableMergeableState(a.state)
+		c.rememberReviewRefusal(a)
 	case autoMergeReasonMergeRefusedMethod:
 		if strings.TrimSpace(a.method) == "" {
 			return reason
 		}
-		key = mergeRefusalMethodKey(a)
+		c.rememberMergeRefusal(mergeRefusalMethodKey(a), mergeRefusal{})
 	}
-	c.rememberMergeRefusal(key, r)
 	return reason
 }
 
