@@ -163,7 +163,7 @@ func classifyContributorForkPushFailure(reason, taskRepo string) forkPushEvidenc
 	if reason == "" || !isBlockedVerdictToolingFailure(reason) || forkPushUpstreamGateRE.MatchString(reason) {
 		return forkPushNoEvidence
 	}
-	evidence := forkPushNoEvidence
+	var evidence forkPushEvidence
 	switch {
 	case forkPushScopeRefusalRE.MatchString(reason):
 		evidence = forkPushScopeBacked
