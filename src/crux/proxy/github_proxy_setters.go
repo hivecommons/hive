@@ -98,3 +98,19 @@ func (p *GitHubProxy) SetWriteRefusedAuditFunc(fn func(agent, kind, method, path
 	p.writeRefusedAudit = fn
 	p.writeSurfaceMu.Unlock()
 }
+
+// SetAppBotIdentityFunc installs the lookup of the App bot's GitHub user id
+// and login that the in-pod push sign-off check accepts as a lane's commit
+// email (<id>+<login>@users.noreply.github.com), matching what the agent
+// manager gives push-capable lanes on App-authored hives. nil clears it.
+func (p *GitHubProxy) SetAppBotIdentityFunc(fn func() (userID int64, login string)) {
+	p.appBotIdentityMu.Lock()
+	p.appBotIdentity = fn
+	p.appBotIdentityMu.Unlock()
+}
+
+func (p *GitHubProxy) pushAppBotIdentity() pushAppBotIdentity {
+	p.appBotIdentityMu.RLock()
+	defer p.appBotIdentityMu.RUnlock()
+	return p.appBotIdentity
+}
