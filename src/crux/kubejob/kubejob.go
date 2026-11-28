@@ -90,16 +90,16 @@ const (
 	jobNameMax = 63
 
 	containerName = "kick"
-	jobLabelKey   = "job-name"
+	jobLabelKey   = config.SandboxPodJobNameLabel
 	// managedByLabel marks Jobs this launcher created so an operator (or a
 	// future sweeper) can list them without guessing at name prefixes.
-	managedByLabel = "app.kubernetes.io/managed-by"
+	managedByLabel = config.SandboxPodManagedByLabel
 	managedByValue = "hive-kubejob"
 	// jobLabel marks a Job's pods with the Job name so a per-Job
 	// NetworkPolicy can select them without relying on the controller's
 	// own job-name label, whose key changed across Kubernetes releases.
-	jobLabel         = "hive.kubestellar.io/job"
-	agentLabel       = "hive.kubestellar.io/agent"
+	jobLabel         = config.SandboxPodReservedLabelPrefix + "job"
+	agentLabel       = config.SandboxPodReservedLabelPrefix + "agent"
 	namePrefix       = "hive-kick-"
 	restartNever     = "Never"
 	deletePropagate  = "Background"
@@ -144,6 +144,9 @@ type Options struct {
 	// Empty leaves the cluster default. The copy transport refuses to run
 	// with it empty when hive's own pod has a runtime class (copy.go).
 	RuntimeClassName string
+	// PodLabels and PodAnnotations are operator-configured Job metadata.
+	PodLabels      map[string]string
+	PodAnnotations map[string]string
 	// EnvFromSecrets are Secret names whose keys become environment variables
 	// in the Job. This is the ONLY credential path into the Job.
 	EnvFromSecrets []string
@@ -270,6 +273,9 @@ func (o Options) Validate() error {
 		return errors.New("kubejob: ttl_seconds must not be negative")
 	}
 	if err := config.ValidateRuntimeClassName(o.RuntimeClassName); err != nil {
+		return fmt.Errorf("kubejob: %w", err)
+	}
+	if err := config.ValidateSandboxJobMetadata(&config.SandboxJobConfig{PodLabels: o.PodLabels, PodAnnotations: o.PodAnnotations}); err != nil {
 		return fmt.Errorf("kubejob: %w", err)
 	}
 	for i, v := range o.ExtraVolumes {
@@ -583,8 +589,17 @@ func (l *Launcher) jobManifest(ns, name, subPath string, spec sandbox.LaunchSpec
 		podSpec["dnsPolicy"] = "ClusterFirstWithHostNet"
 	}
 	labels := map[string]string{managedByLabel: managedByValue, jobLabel: name}
+	for key, value := range l.Options.PodLabels {
+		labels[key] = value
+	}
+	// Fixed labels are authoritative even if a caller bypasses validation.
+	labels[managedByLabel], labels[jobLabel] = managedByValue, name
 	if spec.Name != "" {
 		labels[agentLabel] = sanitizeLabel(spec.Name)
+	}
+	podMetadata := map[string]any{"labels": labels}
+	if len(l.Options.PodAnnotations) > 0 {
+		podMetadata["annotations"] = l.Options.PodAnnotations
 	}
 	return map[string]any{
 		"apiVersion": "batch/v1",
@@ -604,7 +619,7 @@ func (l *Launcher) jobManifest(ns, name, subPath string, spec sandbox.LaunchSpec
 			// forever (hivecommons/hive#18525).
 			"activeDeadlineSeconds": deadline,
 			"template": map[string]any{
-				"metadata": map[string]any{"labels": labels},
+				"metadata": podMetadata,
 				"spec":     podSpec,
 			},
 		},

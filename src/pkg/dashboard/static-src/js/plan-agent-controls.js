@@ -834,7 +834,7 @@
       'acmm:tier-classifier': 'Change classification that categorizes PRs by risk level (trivial, standard, critical).',
       'acmm:security-ai-md': 'An AI security policy documenting how agents handle secrets, auth, and sensitive data.',
       'acmm:session-continuity': 'Session continuity files that let agents resume work across multiple sessions.',
-      'acmm:cross-session-knowledge': 'A knowledge base that persists learnings across agent sessions and contributors.',
+      'acmm:cross-session-knowledge': 'A knowledge base that persists learnings across agent sessions and contributors. Hive indexes Markdown facts in docs/knowledge/ at boot when knowledge.git_sources is unset.',
       'acmm:github-actions-ai': 'GitHub Actions integration that triggers AI agents for reviews, fixes, or issue triage.',
       'acmm:auto-qa-self-tuning': 'Auto-QA with self-tuning — thresholds and rules adapt based on project history.',
       'acmm:public-metrics': 'Publicly visible metrics that show agent contribution quality and project health.',

@@ -178,19 +178,23 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			// The agent's repository scope (#6204), plus the hive's own repo
 			// list so the dialog can offer real choices instead of a free-text
 			// field the operator has to spell from memory.
-			"repos":            agentCfg.Repos,
-			"projectRepos":     s.deps.Config.Project.Repos,
-			"laneKeywords":     agentCfg.LaneKeywords,
-			"detectKeywords":   agentCfg.DetectKeywords,
-			"aliases":          agentCfg.Aliases,
-			"cavemanMode":      agentCfg.CavemanMode,
-			"jevMode":          agentCfg.JevMode,
-			"jevReady":         s.deps.Config.JevReady(),
-			"explainMode":      agentCfg.ExplainMode,
-			"headlessTurns":    agentCfg.HeadlessTurnsEnabled(),
-			"sandboxSubstrate": agentSandboxSubstrateOrEmpty(agentCfg),
-			"sandboxEnabled":   agentCfg.Sandbox != nil && agentCfg.Sandbox.Enabled != nil && *agentCfg.Sandbox.Enabled,
-			"sandboxEffective": agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
+			"repos":          agentCfg.Repos,
+			"projectRepos":   s.deps.Config.Project.Repos,
+			"laneKeywords":   agentCfg.LaneKeywords,
+			"detectKeywords": agentCfg.DetectKeywords,
+			"aliases":        agentCfg.Aliases,
+			"cavemanMode":    agentCfg.CavemanMode,
+			"jevMode":        agentCfg.JevMode,
+			"jevReady":       s.deps.Config.JevReady(),
+			"explainMode":    agentCfg.ExplainMode,
+			"headlessTurns":  agentCfg.HeadlessTurnsEnabled(),
+			// The Claude CLI's context and compaction windows (#19913),
+			// 0 = unset (discover / CLI default).
+			"maxContextTokens":        agentCfg.MaxContextTokens,
+			"autoCompactWindowTokens": agentCfg.AutoCompactWindowTokens,
+			"sandboxSubstrate":        agentSandboxSubstrateOrEmpty(agentCfg),
+			"sandboxEnabled":          agentCfg.Sandbox != nil && agentCfg.Sandbox.Enabled != nil && *agentCfg.Sandbox.Enabled,
+			"sandboxEffective":        agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
 			// What turning the sandbox on would resolve to (#18525): whether
 			// the agent's own fields plus agent_sandbox defaults are a
 			// complete block, and which other agents a block can be copied from.
@@ -714,6 +718,11 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if sandboxEditsPresent(body) {
+		effectiveJob := agentCfg.SandboxJob(s.deps.Config.AgentSandbox)
+		if err := config.ValidateSandboxJobMetadata(&effectiveJob); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		if err := sandboxEnabledProblem(name, agentCfg, s.deps.Config.AgentSandbox); err != nil {
 			jsonError(w, err.Error(), http.StatusBadRequest)
 			return
@@ -787,6 +796,40 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			// Stored as an explicit pointer, false included, so an "off"
 			// saved to the overlay beats a seed opt-in on the next load.
 			agentCfg.HeadlessTurns = &b
+		}
+	}
+	// agents.<key>.max_context_tokens and auto_compact_window_tokens (#19913):
+	// the window the Claude CLI compacts against on a translator route whose
+	// gateway reports none, and the CLI's auto-compaction window. Both reach
+	// the CLI as env at launch, so a change restarts the agent below. 0 clears
+	// the key. Saved to every layer together, like headless_turns.
+	contextWindowChanged := false
+	if v, ok := body["maxContextTokens"]; ok {
+		if f, ok := v.(float64); ok {
+			n := int(f)
+			if n < 0 || float64(n) != f {
+				jsonError(w, "max_context_tokens must be a whole number of tokens, 0 or more (0 = discover from the gateway)", http.StatusBadRequest)
+				return
+			}
+			contextWindowChanged = contextWindowChanged || agentCfg.MaxContextTokens != n
+			agentCfg.MaxContextTokens = n
+		}
+	}
+	if v, ok := body["autoCompactWindowTokens"]; ok {
+		if f, ok := v.(float64); ok {
+			n := int(f)
+			if float64(n) != f {
+				jsonError(w, "auto_compact_window_tokens must be a whole number of tokens", http.StatusBadRequest)
+				return
+			}
+			// Same gate as config.Validate, so the write path cannot persist a
+			// value that would fail the next config load.
+			if err := config.ValidateAutoCompactWindowTokens(n); err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			contextWindowChanged = contextWindowChanged || agentCfg.AutoCompactWindowTokens != n
+			agentCfg.AutoCompactWindowTokens = n
 		}
 	}
 	if v, ok := body["explainMode"]; ok {
@@ -974,9 +1017,9 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			s.logger.Warn("failed to apply backend from config dialog", "agent", name, "error", err)
 		}
 	}
-	if modelChanged || backendChanged || jevModeChanged || headlessTurnsChanged {
+	if modelChanged || backendChanged || jevModeChanged || headlessTurnsChanged || contextWindowChanged {
 		if err := s.deps.AgentMgr.Restart(s.deps.Ctx, name); err != nil {
-			s.logger.Warn("restart after config-dialog model/backend/jev_mode/headless_turns change failed", "agent", name, "error", err)
+			s.logger.Warn("restart after config-dialog model/backend/jev_mode/headless_turns/context window change failed", "agent", name, "error", err)
 		}
 	}
 
@@ -1023,6 +1066,8 @@ var agentGeneralAuditFields = []struct {
 	{"jevMode", func(a config.AgentConfig) string { return a.JevMode }},
 	{"explainMode", func(a config.AgentConfig) string { return a.ExplainMode }},
 	{"headlessTurns", func(a config.AgentConfig) string { return strconv.FormatBool(a.HeadlessTurnsEnabled()) }},
+	{"maxContextTokens", func(a config.AgentConfig) string { return strconv.Itoa(a.MaxContextTokens) }},
+	{"autoCompactWindowTokens", func(a config.AgentConfig) string { return strconv.Itoa(a.AutoCompactWindowTokens) }},
 }
 
 // generalAuditDetail records every listed field the write changed with its

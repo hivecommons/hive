@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/atomicfile"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/classify"
 	"github.com/hivecommons/hive/pkg/config"
@@ -3130,8 +3131,5 @@ func writeReviewDispatchState(plan review.DispatchPlan, confirm func(planned []r
 }
 
 func atomicWrite(path string, data []byte) {
-	tmp := path + ".tmp"
-	if os.WriteFile(tmp, data, 0o644) == nil {
-		_ = os.Rename(tmp, path)
-	}
+	_ = atomicfile.WriteFile(path, data, 0o644)
 }

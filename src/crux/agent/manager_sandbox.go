@@ -622,6 +622,8 @@ func JobOptionsFromConfig(job config.SandboxJobConfig) kubejob.Options {
 		ServiceAccount:      job.ServiceAccount,
 		SchedulerName:       job.SchedulerName,
 		RuntimeClassName:    job.EffectiveRuntimeClassName(os.Getenv),
+		PodLabels:           job.PodLabels,
+		PodAnnotations:      job.PodAnnotations,
 		EnvFromSecrets:      append([]string(nil), job.EnvFromSecrets...),
 		ImagePullSecrets:    append([]string(nil), job.ImagePullSecrets...),
 		TTLSeconds:          job.TTLSeconds,

@@ -6556,6 +6556,10 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// pointer for the same reason as converse: an overlay `false` (the
 	// dashboard's off) must beat a seed `true` the dashboard cannot rewrite,
 	// so only a nil overlay value takes the lower layer's.
+	//
+	// max_context_tokens and auto_compact_window_tokens (#19913) are ints, so
+	// "unset" is 0: a non-zero lower-layer value is carried only when the
+	// overlay entry is silent (0). An overlay value always wins.
 	for name, oa := range overlay.Agents {
 		base, ok := cfg.Agents[name]
 		if !ok {
@@ -6568,6 +6572,14 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 		}
 		if oa.HeadlessTurns == nil && base.HeadlessTurns != nil {
 			oa.HeadlessTurns = base.HeadlessTurns
+			changed = true
+		}
+		if oa.MaxContextTokens == 0 && base.MaxContextTokens > 0 {
+			oa.MaxContextTokens = base.MaxContextTokens
+			changed = true
+		}
+		if oa.AutoCompactWindowTokens == 0 && base.AutoCompactWindowTokens > 0 {
+			oa.AutoCompactWindowTokens = base.AutoCompactWindowTokens
 			changed = true
 		}
 		if changed {
@@ -6593,6 +6605,10 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// pause is carried; unpause through the dashboard, which writes both
 	// layers. `headless_turns` is a pointer, so the file's explicit value,
 	// true or false, is carried and an absent key leaves the overlay's.
+	// `max_context_tokens` and `auto_compact_window_tokens` (#19913) are
+	// carried the same way when the file sets them (non-zero), so a gateway
+	// that reports no window can be given one in the documented agent file;
+	// a compaction window the validator would reject is not carried.
 	if cfg.Data.AgentsDir != "" {
 		if files, ferr := LoadAgentOverrides(cfg.Data.AgentsDir); ferr == nil {
 			for name, fa := range files {
@@ -6609,6 +6625,12 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 				}
 				if fa.HeadlessTurns != nil {
 					a.HeadlessTurns = fa.HeadlessTurns
+				}
+				if fa.MaxContextTokens > 0 {
+					a.MaxContextTokens = fa.MaxContextTokens
+				}
+				if fa.AutoCompactWindowTokens > 0 && ValidateAutoCompactWindowTokens(fa.AutoCompactWindowTokens) == nil {
+					a.AutoCompactWindowTokens = fa.AutoCompactWindowTokens
 				}
 				cfg.Agents[name] = a
 			}

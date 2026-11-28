@@ -1,0 +1,1 @@
+- Hub dashboard: a hub running with `HIVE_HUB_MODE=self-hosted` no longer shows hosted-fleet controls (Usage by cluster, Cluster Health, the Scale Controls fleet knobs and per-cluster limits, `+ Add Hosted Hive`, Request a hive, and the Users quota column); Register your own hive is the only way to add a hive. Hubs without the mode set are unchanged.

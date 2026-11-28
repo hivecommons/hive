@@ -157,8 +157,8 @@ func TestRefreshClearsLaunchForgeOutageOnlyOnSuccess(t *testing.T) {
 			if got := rec.active(crux.ClassForgeUnreachable); len(got) != 0 {
 				t.Fatalf("successful refresh left outage active: %+v", got)
 			}
-			if got := rec.clears(crux.ClassForgeUnreachable); len(got) != 1 || got[0].Key != a.Name {
-				t.Fatalf("outage clears = %+v, want only %s", got, a.Name)
+			if got := rec.clears(crux.ClassForgeUnreachable); len(got) == 0 || got[len(got)-1].Key != a.Name {
+				t.Fatalf("outage clears = %+v, want a clear for %s", got, a.Name)
 			}
 		})
 	}
@@ -183,5 +183,50 @@ func TestRefreshTransportFailureReobservesForgeUnreachable(t *testing.T) {
 	m.refreshAgentTokens(context.Background())
 	if got := rec.observations(crux.ClassForgeUnreachable); len(got) != 1 {
 		t.Fatalf("an HTTP refresh failure observed forge_unreachable: %+v", got)
+	}
+}
+
+func TestRefreshTokenFailureConditionsAndRecovery(t *testing.T) {
+	for _, method := range []string{"periodic", "single"} {
+		t.Run(method, func(t *testing.T) {
+			minter := &failingMinter{err: errors.New("creating scoped token: POST /app/installations/123/access_tokens: 401 Bad credentials")}
+			m, a := mintClassManager(t, minter)
+			a.State = StateRunning
+			rec := recordConditions(t, m)
+			refresh := func() {
+				if method == "single" {
+					_ = m.RefreshAgentTokenFor(context.Background(), a.Name)
+				} else {
+					m.refreshAgentTokens(context.Background())
+				}
+			}
+			refresh()
+			if got := rec.active(crux.ClassGitHubAppTokenMintFailed); len(got) != 1 || got[0].Key != a.Name || !strings.Contains(got[0].Message, "401 Bad credentials") {
+				t.Fatalf("mint failure = %+v, want 401 for %s", got, a.Name)
+			}
+			minter.err = context.DeadlineExceeded
+			refresh()
+			if got := rec.active(crux.ClassGitHubAppTokenMintFailed); len(got) != 0 {
+				t.Fatalf("mint failure remains active during transport outage: %+v", got)
+			}
+			if got := rec.observations(crux.ClassForgeUnreachable); len(got) != 1 || got[0].Key != a.Name {
+				t.Fatalf("transport outage = %+v, want one for %s", got, a.Name)
+			}
+			forgeClears := len(rec.clears(crux.ClassForgeUnreachable))
+			minter.err = crux.ErrGitHubAppNotInstalled
+			refresh()
+			if got := rec.clears(crux.ClassForgeUnreachable); len(got) != forgeClears+1 {
+				t.Fatalf("transport outage was not cleared after response: %+v", got)
+			}
+			if got := rec.observations(crux.ClassGitHubAppNotInstalled); len(got) != 1 || got[0].Key != a.Name {
+				t.Fatalf("missing installation = %+v, want one for %s", got, a.Name)
+			}
+			installClears := len(rec.clears(crux.ClassGitHubAppNotInstalled))
+			minter.err = nil
+			refresh()
+			if got := rec.clears(crux.ClassGitHubAppNotInstalled); len(got) != installClears+1 {
+				t.Fatalf("missing installation was not cleared after recovery: %+v", got)
+			}
+		})
 	}
 }

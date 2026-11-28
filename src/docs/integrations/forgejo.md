@@ -6,7 +6,7 @@ This page is for teams whose repositories live on [Forgejo](https://forgejo.org/
 
 ## Status: partial, in progress
 
-**A Forgejo-only hive finds work, clones, pushes and merges, with gaps.** Hive has a first-class `forgejo` forge kind, and a hive with every repository on Forgejo boots without GitHub credentials. The governor discovers issues and pull requests through the forge adapter ([#19673](https://github.com/hivecommons/hive/pull/19673)), sandbox Job kicks and dashboard Sessions clone from and push to the Forgejo host ([#19678](https://github.com/hivecommons/hive/pull/19678)), though a pod-run agent (`sandbox.runtime` off) gets no credential for the Forgejo host and can clone only public repositories ([#19997](https://github.com/hivecommons/hive/issues/19997)), agent issue and pull request requests go through the forge ([#19681](https://github.com/hivecommons/hive/pull/19681)), and the automerge and close-on-merge sweeps run on Forgejo repositories ([#19676](https://github.com/hivecommons/hive/pull/19676)). The gaps a live run against Forgejo 17 found are tracked in [#19909](https://github.com/hivecommons/hive/issues/19909). This page is updated as each piece merges.
+**A Forgejo-only hive finds work, clones, pushes and merges, with gaps.** Hive has a first-class `forgejo` forge kind, and a hive with every repository on Forgejo boots without GitHub credentials. The governor discovers issues and pull requests through the forge adapter ([#19673](https://github.com/hivecommons/hive/pull/19673)), sandbox Job kicks and dashboard Sessions clone from and push to the Forgejo host ([#19678](https://github.com/hivecommons/hive/pull/19678)), a pod-run agent (`sandbox.runtime` off) gets no credential for the Forgejo host and clones a private repository through the hive's clone relay, `hive-clone`, which needs `forgejo.integration` ([#19997](https://github.com/hivecommons/hive/issues/19997)), agent issue and pull request requests go through the forge ([#19681](https://github.com/hivecommons/hive/pull/19681)), and the automerge and close-on-merge sweeps run on Forgejo repositories ([#19676](https://github.com/hivecommons/hive/pull/19676)). The gaps a live run against Forgejo 17 found are tracked in [#19909](https://github.com/hivecommons/hive/issues/19909). This page is updated as each piece merges.
 
 ## What Forgejo is
 
@@ -49,7 +49,21 @@ forgejo:
   forgejo_url: https://codeberg.org   # bare instance root; no default
   token_env: FORGEJO_TOKEN            # env var NAME, never the token
   # login: hive-bot                   # optional: hive's own username; lets the close-on-merge sweep skip GET /user when the token is repo-limited
+
+agents:                       # required: the loader refuses a config with no agents
+  guide:
+    enabled: true
+    backend: claude           # claude | copilot | gemini | ...
+    model: claude-sonnet-4-6
+    paused: true              # starts paused; resume it from the dashboard
+  scanner:
+    enabled: true
+    backend: claude
+    model: claude-sonnet-4-6
+    paused: true
 ```
+
+**The `agents` block is required.** A config with no agent fails to load with `at least one agent must be configured` (`src/pkg/config/validate.go`), and the pod crash-loops. The hub's provisioning template seeds `guide` and `scanner` for a hosted spoke, but a hand-written seed has no default roster. The two agents above start paused, so the hive boots without kicking work until you resume them. See [Agent configuration](../agent-configuration.md) for the other agent keys.
 
 Put the Forgejo access token in the environment variable that `token_env` names. The token never goes in `hive.yaml`.
 
@@ -67,6 +81,7 @@ project:
 | --- | --- | --- |
 | `project.forge` | `github` | `forgejo` selects the Forgejo adapter for every repository in `project.repos`. |
 | `forgejo.forgejo_url` | none | Instance root, for example `https://codeberg.org` or `https://forgejo.example.com`. The adapter appends `/api/v1` itself, so do not add it. |
+| `agents` | none | Required. At least one agent must be configured, or config load fails. |
 | `forgejo.token_env` | `FORGEJO_TOKEN` | Name of the environment variable that holds the token. Sent as `Authorization: token <TOKEN>`. |
 | `forgejo.login` | none | The hive's own Forgejo username. Optional: set it when the token is limited to specific repositories, because such a token cannot read the token's own user through `GET /user`; the close-on-merge sweep uses this login instead ([#19994](https://github.com/hivecommons/hive/issues/19994)). It must be the token's own user: the sweep uses it only when `GET /user` answers 403 and the login holds write on the repository, and a token that can read its user refuses a different login. For a token whose user is not a repository or site admin, the write check fails for any other user; for an admin token it only proves the login is a writer, and the sweep treats that writer's issues as the hive's own. |
 | `project.repo_policies[].forge` | `project.forge` | Moves one repository to `forgejo`. |

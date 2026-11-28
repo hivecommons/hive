@@ -174,6 +174,11 @@
     const SANDBOX_K8S_NAME_MAX = 63;
     const SANDBOX_K8S_PREFIX_MAX = 253;
     const SANDBOX_MAP_MAX_ENTRIES = 64;
+    /* Pod metadata keys the Job launcher sets itself. Mirrors the
+       SandboxPod* constants in crux/config/sandbox_job_metadata.go; a Go
+       test keeps the two in step. */
+    const SANDBOX_RESERVED_POD_LABELS = ['job-name', 'app.kubernetes.io/managed-by'];
+    const SANDBOX_RESERVED_POD_LABEL_PREFIX = 'hive.kubestellar.io/';
     const SANDBOX_TOLERATIONS_MAX = 32;
     const SANDBOX_PULL_SECRETS_MAX = 32;
     const SANDBOX_PREFLIGHT_COMMANDS_MAX = 32;
@@ -190,6 +195,8 @@
     const SANDBOX_SCHED_YAML = {
       hive: {
         nodeSelector: 'agent_sandbox.job.node_selector.<key>',
+        podLabels: 'agent_sandbox.job.pod_labels.<key>',
+        podAnnotations: 'agent_sandbox.job.pod_annotations.<key>',
         limits: 'agent_sandbox.job.resources.limits.<key>',
         requests: 'agent_sandbox.job.resources.requests.<key>',
         tolerations: 'agent_sandbox.job.tolerations[].key',
@@ -207,6 +214,8 @@
       },
       agent: {
         nodeSelector: 'agents.<key>.sandbox.job.node_selector.<key>',
+        podLabels: 'agents.<key>.sandbox.job.pod_labels.<key>',
+        podAnnotations: 'agents.<key>.sandbox.job.pod_annotations.<key>',
         limits: 'agents.<key>.sandbox.job.resources.limits.<key>',
         requests: 'agents.<key>.sandbox.job.resources.requests.<key>',
         tolerations: 'agents.<key>.sandbox.job.tolerations[].key',
@@ -235,8 +244,14 @@
       return '';
     }
 
+    function sandboxReservedPodKey(k) {
+      const lower = k.toLowerCase();
+      return SANDBOX_RESERVED_POD_LABELS.includes(lower) || lower.startsWith(SANDBOX_RESERVED_POD_LABEL_PREFIX);
+    }
+
     /* key=value lines into a map. kind 'label' takes label values (may be
-       empty), kind 'quantity' takes resource quantities like 2, 500m, 16Gi. */
+       empty), 'podLabel' is a label that must not use a reserved key, and
+       kind 'quantity' takes resource quantities like 2, 500m, 16Gi. */
     function sandboxParseMapLines(text, kind) {
       const value = {};
       const errors = [];
@@ -250,11 +265,24 @@
         const keyErr = sandboxQualifiedNameError(k);
         if (keyErr) { errors.push(`line ${i + 1}: ${keyErr}`); return; }
         if (kind === 'quantity' && !SANDBOX_QUANTITY_RE.test(v)) { errors.push(`line ${i + 1}: "${v}" is not a quantity (for example 2, 500m, 16Gi)`); return; }
-        if (kind !== 'quantity' && v && (v.length > SANDBOX_K8S_NAME_MAX || !SANDBOX_K8S_NAME_RE.test(v))) { errors.push(`line ${i + 1}: "${v}" is not a valid label value`); return; }
+        if (kind === 'podLabel' && sandboxReservedPodKey(k)) { errors.push(`line ${i + 1}: "${k}" is reserved`); return; }
+        if ((kind === 'label' || kind === 'podLabel') && v && (v.length > SANDBOX_K8S_NAME_MAX || !SANDBOX_K8S_NAME_RE.test(v))) { errors.push(`line ${i + 1}: "${v}" is not a valid label value`); return; }
         value[k] = v;
       });
       if (Object.keys(value).length > SANDBOX_MAP_MAX_ENTRIES) errors.push(`at most ${SANDBOX_MAP_MAX_ENTRIES} entries`);
       return { value, errors };
+    }
+
+    function sandboxParseAnnotations(text) {
+      try {
+        const value = JSON.parse(String(text || '').trim() || '{}');
+        if (!value || Array.isArray(value) || typeof value !== 'object' || Object.values(value).some(v => typeof v !== 'string')) {
+          return { value: {}, errors: ['write a JSON object with string values'] };
+        }
+        return { value, errors: [] };
+      } catch (_) {
+        return { value: {}, errors: ['write a valid JSON object'] };
+      }
     }
 
     function sandboxMapText(map) {
@@ -382,7 +410,7 @@
     }
 
     function sandboxEffectiveText(field, v) {
-      if (field === 'nodeSelector') return sandboxMapText(v).split('\n').filter(Boolean).join(', ');
+      if (field === 'nodeSelector' || field === 'podLabels' || field === 'podAnnotations') return sandboxMapText(v).split('\n').filter(Boolean).join(', ');
       if (field === 'resources') {
         const parts = [];
         const lim = sandboxMapText((v || {}).limits).split('\n').filter(Boolean).join(', ');
@@ -406,6 +434,7 @@
       const src = eff.sources || {};
       const rows = [
         ['Node selector', 'nodeSelector'], ['Resources', 'resources'], ['Tolerations', 'tolerations'],
+        ['Pod labels', 'podLabels'], ['Pod annotations', 'podAnnotations'],
         ['Service account', 'serviceAccount'], ['Scheduler name', 'schedulerName'], ['Image pull secrets', 'imagePullSecrets'],
         ['Job TTL', 'ttlSeconds'], ['Schedule timeout', 'scheduleTimeoutS'],
       ].map(([label, key]) => {
@@ -440,6 +469,7 @@
       const y = SANDBOX_SCHED_YAML[agent ? 'agent' : 'hive'];
       const own = agent ? (d.sandboxJob || {}) : {
         nodeSelector: d.agentSandboxJobNodeSelector, resources: d.agentSandboxJobResources, tolerations: d.agentSandboxJobTolerations,
+        podLabels: d.agentSandboxJobPodLabels, podAnnotations: d.agentSandboxJobPodAnnotations,
         imagePullSecrets: d.agentSandboxJobImagePullSecrets, scheduleTimeoutS: d.agentSandboxJobScheduleTimeoutS,
       };
       const defaults = (agent ? d.sandboxPreflightDefaults : d.agentSandboxPreflightDefaults) || {};
@@ -464,6 +494,8 @@
           <p class="config-help">Where the sandbox Job may run and what it asks the cluster for (runtime <code>job</code> only). ${wholesaleNote}</p>
           ${agent ? sandboxEffectiveHtml(d) : ''}
           ${sandboxSchedTextarea(scope, 'nodeSelector', 'Node selector', y.nodeSelector, sandboxMapText(own.nodeSelector), inherited('nodeSelector', sandboxMapText(eff.nodeSelector)) || 'accelerator=spyre', 'One Kubernetes node label per line, <code>key=value</code>. The Job only runs on nodes carrying every label. Avoid <code>kubernetes.io/hostname</code>: it pins one node and defeats the preflight retry.', 3)}
+          ${sandboxSchedTextarea(scope, 'podLabels', 'Pod labels', y.podLabels, sandboxMapText(own.podLabels), 'example.com/team=platform', 'One <code>key=value</code> per line. Agent entries override matching hive-wide entries; reserved Hive and Kubernetes keys cannot be set.', 2)}
+          ${sandboxSchedTextarea(scope, 'podAnnotations', 'Pod annotations', y.podAnnotations, JSON.stringify(own.podAnnotations || {}, null, 2), '{"example.com/note":"value"}', 'A JSON object of string values. Agent entries override matching hive-wide entries; reserved Hive and Kubernetes keys cannot be set.', 3)}
           ${sandboxSchedTextarea(scope, 'limits', 'Resource limits', y.limits, sandboxMapText(res.limits), inherited('resources', sandboxMapText(effRes.limits)) || 'ibm.com/spyre_pf=1\nmemory=32Gi', 'One <code>resource=quantity</code> per line, for example <code>cpu=4</code>, <code>memory=32Gi</code>, or a device such as <code>ibm.com/spyre_pf=1</code>. Device (extended) resources are requested through limits.', 3)}
           ${sandboxSchedTextarea(scope, 'requests', 'Resource requests', y.requests, sandboxMapText(res.requests), inherited('resources', sandboxMapText(effRes.requests)) || 'cpu=500m', 'One <code>resource=quantity</code> per line. Leave empty to request what the limits say.', 2)}
           ${sandboxSchedTextarea(scope, 'tolerations', 'Tolerations', y.tolerations, sandboxTolerationText(own.tolerations), inherited('tolerations', sandboxTolerationText(eff.tolerations)) || 'accelerator:NoSchedule', 'One per line in taint syntax: <code>key=value:Effect</code> (operator Equal), <code>key:Effect</code> or <code>key</code> (operator Exists), <code>*</code> for every taint. Effect is NoSchedule, PreferNoSchedule or NoExecute; leave it out to match all. Also sets ' + y.tolerationParts.map(k => '<code>' + esc(k) + '</code>').join(', ') + '.', 2)}
@@ -515,6 +547,8 @@
       };
       const read = field => sandboxSchedInputValue(scope, field);
       if (read('nodeSelector') != null) take('nodeSelector', sandboxParseMapLines(read('nodeSelector'), 'label'), v => { staged.nodeSelector = v; });
+      if (read('podLabels') != null) take('podLabels', sandboxParseMapLines(read('podLabels'), 'podLabel'), v => { staged.podLabels = v; });
+      if (read('podAnnotations') != null) take('podAnnotations', sandboxParseAnnotations(read('podAnnotations')), v => { staged.podAnnotations = v; });
       const resources = {};
       if (read('limits') != null) take('limits', sandboxParseMapLines(read('limits'), 'quantity'), v => { resources.limits = v; });
       if (read('requests') != null) take('requests', sandboxParseMapLines(read('requests'), 'quantity'), v => { resources.requests = v; });
@@ -569,7 +603,7 @@
         if (setup !== undefined && setupOk) markDirty('general', 'sandboxSetup', setup);
         return;
       }
-      const keys = { nodeSelector: 'agentSandboxJobNodeSelector', resources: 'agentSandboxJobResources', tolerations: 'agentSandboxJobTolerations', imagePullSecrets: 'agentSandboxJobImagePullSecrets', scheduleTimeoutS: 'agentSandboxJobScheduleTimeoutS' };
+      const keys = { nodeSelector: 'agentSandboxJobNodeSelector', podLabels: 'agentSandboxJobPodLabels', podAnnotations: 'agentSandboxJobPodAnnotations', resources: 'agentSandboxJobResources', tolerations: 'agentSandboxJobTolerations', imagePullSecrets: 'agentSandboxJobImagePullSecrets', scheduleTimeoutS: 'agentSandboxJobScheduleTimeoutS' };
       Object.keys(staged).forEach(k => markDirty('security', keys[k], staged[k]));
       if (preflight !== undefined && preflightOk) markDirty('security', 'agentSandboxPreflight', preflight);
       if (setup !== undefined && setupOk) markDirty('security', 'agentSandboxSetup', setup);

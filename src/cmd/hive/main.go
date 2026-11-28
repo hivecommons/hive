@@ -606,7 +606,7 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 				"current", gitShort,
 				"target", m.TargetSHA,
 				"attempts", m.Attempts,
-				"last_error", m.LastError,
+				"last_error", upgradeLastErrorForLog(m.LastError),
 			)
 		}
 	}
@@ -2460,10 +2460,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// way hands the queues to the right relays. It stops with b.ctx, which
 	// is all shutdown needs, so its done channel is not joined. It also
 	// serves push-branch requests with the manager's push authorizer, and
-	// answers review and merge requests with a reason (#19916).
+	// answers review and merge requests with a reason (#19916). Clone
+	// requests are served with the manager's clone authorizer when the
+	// runtime has one, and denied otherwise (#19997).
 	if deps.startForgeRequestRelay != nil {
-		_ = deps.startForgeRequestRelay(b.ctx, newForgeRequestRelay(func() *config.Config { return b.cfg },
-			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger).withPushRelay(b.agentMgr.AuthorizePushBranch).withPushAudit(b.recordWriteAudit))
+		relay := newForgeRequestRelay(func() *config.Config { return b.cfg },
+			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger).withPushRelay(b.agentMgr.AuthorizePushBranch).withPushAudit(b.recordWriteAudit)
+		if a, ok := b.agentMgr.(forgeCloneAuthorizerSource); ok {
+			relay.withCloneRelay(a.AuthorizeForgeClone)
+		}
+		_ = deps.startForgeRequestRelay(b.ctx, relay)
 	}
 	// Forgejo repos (#19671): the GitHub sweeps above skip them (RepoOnGitHub),
 	// so they get their own sweeps, which need no GitHub client. A gitea config
@@ -2983,6 +2989,10 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 		return github.NewReviewEvidenceVerifier(b.cfg.Evidence.SigningKeyPath())
 	})
 	b.metricsCollector.SetPRIssueWindowStartProvider(b.dashSrv.CostWindowStart)
+	// Merged / closed counts come from the GitHub Search API; repos on
+	// another forge are left out of them instead of failing every reconcile
+	// (#20179). Before wireForgeStateCounts, which builds the counters.
+	b.metricsCollector.SetRepoOnGitHubProvider(func(repo string) bool { return b.cfg.RepoOnGitHub(repo) })
 	// Merged / closed counts move on webhook events and the Search API is
 	// asked only hourly; with forgestate.enabled the Overview's open totals
 	// come from the cache the governor already reads (#13376).
@@ -4976,6 +4986,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}(),
 				HiveID:            b.cfg.HiveID,
 				Org:               b.cfg.Project.Org,
+				ProjectName:       b.cfg.Project.Name,
 				AIAuthor:          b.cfg.Project.AIAuthor,
 				AIAuthorEffective: b.cfg.EffectiveAIAuthor(),
 				StartedAt:         b.processStartedAt.UTC().Format(time.RFC3339),
@@ -5245,7 +5256,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 								"current", gitShort,
 								"attempts", m.Attempts,
 								"max_attempts", selfUpgradeMaxAttempts,
-								"last_error", m.LastError,
+								"last_error", upgradeLastErrorForLog(m.LastError),
 								"hint", "the spoke must be able to get/patch its own Deployment; check the hive-self-upgrade Role/RoleBinding in this namespace",
 							)
 							spoke.ReportUpgradeFailure(b.hubURL, b.cfg.HiveID, targetSHA, gitShort,
@@ -5264,7 +5275,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 								"current", gitShort,
 								"attempts", m.Attempts,
 								"retry_in", (backoff - since).Round(time.Second),
-								"last_error", m.LastError,
+								"last_error", upgradeLastErrorForLog(m.LastError),
 							)
 							return
 						}
@@ -5273,7 +5284,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 							"current", gitShort,
 							"attempt", m.Attempts+1,
 							"max_attempts", selfUpgradeMaxAttempts,
-							"last_error", m.LastError,
+							"last_error", upgradeLastErrorForLog(m.LastError),
 						)
 						attemptCount = m.Attempts
 					} else {
@@ -5427,6 +5438,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						// exactly as cheap as Org above.
 						Repos:                   b.cfg.Project.Repos,
 						PrimaryRepo:             b.cfg.Project.PrimaryRepo,
+						ProjectName:             b.cfg.Project.Name,
 						ACMMLevel:               acmmLvl,
 						Agents:                  agents,
 						GitHash:                 gitShort,
@@ -6096,6 +6108,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					Org:                     b.cfg.Project.Org,
 					Repos:                   b.cfg.Project.Repos,
 					PrimaryRepo:             b.cfg.Project.PrimaryRepo,
+					ProjectName:             b.cfg.Project.Name,
 					ACMMLevel:               acmmLvl,
 					Agents:                  agents,
 					Governor:                spoke.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs, OpenIssues: openIssues, OpenPRs: openPRs},

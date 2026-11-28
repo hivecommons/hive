@@ -370,6 +370,9 @@ func TestGitSourcesDisconnectSuccessFiltersAndPersists(t *testing.T) {
 	if text := string(persisted); strings.Contains(text, "nested-docs") || !strings.Contains(text, "root-docs") || !strings.Contains(text, "other-docs") {
 		t.Fatalf("persisted config did not filter only the requested git source:\n%s", text)
 	}
+	if !deps.Config.Knowledge.GitSourcesDisconnected || !strings.Contains(string(persisted), "git_sources_disconnected: true") {
+		t.Fatalf("disconnect did not record git_sources_disconnected so the boot seed stays off:\n%s", persisted)
+	}
 }
 
 func TestGitSourcesDisconnectNotFoundDoesNotPersistSuccess(t *testing.T) {

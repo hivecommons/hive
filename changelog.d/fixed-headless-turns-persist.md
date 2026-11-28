@@ -1,1 +1,0 @@
-- `headless_turns: true` set in `/data/agent-configs/<agent>.yaml` or in the agent's block of the runtime config is no longer dropped on a Kubernetes spoke when the dashboard overlay's older copy of the agent replaces it at boot, and the agent's Settings dialog now has a Headless turns toggle that saves the key to every layer and restarts the agent (#19902).

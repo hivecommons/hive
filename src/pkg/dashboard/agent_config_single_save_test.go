@@ -41,7 +41,8 @@ func TestFooterSavePersistsPromptTemplate(t *testing.T) {
 		// ...and awaits the template persistence, failing the save if it fails.
 		"if (templateDirty && !(await savePromptTemplate())) success = false;",
 		// Create mode has no agent to PUT to; the template rides the payload.
-		"agent.kick_template = _configState.promptTemplateValue;",
+		// It goes in prompt_template, never kick_template (a file name, #20205).
+		"agent.prompt_template = _configState.promptTemplateValue;",
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing %q — the footer Save no longer persists the prompt template (#2766)", snippet)

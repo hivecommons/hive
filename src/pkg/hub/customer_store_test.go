@@ -424,13 +424,13 @@ func TestHubCustomerStoreShadowDualWrite(t *testing.T) {
 	if c, ok := colonyPerson(t, st, users[1]).Consent("own"); !ok || !c.Covers(store.FieldCountry) {
 		t.Fatalf("consent not mirrored: %+v", c)
 	}
-	// Removing every consent withdraws it in colony.
+	// Removing every consent deletes it from colony too (colony v0.4.0).
 	path, _ := customerConsentPath(users[1])
 	if err := saveCustomerConsents(path, map[string]customerConsent{}); err != nil {
 		t.Fatal(err)
 	}
-	if c, ok := colonyPerson(t, st, users[1]).Consent("own"); !ok || c.Active() {
-		t.Fatalf("removed consent still active in colony: %+v", c)
+	if c, ok := colonyPerson(t, st, users[1]).Consent("own"); ok {
+		t.Fatalf("removed consent still in colony: %+v", c)
 	}
 }
 
@@ -614,12 +614,12 @@ func TestParseHubCustomerStoreMode(t *testing.T) {
 	// Unset is the colony default (#19972); an explicit json still works; an
 	// unknown value fails closed to json and reports it.
 	for raw, want := range map[string]string{"": "colony", "  ": "colony", "JSON": "json", "json": "json", " shadow ": "shadow",
-		"colony": "colony", "colony-only": "json", "bogus": "json"} {
+		"colony": "colony", "colony-only": "colony-only", " Colony-Only ": "colony-only", "colony_only": "json", "bogus": "json"} {
 		got, ok := parseHubCustomerStoreMode(raw)
 		if got != want {
 			t.Errorf("%q -> %q, want %q", raw, got, want)
 		}
-		known := raw != "colony-only" && raw != "bogus"
+		known := raw != "colony_only" && raw != "bogus"
 		if ok != known {
 			t.Errorf("%q ok = %v, want %v", raw, ok, known)
 		}

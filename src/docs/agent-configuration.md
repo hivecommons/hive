@@ -665,7 +665,7 @@ Hive tells the CLI the real window with `CLAUDE_CODE_MAX_CONTEXT_TOKENS` when it
        max_context_tokens: 262144
    ```
 
-2. The window the inference translator discovered from the endpoint's `/v1/models`: `max_model_len` (vLLM), then `context_length` (gufo, OpenRouter), then `max_input_tokens` (used by some gateways; LiteLLM's own `/v1/models` does not report a window, so set `max_context_tokens` there). A listing entry is used only when its `id` matches the model, or when the listing has a single model. The discovery runs in the background when the route is set, so a window learned for a model applies from the next launch of an agent on that model. Learned windows are kept in memory only, so after a hive restart the first launch on each model gets no discovered window. Set `max_context_tokens` when the window must apply from the first launch. The `inference route max context length resolved` log line records a learned window.
+2. The window the inference translator discovered from the endpoint's `/v1/models`: `max_model_len` (vLLM), then `context_length` (gufo, OpenRouter), then `max_input_tokens` (used by some gateways). A listing entry is used only when its `id` matches the model, or when the listing has a single model. When the listing names no window, as LiteLLM's own `/v1/models` does not, Hive asks the gateway's `/model/info` next and uses `model_info.max_input_tokens` of the entry whose `model_name` is the model. LiteLLM reports that value for models it knows, and for others when the LiteLLM config sets `model_info.max_input_tokens` on the deployment; otherwise set `max_context_tokens`. The discovery runs in the background when the route is set, so a window learned for a model applies from the next launch of an agent on that model. Learned windows are kept in memory only, so after a hive restart the first launch on each model gets no discovered window. Set `max_context_tokens` when the window must apply from the first launch. The `inference route max context length resolved` log line records a learned window.
 
 `max_context_tokens` describes the agent's configured `model`. It is not applied while a model override (a dashboard switch or pin) runs another model, and a review head on a different model does not inherit it; those fall back to discovery.
 
@@ -696,6 +696,10 @@ per-agent setting does not depend on the context-window export and also works
 for Claude model IDs. It describes the configured model and is dropped for a
 review head using a different model. Sandbox Job kicks receive the same context
 and compaction settings as pane launches.
+
+#### Setting the windows
+
+Use the **Context window (tokens)** and **Auto-compact window (tokens)** fields in the agent's Settings dialog (General section) for `max_context_tokens` and `auto_compact_window_tokens`. Saving writes the config file, the dashboard overlay and `/data/agent-configs/<agent>.yaml` together and restarts the agent, because the CLI reads both values at launch. An empty field or `0` clears the key. A hand edit to the agent file or to the agent's block in the config file also takes effect at the next boot or reload: on a Kubernetes spoke a non-zero value in either layer is no longer replaced by an older dashboard overlay entry for the agent that does not set the key, and a non-zero value in the agent file wins over the overlay. Because `0` means unset, clearing a value in the dashboard does not override a non-zero value in a read-only ConfigMap seed; remove it there.
 
 Hive does not export the variable for model IDs that contain `claude` (for example `anthropic/claude-sonnet-5-5`), because the CLI already knows those windows. Set `HIVE_INFERENCE_PASS_CONTEXT_WINDOW=0` to turn the export off for the whole hive.
 

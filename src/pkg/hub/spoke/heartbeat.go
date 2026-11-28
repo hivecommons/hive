@@ -661,6 +661,7 @@ type HeartbeatPayload struct {
 	Org         string   `json:"org"`
 	Repos       []string `json:"repos"`
 	PrimaryRepo string   `json:"primary_repo"`
+	ProjectName string   `json:"project_name"`
 	// AIAuthor is the GitHub account this hive's agents open PRs as. Reported
 	// so the hub can echo it back in HeartbeatProjectConfig rather than
 	// blanking it, and so the registry knows each hive's author without any

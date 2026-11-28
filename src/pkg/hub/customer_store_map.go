@@ -58,12 +58,6 @@ const (
 	crmIdentitySourceEmail  = store.HubSourcePrefix + "provider_email"
 )
 
-// crmMaxFactValueBytes is the colony store's per-value cap. A longer value
-// (only admin notes can be, at maxContactNotesLen runes) stays JSON-only:
-// it is never truncated into colony, because a colony read would then put
-// the truncated text back on the record.
-const crmMaxFactValueBytes = 4096
-
 // crmMaxIdentityBytes and crmMaxPersonIDBytes are the colony store's caps
 // on an identity value and a person id.
 const (
@@ -178,7 +172,9 @@ func crmFactsFromUser(u *SaaSUser) []store.Fact {
 	}
 	var out []store.Fact
 	add := func(f store.Fact) {
-		if crmStorableText(f.Value, crmMaxFactValueBytes) {
+		// colony's own limits (v0.4.0: 64 KiB for notes, carriage returns
+		// in notes), so a long note is stored rather than left JSON-only.
+		if store.CheckFactValue(f.Field, f.Value) == nil {
 			out = append(out, f)
 		}
 	}
@@ -300,6 +296,18 @@ func crmConsentsFromRecords(records map[string]customerConsent) []store.Consent 
 		if c.LastDeliveredAt != nil {
 			sc.DeliveredAt = c.LastDeliveredAt.UTC()
 		}
+		// The delivery bookkeeping has colony slots since v0.4.0.
+		sc.UpdatedAt = c.UpdatedAt.UTC()
+		if c.FirstDeliveredAt != nil {
+			sc.FirstDeliveredAt = c.FirstDeliveredAt.UTC()
+		}
+		if c.DeliveredFields != nil {
+			sc.DeliveredFields = c.DeliveredFields.names()
+		}
+		if c.LastDeliveredFields != nil {
+			sc.LastDeliveredFields = c.LastDeliveredFields.names()
+		}
+		sc.DeliveredRev = c.DeliveredRev
 		if sc.Fields == nil {
 			sc.Fields = []string{}
 		}

@@ -61,14 +61,16 @@ func (s *Store) writerLock() (func(), error) {
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 4096), maxJournalRecordBytes)
 	for scanner.Scan() {
-		if len(s.seen) > maxJournalRecords {
-			unlock()
-			return nil, fmt.Errorf("integration journal exceeds bounded replay index")
-		}
 		var event Event
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			unlock()
 			return nil, err
+		}
+		// Releases are admitted past the index bound by appendLocked, so replay
+		// must accept them too; the byte bound above still caps the journal.
+		if len(s.seen) > maxJournalRecords && event.Release == "" {
+			unlock()
+			return nil, fmt.Errorf("integration journal exceeds bounded replay index")
 		}
 		if err := s.validate(event); err != nil {
 			unlock()

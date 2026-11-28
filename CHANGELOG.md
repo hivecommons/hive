@@ -11,6 +11,137 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.0)
+
+### Added
+
+- Hubs that provision no hives can set `HIVE_HUB_MODE=self-hosted`. With no cluster registry file, such a hub now uses an empty cluster registry instead of synthesizing an `OKE (default)` cluster, so Usage, Cluster Health and Scale Controls no longer show a phantom `hive-oke` cluster. The mode is reported to the dashboard as `hub_mode` in `/api/auth/user` ([#20196](https://github.com/hivecommons/hive/issues/20196)).
+
+## 2026-11-27 (v5.383.7)
+
+### Fixed
+
+- A hive whose repositories are all on another forge (Forgejo, Gitea, GitLab) no longer asks the GitHub Search API for its merged-PR and closed-issue counts or warns `github client not configured` every hour; the counts show as unsupported, and a mixed hive counts only its GitHub repositories (#20179).
+- `hive-clone` works in the stock Kubernetes pod again: when the hive cannot `chown` the clone bundle to the agent (no effective `CAP_CHOWN`), it writes the bundle as the agent's UID through `su-exec` instead of failing and quarantining the request (#20195).
+- Hub dashboard: the NPS card, Customers profile sharing and Ask AI help panels no longer take space when their feature is off (one "Optional features off" line names what is off), and the Hub admins field asks for the identity form of the hub's sign-in provider, such as `custom:<subject>` on a custom-OIDC hub, instead of always saying GitHub login.
+
+## 2026-11-27 (v5.383.6)
+
+### Fixed
+
+- **Hub dashboard times now show in the viewer's own time zone.** Timestamps on the hub dashboard (user logins, last action, hive last-seen and offline-since, access grants) were always formatted in `America/New_York` with a hardcoded `EDT` suffix, which was wrong for anyone outside New York and wrong for New York itself during standard time. They now use the browser's local zone and print the zone name the browser reports, for example `11/27/2026 4:26p PST` ([#20190](https://github.com/hivecommons/hive/issues/20190)).
+
+## 2026-11-27 (v5.383.5)
+
+### Fixed
+
+- A hive whose every repository is on another forge (such as Forgejo) no longer fails the `github_auth` health check for having no GitHub credentials; the check now passes as not applicable, so the hub row is not red.
+
+## 2026-11-27 (v5.383.4)
+
+### Fixed
+
+- The boot-time seed of the primary repo's `docs/knowledge/` git source now runs on spokes whose dashboard config was saved: `knowledge.git_sources` is omitted when unset, and a dashboard disconnect is recorded as `knowledge.git_sources_disconnected: true` instead of an empty list (#20173).
+
+## 2026-11-27 (v5.383.3)
+
+### Fixed
+
+- Self-upgrade retry, backoff, give-up and boot logs no longer carry an empty `last_error=` when the failed attempt recorded no error (the patch or restart succeeded but the image never changed); they now name that cause. The bounded retry and backoff WARNs no longer file fleet self-reports as `unclassified_error_repeated`; giving up after the last attempt still logs an ERROR that is reported.
+
+## 2026-11-27 (v5.383.2)
+
+### Fixed
+
+- A merge request refused because its workflow change does not qualify for the pin-only exception no longer files an `unclassified_error_repeated` selfreport when agents re-request the same PR; the refusal is expected policy enforcement and the WARN stays in local logs (#20169).
+
+## 2026-11-27 (v5.383.1)
+
+### Fixed
+
+- Scanner CI-triage notes that carry a copied `<!-- hive:scanner-note -->` marker are now folded into the one scanner note per PR and dropped when the head and failing checks are unchanged, instead of each posting a new comment.
+
+## 2026-11-27 (v5.383.0)
+
+### Added
+
+- Sandbox Jobs accept operator-configured pod labels and annotations for network policy and admission controls ([#20155](https://github.com/hivecommons/hive/issues/20155)).
+
+## 2026-11-27 (v5.382.2)
+
+### Fixed
+
+- Report agent GitHub token refresh failures under the appropriate authentication or connectivity condition and clear it when refresh recovers.
+
+## 2026-11-27 (v5.382.1)
+
+### Fixed
+
+- An inference-routed agent behind a LiteLLM gateway now learns its model's context window from the gateway's `/model/info` (`model_info.max_input_tokens`) when `/v1/models` reports none, so the Claude CLI gets `CLAUDE_CODE_MAX_CONTEXT_TOKENS` without a hand-set `max_context_tokens` (#19913).
+
+## 2026-11-27 (v5.382.0)
+
+### Added
+
+- Forgejo: a pod-run agent can clone a private Forgejo repo. The new `hive-clone` asks the hive's clone relay, which fetches the repo with a one-hour `forgejo.integration` JWT for the agent's own tier in a hive-owned git directory and hands the agent a git bundle that only its UID can read, so the token never enters the agent's environment, arguments, files or logs. The relay needs per-agent UIDs and `forgejo.integration`, clones only managed repos in the agent's scope, and fetches nothing when a mint fails; proxy credential injection is unchanged ([#19997](https://github.com/hivecommons/hive/issues/19997)).
+
+## 2026-11-27 (v5.381.5)
+
+### Fixed
+
+- ACMM `acmm:cross-session-knowledge` now credits `docs/knowledge/` and `src/docs/knowledge/`, the paths Hive indexes at boot, and its gap issue names that path; a knowledge store or git source rooted at a dot-named folder such as `.knowledge/` is now indexed instead of skipped (#20128).
+
+## 2026-11-27 (v5.381.4)
+
+### Fixed
+
+- The agent Settings dialog now has Context window and Auto-compact window fields for `max_context_tokens` and `auto_compact_window_tokens`, which save to every config layer and restart the agent, and both keys set in `/data/agent-configs/<agent>.yaml` or the agent's block of the runtime config are no longer dropped on a Kubernetes spoke when the dashboard overlay's older copy of the agent replaces it at boot (#19913).
+- **`hive-open-pr` title-claim gate now recognises inline Rust test modules.** A title that claims "test" used to be refused unless a changed path looked like a test file, so test-only Rust PRs (whose unit tests live in an inline `#[cfg(test)] mod tests` block in the source file) were rejected with `title claims test but diff contains no test file` and had to be retitled. A changed `*.rs` file now also counts as a test file when its added lines contain `#[test]`, `#[cfg(test)]` or `#[tokio::test]`. The path rules are unchanged, so no PR accepted before is refused now. ([#20138](https://github.com/hivecommons/hive/issues/20138))
+
+## 2026-11-27 (v5.381.3)
+
+### Fixed
+
+- State files that went through a fixed `.tmp` name or skipped `fsync` (dashboard history and merge-eligibility files, hive state buckets, CLI-memory and connector facts, inbox facts and transcripts, marketplace bundles, contributor readings, remote AGENTS.md copies, merged ledger) now share one atomic write: a unique temp file, fsync, rename and directory fsync, so concurrent writers and crashes can no longer leave a partial or missing file.
+
+## 2026-11-27 (v5.381.2)
+
+### Fixed
+
+- **Integration reservation releases no longer fail repeatedly once the integration journal reaches its record bound.** Every per-key release was refused with "integration journal index bound reached", so held reservations were never released and the error repeated on each claim release. A release that frees a held reservation is now recorded past the bound, a release with nothing to free is skipped, and journal replay accepts those release records (#20123).
+
+## 2026-11-27 (v5.381.1)
+
+### Fixed
+
+- **Colony-only hub boots now forget users deleted from `/data/saas/users`, and a changed consent is replaced in one colony transaction.** A colony-only boot skips the boot sync, so a user removed while the hub was down stayed in `colony.db`; the forget pass now runs on its own there, with the same mass-deletion guard. A consent change was a delete and a write, so a failure between them left no consent for the scope, which reads as a withdrawal (#20112, #20113).
+- Colony: the consent sweep removes users.migrated, consents.migrated, consents.ignored and consents.pre-restore copies 90 days after they were set aside, and a consents directory newer than the colony-only migration is merged into colony narrow-only (a withdrawal on either side wins, nothing widens a grant) instead of refusing the boot (#20114, #20115)
+- **A hub image older than colony-only no longer writes into a colony-only `colony.db`.** While the hub store is colony-only, `colony.db` records a schema version every colony release refuses, so such an image falls back to `json` mode without its boot sync emptying colony's typed facts and consents; current images and `hive colony export` open it as before, and a rollback from colony-only clears it (#20116).
+
+## 2026-11-27 (v5.381.0)
+
+### Added
+
+- **The hub can keep its customer data on the colony store alone (`HIVE_HUB_CUSTOMER_STORE=colony-only`, opt-in).** After a boot sync with parity and a verified read-back, the CRM fields and consent records (delivery bookkeeping included) live only in `/data/saas/colony.db`: the consents directory is renamed `consents.migrated`, the users directory is copied to `users.migrated`, and user records are written without their CRM fields, only once the colony write succeeded. Setting `colony`, `shadow` or `json` again writes everything back on the next boot, and `hive colony export --format hive-hub-json` does it by hand. `shadow` and `colony` now also store the delivery bookkeeping, long notes and a second user's linked login or email, and delete a pruned consent from colony. The trusted-hive gate on customer data is unchanged (#19972).
+
+### Fixed
+
+- `headless_turns: true` set in `/data/agent-configs/<agent>.yaml` or in the agent's block of the runtime config is no longer dropped on a Kubernetes spoke when the dashboard overlay's older copy of the agent replaces it at boot, and the agent's Settings dialog now has a Headless turns toggle that saves the key to every layer and restarts the agent (#19902).
+
+## 2026-11-27 (v5.380.0)
+
+### Added
+
+- A person signed in to the hub through OpenID Connect can link the GitHub login they control by completing GitHub OAuth on the hub; a spoke then shows them that login's contributor profile. An owner can unlink or revoke a link but cannot create one, and the link never changes roles or owner-authored merge checks (#19992).
+- Claude CLI agents can opt into earlier auto-compaction with a per-agent window, including sandbox Job kicks; inference-routed agents with a known context window can instead use a hive-wide percentage ([#20077](https://github.com/hivecommons/hive/issues/20077)).
+
+### Fixed
+
+- Colony: colony-only review fixes, and test the shadow default over a colony-mode store (#20099)
+- **Hub signing follows master-key rotation.** After a rotation the hub kept signing SSO handoff tokens and heartbeat response signatures with the pre-rotation master, and once that generation retired the reconcile sweep rebuilt the retired generation's keys from `HIVE_HUB_SECRET` and pushed them back onto spokes. Both would have broken sign-in and heartbeat verification on every swept spoke at retirement. The hub now signs with keys from its generation set (the current generation, or the still-live previous one for a spoke the sweep last saw on it), and keeps the generation set authoritative after retirement and across restarts. See the rotation section of `src/docs/hub-deployment.md`. ([#20102](https://github.com/hivecommons/hive/issues/20102))
+- The hub no longer runs a whole pod lifetime in `json` mode because the previous pod still held `colony.db`'s lock at boot. It now retries the open with doubling backoff for up to `HIVE_HUB_CUSTOMER_STORE_LOCK_WAIT` (default `2m`), logs each retry, and falls back to `json` only after that. Run the hub Deployment with `strategy: Recreate`; `src/deploy/check-hub-manifest.py` now fails on any other strategy, because under a rolling update the old pod keeps the lock until the new one is Ready ([#20103](https://github.com/hivecommons/hive/issues/20103)).
+- An issue create left Unknown by an ambiguous GitHub response is no longer reported as a stuck effect-ledger op while it is still inside its one-hour unresolved TTL, since the next refused retry past the TTL expires it on its own; it is reported only if it is still refused after that (#20100).
+
 ## 2026-11-26 (v5.379.0)
 
 ### Added

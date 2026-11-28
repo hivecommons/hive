@@ -65,6 +65,19 @@ func TestHandlerSkipsBenignAndExplicitClasses(t *testing.T) {
 	}
 }
 
+func TestAgentTokenRefreshWarningUsesExplicitCondition(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for range 5 {
+		logger.Warn("agent token refresh failed", "agent", "quality", "error", "creating scoped token: POST /app/installations/123/access_tokens: 401 Bad credentials")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("refresh warning duplicated the explicit condition: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 5 {
+		t.Fatalf("wrapped handler saw %d records, want 5", n)
+	}
+}
+
 func TestSignedCommitOwnershipSkipStaysInLogsWithoutFleetReport(t *testing.T) {
 	logger, seen, out := newFeed(t)
 	const msg = "signed-commit reconciler: skipped; the PR keeps an unsigned commit"
@@ -178,6 +191,26 @@ func TestClaudeCredentialRebridgeStaysInLogsWithoutFleetReport(t *testing.T) {
 	logger.Error(claudeCredentialRebridgedMessage, "agent", "reviewer")
 	if len(*seen) != 2 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated || (*seen)[1].class != fleetreport.ClassUnclassifiedRepeated {
 		t.Fatalf("failed repairs must remain reportable: %+v", *seen)
+	}
+}
+
+func TestSelfUpgradeBoundedRetryStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	for range 6 {
+		logger.Warn(selfUpgradeRetryMessage, "target", "69abb14", "current", "42ac801", "attempt", 2, "max_attempts", 5, "last_error", "")
+		logger.Warn(selfUpgradeRetryDeferredMessage, "target", "69abb14", "current", "42ac801", "attempts", 1, "retry_in", "30s", "last_error", "")
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("bounded self-upgrade retries produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "self-upgrade retr"); n != 12 {
+		t.Fatalf("local logs lost the retry warnings: got %d, want 12: %s", n, out.String())
+	}
+	// Exhausting the budget is the defect and must stay reportable.
+	logger.Error("self-upgrade FAILED: giving up after repeated attempts (image never changed)", "target", "69abb14")
+	logger.Error(selfUpgradeRetryMessage, "target", "69abb14")
+	if len(*seen) != 2 {
+		t.Fatalf("self-upgrade give-up and ERROR-level retries must remain reportable: %+v", *seen)
 	}
 }
 
