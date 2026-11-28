@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -42,10 +43,15 @@ func guideFlowLine(a *github.ActionableResult, allowed map[string]bool, dwell ti
 	const day = 24 * time.Hour
 	surge, mean, oldest := "unknown", "unknown", "unknown"
 	snapshot := "unknown"
-	clogged := false
+	// cloggedBy names each threshold that tripped, so a single breach (a
+	// long SURGE, one long-lived item) is not read as slow merges when the
+	// merge sample is empty (hivecommons/hive#20273).
+	var cloggedBy []string
 	if dwellKnown && dwell >= 0 {
 		surge = fmt.Sprintf("%dm", int64(dwell/time.Minute))
-		clogged = dwell >= 3*day
+		if dwell >= 3*day {
+			cloggedBy = append(cloggedBy, "surge")
+		}
 	}
 	n := 0
 	if a != nil && !a.GeneratedAt.IsZero() {
@@ -57,7 +63,7 @@ func guideFlowLine(a *github.ActionableResult, allowed map[string]bool, dwell ti
 			}
 		}
 		for _, pr := range a.PRs.Items {
-			if !allowed[pr.Repo] || pr.CreatedAt.IsZero() {
+			if !allowed[pr.Repo] || pr.CreatedAt.IsZero() || !guideFlowAwaitsFlow(pr) {
 				continue
 			}
 			age := int(a.GeneratedAt.Sub(pr.CreatedAt) / time.Minute)
@@ -66,7 +72,9 @@ func guideFlowLine(a *github.ActionableResult, allowed map[string]bool, dwell ti
 			}
 		}
 		oldest = fmt.Sprintf("%dm", maxAge)
-		clogged = clogged || maxAge >= 14*24*60
+		if maxAge >= 14*24*60 {
+			cloggedBy = append(cloggedBy, "oldest")
+		}
 		var totalMinutes float64
 		seen := make(map[string]bool)
 		for _, pr := range a.PRs.Attributed {
@@ -82,14 +90,28 @@ func guideFlowLine(a *github.ActionableResult, allowed map[string]bool, dwell ti
 		if n > 0 {
 			avg := totalMinutes / float64(n)
 			mean = fmt.Sprintf("%dm", int64(avg))
-			clogged = clogged || avg > (7*day).Minutes()
+			if avg > (7 * day).Minutes() {
+				cloggedBy = append(cloggedBy, "mttm")
+			}
 		}
 	}
-	status := "normal"
-	if clogged {
-		status = "clogged"
+	status, reasons := "normal", "none"
+	if len(cloggedBy) > 0 {
+		status, reasons = "clogged", strings.Join(cloggedBy, ",")
 	} else if surge == "unknown" || mean == "unknown" || oldest == "unknown" {
 		status = "unknown"
 	}
-	return fmt.Sprintf("HIVE_FLOW: %s surge=%s mttm_sample=%s merged_sample=%d window=14d oldest_actionable=%s scope=authorized-repos surge_scope=hive source=cached-attributed-prs snapshot=%s\n", status, surge, mean, n, oldest, snapshot)
+	return fmt.Sprintf("HIVE_FLOW: %s clogged_by=%s surge=%s mttm_sample=%s merged_sample=%d window=14d oldest_actionable=%s scope=authorized-repos surge_scope=hive source=cached-attributed-prs snapshot=%s\n", status, reasons, surge, mean, n, oldest, snapshot)
+}
+
+// guideFlowAwaitsFlow reports whether an open PR's age says anything about
+// review/merge flow. A draft is not ready, and a PR whose review decision is
+// CHANGES_REQUESTED waits on its author; either can stay open for months by
+// design, and counting it made one such PR hold the oldest-actionable
+// threshold true for as long as it lived (hivecommons/hive#20273).
+func guideFlowAwaitsFlow(pr github.PullRequest) bool {
+	if pr.Draft {
+		return false
+	}
+	return pr.Protection == nil || pr.Protection.ReviewDecision != github.ReviewDecisionChangesRequested
 }

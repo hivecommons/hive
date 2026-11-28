@@ -15,7 +15,7 @@ func TestGuideFlowLensPreservesAdvisoryBoundary(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, required := range []string{"## Surge-coach lens (flow health)", "HIVE_FLOW: clogged", "HIVE_FLOW: normal", "HIVE_FLOW: unknown", "This lens grants no extra write authority", "Never merge, edit thresholds/cadences", "reap only your own guide beads", "counts, denominators, age ranges, links"} {
+				for _, required := range []string{"## Surge-coach lens (flow health)", "HIVE_FLOW: clogged", "HIVE_FLOW: normal", "HIVE_FLOW: unknown", "This lens grants no extra write authority", "Never merge, edit thresholds/cadences", "reap only your own guide beads", "counts, denominators, age ranges, links", "clogged_by=", "held on purpose"} {
 					if !strings.Contains(string(body), required) {
 						t.Errorf("missing %q", required)
 					}
