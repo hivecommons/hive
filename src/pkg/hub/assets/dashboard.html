@@ -8320,18 +8320,9 @@
               /* Tracking off: hub auto-upgrade has no target to roll to, so
                  the checkbox would control nothing. */
               if (!_releaseTrackingDisabled) hubAutoCheck = ' <label style="margin-left:var(--sp-3);font-size:var(--fs-2xs);color:var(--muted);cursor:pointer;white-space:nowrap" title="Auto-upgrade hub when a new image is available"><input type="checkbox" ' + (_hubAutoUpgrade ? 'checked' : '') + ' onchange="toggleHubAutoUpgrade(this.checked)" style="vertical-align:middle;margin-right:var(--sp-1);cursor:pointer">auto</label>';
-              /* Upgrade kill switches (admin-only): checked = paused. Titles
-                 carry who/when; the dashboard banner repeats it prominently.
-                 Rendered as ONE compact bordered column so the pair reads as a
-                 control cluster, stays vertically aligned with the header row,
-                 and wraps as a unit instead of the second toggle dangling onto
-                 its own line. */
-              hubAutoCheck += ' <span style="display:inline-flex;flex-direction:column;align-items:flex-start;gap:var(--sp-1);margin-left:var(--sp-4);padding:3px 8px;border:1px solid var(--border);border-radius:var(--r);background:var(--surface);vertical-align:middle;line-height:1.2">' +
-                upgradePauseToggleHTML('hub', 'hub upgrades',
-                'Kill switch: freeze the hub on its current build — no self-upgrades (auto or manual) until resumed') +
-                upgradePauseToggleHTML('spokes', 'spoke upgrades',
-                'Kill switch: freeze ALL automatic image changes to spokes, fleet-wide, until resumed') +
-                '</span>';
+              /* Upgrade kill switches (admin-only); see upgradePauseClusterHTML
+                 for when each one is shown. */
+              hubAutoCheck += upgradePauseClusterHTML();
             }
             var hubStatusIcon = (_releaseTrackingDisabled && !hubBranchLatest)
               ? ' ' + RELEASE_TRACKING_OFF_HTML
@@ -10514,6 +10505,39 @@
         '<button class="hv-btn btn-primary" onclick="toggleUpgradePause(\'' + target + '\', ' + (sw.paused ? 'false' : 'true') + ')" style="' + btnStyle + '" aria-label="' + escAttr((sw.paused ? 'Resume ' : 'Pause ') + label) + '">' + icon + '</button>' +
         '<span style="font-size:var(--fs-2xs);color:' + (sw.paused ? 'var(--red)' : 'var(--muted)') + ';font-weight:' + (sw.paused ? '700' : '400') + '">' + esc(label) + '</span>' +
         '</span>';
+    }
+    /* upgradePauseClusterHTML renders the hub-header kill-switch pair:
+       checked = paused, titles carry who/when, and the dashboard banner
+       repeats it prominently. ONE compact bordered column so the pair reads
+       as a control cluster, stays aligned with the header row, and wraps as a
+       unit instead of the second toggle dangling onto its own line.
+
+       A switch is only shown where it controls something (#20253):
+       - hub upgrades: hidden with release tracking off. The hub has no
+         target to roll to, and the Upgrade button and auto checkbox are
+         already gone (#20188), so there is no self-upgrade to freeze.
+       - spoke upgrades: hidden on a self-hosted hub (HIVE_HUB_MODE), which
+         provisions no hives and so changes no spoke images (#20199). With
+         tracking off on a hosted hub it stays: it still refuses branch
+         switches and digest unpins on provisioned hives.
+       A switch that is currently PAUSED is always shown, so an admin can
+       resume a pause set before the hub's configuration changed. With
+       neither switch shown the bordered cluster is dropped too. */
+    function upgradePauseClusterHTML() {
+      var hubPaused = !!(_upgradePause && _upgradePause.hub && _upgradePause.hub.paused);
+      var spokesPaused = !!(_upgradePause && _upgradePause.spokes && _upgradePause.spokes.paused);
+      var inner = '';
+      if (!_releaseTrackingDisabled || hubPaused) {
+        inner += upgradePauseToggleHTML('hub', 'hub upgrades',
+          'Kill switch: freeze the hub on its current build — no self-upgrades (auto or manual) until resumed');
+      }
+      if (!_hubSelfHosted || spokesPaused) {
+        inner += upgradePauseToggleHTML('spokes', 'spoke upgrades',
+          'Kill switch: freeze ALL automatic image changes to spokes, fleet-wide, until resumed');
+      }
+      if (!inner) return '';
+      return ' <span style="display:inline-flex;flex-direction:column;align-items:flex-start;gap:var(--sp-1);margin-left:var(--sp-4);padding:3px 8px;border:1px solid var(--border);border-radius:var(--r);background:var(--surface);vertical-align:middle;line-height:1.2">' +
+        inner + '</span>';
     }
     async function toggleUpgradePause(target, paused) {
       try {
