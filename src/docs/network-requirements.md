@@ -62,7 +62,7 @@ A hub (`HIVE_MODE=hub`) calls these hosts itself. An operator who denies the hub
 | Login provider issuers | OpenID Connect and GitHub sign-in. | Needed for the providers you configure. |
 | Kubernetes API, OCI Object Storage, NPS relay | Provisioning, DR backups and the NPS relay pull. | Each only when configured. |
 
-With `HIVE_HUB_RELEASE_TRACKING_DISABLED=true` the dashboard shows "unknown" for the latest-image and channel rows, and neither the hub nor its spokes get an auto-upgrade target from the hub. Leave it unset if you rely on hub-driven upgrades.
+With `HIVE_HUB_RELEASE_TRACKING_DISABLED=true` the dashboard shows "Release tracking is off" in place of the latest-image and channel rows, hides the image-pulls chart, the hub's `auto` upgrade checkbox, and the Upgrade buttons and spinners that would otherwise wait for a latest version, and neither the hub nor its spokes get an auto-upgrade target from the hub. Leave it unset if you rely on hub-driven upgrades.
 
 ## Egress through a corporate forward proxy
 

@@ -13,8 +13,10 @@ import (
 // HIVE_HUB_MARKETPLACE_DISABLED: "1", "true" or "yes" turn it on, anything
 // else (including unset) leaves tracking on.
 //
-// With tracking off the dashboard renders its existing "unknown" state for the
-// latest-image and channel rows, no "behind" badge shows, and hub and spoke
+// With tracking off /api/saas/my-hives reports release_tracking_disabled, and
+// the dashboard shows "Release tracking is off" in place of the latest-image
+// and channel rows, the image-pulls chart, the hub auto checkbox and the
+// waiting Upgrade buttons and spinners (#20188), no "behind" badge shows, and hub and spoke
 // auto-upgrade have no target to roll to. The SHA poller goroutine still runs
 // so the reconciliation lanes it drives keep working; only its GitHub and GHCR
 // reads are skipped.

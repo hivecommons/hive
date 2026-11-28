@@ -12,6 +12,23 @@ conversations by hand.
 The hive now reconciles those threads itself, for every PR it opened, with no
 per-agent prompt rule. Three pieces, and one config key that turns them on.
 
+## Conversation blockers on v5
+
+When GitHub reports a PR as blocked and its base branch requires conversation
+resolution, the Activity Monitor PR row shows the number of unresolved review
+threads. The count includes threads GitHub still marks unresolved after the
+lines they refer to become outdated. Other merge rules may also be unmet.
+The Hive status comment can link to the blocking threads on Hive-authored PRs
+when repository pause and write-back policy permit the notice.
+Hive updates that section in place when the blocker changes and removes it
+once GitHub confirms the PR is no longer blocked on conversations. An
+incomplete read leaves the last notice intact.
+
+On v5, `classification.review_bots` only reconciles threads opened by configured
+external review bots. It does not resolve the Hive reviewer's own threads, even
+non-blocking notes. Address those threads and resolve them on GitHub by hand;
+the blocker line disappears after the next refresh once they are all resolved.
+
 ## Which PRs qualify
 
 A PR is the hive's to follow up on — *hive-mediated* — when **either** of two
