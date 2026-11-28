@@ -7,6 +7,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/reviewgate"
 )
 
 // latestTrustedHumanChangesRequested finds a trusted maintainer's standing
@@ -47,7 +48,6 @@ func (c *Engine) standingTrustedHumanReviews(ctx context.Context, owner, repo st
 		ctx = context.Background()
 	}
 	opts := &gh.ListOptions{PerPage: 100}
-	latest := map[string]*gh.PullRequestReview{}
 	var seen []*gh.PullRequestReview
 	for {
 		reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, opts)
@@ -56,16 +56,6 @@ func (c *Engine) standingTrustedHumanReviews(ctx context.Context, owner, repo st
 			return nil
 		}
 		seen = append(seen, reviews...)
-		for _, rv := range reviews {
-			login := strings.ToLower(strings.TrimSpace(hgithub.SafeGetLogin(rv.GetUser())))
-			if login == "" {
-				continue
-			}
-			switch strings.ToUpper(strings.TrimSpace(rv.GetState())) {
-			case "APPROVED", "CHANGES_REQUESTED", "DISMISSED":
-				latest[login] = rv
-			}
-		}
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
@@ -73,7 +63,7 @@ func (c *Engine) standingTrustedHumanReviews(ctx context.Context, owner, repo st
 	}
 	c.noteStageReviews(owner, repo, number, seen)
 	var out []*gh.PullRequestReview
-	for login, rv := range latest {
+	for login, rv := range standingGitHubReviews(seen) {
 		if c.isHiveAppReviewAuthor(rv) || strings.HasSuffix(login, "[bot]") {
 			continue
 		}
@@ -82,6 +72,32 @@ func (c *Engine) standingTrustedHumanReviews(ctx context.Context, owner, repo st
 			continue
 		}
 		out = append(out, rv)
+	}
+	return out
+}
+
+// standingGitHubReviews applies reviewgate.Standing, the one definition of
+// a reviewer's standing review that the merge-time gate also uses, to a
+// go-github listing and returns the original reviews keyed by lower-cased
+// login. Each review's listing position stands in for its ID, so reviews
+// with the same submission time keep the forge's order and the answer maps
+// back to the review it came from.
+func standingGitHubReviews(reviews []*gh.PullRequestReview) map[string]*gh.PullRequestReview {
+	in := make([]reviewgate.Review, 0, len(reviews))
+	for i, rv := range reviews {
+		if rv == nil {
+			continue
+		}
+		in = append(in, reviewgate.Review{
+			ID:          int64(i),
+			Reviewer:    hgithub.SafeGetLogin(rv.GetUser()),
+			State:       rv.GetState(),
+			SubmittedAt: rv.GetSubmittedAt().Time,
+		})
+	}
+	out := make(map[string]*gh.PullRequestReview, len(in))
+	for login, rv := range reviewgate.Standing(in) {
+		out[login] = reviews[rv.ID]
 	}
 	return out
 }

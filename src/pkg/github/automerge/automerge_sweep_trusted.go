@@ -13,6 +13,7 @@ import (
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/prstatus"
+	"github.com/hivecommons/hive/pkg/reviewgate"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -1012,7 +1013,6 @@ func (c *Engine) executeUpdateBranchEffect(ctx context.Context, owner, repo stri
 
 func (c *Engine) hasOutstandingChangesRequested(ctx context.Context, owner, repo string, number int) (bool, error) {
 	opts := &gh.ListOptions{PerPage: 100}
-	latest := map[string]string{}
 	var seen []*gh.PullRequestReview
 	for {
 		reviews, resp, err := c.gh.PullRequests.ListReviews(ctx, owner, repo, number, opts)
@@ -1020,24 +1020,14 @@ func (c *Engine) hasOutstandingChangesRequested(ctx context.Context, owner, repo
 			return false, err
 		}
 		seen = append(seen, reviews...)
-		for _, review := range reviews {
-			login := strings.ToLower(strings.TrimSpace(hgithub.SafeGetLogin(review.GetUser())))
-			if login == "" {
-				continue
-			}
-			state := strings.ToUpper(strings.TrimSpace(review.GetState()))
-			if state == "APPROVED" || state == "CHANGES_REQUESTED" || state == "DISMISSED" {
-				latest[login] = state
-			}
-		}
 		if resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
 	}
 	c.noteStageReviews(owner, repo, number, seen)
-	for _, state := range latest {
-		if state == "CHANGES_REQUESTED" {
+	for _, rv := range standingGitHubReviews(seen) {
+		if reviewgate.NormalizeState(rv.GetState(), false) == reviewgate.StateChangesRequested {
 			return true, nil
 		}
 	}
