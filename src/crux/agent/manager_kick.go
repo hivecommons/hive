@@ -14,6 +14,15 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+// noActionWatch is the no-action watchdog's per-kick baseline, embedded in
+// AgentProcess and kept here so manager.go stays under the crux file-size
+// ratchet. Guarded by m.mu like the rest of AgentProcess.
+type noActionWatch struct {
+	lastInferKickMarks  int       // tool-marker count after lastInferKickAnchor just after kick delivery
+	lastInferKickAnchor string    // scrollback lines just above the screen at kick delivery; markers are counted only after them (#20214)
+	lastInferKickBusyAt time.Time // last time a governor pass saw the kicked turn still working (#20214)
+}
+
 // SetRecordPromptCallback wires a function that persists a delivered kick
 // prompt (agent, trigger, full text). Safe to call at any time; a nil fn
 // clears it. Never takes m.mu — see recordPromptCallback.
