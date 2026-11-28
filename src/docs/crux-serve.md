@@ -225,6 +225,13 @@ hive is away and resumes on the next successful call. No setter is served
 from a `runtime:` config key: every value is already resolved hive-side
 from the live config, so a reload reaches the runtime on its next poll.
 
+`GET /v1/inference/activity` (`inference_activity`) returns, per agent,
+the time of its last translator-authenticated inference request. The
+runtime polls it every 5 s and stall detection counts that time as
+activity, so an agent whose model is still working upstream is not
+restarted as busy with no activity. A failed read, or a hive without the
+capability, keeps the last known value.
+
 ### Supervision and failure semantics (#14138 stage 4)
 
 In sidecar mode hive decides who keeps `crux serve` alive:
