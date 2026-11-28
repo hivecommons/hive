@@ -129,10 +129,11 @@ type Client struct {
 	humanClaims humanClaimState
 	// openPRLinkState backs the pre-dispatch open-PR guard and the
 	// duplicate-fix resolver (open_pr_links.go); built lazily.
-	openPRLinkOnce  sync.Once
-	openPRLinkState *openPRLinkCache
-	sentinelMu      sync.RWMutex
-	sentinelLabel   string
+	openPRLinkOnce   sync.Once
+	openPRLinkState  *openPRLinkCache
+	conversationRule conversationRuleSlot // conversation_resolution.go; built lazily
+	sentinelMu       sync.RWMutex
+	sentinelLabel    string
 	// issueFilter is the operator's project.issue_filter (require_labels
 	// allow-list) gating which issues become actionable at all. The exclude
 	// polarity is NOT here — it is exemptLabels above (governor.labels.exempt,
@@ -1064,6 +1065,9 @@ type PullRequest struct {
 	// CI (#7471). Never consulted by any gate — mergeableFromState owns the
 	// policy; this is the evidence the pill tooltip shows for it.
 	MergeableState string `json:"mergeable_state,omitempty"`
+	// Set only by enrichment when there is enough evidence to replace or
+	// remove an existing review-conversation notice.
+	reviewConversationKnown bool
 	// Supersedes is the PR this one declares it supersedes ("Supersedes
 	// #N" in the body: the hive's adoption / takeover / re-author copy of
 	// a contributor PR), read from the list payload; 0 when none.
@@ -2630,9 +2634,10 @@ func pullRequestAttributionRecord(repo string, pr *gh.PullRequest, meta Invocati
 // (hivecommons/hive#7515, step 2) — which required checks are red or have
 // never reported, and GitHub's own review decision — so that the dashboard
 // pill can name the unsatisfied rule instead of repeating the word
-// "blocked". Those facts are gathered from data this pass already walks
-// plus at most one GraphQL query per repository; nothing here is per-hover
-// and nothing here is per-PR beyond the calls that were already made.
+// "blocked". Review verdicts come from a batched query; a blocked PR with
+// review threads may also need a base-policy read and paginated thread reads.
+// Resolution does not change the head SHA or thread total, so the thread
+// read cannot be cached on either. Nothing is fetched on hover.
 //
 // For each red PR it also resolves SharedCIIncident (hivecommons/hive#10528):
 // one comment listing per red PR, plus one issue GET per distinct incident
@@ -3320,6 +3325,10 @@ func (c *Client) QueuePRAutoMergeWithNoteResultAtHead(ctx context.Context, repo 
 			"agent", queuedBy, "label", blocked)
 		return res, fmt.Errorf("approving PR: %s label blocks Hive approval and auto-merge", blocked)
 	}
+	if err := c.gateChangesRequested(ctx, full, number, ChangesRequestedGateActionApprove, PRAuditPathQueue,
+		changesRequestedGateOptions{allowOverride: true, supersedesOwn: true}); err != nil {
+		return res, fmt.Errorf("approving PR: %w", err)
+	}
 	label := c.AutoMergeLabel()
 	if err := c.ensureLabel(ctx, owner, repoName, label); err != nil {
 		return res, fmt.Errorf("ensuring %s label: %w", label, err)
@@ -3642,6 +3651,14 @@ func (c *Client) addLabelsObserved(ctx context.Context, repo string, number int,
 		return nil
 	}
 	owner, repoName := c.splitRepo(repo)
+	// `lgtm` / `approved` (or the configured auto-merge label) approves a
+	// PR for merging: a sentinel alert or an open change request refuses
+	// it (#20067).
+	if c.approvalLabels(labels) {
+		if err := c.gateApprovalLabelWrite(ctx, owner+"/"+repoName, number); err != nil {
+			return err
+		}
+	}
 	claim := effects.Claim{
 		Repo:   owner + "/" + repoName,
 		Kind:   effects.KindLabelMutation,

@@ -229,6 +229,30 @@ func (c *Engine) nativeQueue(repo string) nativeQueueTransport {
 	return c.nativeQueueTransport()
 }
 
+// nativeQueueChangesRequested is the open change-request gate for the queue
+// and integration paths: a skip reason when a writer's change request is
+// open, nativeQueueReasonRead with the error when the reviews cannot be read.
+func (c *Engine) nativeQueueChangesRequested(ctx context.Context, pr *gh.PullRequest, claim effects.Claim) (string, error) {
+	repo := claim.Repo
+	if !strings.Contains(repo, "/") {
+		repo = pr.GetBase().GetRepo().GetFullName()
+	}
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok {
+		// Every lane's merge claim names the repo; a direct merge is still
+		// gated in executeMergeEffect.
+		return "", nil
+	}
+	err := c.gateChangesRequested(ctx, owner, name, pr.GetNumber(), hgithub.ChangesRequestedGateActionEnqueue)
+	if err == nil {
+		return "", nil
+	}
+	if reason, ok := changesRequestedSkipReason(err); ok {
+		return reason, nil
+	}
+	return nativeQueueReasonRead, err
+}
+
 // tryNativeQueue runs only after the lane's existing merge gates passed. A
 // queued PR is not a merged PR: no merged audit, issue closure or merge event.
 func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim effects.Claim) (string, error) {
@@ -236,6 +260,11 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 		if pr.GetHead().GetSHA() != capture.head || pr.GetBase().GetRef() != capture.base ||
 			pr.GetBase().GetRepo().GetFullName() != capture.repo {
 			return "integration exact member identity changed", nil
+		}
+		// An integration promotion lands the captured PR by a ref update,
+		// not through executeMergeEffect: gate it here (#20067).
+		if reason, err := c.nativeQueueChangesRequested(ctx, pr, claim); reason != "" || err != nil {
+			return reason, err
 		}
 		capture.pr = pr
 		return integrationEligibilityCaptured, nil
@@ -301,6 +330,19 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 			return nativeQueueReasonMethod, fmt.Errorf("mixed authorship requires a merge commit; queue uses %s", method)
 		}
 	}
+	// An open change request keeps the PR out of the queue, and the
+	// withdraw reason it returns takes the hive's own entry back out
+	// (hivecommons/hive#20067).
+	if reason, err := c.nativeQueueChangesRequested(ctx, pr, claim); reason != "" || err != nil {
+		return reason, err
+	}
+	// GitHub already refused this head for unresolved review conversations
+	// (parked, or waiting out a retry): do not ask again every pass.
+	if !state.IsInMergeQueue {
+		if reason := c.knownUnresolvedThreads(claim.Repo, pr.GetNumber(), state.HeadRefOid); reason != "" {
+			return reason, nil
+		}
+	}
 	if !state.IsInMergeQueue {
 		if c.integrationAdmission != nil {
 			reason, err := c.integrationAdmission(ctx, claim.Repo, pr)
@@ -329,6 +371,11 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 		_, err = effects.ExecuteReconciling(ctx, c.mutation, claim, observe, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 			entry, err := t.EnqueueNativePullRequest(ctx, state.ID, state.HeadRefOid)
 			if err != nil {
+				if hgithub.IsUnresolvedConversationsError(err) {
+					// A definite refusal: nothing was queued, so the
+					// journal must not hold it as an uncertain outcome.
+					return effects.Result{}, effects.NotApplied(err)
+				}
 				return effects.Result{}, err
 			}
 			state.MergeQueueEntry = entry
@@ -339,6 +386,9 @@ func (c *Engine) tryNativeQueue(ctx context.Context, pr *gh.PullRequest, claim e
 				// GitHub refuses the enqueue while required checks fail. That is
 				// a hold on the PR, not a sweep fault; the next tick retries.
 				return nativeQueueReasonChecksFailing, nil
+			}
+			if hgithub.IsUnresolvedConversationsError(err) {
+				return c.unresolvedThreadsRefusal(ctx, claim.Repo, pr.GetNumber(), state.HeadRefOid), nil
 			}
 			return nativeQueueReasonEnqueue, err
 		}

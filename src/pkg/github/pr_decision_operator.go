@@ -431,6 +431,12 @@ func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo
 		}
 	}
 	full := owner + "/" + name
+	// The approval posts `/lgtm` and `/approve` and releases the PR to the
+	// merge gate, so an open change request refuses it unless the operator
+	// recorded an audited override first (#20067).
+	if err := c.GateChangesRequested(ctx, full, number, ChangesRequestedGateActionApprove, PRAuditPathDashboard); err != nil {
+		return PullRequestApprovalEvent{}, err
+	}
 	event := PullRequestApprovalEvent{Repo: full, Number: number, HeadSHA: head, Actor: actor, ProwManaged: ProwManagedLabels(labels)}
 	if opts.HumanChangeRequests != nil {
 		if head == "" {

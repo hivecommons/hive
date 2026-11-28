@@ -1598,13 +1598,16 @@ func (c *Engine) trySweepContributorLanePR(ctx context.Context, displayRepo, own
 		return effects.Result{Provenance: mergeResult.GetSHA()}, nil
 	})
 	if err != nil {
+		if reason, ok := changesRequestedSkipReason(err); ok {
+			return AutoMergeSweepEvent{}, reason, nil
+		}
 		if c.requiredChecksExpected(attempt, err) {
 			return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, headSHA, "required-checks-expected", eval.pr)
 		}
 		if reason := c.workflowFenceMergeUnauthorized(ctx, displayRepo, owner, repo, eval, err); reason != "" {
 			return AutoMergeSweepEvent{}, reason, nil
 		}
-		if refused := c.refusedMerge(attempt, err); refused != "" {
+		if refused := c.refusedMerge(ctx, attempt, err); refused != "" {
 			return AutoMergeSweepEvent{}, refused, nil
 		}
 		return AutoMergeSweepEvent{}, "merge-failed", err

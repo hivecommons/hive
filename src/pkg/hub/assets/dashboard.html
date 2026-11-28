@@ -179,6 +179,7 @@
     .alert-row-hive { font-weight: 700; color: var(--text); }
     .alert-row-reason { color: var(--muted); }
     .alert-row-age { color: var(--muted); font-size: var(--fs-xs); margin-left: auto; white-space: nowrap; }
+    .release-tracking-off { font-size: var(--fs-xs); color: var(--muted); }
     .alert-ack-btn { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 5px; padding: 1px 8px; font-size: 0.66rem; font-family: inherit; cursor: pointer; }
     .alert-ack-btn:hover { color: var(--text); border-color: var(--muted); }
     .alert-panel-more { margin-top: var(--sp-4); font-size: 0.7rem; color: var(--muted); background: none; border: none; font-family: inherit; cursor: pointer; text-decoration: underline; padding: var(--sp-0); }
@@ -3178,7 +3179,92 @@
     // and the tooltip apply their own public-GitHub default.
     function hiveForgeHost(h) {
       if (!h) return '';
+      /* A hive on Forgejo, Gitea or GitLab reports that forge beside
+         githubHost, which for such a spoke is only the github.com default of
+         an empty github block (hivecommons/hive#20181). Its host comes from
+         the forge's base URL; '' when the spoke reported none. */
+      if (hiveForgeKind(h)) {
+        var base = hiveForgeBaseURL(h);
+        return base ? base.replace(/^https?:\/\//, '').split('/')[0] : '';
+      }
       return h.githubHost || h.github_host || h.default_forge || '';
+    }
+
+    // GITHUB_REPO_ICON_SVG is the GitHub mark shown beside a GitHub hive's repo.
+    var GITHUB_REPO_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>';
+
+    // FORGE_KIND_LABELS names the non-GitHub forges a hive row can report
+    // (RegistryEntry.forgeKind). A kind not listed here renders as GitHub.
+    var FORGE_KIND_LABELS = {forgejo: 'Forgejo', gitea: 'Gitea', gitlab: 'GitLab'};
+
+    // hiveForgeKind returns the hive's non-GitHub forge kind, or '' for a
+    // GitHub hive (and for a spoke too old to report one).
+    function hiveForgeKind(h) {
+      var k = String((h && h.forgeKind) || '').toLowerCase();
+      return Object.prototype.hasOwnProperty.call(FORGE_KIND_LABELS, k) ? k : '';
+    }
+
+    // hiveForgeBaseURL returns the instance root of a non-GitHub hive's forge
+    // ("https://code.example.org"), or '' when it is not a plain http(s) URL.
+    // The hub sanitizes it already; this keeps the href safe on its own.
+    function hiveForgeBaseURL(h) {
+      if (!hiveForgeKind(h)) return '';
+      var u = String(h.forgeBaseUrl || '').replace(/\/+$/, '');
+      return /^https?:\/\/[A-Za-z0-9.-]+(:[0-9]+)?(\/[A-Za-z0-9._\/-]*)?$/.test(u) ? u : '';
+    }
+
+    // hiveRepoURL links owner/repo on the forge the hive's repos live on: the
+    // forge's base URL for Forgejo/Gitea/GitLab, else the GitHub host. A
+    // non-GitHub hive with no usable base URL gets '' (plain text), never a
+    // github.com link to a repository that does not exist there.
+    function hiveRepoURL(h, owner, repo) {
+      if (hiveForgeKind(h)) {
+        var base = hiveForgeBaseURL(h);
+        if (!base || !owner || !repo) return '';
+        return base + '/' + encodeURIComponent(owner) + '/' + encodeURIComponent(repo);
+      }
+      return ghRepoURL(hiveForgeHost(h), owner, repo);
+    }
+
+    // hiveForgePill is the Location pill for a hive row: githubHostPill for a
+    // GitHub hive, else the forge's host in its own colour, titled by kind.
+    function hiveForgePill(h) {
+      var kind = hiveForgeKind(h);
+      if (!kind) return githubHostPill(hiveForgeHost(h));
+      var label = FORGE_KIND_LABELS[kind];
+      return forgeHostPillHTML(hiveForgeHost(h) || label, 'var(--purple)', label);
+    }
+
+    // hiveHostLabel is the text the Location pill shows for a hive, so search
+    // and the host facet group a Forgejo hive under its own forge host, not
+    // github.com. Absent host on a GitHub hive means public GitHub.
+    function hiveHostLabel(h) {
+      var kind = hiveForgeKind(h);
+      if (kind) return hiveForgeHost(h) || FORGE_KIND_LABELS[kind];
+      return hiveForgeHost(h) || PAST_REQUESTS_DEFAULT_GITHUB_HOST;
+    }
+
+    // hiveForgeLabel names the forge a hive's repos live on, for tooltips.
+    function hiveForgeLabel(h) {
+      var kind = hiveForgeKind(h);
+      return kind ? FORGE_KIND_LABELS[kind] : 'GitHub';
+    }
+
+    // hiveAuthorIdentity is who the hive opens PRs/commits as: its forge user
+    // (forgejo.login, else ai_author) on a non-GitHub forge, else
+    // aiAuthorEffective. '' renders as "—".
+    function hiveAuthorIdentity(h) {
+      if (!h) return '';
+      return (hiveForgeKind(h) ? h.forgeLogin : h.aiAuthorEffective) || '';
+    }
+
+    // hiveRepoIconSVG is the 13px icon beside a hive's repo: the GitHub mark
+    // for a GitHub hive, a neutral git-branch glyph for any other forge.
+    function hiveRepoIconSVG(h) {
+      if (hiveForgeKind(h)) {
+        return '<svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle" role="img" aria-label="' + escAttr(hiveForgeLabel(h)) + '"><path d="M5 3.25a.75.75 0 1 1-1.5 0 .75.75 0 0 1 1.5 0Zm0 2.122a2.25 2.25 0 1 0-1.5 0v5.256a2.25 2.25 0 1 0 1.5 0V9.5h4.25A2.25 2.25 0 0 0 11.5 7.25v-.878a2.25 2.25 0 1 0-1.5 0v.878a.75.75 0 0 1-.75.75H5V5.372ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm6.5-8.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>';
+      }
+      return GITHUB_REPO_ICON_SVG;
     }
 
     function ghRepoURL(host, org, repo) {
@@ -4913,6 +4999,13 @@
     var _releaseChannels = [];
     var _candidateBypassesSchedule = false;
     var _channelTargets = [];
+    /* HIVE_HUB_RELEASE_TRACKING_DISABLED (#20188), from /api/saas/my-hives.
+       With tracking off the latest image is never resolved, so every
+       "waiting for latest version" affordance (spinner, dimmed Upgrade, auto
+       checkbox, channel block, image-pulls line) would wait forever. When
+       set, those are hidden and RELEASE_TRACKING_OFF_HTML says why. */
+    var _releaseTrackingDisabled = false;
+    var RELEASE_TRACKING_OFF_HTML = '<span class="release-tracking-off" title="HIVE_HUB_RELEASE_TRACKING_DISABLED is set: the hub does not look up the latest release, so it offers no upgrade target to itself or its spokes">Release tracking is off</span>';
     var _stablePromotion = {auto_promote: true, soak_hours: 24, maintained_hives: []};
     /* Parent domain for hosted-tenant URLs, from the server (hub_spoke_domain).
        Empty until the first payload lands, and the link builders below treat
@@ -6429,8 +6522,9 @@
         /* The GitHub host is shown as a pill in the Location column, so it has
            to be searchable too — "github.ibm.com" is how an admin narrows to
            the GHE fleet. Absent means public GitHub, which is what the pill
-           renders, so search on that same default rather than nothing. */
-        h.githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST
+           renders, so search on that same default rather than nothing. A
+           Forgejo/Gitea/GitLab hive searches on its forge host instead. */
+        hiveHostLabel(h)
       ];
       (h.repos || []).forEach(function(r) { parts.push(r); });
       (h.access || []).forEach(function(a) {
@@ -6728,7 +6822,7 @@
       /* Absent host means public GitHub — bucket it under the same label the
          pill renders, not FACET_UNKNOWN, so old spokes group with github.com
          rather than forming a meaningless "—" bucket. */
-      f[FACET_GITHUB_HOST] = h.githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST;
+      f[FACET_GITHUB_HOST] = hiveHostLabel(h);
       var flags = hiveStatusFlags(h);
       f[FACET_STATUS] = flags.degraded ? 'Degraded' : (h.online ? 'Online' : 'Offline');
       return f;
@@ -8014,6 +8108,7 @@
         if (data.latest_shas) _latestSHAs = data.latest_shas;
         if (data.tracked_branches) _trackedBranchesList = data.tracked_branches;
         if (data.release_channels) _releaseChannels = data.release_channels;
+        _releaseTrackingDisabled = !!data.release_tracking_disabled;
         _candidateBypassesSchedule = !!data.candidate_bypasses_schedule;
         if (data.channel_targets) _channelTargets = data.channel_targets;
         if (data.stable_promotion) _stablePromotion = data.stable_promotion;
@@ -8165,7 +8260,11 @@
              its own above it, so neither reads as a subheading of the other. */
           if (lines) lines = '<div style="font-size:0.7rem;color:var(--muted);margin-bottom:var(--sp-1)">Latest available images:</div>' + lines;
           lines = chLines + lines;
-          shaEl.innerHTML = lines ? lines :'<div style="display:flex;align-items:center;gap:var(--sp-3);font-size:0.7rem;color:var(--muted)"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite"></span>Resolving latest available images…</div>';
+          /* Tracking off (#20188): the channel and branch rows could only
+             ever read "unknown" and the empty state would spin forever, so
+             one line says why instead. */
+          if (_releaseTrackingDisabled) shaEl.innerHTML = '<div>' + RELEASE_TRACKING_OFF_HTML + '</div>';
+          else shaEl.innerHTML = lines ? lines :'<div style="display:flex;align-items:center;gap:var(--sp-3);font-size:0.7rem;color:var(--muted)"><span style="display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite"></span>Resolving latest available images…</div>';
         }
         var hubHash = data.hub_git_hash || '';
         var hubBranch = data.hub_git_branch || STABLE_BRANCH_LABEL;
@@ -8173,7 +8272,9 @@
           var el = document.getElementById('hub-version');
           if (el) {
             var hubBranchLatest = _latestSHAs[hubBranch] || _latestSHA;
-            var hubLatestUnknown = !hubBranchLatest;
+            /* Tracking off (#20188): "unknown" is permanent, not a wait, so
+               the waiting spinner and dimmed Upgrade below must not render. */
+            var hubLatestUnknown = !hubBranchLatest && !_releaseTrackingDisabled;
             var isCurrent = hubBranchLatest && sameShaJS(hubHash, hubBranchLatest);
             var hubUpgradeBtn = '';
             // Distinguish two states, matching the per-hive badges:
@@ -8216,21 +8317,16 @@
             if (isCurrent) { _hubUpgrading = false; }
             var hubAutoCheck = '';
             if (_isAdmin) {
-              hubAutoCheck = ' <label style="margin-left:var(--sp-3);font-size:var(--fs-2xs);color:var(--muted);cursor:pointer;white-space:nowrap" title="Auto-upgrade hub when a new image is available"><input type="checkbox" ' + (_hubAutoUpgrade ? 'checked' : '') + ' onchange="toggleHubAutoUpgrade(this.checked)" style="vertical-align:middle;margin-right:var(--sp-1);cursor:pointer">auto</label>';
-              /* Upgrade kill switches (admin-only): checked = paused. Titles
-                 carry who/when; the dashboard banner repeats it prominently.
-                 Rendered as ONE compact bordered column so the pair reads as a
-                 control cluster, stays vertically aligned with the header row,
-                 and wraps as a unit instead of the second toggle dangling onto
-                 its own line. */
-              hubAutoCheck += ' <span style="display:inline-flex;flex-direction:column;align-items:flex-start;gap:var(--sp-1);margin-left:var(--sp-4);padding:3px 8px;border:1px solid var(--border);border-radius:var(--r);background:var(--surface);vertical-align:middle;line-height:1.2">' +
-                upgradePauseToggleHTML('hub', 'hub upgrades',
-                'Kill switch: freeze the hub on its current build — no self-upgrades (auto or manual) until resumed') +
-                upgradePauseToggleHTML('spokes', 'spoke upgrades',
-                'Kill switch: freeze ALL automatic image changes to spokes, fleet-wide, until resumed') +
-                '</span>';
+              /* Tracking off: hub auto-upgrade has no target to roll to, so
+                 the checkbox would control nothing. */
+              if (!_releaseTrackingDisabled) hubAutoCheck = ' <label style="margin-left:var(--sp-3);font-size:var(--fs-2xs);color:var(--muted);cursor:pointer;white-space:nowrap" title="Auto-upgrade hub when a new image is available"><input type="checkbox" ' + (_hubAutoUpgrade ? 'checked' : '') + ' onchange="toggleHubAutoUpgrade(this.checked)" style="vertical-align:middle;margin-right:var(--sp-1);cursor:pointer">auto</label>';
+              /* Upgrade kill switches (admin-only); see upgradePauseClusterHTML
+                 for when each one is shown. */
+              hubAutoCheck += upgradePauseClusterHTML();
             }
-            var hubStatusIcon = hubLatestUnknown
+            var hubStatusIcon = (_releaseTrackingDisabled && !hubBranchLatest)
+              ? ' ' + RELEASE_TRACKING_OFF_HTML
+              : hubLatestUnknown
               ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
               : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="hub is on latest">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="hub is behind latest ' + esc(hubBranchLatest) + '">↑</span>';
             var hubBranchPill = '<span style="display:inline-block;padding:1px 6px;border-radius:var(--r-pill);font-size:var(--fs-2xs);background:rgba(59,130,246,0.15);color:#60a5fa;border:1px solid rgba(59,130,246,0.3);margin-right:var(--sp-2)">' + esc(hubBranch) + '</span>';
@@ -8365,6 +8461,9 @@
     async function loadImagePulls() {
       var host = document.getElementById('image-pulls-spark');
       if (!host) return;
+      /* Tracking off (#20188): no release is ever recorded, so the chart
+         would say "collecting…" forever. Hide it. */
+      if (_releaseTrackingDisabled) { host.style.display = 'none'; return; }
       var data;
       try {
         var resp = await fetch('/api/hub/image-pulls');
@@ -8473,10 +8572,11 @@
         var accessMap = statusData.hives || {};
         var rows = otherHives.map(function(h) {
           var repoPath = h.org && h.primaryRepo ? h.org + '/' + h.primaryRepo : h.primaryRepo || '';
-          // Link on the hive's own GitHub instance (github_host) — a GHE repo must
-          // point at github.ibm.com, not 404 on github.com. Falls back to plain
-          // text when there is no org/repo to build a valid link from.
-          var repoHref = ghRepoURL(hiveForgeHost(h), h.org, h.primaryRepo);
+          // Link on the forge the hive's repos live on (hiveRepoURL): its own
+          // Forgejo/Gitea/GitLab instance, else github_host so a GHE repo points
+          // at github.ibm.com, not 404 on github.com. Falls back to plain text when
+          // there is no org/repo or forge base URL to build a valid link from.
+          var repoHref = hiveRepoURL(h, h.org, h.primaryRepo);
           var repoLink = repoPath ? (repoHref ? '<a href="' + repoHref + '" target="_blank" class="repo-link">' + esc(h.primaryRepo) + '</a>' : '<span class="repo-link">' + esc(h.primaryRepo) + '</span>') : '';
           var actionCell = '';
           var access = accessMap[h.id];
@@ -9261,9 +9361,10 @@
           ? healthBadge(h)
           : (h.online ? healthBadge(h) : '<span class="online-dot off" title="' + escAttr(offlineDotTitle) + '" style="cursor:help"></span>');
         var rp = repoPath(h);
-        // Link on the hive's own GitHub instance (github_host) so a GHE repo
-        // points at github.ibm.com, not 404 on github.com.
-        var repoHref = ghRepoURL(hiveForgeHost(h), h.org, h.primaryRepo);
+        // Link on the forge the hive's repos live on (hiveRepoURL): its own
+        // Forgejo/Gitea/GitLab instance, else github_host so a GHE repo points
+        // at github.ibm.com, not 404 on github.com.
+        var repoHref = hiveRepoURL(h, h.org, h.primaryRepo);
         var repoLink = rp ? (repoHref ? '<a href="' + repoHref + '" target="_blank" class="repo-link">' + esc(h.primaryRepo) + '</a>' : '<span class="repo-link">' + esc(h.primaryRepo) + '</span>') : '';
         var repoCount = (h.repos || []).length;
         var isHosted = h.hiveType === 'hosted' || (h.id && (h.id.startsWith('hosted-') || h.id.startsWith('saas-')));
@@ -9557,7 +9658,11 @@
             ', which this hive is running; ' + branchName + ' tip ' + branchTipSHA +
             ' is ' + imagePendingCount + ' ahead and its image status is ' + imagePendingStatus +
             '. Upgrade will appear after a newer immutable image is published.' + verificationNote;
-          var status = latestUnknown
+          /* Tracking off (#20188): no latest is ever coming, so neither the
+             "resolving" spinner nor a "behind" arrow is true. */
+          var status = (_releaseTrackingDisabled && !branchLatest)
+            ? ''
+            : latestUnknown
             ? ' <span style="display:inline-block;width:10px;height:10px;border:2px solid rgba(255,255,255,0.2);border-top-color:var(--hub-dashboard-accent);border-radius:50%;animation:spin 1s linear infinite;vertical-align:middle;margin-left:3px" title="Resolving latest version…"></span>'
             : channelImagePending ? '<span style="color:var(--yellow);margin-left:3px" title="' + escAttr(imagePendingTitle) + '">⏳</span>'
             : isCurrent ? '<span style="color:var(--green);margin-left:3px" title="' + escAttr('Current: running commit matches ' + behindRef + ' ' + (branchLatest || '') + stableLagNote) + '">✓</span>' : '<span style="color:var(--red);margin-left:3px" title="' + escAttr('Behind latest reachable image ' + (branchLatest || '') + ' (' + behindRef + ')') + '">↑</span>';
@@ -9639,7 +9744,7 @@
                upgrade, so a button would be a lie, but saying nothing made a
                behind hive read as current. Passive badge, no handler. */
             upgradeIcon = '<span title="' + escAttr('A newer build is available (' + branchLatest + ') — the hive owner or an admin can trigger the upgrade') + '" style="' + UPGRADE_STATE_BADGE_STYLE + '">Update available</span>';
-          } else if (latestUnknown && isHosted && h.role === 'owner') {
+          } else if (latestUnknown && !_releaseTrackingDisabled && isHosted && h.role === 'owner') {
             upgradeIcon = '<span title="Waiting for latest version…" style="font-size:0.7rem;color:var(--muted);white-space:nowrap;cursor:not-allowed;opacity:0.5">Upgrade</span>';
           }
           /* Auto-upgrade control: a single select replaces the old checkbox.
@@ -9884,7 +9989,7 @@
         return '<tr id="' + escAttr(hiveRowDomId(h.id)) + '"' + ((i % 2 === 1) ? ' class="hive-row-alt"' : '') + '>' +
           bulkCheckboxCell(h, section || 'all') +
           '<td class="hive-menu-cell" style="position:relative;width:30px;text-align:center;overflow:visible">' + ('<span role="button" tabindex="0" aria-haspopup="menu" aria-label="Manage hive" title="' + HIVE_MENU_HINT + '" onkeydown="hiveMenuKey(event)" style="cursor:pointer;font-size:1.1rem;color:var(--muted);user-select:none">⋮</span>' + pendingBadge + '<div class="hive-menu-dropdown" style="display:none;position:absolute;left:0;bottom:auto;background:#1c2128;border:1px solid #30363d;border-radius:8px;min-width:160px;padding:var(--sp-2) var(--sp-0);z-index:1000;box-shadow:0 8px 24px rgba(0,0,0,0.5)">' + menuItems.join('') + '</div>') + '</td>' +
-          '<td style="text-align:left;line-height:1.4">' + (function() { var openUrl = hiveOpenURL(h); var dh = openUrl || (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; /* rp is the repo path shown in the GitHub-icon tooltip; use the same doubling-safe path the label shows (repoDisplayLine / hiveLabel), never org + '/' + primaryRepo which doubles the owner on a github.io/GHE hive whose primaryRepo is already 'owner/repo'. */ var rp = repoName || ''; /* The icon href must resolve to a real GitHub path. When primaryRepo already carries 'owner/repo', that pair IS the owner/repo the URL needs (not org, which may be a mis-parsed host); otherwise fall back to org + primaryRepo. */ var hasRepoPath = h.primaryRepo && h.primaryRepo.indexOf('/') !== -1; var rpOwner = hasRepoPath ? h.primaryRepo.split('/')[0] : h.org; var rpName = hasRepoPath ? h.primaryRepo.split('/').slice(1).join('/') : h.primaryRepo; var rpHref = ghRepoURL(hiveForgeHost(h), rpOwner, rpName); var ghIcon = (rp && rpHref) ? '<a href="' + rpHref + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></a>' : (rp ? '<span style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="vertical-align:middle"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg></span>' : ''); /* vanityDisplay is the friendly host shown in the status bar on hover. rb is resolvedBase(h), which the hub has already overlaid with the claimed vanity_url; it is only a DISPLAY url here, never the click target — see ssoDisplayLink. Empty for a row with no vanity host, which falls back to today's /open href. Only set on rows hiveOpenURL routes through /open: a direct row's dh IS rb already. */ var vanityDisplay = openUrl && rb ? rb : ''; var link = function(text, bold) { if (dh) { return ssoDisplayLink(dh, vanityDisplay, text, bold ? 'hive-name-link' : 'hive-sub-link'); } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; /* repoLink wraps the second line (the org/repo) in a link to the ACTUAL FORGE REPO (github.com / GHE host), NOT the spoke dashboard: the top line already opens the dashboard, so the repo path should take an operator to the code. rpHref is the same doubling-safe forge URL the GitHub icon uses (ghRepoURL(hiveForgeHost(h), rpOwner, rpName)); when it is empty (BYO/mis-parsed host) fall back to plain non-link text, never to the dashboard. */ var repoLink = function(text) { if (rpHref) { return '<a href="' + rpHref + '" target="_blank" rel="noopener" class="hive-sub-link" title="Open repository on ' + escAttr((hiveForgeHost(h) || 'github.com')) + '">' + esc(text) + '</a>'; } return '<span style="color:#6b7280;font-weight:400">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true) + heartbeatHeart(h) + nameEditAffordance(h); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Forge egress broken, pod healthy: the labelled pill replaces the stale-advisory pill and the github_auth entry (failingChecks already drops it), but any other failing check still renders beside it. Not re-gated on h.online here because the hub already blanks forgeUnreachableLabel for offline hives (forgeUnreachableLabel in Go), so the rule cannot drift between the API and this row. */ var fuPill = forgeUnreachableSummary(h); /* Advisory-staleness pill sits right beside the failing-check pill: both are "something is quietly wrong with this working hive" signals, and advisoryStaleSummary already self-suppresses (empty string) unless the hub flagged the digest stale, so unaffected rows are pixel-identical. */ var advPill = h.online && !fuPill ? advisoryStaleSummary(h) : ''; /* Advisory finding-count pill rides beside the staleness pill and carries the "(top N)" marker when the spoke capped its digest. */ var advCountPill = h.online ? advisoryFindingsSummary(h) : ''; /* Dead-link pill is deliberately NOT gated on h.online: the entire point is a hive that IS online and heartbeating while its public URL is broken, so gating it the way the other pills are gated would hide exactly the case it exists to surface. */ var dlPill = deadLinkSummary(h); var privatePill = privateURLSummary(h); /* Inference-auth pill: like the dead-link pill it is NOT gated on h.online, because the hive being online while every inference call 401s is exactly the case it surfaces. */ var iaPill = inferenceAuthSummary(h); var rsPill = restartStormSummary(h); /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + repoLink(repoName) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fuPill + fcPill + advPill + advCountPill + dlPill + privatePill + iaPill + rsPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fuPill + fcPill + advPill + advCountPill + dlPill + privatePill + iaPill + rsPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:var(--sp-2);padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
+          '<td style="text-align:left;line-height:1.4">' + (function() { var openUrl = hiveOpenURL(h); var dh = openUrl || (rb ? esc(rb) : ''); /* Label derived from the PROJECT (org + primary repo), not by splitting h.name — see hiveLabel. */ var label = hiveLabel(h); var orgName = label.line1; var repoName = label.line2; /* rp is the repo path shown in the GitHub-icon tooltip; use the same doubling-safe path the label shows (repoDisplayLine / hiveLabel), never org + '/' + primaryRepo which doubles the owner on a github.io/GHE hive whose primaryRepo is already 'owner/repo'. */ var rp = repoName || ''; /* The icon href must resolve to a real GitHub path. When primaryRepo already carries 'owner/repo', that pair IS the owner/repo the URL needs (not org, which may be a mis-parsed host); otherwise fall back to org + primaryRepo. */ var hasRepoPath = h.primaryRepo && h.primaryRepo.indexOf('/') !== -1; var rpOwner = hasRepoPath ? h.primaryRepo.split('/')[0] : h.org; var rpName = hasRepoPath ? h.primaryRepo.split('/').slice(1).join('/') : h.primaryRepo; var rpHref = hiveRepoURL(h, rpOwner, rpName); var ghIcon = (rp && rpHref) ? '<a href="' + rpHref + '" target="_blank" style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '">' + hiveRepoIconSVG(h) + '</a>' : (rp ? '<span style="opacity:0.5;vertical-align:middle" title="' + esc(rp) + '">' + hiveRepoIconSVG(h) + '</span>' : ''); /* vanityDisplay is the friendly host shown in the status bar on hover. rb is resolvedBase(h), which the hub has already overlaid with the claimed vanity_url; it is only a DISPLAY url here, never the click target — see ssoDisplayLink. Empty for a row with no vanity host, which falls back to today's /open href. Only set on rows hiveOpenURL routes through /open: a direct row's dh IS rb already. */ var vanityDisplay = openUrl && rb ? rb : ''; var link = function(text, bold) { if (dh) { return ssoDisplayLink(dh, vanityDisplay, text, bold ? 'hive-name-link' : 'hive-sub-link'); } var s = bold ? 'font-weight:700;color:inherit' : 'color:#6b7280;font-weight:400'; return '<span style="' + s + '">' + esc(text) + '</span>'; }; /* repoLink wraps the second line (the org/repo) in a link to the ACTUAL FORGE REPO (github.com / GHE host), NOT the spoke dashboard: the top line already opens the dashboard, so the repo path should take an operator to the code. rpHref is the same doubling-safe forge URL the repo icon uses (hiveRepoURL(h, rpOwner, rpName)); when it is empty (BYO/mis-parsed host) fall back to plain non-link text, never to the dashboard. */ var repoLink = function(text) { if (rpHref) { return '<a href="' + rpHref + '" target="_blank" rel="noopener" class="hive-sub-link" title="Open repository on ' + escAttr((hiveForgeHost(h) || 'github.com')) + '">' + esc(text) + '</a>'; } return '<span style="color:#6b7280;font-weight:400">' + esc(text) + '</span>'; }; var line1 = dot + ' ' + link(orgName, true) + heartbeatHeart(h) + nameEditAffordance(h); var fcPill = h.online ? failingCheckSummary(h) : ''; /* Forge egress broken, pod healthy: the labelled pill replaces the stale-advisory pill and the github_auth entry (failingChecks already drops it), but any other failing check still renders beside it. Not re-gated on h.online here because the hub already blanks forgeUnreachableLabel for offline hives (forgeUnreachableLabel in Go), so the rule cannot drift between the API and this row. */ var fuPill = forgeUnreachableSummary(h); /* Advisory-staleness pill sits right beside the failing-check pill: both are "something is quietly wrong with this working hive" signals, and advisoryStaleSummary already self-suppresses (empty string) unless the hub flagged the digest stale, so unaffected rows are pixel-identical. */ var advPill = h.online && !fuPill ? advisoryStaleSummary(h) : ''; /* Advisory finding-count pill rides beside the staleness pill and carries the "(top N)" marker when the spoke capped its digest. */ var advCountPill = h.online ? advisoryFindingsSummary(h) : ''; /* Dead-link pill is deliberately NOT gated on h.online: the entire point is a hive that IS online and heartbeating while its public URL is broken, so gating it the way the other pills are gated would hide exactly the case it exists to surface. */ var dlPill = deadLinkSummary(h); var privatePill = privateURLSummary(h); /* Inference-auth pill: like the dead-link pill it is NOT gated on h.online, because the hive being online while every inference call 401s is exactly the case it surfaces. */ var iaPill = inferenceAuthSummary(h); var rsPill = restartStormSummary(h); /* Inline access faces sit on the name cell's second line, immediately after this row's own role badge: the badge already answers "what am I on this hive", so the co-members read as the natural continuation of the same thought, in the one cell that is left-aligned and has room to grow. It also keeps them out of the 16 dense metric columns, none of which is about people. Empty string when the viewer is the only member, so those rows are pixel-identical to today. */ var accessFaces = hiveAccessAvatars(h); /* Keyed off repoName, not orgName: line 1 now always carries SOME identity, so the presence of a second line is decided purely by whether there is a repo to put on it. Without a repo the row still shows the GitHub icon, role badge, faces and failing-check pill on the compact variant. */ var line2 = repoName ? '<div style="padding-left:18px;font-size:0.8rem">' + repoLink(repoName) + ' ' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fuPill + fcPill + advPill + advCountPill + dlPill + privatePill + iaPill + rsPill + '</div>' : '<div style="padding-left:18px">' + ghIcon + ' ' + roleBadge(h.role) + accessFaces + fuPill + fcPill + advPill + advCountPill + dlPill + privatePill + iaPill + rsPill + '</div>'; var line3 = pendingPill ? '<div style="margin-top:var(--sp-2);padding-left:18px">' + pendingPill + '</div>' : ''; return line1 + line2 + line3; })() + '</td>' +
           '<td>' + locationCell + '</td>' +
           '<td style="white-space:nowrap">' + uptimeCell(h) + '</td>' +
           /* No white-space:nowrap on the cell itself: the stacked lines each
@@ -9905,8 +10010,8 @@
           '<td class="repos-cell" title="' + esc((h.repos || []).join('\n')) + '" style="cursor:' + (repoCount > 0 ? 'help' : 'default') + '">' +
             '<div style="' + STACKED_CELL_STYLE + '">' +
               '<div style="' + STACKED_LINE_STYLE + '">' + repoCount + '</div>' +
-              '<div style="' + STACKED_LINE_STYLE + '" title="GitHub instance these repos live on">' + githubHostPill(hiveForgeHost(h)) + '</div>' +
-              '<div class="repos-as" style="' + STACKED_LINE_STYLE + ';white-space:normal;overflow-wrap:anywhere;color:var(--muted)" title="GitHub identity this hive opens PRs/commits as (— = no GitHub App installed yet)">as: ' + esc(h.aiAuthorEffective || '—') + '</div>' +
+              '<div style="' + STACKED_LINE_STYLE + '" title="' + escAttr(hiveForgeLabel(h) + ' instance these repos live on') + '">' + hiveForgePill(h) + '</div>' +
+              '<div class="repos-as" style="' + STACKED_LINE_STYLE + ';white-space:normal;overflow-wrap:anywhere;color:var(--muted)" title="' + escAttr(hiveForgeKind(h) ? hiveForgeLabel(h) + ' user this hive opens PRs/commits as (— = no login configured: forgejo.login or project.ai_author)' : 'GitHub identity this hive opens PRs/commits as (— = no GitHub App installed yet)') + '">as: ' + esc(hiveAuthorIdentity(h) || '—') + '</div>' +
             '</div>' +
           '</td>' +
           /* MATURITY: the ACMM level badge and the Journey status stacked into
@@ -10400,6 +10505,39 @@
         '<button class="hv-btn btn-primary" onclick="toggleUpgradePause(\'' + target + '\', ' + (sw.paused ? 'false' : 'true') + ')" style="' + btnStyle + '" aria-label="' + escAttr((sw.paused ? 'Resume ' : 'Pause ') + label) + '">' + icon + '</button>' +
         '<span style="font-size:var(--fs-2xs);color:' + (sw.paused ? 'var(--red)' : 'var(--muted)') + ';font-weight:' + (sw.paused ? '700' : '400') + '">' + esc(label) + '</span>' +
         '</span>';
+    }
+    /* upgradePauseClusterHTML renders the hub-header kill-switch pair:
+       checked = paused, titles carry who/when, and the dashboard banner
+       repeats it prominently. ONE compact bordered column so the pair reads
+       as a control cluster, stays aligned with the header row, and wraps as a
+       unit instead of the second toggle dangling onto its own line.
+
+       A switch is only shown where it controls something (#20253):
+       - hub upgrades: hidden with release tracking off. The hub has no
+         target to roll to, and the Upgrade button and auto checkbox are
+         already gone (#20188), so there is no self-upgrade to freeze.
+       - spoke upgrades: hidden on a self-hosted hub (HIVE_HUB_MODE), which
+         provisions no hives and so changes no spoke images (#20199). With
+         tracking off on a hosted hub it stays: it still refuses branch
+         switches and digest unpins on provisioned hives.
+       A switch that is currently PAUSED is always shown, so an admin can
+       resume a pause set before the hub's configuration changed. With
+       neither switch shown the bordered cluster is dropped too. */
+    function upgradePauseClusterHTML() {
+      var hubPaused = !!(_upgradePause && _upgradePause.hub && _upgradePause.hub.paused);
+      var spokesPaused = !!(_upgradePause && _upgradePause.spokes && _upgradePause.spokes.paused);
+      var inner = '';
+      if (!_releaseTrackingDisabled || hubPaused) {
+        inner += upgradePauseToggleHTML('hub', 'hub upgrades',
+          'Kill switch: freeze the hub on its current build — no self-upgrades (auto or manual) until resumed');
+      }
+      if (!_hubSelfHosted || spokesPaused) {
+        inner += upgradePauseToggleHTML('spokes', 'spoke upgrades',
+          'Kill switch: freeze ALL automatic image changes to spokes, fleet-wide, until resumed');
+      }
+      if (!inner) return '';
+      return ' <span style="display:inline-flex;flex-direction:column;align-items:flex-start;gap:var(--sp-1);margin-left:var(--sp-4);padding:3px 8px;border:1px solid var(--border);border-radius:var(--r);background:var(--surface);vertical-align:middle;line-height:1.2">' +
+        inner + '</span>';
     }
     async function toggleUpgradePause(target, paused) {
       try {
@@ -11317,9 +11455,14 @@
          two instances are distinguishable at a glance without reading the
          text. An absent host is treated as public, matching the label below. */
       var isGHE = !!githubHost && githubHost !== PAST_REQUESTS_DEFAULT_GITHUB_HOST;
-      var border = isGHE ? 'var(--blue);color:var(--blue)' : 'var(--green);color:var(--green)';
-      return '<span style="font-size:var(--fs-xs);padding:1px 7px;border-radius:var(--r-pill);border:1px solid ' + border + '">' +
-        esc(githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST) + '</span>';
+      return forgeHostPillHTML(githubHost || PAST_REQUESTS_DEFAULT_GITHUB_HOST, isGHE ? 'var(--blue)' : 'var(--green)', '');
+    }
+
+    // forgeHostPillHTML is the outlined host pill shared by githubHostPill and
+    // hiveForgePill: text in colour (a var(--…) token), with an optional title.
+    function forgeHostPillHTML(text, colour, title) {
+      return '<span' + (title ? ' title="' + escAttr(title) + '"' : '') + ' style="font-size:var(--fs-xs);padding:1px 7px;border-radius:var(--r-pill);border:1px solid ' + colour + ';color:' + colour + '">' +
+        esc(text) + '</span>';
     }
 
     // otherHivesCell summarises the rest of a requester's fleet: which other

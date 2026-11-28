@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/factcheck"
 	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/reviewgate"
 )
 
 // ReviewRequestDir is where agents drop PR-review requests. An agent that wants
@@ -466,6 +467,36 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 				slog.Int("number", req.Number), slog.String("label", blocked))
 		}
 	}
+	// The review swarm's approval is gated like every other approval path
+	// (hivecommons/hive#20067): an open change request from a writer turns
+	// it into the same suppressed verdict or COMMENT a sentinel label does.
+	if apiEvent == "APPROVE" {
+		if gateErr := c.gateChangesRequested(ctx, req.Repo, req.Number, ChangesRequestedGateActionApprove, PRAuditPathRelay,
+			changesRequestedGateOptions{supersedesOwn: true}); gateErr != nil {
+			if errors.Is(gateErr, reviewgate.ErrUnreadable) {
+				// A failed review read is transient: retry the request
+				// rather than downgrade the verdict for good.
+				c.retryOrQuarantineReview(path, req, gateErr, nowFn)
+				return
+			}
+			if strings.TrimSpace(req.Body) == "" {
+				c.recordReviewEvidence(ctx, req, nil, nil, nowFn())
+				c.writeReviewResult(path, ReviewResponse{
+					OK:     true,
+					Number: req.Number,
+					State:  ReviewEventRecordVerdict,
+					Note:   "approval suppressed: " + gateErr.Error(),
+					At:     nowFn().UTC().Format(time.RFC3339),
+				})
+				_ = os.Remove(path)
+				c.reviewRetries.clear(path)
+				return
+			}
+			apiEvent, state, _ = reviewEventToAPI("comment")
+			req.Report = ""
+			sentinelBlockNote = "approval downgraded to COMMENT: " + gateErr.Error()
+		}
+	}
 
 	// COMMENT-only on contributor PRs (hivecommons/hive#9590). The hive
 	// reviews everyone's work but adjudicates only its own: an APPROVE or
@@ -590,6 +621,14 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 		reviewReq.Body = gh.Ptr(body)
 	}
 	reviewReq.Comments = draftReviewComments(anchored, func(text string) string { return c.relayBody(req.Agent, text) })
+	if len(reviewReq.Comments) > 0 {
+		// Mark each thread with its finding's severity, so a merge lane
+		// refused for unresolved conversations can tell the hive's own
+		// non-blocking notes from blocking findings without reading prose
+		// (review_own_threads.go).
+		reports, _ := review.ValidateReportsFor([]byte(strings.TrimSpace(req.Report)), c.perspectives)
+		stampInlineCommentSeverity(reviewReq.Comments, anchored, reports)
+	}
 	resp := ReviewResponse{At: nowFn().UTC().Format(time.RFC3339)}
 	// Canary-gated like CreateIssue/CreatePR/CreateIssueComment
 	// (kubestellar/hive#4960): a PR review body is agent-supplied text posted

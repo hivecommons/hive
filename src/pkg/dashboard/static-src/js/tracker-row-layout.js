@@ -71,6 +71,7 @@
       const canonical = /^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/pull\/\d+(?:[?#].*)?$/.exec(String(lp.url || ''));
       return { repo: canonical ? canonical[1] : (lp.repo || issue.repo), number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
+        review_conversation_blocker: lp.review_conversation_blocker || '',
         state: lp.state || '', terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '', preparation: lp.preparation || null, human_attention: lp.human_attention || null,
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '',

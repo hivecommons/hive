@@ -1312,8 +1312,14 @@ func (s *HubServer) buildMyHivesResponse(username string, queryValues url.Values
 		"candidate_bypasses_schedule": !candidateAutoUpgradeScheduleOverride(),
 		"channel_targets":             channelTargets,
 		"stable_promotion":            stablePromotion,
-		"hub_auto_upgrade":            isHubAutoUpgrade(),
-		"hub_upgrade_state":           s.hubUpgradeState(),
+		// HIVE_HUB_RELEASE_TRACKING_DISABLED (#20188): with tracking off the
+		// latest image is never known, so the dashboard must not render its
+		// "waiting for latest version" Upgrade button and spinner, the auto
+		// checkbox, the channel block or the image-pulls line, whose wait
+		// would never end. It shows "Release tracking is off" instead.
+		"release_tracking_disabled": releaseTrackingDisabled(),
+		"hub_auto_upgrade":          isHubAutoUpgrade(),
+		"hub_upgrade_state":         s.hubUpgradeState(),
 		// Kill-switch state rides the top-level payload (NOT the hive-row
 		// shape, so no HIVES_CACHE_VERSION bump): the dashboard shows a
 		// prominent banner while anything is paused, and admins get toggles.

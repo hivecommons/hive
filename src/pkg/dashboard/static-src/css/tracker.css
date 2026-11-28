@@ -528,6 +528,7 @@
     .ham-seg.ham-seg.active.ham-settled-current { background: var(--surface-3); color: var(--text); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
+    .ham-current-stage.ham-review-conversation-blocker { display: block; }
     .ham-active-ico { display: none; }
     .cue-working .ham-seg.active:not(.cap) .ham-active-ico { display: inline-block; margin-right: var(--sp-1); }
     .ham-active-ico-wrap { display: contents; }

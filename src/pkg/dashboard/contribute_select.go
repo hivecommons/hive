@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -250,6 +251,7 @@ func (h *ContributeWSHub) rollbackAssignment(c *ContributorConnection, taskID st
 // that do not know a key can print it as is.
 const (
 	filterDisabledRepo     = "disabled_repo"
+	filterUnsupportedForge = "unsupported_forge"
 	filterOperatorHold     = "operator_hold"
 	filterCooldown         = "cooldown"
 	filterNoWorkVerdict    = "no_work_verdict"
@@ -799,7 +801,25 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			filtered[filterDisabledRepo] += len(repo.ActionableIssues)
 			continue
 		}
-		if !repoScope.allows(repoScopeID(repoScopeDefaultForge, scopeHost, repo.Full)) {
+		onGitHub := h.server.deps == nil || h.server.deps.Config.RepoOnGitHub(repo.Full)
+		inScope := repoScope.allows(repoScopeID(repoScopeDefaultForge, scopeHost, repo.Full))
+		if !inScope && !onGitHub {
+			cfg := h.server.deps.Config
+			forge := cfg.ForgeKindForRepo(repo.Full)
+			if u, err := url.Parse(cfg.ForgeURLForRepo(repo.Full)); err == nil && u.Host != "" {
+				inScope = repoScope.allows(repoScopeID(forge, u.Host, repo.Full))
+				if !inScope && forge == config.ForgeForgejo {
+					inScope = repoScope.allows(repoScopeID(config.ForgeGitea, u.Host, repo.Full))
+				}
+			}
+		}
+		if !inScope {
+			continue
+		}
+		// Contributor credentials are minted by the GitHub App.
+		if !onGitHub {
+			issuesSeen += len(repo.ActionableIssues)
+			filtered[filterUnsupportedForge] += len(repo.ActionableIssues)
 			continue
 		}
 		if h.repoUnmintable(repo.Full, time.Now()) {
@@ -1135,7 +1155,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			return h.taskUnavailable(taskUnavailableRepoUnmintable)
 		}
 		if repoScope.restricts() {
-			return h.taskUnavailable(taskUnavailableNoSelectedWork)
+			msg := h.taskUnavailable(taskUnavailableNoSelectedWork)
+			if filtered[filterUnsupportedForge] > 0 {
+				msg.Filtered = map[string]int{filterUnsupportedForge: filtered[filterUnsupportedForge]}
+			}
+			return msg
 		}
 		if issuesSeen == 0 {
 			return h.taskUnavailable(taskUnavailableQueueEmpty)

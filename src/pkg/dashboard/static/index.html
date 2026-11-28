@@ -1927,6 +1927,7 @@
     .ham-seg.ham-seg.active.ham-settled-current { background: var(--surface-3); color: var(--text); }
     .ham-detour { white-space: normal; overflow-wrap: anywhere; }
     .ham-current-stage { display: none; margin: 0; font-size: var(--fs-xs); color: var(--muted); overflow-wrap: anywhere; }
+    .ham-current-stage.ham-review-conversation-blocker { display: block; }
     .ham-active-ico { display: none; }
     .cue-working .ham-seg.active:not(.cap) .ham-active-ico { display: inline-block; margin-right: var(--sp-1); }
     .ham-active-ico-wrap { display: contents; }
@@ -20776,10 +20777,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // full-width caption so detours and the next actor never need a hover.
     function stageTrackerCurrentStageHtml(item, stages, range, nowMs) {
       if (item.superseded && item.superseded.closer_pr) return `<p class="ham-current-stage">${esc(stageTrackerHeadline(item) + (item.superseded.keep_reason ? " · " + item.superseded.keep_reason : ""))}</p>`;
+      const blocker = item.review_conversation_blocker ? `<p class="ham-current-stage ham-review-conversation-blocker">${esc('Blocked: ' + item.review_conversation_blocker)}</p>` : '';
       const active = stageTrackerSegments(item, stages, nowMs).find(sg => sg.state === 'active'
         && (!range || range.from == null || sg.number >= range.from)
         && (!range || range.to == null || sg.number <= range.to));
-      if (!active) return '';
+      if (!active) return blocker;
       const actor = active.cap || active.number === 50 ? '' : stageTrackerActorTip(item);
       const by = active.cap && item.terminal_merge && typeof stageTrackerMergedByText === 'function' ? stageTrackerMergedByText(item.merged_by) : '';
       const regressed = stageTrackerRegressionText(item, Date.now());
@@ -20806,7 +20808,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const moving = a.active || ['running', 'reviewing', 'adjudicating'].includes(a.state);
         return (a.caption || noData).replace(/^(CI|Review) unknown(?= ·|$)/, noData) + (!Number.isFinite(observed) ? ' · observation time unknown' : !fresh ? ' · last observed ' + stageTrackerAgoWord(observed, clock) + (moving ? ' · refreshing' : '') : '');
       }).join(' · ') : '';
-      return `<p class="ham-current-stage">${esc(text + (tracks ? ' · ' + tracks : ''))}</p>`;
+      return `<p class="ham-current-stage">${esc(text + (tracks ? ' · ' + tracks : ''))}</p>` + blocker;
     }
 
     // Phone progress pill (hivecommons/hive#17160): "Step 7/9 · Merge queue ·
@@ -21952,6 +21954,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const canonical = /^https?:\/\/[^/]+\/([^/]+\/[^/]+)\/pull\/\d+(?:[?#].*)?$/.exec(String(lp.url || ''));
       return { repo: canonical ? canonical[1] : (lp.repo || issue.repo), number: lp.number, kind: 'pr', title: lp.title || '', url: lp.url || '', author: lp.author || '', author_kind: lp.author_kind || '',
         ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
+        review_conversation_blocker: lp.review_conversation_blocker || '',
         state: lp.state || '', terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
         stage: lp.stage || 0, stage_since: lp.stage_since || '', stage_slug: lp.stage_slug || '', modifiers: lp.modifiers || [], deferred_modifiers: lp.deferred_modifiers || [], caption: lp.caption || '', reason: lp.reason || '', preparation: lp.preparation || null, human_attention: lp.human_attention || null,
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '',
@@ -27122,8 +27125,17 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         pending.push(pend);
         stageTrackerClearActionFailure(it);
         try {
-          const r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
+          let r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
           let data = await r.json().catch(() => ({}));
+          // An open change request (hivecommons/hive#20067): the server
+          // names it first; the decision proceeds only with a reason the
+          // operator types, which the hive audits.
+          if (r.status === 409 && data && data.needs_override_reason === true && typeof hivePrompt === 'function') {
+            const reason = await hivePrompt({ title: 'Open change request on ' + stageTrackerRefOf(it), label: data.error || 'This pull request has an open change request.', placeholder: 'Reason for proceeding anyway', confirmLabel: 'Override and continue', validate: v => v ? true : 'A reason is required to override.' });
+            if (!reason) throw new Error(data.error || 'open change request');
+            r = await fetch(req.url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({}, req.body, { override_reason: reason, override_review_ids: (data.change_requests || []).map(c => c.review_id) })) });
+            data = await r.json().catch(() => ({}));
+          }
           if (!r.ok) throw new Error(stageTrackerActionError(r.status, data));
           if (id === 'accept-triage' && data.ok !== true) throw new Error(data.error || 'The server did not confirm the triage handoff');
           if (id === 'decide:close-issue' && data.status !== 'closed' && data.status !== 'refused') throw new Error(data.error || 'The server did not confirm that the issue closed');

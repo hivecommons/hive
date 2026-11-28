@@ -11,6 +11,63 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.13)
+
+### Fixed
+
+- The hub dashboard header no longer shows upgrade kill switches that control nothing ([#20253](https://github.com/hivecommons/hive/issues/20253)). With `HIVE_HUB_RELEASE_TRACKING_DISABLED` set the `hub upgrades` switch is hidden, since the hub has no target to roll to and its Upgrade button and `auto` checkbox are already gone; with `HIVE_HUB_MODE=self-hosted` the `spoke upgrades` switch is hidden, since the hub provisions no hives. A switch that is currently paused stays visible so an admin can resume it, and with neither switch shown the bordered cluster is dropped.
+
+## 2026-11-28 (v5.384.12)
+
+### Fixed
+
+- Exclude unsupported non-GitHub repositories from contributor catalogs and issue assignments.
+
+## 2026-11-28 (v5.384.11)
+
+### Changed
+
+- images: bump pi 1.6.0 -> 1.7.0 (#20247)
+
+## 2026-11-28 (v5.384.10)
+
+### Fixed
+
+- The hive's own non-blocking review threads no longer block a person's merge on a base that requires conversation resolution. [#19421](https://github.com/hivecommons/hive/pull/19421) resolved them only after GitHub refused a merge the hive attempted, so a PR the hive hands to a person at `stage/090-ready-for-human-merge` (a human-merge path, a workflow fence) kept the hive's `low` notes open, GitHub refused the person's merge with "All comments must be resolved", and they had to reply to and resolve each note by hand ([projectbluefin/actions#779](https://github.com/projectbluefin/actions/pull/779), [#783](https://github.com/projectbluefin/actions/pull/783)). When the stage pass writes 090 for a head with no hold or sentinel gate, and the write-back gate admits it (under the 090 / 085 entry comment's `needs_decision_comment` kind, so a `labels-only` repository gets nothing), it reads whether the base requires conversation resolution (a ruleset `pull_request` rule's `required_review_thread_resolution`, or classic protection's `required_conversation_resolution`, cached per repository and branch for 10 minutes, or an hour after a 403) and, only when it does and every unresolved thread is the hive's own and marked non-blocking, replies once in each thread to say why and then resolves it, once per head, with the same rules as the merge-refusal path, audited with `trigger=ready-for-human-merge`. With quiet notifications the threads are resolved without replies. A rule that is not required or cannot be read, any thread a person must look at, a paused repository and a held 090 resolve nothing; the merge-refusal path is unchanged.
+
+## 2026-11-28 (v5.384.9)
+
+### Fixed
+
+- A PR on a repository that requires every review conversation to be resolved no longer sits unmerged forever behind the hive's own non-blocking review comments. Since the reviewer posts each line finding as its own thread ([#18531](https://github.com/hivecommons/hive/issues/18531)), nothing resolved those threads, so GitHub refused every merge-queue enqueue with "All comments must be resolved"; the hive logged it as "effect outcome uncertain, reconciliation required" and retried it on every sweep (projectbluefin/gutenprint-printer-app#254, projectbluefin/ps-printer-app#221, 2026-11-20). The automerge lanes (self-authored, trusted-bot, trusted-author, `/lgtm` queued and contributor, on the native-queue enqueue, the direct merge and the serialized lane) now name that refusal. When every open thread on the PR is the hive's own and marked non-blocking, the lane resolves them and the next pass merges. A person's thread, another bot's thread, a hive thread someone replied in and a hive finding not marked non-blocking (outdated or not) are never resolved: the PR parks at `085-needs-decision` with the new reason `unresolved-review-threads`, and the lane asks GitHub again only after a new push or 30 minutes. A refusal nothing explains waits at `review-threads-pending` (not a ready merge-train front) and is retried every 5 minutes, parking after three tries. A hive that wants none of its own threads resolved sets `review.severity.block_at: P3`: every finding then blocks, so every such refusal parks at 085. The review relay now marks each inline comment with the severity of the verdict finding it matches (or `unmatched`, read as blocking), so the lanes do not have to read the comment's prose. The agent `hive-merge` relay is unchanged.
+
+## 2026-11-28 (v5.384.8)
+
+### Fixed
+
+- **The hive no longer approves, labels or merges a pull request with an open change request** ([#20067](https://github.com/hivecommons/hive/issues/20067)). One shared check (`pkg/reviewgate`) now runs before every path that approves a PR, writes `lgtm` / `approved`, queues it or merges it: the auto-merge sweep and every lane it runs (trusted, contributor, queued, ACMM L6 merge on green), the merge train and GitHub's native merge queue, the review swarm's approval, the agents' label relay, the hive-merge relay, the dashboard's Approve / Merge now / Queue merge / Let hive decide, and the Forgejo merge and approval-label paths. A reviewer with write access or above whose latest review is `CHANGES_REQUESTED` blocks, following GitHub's rules: a comment does not clear it, a change request on an older head still counts, and it lifts when that reviewer approves or the review is dismissed. A change request from a non-writer does not block, and a failed review read refuses rather than merging. Each gated attempt is logged and audited as `changes-requested-gate` with the reviewer and the review ID. An operator's explicit dashboard decision can still proceed, but the dashboard names the open change request first and asks for a reason, which is audited.
+- **The hive's own `lgtm` / `approved` label writes and its merge-train lane now respect the sentinel alert** ([#20067](https://github.com/hivecommons/hive/issues/20067)). An approval label written through the hive (its client or the agents' label relay) is refused while the configured sentinel label is on the PR, the same block the queue approval and the review swarm's approval already applied, and the queued (merge-train) lane now stops on a sentinel alert that lands after a merger queued the PR. Tide does not know about the sentinel label, so a person or tool adding `lgtm` + `approved` outside the hive can still merge such a PR until the Prow config adds it to Tide's `missingLabels`.
+- The hub no longer shows a Forgejo, Gitea or GitLab hive as a GitHub hive: the heartbeat now reports the primary repo's forge kind, instance URL and the hive's forge login (`forgejo.login`, else `project.ai_author`), and the hive row builds its Location pill, repo link, repo icon and `as:` line from them instead of linking to a `github.com` repository that does not exist (#20181).
+
+## 2026-11-28 (v5.384.7)
+
+### Fixed
+
+- The Activity Monitor now shows when unresolved review threads block a GitHub PR. When write-back policy permits, the Hive status comment links to the threads on Hive-authored PRs and clears the notice when the blocker is gone. On v5, resolve the Hive reviewer's own threads by hand ([#20165](https://github.com/hivecommons/hive/issues/20165)).
+- With `HIVE_HUB_RELEASE_TRACKING_DISABLED=true` the dashboard now shows "Release tracking is off" instead of a disabled Upgrade button and spinner that waited forever, and hides the hub `auto` checkbox, the all-"unknown" channel block and the "collecting…" image-pulls line (#20188).
+
+## 2026-11-28 (v5.384.6)
+
+### Fixed
+
+- Stop warning every cycle and flagging a stale advisory on the hub when a hive's primary repo is on Forgejo, Gitea or GitLab and `governor.advisory.target` is `github`: the digest has no GitHub issue there, so it is kept on the dashboard and not posted ([#20226](https://github.com/hivecommons/hive/issues/20226)).
+
+## 2026-11-28 (v5.384.5)
+
+### Fixed
+
+- Name `hive-clone` and `hive-push-branch` instead of `hive-gh` in the kick text on a hive whose repos are all on Forgejo, so an agent learns how to get a checkout ([#20222](https://github.com/hivecommons/hive/issues/20222)).
+
 ## 2026-11-28 (v5.384.4)
 
 ### Fixed

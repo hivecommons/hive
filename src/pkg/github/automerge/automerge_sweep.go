@@ -346,6 +346,12 @@ type Engine struct {
 	carriedFenceDropMu     sync.Mutex
 	carriedFenceDropLogged map[string]bool
 
+	// readyOwnThreads remembers the PR heads whose own review threads the
+	// stage pass already asked to resolve at 090, so each head is asked
+	// once (automerge_review_threads_ready.go).
+	readyOwnThreadsMu sync.Mutex
+	readyOwnThreads   map[string]bool
+
 	humanMergePathsMu sync.RWMutex
 	humanMergePaths   func(repo string) []string
 

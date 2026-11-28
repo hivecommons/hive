@@ -12,6 +12,23 @@ conversations by hand.
 The hive now reconciles those threads itself, for every PR it opened, with no
 per-agent prompt rule. Three pieces, and one config key that turns them on.
 
+## Conversation blockers on v5
+
+When GitHub reports a PR as blocked and its base branch requires conversation
+resolution, the Activity Monitor PR row shows the number of unresolved review
+threads. The count includes threads GitHub still marks unresolved after the
+lines they refer to become outdated. Other merge rules may also be unmet.
+The Hive status comment can link to the blocking threads on Hive-authored PRs
+when repository pause and write-back policy permit the notice.
+Hive updates that section in place when the blocker changes and removes it
+once GitHub confirms the PR is no longer blocked on conversations. An
+incomplete read leaves the last notice intact.
+
+On v5, `classification.review_bots` only reconciles threads opened by configured
+external review bots. It does not resolve the Hive reviewer's own threads, even
+non-blocking notes. Address those threads and resolve them on GitHub by hand;
+the blocker line disappears after the next refresh once they are all resolved.
+
 ## Which PRs qualify
 
 A PR is the hive's to follow up on — *hive-mediated* — when **either** of two
@@ -262,3 +279,172 @@ logins configured, the kick has no bot section.
   path, and never resolved — including on a PR whose *author* is a human
   because a hive agent opened it on their credentials: the guard looks at who
   opened the thread, not who opened the PR.
+
+## The hive's own review threads
+
+Since [#18531](https://github.com/hivecommons/hive/issues/18531) the hive's
+reviewer posts each finding that points at a changed line as its own inline
+review thread, opened by the App bot. Everything above acts only on threads a
+configured review bot opened, so nothing resolved the hive's own threads. On a
+repository that requires conversation resolution, one open "non-blocking, you
+can ignore it" note from the hive held the merge forever: GitHub refused every
+merge-queue enqueue with "All comments must be resolved", and the lane retried
+on every sweep (projectbluefin/gutenprint-printer-app#254 and
+projectbluefin/ps-printer-app#221, 2026-11-20).
+
+The hive now resolves its own non-blocking notes itself, at two points, both
+only on a repository that requires conversation resolution:
+
+- **after GitHub refuses a merge the hive attempted because review
+  conversations are unresolved**, once the merge lane's own gates passed;
+- **when the stage pass hands a head to a person at
+  `090-ready-for-human-merge`**, once per head. The hive never attempts that
+  merge itself (a human-merge path, a workflow fence), so without this the person's merge was refused for the
+  hive's own notes and they had to reply to and resolve each one by hand
+  (projectbluefin/actions#779 and #783, 2026-11-25). See
+  [At a person's merge](#at-a-persons-merge) below.
+
+A reviewer's verdict never resolves anything by itself, and nothing else (a
+person's thread, a blocking finding) is ever resolved; see the limits below.
+
+**Opting out.** There is no separate switch. A hive that wants none of its
+own threads resolved sets `review.severity.block_at: P3` (every finding
+blocks): then no hive thread is non-blocking, and every such refusal parks
+the PR at `085-needs-decision` with `unresolved-review-threads` for a person.
+`block_at` is hive-wide and is not only about threads: at `P3` every info and
+low finding also blocks the hive's merges, and it lowers
+`classification.review_bots.min_priority` when that key is not set, so external
+bots' P3 findings are routed too.
+
+**Which merge paths.** The automerge sweep lanes - self-authored (including
+the trusted-bot lane), trusted-author, the `/lgtm` queued lane and the
+contributor lane - on both of their merge calls: the native merge-queue
+enqueue (GraphQL `UNPROCESSABLE`, "Pull request All comments must be
+resolved.") and the direct REST merge (405 "Repository rule violations found …
+All comments must be resolved."). The
+agent `hive-merge` relay (`merge_pr`) does not: it keeps its own refusal
+handling, and on a merge-queue base it already reports
+`merge-queue-required` and leaves the PR to the lanes.
+
+**What the lane does with the refusal:**
+
+- every unresolved thread is the hive's own and marked non-blocking: it
+  resolves them all and reports `review-threads-resolved`
+  (`100-merge-queue`); the next pass merges or enqueues the same head;
+- any thread only a person can clear is open (below): it resolves nothing,
+  parks the PR at `085-needs-decision` with `unresolved-review-threads`, and
+  does not ask GitHub again for that head for 30 minutes (or until a new
+  push);
+- neither - the thread read failed, GitHub still counts a thread that was
+  just resolved, or every resolve call failed: the PR waits at
+  `100-merge-queue` with `review-threads-pending` and the lane asks again
+  after 5 minutes. After three such refusals on one head it parks as above.
+  A refusal nothing explains therefore costs at most three merge attempts
+  per head before a person is asked. When a park expires the lane tries
+  once more, and another unexplained refusal parks again at once, so a
+  parked head costs one merge call per 30 minutes and does not flap
+  between stages. While waiting, `review-threads-pending` is not a ready
+  merge-train front: the train merges the PRs behind it.
+
+See [stage-labels.md](labels-and-control-signals/stage-labels.md).
+
+**Which threads are the hive's own.** The thread's first comment is from a
+`Bot` account whose login is the hive's App bot (GraphQL reports it without
+the `[bot]` suffix; both spellings match). `project.ai_author` does not
+count, because it can be a person's own account. A hive with no App identity
+(static-token mode) has no own threads here and resolves nothing.
+
+**Never resolved:**
+
+- a thread a person or another bot opened (including a configured review bot:
+  those stay with the reconciler above);
+- a hive thread anyone other than the hive has replied in: the conversation
+  is that person's too;
+- a hive finding that is not marked non-blocking, outdated or not. An
+  outdated thread is not resolved for being outdated: some lanes merge with
+  no approving review at all (the trusted-bot lane while
+  `auto_merge.trusted_bot_skip_review` is on, or the review gate off or in
+  shadow), so "the merge gate passed" says nothing about the finding.
+
+**How "non-blocking" is read.** When the relay posts an inline comment, it
+matches the comment to the verdict report's finding on the same file and line
+(or inside the comment's line range) and appends a hidden marker naming that
+finding's severity, for example `<!-- hive-finding-severity: low -->`. When
+several findings match, the most severe wins. A comment no finding matches
+(no report, a report that does not validate, a finding with no file or line,
+or no severity) is marked `unmatched`, which reads as blocking. A comment a
+security-perspective finding is anchored on is marked `security`, whatever
+severity that finding was filed at, and also reads as blocking: a reviewer
+misled into rating a real security problem low cannot unblock the merge by
+it. A marker the agent wrote itself is stripped first. The marked severity is then compared
+with the blocking line:
+
+- with `review.severity.block_at` set, a finding is non-blocking when it is
+  below the line, the same rule the review backlog uses
+  (`ReviewFindingBelowLine`): `P1` leaves medium, low and info below it, `P2`
+  low and info, `P3` nothing (the opt-out above);
+- with no `block_at` (the default, where the backlog rule puts nothing below
+  the line), `info` and `low` count as non-blocking, the reviewer's own
+  "non-blocking" tier;
+- only the five known severities qualify; `required`, `unmatched`,
+  `security` or any other value is blocking.
+
+Threads posted before the marker existed carry only prose. For those the
+first line of the hive's comment is read (emphasis removed, at most 160
+characters): it must open with a low severity label (`style (low):`,
+`Info:`, `Nit:`) or say `non-blocking`, and must not also say blocking,
+medium, high, critical, required or must. Such a thread is treated as a `low`
+finding against the rule above; anything else is blocking.
+
+Each resolution is audited as `agent_pr_reviewed` with `state=thread_resolved`,
+`thread=<id>` and `trigger=merge-refused-unresolved-conversations` (or
+`trigger=ready-for-human-merge` at a person's merge, below).
+
+**Known limit.** The hive does not remember threads a person resolved and
+then re-opened. A person who unresolves one of the hive's non-blocking notes
+without replying in it will see the hive resolve it again on the next
+refused merge, and, at `090-ready-for-human-merge`, on the next new head or
+after the hive restarts (the once-per-head mark is kept in memory). It is
+not replied in again there: the hive's earlier reply is still in the thread.
+Replying in the thread is what keeps it open: a hive thread with anyone
+else's reply is never resolved.
+
+### At a person's merge
+
+When the stage pass writes `090-ready-for-human-merge` for a head with no
+hold or sentinel gate, it applies the same rules to that head once, on the
+pass that writes the 090 label and entry comment:
+
+- the write-back gate decides first, under the kind the 090 / 085 entry
+  comment is gated under (`needs_decision_comment`): a repository in
+  `labels-only`, `issues-only` or `off` mode gets nothing read or written,
+  and a person's PR needs what that kind needs (the review opt-in label, or
+  per-repository mode `full`). A refusal costs no GitHub call and holds for
+  that head;
+- it then reads whether the base branch requires conversation resolution,
+  from the same sources as the required checks: the branch's rulesets (a
+  `pull_request` rule with `required_review_thread_resolution`, readable
+  without admin rights) and classic branch protection
+  (`required_conversation_resolution`). The answer is cached per repository
+  and branch for 10 minutes, or for an hour when GitHub refused a read with
+  403 (the App lacks the permission). Not required: the notes stay open,
+  since they are useful reading. Cannot be read: nothing is resolved, the
+  hive logs it once per cache fill, and a later pass asks again;
+- when it is required and every unresolved thread is the hive's own and
+  marked non-blocking, it replies once in each of those threads to say the
+  hive is resolving its own non-blocking note so the branch rule does not
+  block the person's merge, then resolves it (a reply that fails does not
+  stop the resolve, and a thread that already carries the reply gets no
+  second one). Each reply is audited as `agent_pr_reviewed` with
+  `state=thread_replied` and `trigger=ready-for-human-merge`. With
+  `github.notifications.mode: quiet`, where a plain 090 emails nobody, the
+  threads are resolved without replies;
+- when any thread is not one of those, it resolves nothing. The 090 entry
+  comment is unchanged; the hive logs how many threads still need a person.
+
+A paused repository is skipped. A held 090 (a hold label, an open sentinel
+alert) waits until the gate lifts. A new push is a new head and is checked
+again, and so is a head where every resolve call failed. The extra cost is
+bounded: only a head entering 090 that was not checked before, one cached
+rule read per repository and branch, one thread query for the PR, and one
+reply and one resolve per thread.

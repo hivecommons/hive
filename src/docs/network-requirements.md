@@ -62,7 +62,7 @@ A hub (`HIVE_MODE=hub`) calls these hosts itself. An operator who denies the hub
 | Login provider issuers | OpenID Connect and GitHub sign-in. | Needed for the providers you configure. |
 | Kubernetes API, OCI Object Storage, NPS relay | Provisioning, DR backups and the NPS relay pull. | Each only when configured. |
 
-With `HIVE_HUB_RELEASE_TRACKING_DISABLED=true` the dashboard shows "unknown" for the latest-image and channel rows, and neither the hub nor its spokes get an auto-upgrade target from the hub. Leave it unset if you rely on hub-driven upgrades.
+With `HIVE_HUB_RELEASE_TRACKING_DISABLED=true` the dashboard shows "Release tracking is off" in place of the latest-image and channel rows, hides the image-pulls chart, the hub's `auto` upgrade checkbox, the `hub upgrades` kill switch, and the Upgrade buttons and spinners that would otherwise wait for a latest version, and neither the hub nor its spokes get an auto-upgrade target from the hub. Leave it unset if you rely on hub-driven upgrades. The `spoke upgrades` kill switch stays on a hosted hub, where it still refuses branch switches and digest unpins on provisioned hives; it is hidden on a hub with `HIVE_HUB_MODE=self-hosted`, which provisions no hives. A switch that is already paused stays visible either way, so it can be resumed ([#20253](https://github.com/hivecommons/hive/issues/20253)).
 
 ## Egress through a corporate forward proxy
 

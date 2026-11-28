@@ -37,6 +37,9 @@ const (
 	// ("⚠️ Hold-gate mergeability") notice, the re-hold label and the
 	// merge-from-base push that keeps a held PR mergeable.
 	KindHoldGateNotice Kind = "hold_gate_notice"
+	// KindReviewConversationNotice reports unresolved review threads without
+	// changing review state or removing a hold.
+	KindReviewConversationNotice Kind = "review_conversation_notice"
 	// KindStageLabel is every stage/*, role/* and hive-owned ownership label
 	// the stage engine writes on an item.
 	KindStageLabel Kind = "stage_label"
@@ -122,6 +125,8 @@ type KindPolicyOverride struct {
 //     a missed finding would merge.
 func DefaultKinds() map[Kind]KindPolicy {
 	return map[Kind]KindPolicy{
+		KindReviewConversationNotice: {MinLevel: 4, OwnOnly: true},
+
 		KindSentinel:             {MinLevel: 5, RequireLabel: true, UnlabeledMinLevel: 6},
 		KindHoldGateNotice:       {MinLevel: 4, OwnOnly: true},
 		KindStageLabel:           {MinLevel: 5, RequireLabel: true},

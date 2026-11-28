@@ -120,6 +120,13 @@ func (c *Client) applyModelReplyLabel(ctx context.Context, owner, repo string, n
 	if eff.Label == "" || labelPresent(labels, eff.Label) {
 		return "", nil
 	}
+	// A model reply that maps to `lgtm` / `approved` hands the PR to Tide:
+	// it clears the same sentinel and change-request gate (#20067).
+	if c.approvalLabels([]string{eff.Label}) {
+		if err := c.gateApprovalLabelWrite(ctx, owner+"/"+repo, number); err != nil {
+			return "", err
+		}
+	}
 	if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{eff.Label}); err != nil { // writeback:solicited a maintainer answered the gate with this model verb (comment or dashboard)
 		return "", fmt.Errorf("adding %s to %s/%s#%d: %w", eff.Label, owner, repo, number, err)
 	}

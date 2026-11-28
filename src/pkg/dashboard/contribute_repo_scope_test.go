@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Contributor repository scope (hivecommons/hive#12805, RFC #12570 §4).
@@ -328,5 +330,74 @@ func TestContributeRepositories_ListsEligibleRepos(t *testing.T) {
 		if msg := hub.selectTask(conn); msg == nil || msg.Type != "task_assign" || msg.Repo != r.FullName {
 			t.Fatalf("scope %s must select %s work, got %+v", r.ID, r.FullName, msg)
 		}
+	}
+}
+
+func TestContributeRepositories_ExcludesUnsupportedForges(t *testing.T) {
+	hub, s := covK2Hub(t)
+	twoRepoStatus(s)
+	s.deps.Config.Project.Forge = config.ForgeForgejo
+	s.deps.Config.Forgejo.URL = "https://code.example.com"
+	s.deps.Config.Project.RepoPolicies = []config.RepoPolicy{{Repo: "testsuite", Forge: config.ForgeGitHub}}
+
+	repos := s.contributeEligibleRepositories()
+	if len(repos) != 1 || repos[0].ID != scopeIDTestsuite {
+		t.Fatalf("catalog must contain only GitHub repositories: %+v", repos)
+	}
+	if queue := hub.ReadyQueue(readyQueueDefaultLimit); len(queue) != 1 || queue[0].Repo != "myorg/testsuite" {
+		t.Fatalf("ready queue must contain only GitHub work: %+v", queue)
+	}
+	snap := hub.admissionQueueSnapshot(readyQueueDefaultLimit, withheldAll)
+	if item, ok := findWithheld(snap.withheld, "myorg/review#638"); !ok || item.Reason != filterUnsupportedForge {
+		t.Fatalf("unsupported repository must be explained: %+v", snap.withheld)
+	}
+	conn := lockScopeConn(hub, "forge-test", "c-forge-test")
+	msg := hub.selectTask(conn)
+	if msg == nil || msg.Type != "task_assign" || msg.Repo != "myorg/testsuite" {
+		t.Fatalf("unrestricted selection must skip Forgejo work: %+v", msg)
+	}
+
+	s.deps.Config.Project.RepoPolicies = nil
+	if repos := s.contributeEligibleRepositories(); len(repos) != 0 {
+		t.Fatalf("Forgejo-only catalog must be empty: %+v", repos)
+	}
+	other := lockScopeConn(hub, "forge-other", "c-forge-other")
+	msg = hub.selectTask(other)
+	if msg == nil || msg.Type != "task_unavailable" || msg.Reason != taskUnavailableNoMatchingWork || msg.Filtered[filterUnsupportedForge] != 2 {
+		t.Fatalf("Forgejo-only hive must report two unsupported issues: %+v", msg)
+	}
+
+	for _, tc := range []struct {
+		id    string
+		count int
+	}{
+		{scopeIDReview, 1},
+		{"forgejo/code.example.com/myorg/review", 1},
+		{"gitea/code.example.com/myorg/review", 1},
+		{"forgejo/other.example.com/myorg/review", 0},
+		{"forgejo/code.example.com/myorg/other", 0},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			selected := lockScopeConn(hub, "forge-selected-"+tc.id, "c-forge-selected-"+tc.id)
+			ackScope(selected, 1, repoScopeModeSelected, tc.id)
+			msg := hub.selectTask(selected)
+			if msg == nil || msg.Reason != taskUnavailableNoSelectedWork || msg.Filtered[filterUnsupportedForge] != tc.count {
+				t.Fatalf("selected scope must report %d unsupported issues: %+v", tc.count, msg)
+			}
+		})
+	}
+}
+
+func TestContributeRepositories_UnknownForgeFallsBackToGitHub(t *testing.T) {
+	hub, s := covK2Hub(t)
+	twoRepoStatus(s)
+	s.deps.Config.Project.Forge = "GitHub"
+
+	if repos := s.contributeEligibleRepositories(); len(repos) != 2 {
+		t.Fatalf("unknown forge must retain GitHub catalog: %+v", repos)
+	}
+	conn := lockScopeConn(hub, "forge-fallback", "c-forge-fallback")
+	if msg := hub.selectTask(conn); msg == nil || msg.Type != "task_assign" || msg.Repo != "myorg/review" {
+		t.Fatalf("unknown forge must permit GitHub selection: %+v", msg)
 	}
 }
