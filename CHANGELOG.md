@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v6.67.1)
+
+### Fixed
+
+- **A merge-queue repo that requires approving reviews no longer has its PRs re-enqueued every pass until a person approves.** On a base opted into `auto_merge.native_merge_queue`, the hive named only one reason GitHub refuses an enqueue (unresolved conversations). Any other refusal came back as `native-merge-queue-enqueue` with an error, was held in the mutation journal as an uncertain outcome, and was sent again on every pass: one PR produced about 950 refused enqueues in 16 hours. A repo whose rules require approvals would have done that for every PR that passed the hive's own gates before a person approved it. The hive now asks GitHub once per commit and lets the answer decide. It reads GitHub's `reviewDecision` in the queue read it already makes (one more field, no extra call). When GitHub refuses the enqueue with an `UNPROCESSABLE` error while that reads `REVIEW_REQUIRED` or `CHANGES_REQUESTED`, the refusal and the review state together name the reason, whatever words the refusal uses: the PR waits at `stage/085-needs-decision` with `merge-refused:review-required`, the same request for a person's approval as on a direct merge, the commit is not enqueued again while the review state stays the same (apart from one recheck every 30 minutes, as on a direct merge), and it is enqueued on the first pass after the approval. Where GitHub reports no review state for the PR and the hive does not recognise the refusal's wording, the PR waits under the backoff below with GitHub's text instead. `reviewDecision` alone never stops an enqueue, so a GitHub App that the branch rules allow to bypass the review requirement is unaffected. Any other failed enqueue backs off on an unchanged commit and the stage reason carries GitHub's error text: the wait starts at 2 minutes and doubles, up to 1 hour for an enqueue GitHub refused (`UNPROCESSABLE`, `FORBIDDEN` or `NOT_FOUND`, recorded as not applied and logged once per wait instead of once per pass) and up to 15 minutes for a failure whose outcome is uncertain (a network error, a 5xx, a rate limit). An accepted enqueue clears the wait, so one passing failure delays a merge by 2 minutes at most. A PR already in the queue is not touched, and a queue repo that requires no approvals behaves as before when GitHub accepts the enqueue. See [native-merge-queue.md](src/docs/native-merge-queue.md#enqueues-github-does-not-accept).
+
 ## 2026-11-28 (v6.67.0)
 
 ### Added
