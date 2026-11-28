@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.385.0)
+
+### Added
+
+- On a hive whose repos are all on Forgejo, `hive-gh pr view`, `issue view` and `pr checks` now read the pull request or issue through the hive, returning title, body, labels, author, head SHA, state and commit statuses with the same compact JSON key names as on GitHub; `mergeStateStatus`, `reviewDecision`, `additions`, `deletions`, `changedFiles`, `stateReason` and `milestone` are not returned ([#20230](https://github.com/hivecommons/hive/issues/20230)).
+
 ## 2026-11-28 (v5.384.13)
 
 ### Fixed
