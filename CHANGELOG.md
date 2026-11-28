@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.2)
+
+### Fixed
+
+- Hub dashboard: a hub running with `HIVE_HUB_MODE=self-hosted` no longer shows hosted-fleet controls (Usage by cluster, Cluster Health, the Scale Controls fleet knobs and per-cluster limits, `+ Add Hosted Hive`, Request a hive, and the Users quota column); Register your own hive is the only way to add a hive. Hubs without the mode set are unchanged.
+- Show self-registered spokes' project names and disambiguate duplicate hive titles on the hub dashboard.
+
 ## 2026-11-28 (v5.384.1)
 
 ### Fixed
