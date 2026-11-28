@@ -1592,8 +1592,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		// (auto_merge.human_merge_labels) before its gate re-checks the
 		// files, so the label comes off here when the hive put it on and the
 		// current head no longer touches a listed path, qualifies for the
-		// pin-only exception, or carries a trusted merger's approval on a
-		// repository that lets one release it. While it stays, the route
+		// pin-only exception, carries a trusted merger's approval on a
+		// repository that lets one release it, or is a promotion the lane
+		// owns under a rule with inherit_human_merge_paths on. While it stays, the route
 		// reads it as the human-merge-path rule rather than a breaking
 		// change. A label a person put on is theirs: it reads as the
 		// manual-merge rule it always was. A repository with no
@@ -1625,6 +1626,22 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 					released, err := c.releaseApprovedHumanMergePathHold(ctx, obs, prov)
 					if err != nil {
 						c.warn("stage labels: could not release approved human-merge-path label", "repo", obs.Display, "pr", obs.Number, "error", err)
+						if firstErr == nil {
+							firstErr = err
+						}
+					}
+					if released {
+						result.Comments++
+						result.Skipped++
+						continue
+					}
+					// A promotion the lane owns under a rule whose
+					// inherit_human_merge_paths is on, verified against
+					// GitHub in this pass: the hive's own label comes
+					// off, and the promotion lane takes the PR from there.
+					released, err = c.releaseInheritedHumanMergePathLabel(ctx, obs, prov, pathComments)
+					if err != nil {
+						c.warn("stage labels: could not release inherited human-merge-path label", "repo", obs.Display, "pr", obs.Number, "error", err)
 						if firstErr == nil {
 							firstErr = err
 						}

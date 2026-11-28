@@ -23,7 +23,11 @@ package automerge
 // blocked/exempt/sentinel labels, human_merge_paths, the review verdict hold,
 // the intent tier gate, the linked-issue holds, the approval desk, the
 // repository's merge method (squash_only), the merge train, and the
-// expected-head SHA re-read before the merge. The hive never writes to a
+// expected-head SHA re-read before the merge. human_merge_paths is the one
+// gate a rule can set aside, with inherit_human_merge_paths
+// (automerge_promotion_human_merge_paths.go). The lane then proves what it
+// proves for every promotion, that the tree is the source's current tree,
+// and nothing about how a listed file reached the source. The hive never writes to a
 // promotion branch, so the lane never updates it: a behind promotion (the
 // target requires up-to-date branches) holds as promotion-behind-target, a
 // serialized repository's promotion as promotion-serialized-repo, and

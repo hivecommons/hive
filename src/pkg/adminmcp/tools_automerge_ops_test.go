@@ -17,6 +17,10 @@ type autoMergeProvider struct {
 	readErr  error
 	reads    int
 	requests []WriteRequest
+	// onWrite, when set, runs for each executed write: a test that reads
+	// the settings back after a write stores the request the way its hive
+	// would.
+	onWrite func(req WriteRequest)
 }
 
 func (p *autoMergeProvider) Read(_ context.Context, tool string, args map[string]any) (any, error) {
@@ -40,6 +44,9 @@ func (p *autoMergeProvider) Read(_ context.Context, tool string, args map[string
 
 func (p *autoMergeProvider) ExecuteWrite(_ context.Context, req WriteRequest) (any, error) {
 	p.requests = append(p.requests, req)
+	if p.onWrite != nil {
+		p.onWrite(req)
+	}
 	return map[string]any{"ok": true}, nil
 }
 

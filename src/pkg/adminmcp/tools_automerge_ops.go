@@ -150,7 +150,7 @@ var autoMergeFields = []amField{
 
 func (autoMergeUpdateOp) Name() string { return WriteOpAutoMergeUpdate }
 func (autoMergeUpdateOp) Description() string {
-	return "Change merge settings (auto_merge) through PATCH /api/config/auto-merge, the endpoint the dashboard's merge controls use. Owner only. Pass only what changes, shaped like the endpoint's body. A list takes {\"add\": [...], \"remove\": [...]}; human_merge_paths takes {\"owner/repo\": [every pattern for that repository]}, with null or [] removing that repository. human_merge_pin_only takes {\"owner/repo\": {\"enabled\": true, \"paths\": [...], \"kinds\": [...], \"trusted_authors\": [...]}}, the whole exception for that repository, with null removing it; the repository needs human_merge_paths. promotions takes {\"owner/repo\": [{\"source\": \"main\", \"target\": \"stable\", \"authors\": [...], \"head_ref_prefix\": \"auto/promote-\"}]}, that repository's whole list of branch-promotion rules, with null or [] removing it; a rule lets a matching pull request whose head tree and test merge equal the current tree of a source branch that takes changes only through a pull request merge with no person, so the target inherits exactly the source's review guarantee; adding one is disclosed as widening. contributor_lane.workflow_fence_scope_repos takes {\"owner/repo\": \"all\" | \"human_merge_paths\"}, one repository's own workflow fence scope, with null returning it to the hive-wide scope; only the named repositories change. The preview reads the current settings and sends each changed list or map whole, keeping every entry you did not name, shows each change before and after, and says which changes let the hive merge more on its own. write_confirm refuses if any of those settings changed after the preview. This operation never merges a pull request."
+	return "Change merge settings (auto_merge) through PATCH /api/config/auto-merge, the endpoint the dashboard's merge controls use. Owner only. Pass only what changes, shaped like the endpoint's body. A list takes {\"add\": [...], \"remove\": [...]}; human_merge_paths takes {\"owner/repo\": [every pattern for that repository]}, with null or [] removing that repository. human_merge_pin_only takes {\"owner/repo\": {\"enabled\": true, \"paths\": [...], \"kinds\": [...], \"trusted_authors\": [...]}}, the whole exception for that repository, with null removing it; the repository needs human_merge_paths. promotions takes {\"owner/repo\": [{\"source\": \"main\", \"target\": \"stable\", \"authors\": [...], \"head_ref_prefix\": \"auto/promote-\"}]}, that repository's whole list of branch-promotion rules, with null or [] removing it; a rule lets a matching pull request whose head tree and test merge equal the current tree of a source branch that takes changes only through a pull request merge with no person, so the target inherits exactly the source's review guarantee; adding one is disclosed as widening. A rule may also carry \"inherit_human_merge_paths\": true (default false; a rule is sent whole, so leaving it out turns it off): the repository's human_merge_paths then no longer stops that rule's promotions. The hive proves only that a promotion's tree is the source branch's current tree, not how or when a listed file reached the source; turning it on is disclosed as widening, with the cases that follow from that. A hive on an older build drops the option, so write_confirm reads the rule back and reports inherit_human_merge_paths_stored, with a warning when it is false. contributor_lane.workflow_fence_scope_repos takes {\"owner/repo\": \"all\" | \"human_merge_paths\"}, one repository's own workflow fence scope, with null returning it to the hive-wide scope; only the named repositories change. The preview reads the current settings and sends each changed list or map whole, keeping every entry you did not name, shows each change before and after, and says which changes let the hive merge more on its own. write_confirm refuses if any of those settings changed after the preview. This operation never merges a pull request."
 }
 
 func (autoMergeUpdateOp) InputSchema() map[string]any {
@@ -285,6 +285,28 @@ func (autoMergeUpdateOp) ConfirmGuard(ctx context.Context, args map[string]any, 
 		return "", fmt.Errorf("write_confirm checks the merge settings again before writing, and that check refused this change; preview it again: %w", err)
 	}
 	return plan.fingerprint, nil
+}
+
+// ConfirmResult runs after the write, which already happened: whatever it
+// finds is reported next to the result, never as a failed write. The
+// endpoint answers success for a body it only partly understood: a hive on
+// an older build does not know a promotion rule's inherit_human_merge_paths,
+// drops the key and stores the rule without it. The preview disclosed the
+// option as widening, so when the request turned it on for a rule the
+// settings are read back and "after" says what the hive holds
+// (autoMergePromotionsInheritResult): the named repositories' rules,
+// inherit_human_merge_paths_stored, and a warning when a rule came back
+// without the option. A read-back that fails is the handler's after_error.
+// A request that sets the option on no rule reads nothing and adds nothing.
+func (autoMergeUpdateOp) ConfirmResult(ctx context.Context, args map[string]any, provider Provider) (any, error) {
+	if !autoMergePromotionsArgInherits(args["promotions"]) {
+		return nil, nil
+	}
+	current, err := readAutoMergeSettings(ctx, provider)
+	if err != nil {
+		return nil, fmt.Errorf("the change was sent, but inherit_human_merge_paths could not be verified as stored (a hive on an older build drops the option); read settings_read section auto_merge before relying on it: %w", err)
+	}
+	return autoMergePromotionsInheritResult(args["promotions"], current), nil
 }
 
 type amArg struct {

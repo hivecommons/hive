@@ -8,11 +8,13 @@ package automerge
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	gh "github.com/google/go-github/v72/github"
@@ -55,6 +57,16 @@ type promotionSweepFixture struct {
 	headTree    string
 	headParents []string
 	mergedTree  string
+	// labelPosts and commentPosts count the label and comment writes on the
+	// pull request (the human-merge-path gate makes one of each).
+	labelPosts   int
+	commentPosts int
+	// checkState is the state of the required ci/build status on the head
+	// ("success" when empty).
+	checkState string
+	// onPRRead, when set, runs each time the pull request itself is read
+	// (GET /pulls/N).
+	onPRRead func()
 }
 
 func (fx *promotionSweepFixture) tip() string {
@@ -114,6 +126,9 @@ func newPromotionSweepAPI(t *testing.T, fx *promotionSweepFixture) *httptest.Ser
 			}
 			_ = json.NewEncoder(w).Encode(files)
 		case r.Method == http.MethodGet && p == prPath:
+			if fx.onPRRead != nil {
+				fx.onPRRead()
+			}
 			_ = json.NewEncoder(w).Encode(pr())
 		case r.Method == http.MethodPut && p == prPath+"/merge":
 			fx.merged = append(fx.merged, fx.number)
@@ -174,7 +189,11 @@ func newPromotionSweepAPI(t *testing.T, fx *promotionSweepFixture) *httptest.Ser
 		case r.Method == http.MethodGet && p == "/repos/acme/widget/commits/basesha/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 0, "statuses": []map[string]string{}})
 		case r.Method == http.MethodGet && p == "/repos/acme/widget/commits/"+fx.head+"/status":
-			_ = json.NewEncoder(w).Encode(map[string]any{"state": "success", "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": "success"}}})
+			state := fx.checkState
+			if state == "" {
+				state = "success"
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"state": state, "total_count": 1, "statuses": []map[string]string{{"context": "ci/build", "state": state}}})
 		case r.Method == http.MethodGet && p == "/repos/acme/widget/commits/"+fx.head+"/check-runs":
 			_ = json.NewEncoder(w).Encode(map[string]any{"total_count": 1, "check_runs": []map[string]string{{"name": "build", "status": "completed", "conclusion": "success"}}})
 		case r.Method == http.MethodGet && p == "/repos/acme/widget/commits/"+fx.head:
@@ -184,9 +203,11 @@ func newPromotionSweepAPI(t *testing.T, fx *promotionSweepFixture) *httptest.Ser
 		case r.Method == http.MethodGet && (p == issuePath+"/comments" || p == issuePath+"/timeline"):
 			_ = json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodPost && p == issuePath+"/comments":
+			fx.commentPosts++
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
 		case r.Method == http.MethodPost && p == issuePath+"/labels":
+			fx.labelPosts++
 			_ = json.NewEncoder(w).Encode([]map[string]string{{"name": "needs-owner-merge"}})
 		case r.Method == http.MethodGet && strings.HasPrefix(p, "/repos/acme/widget/labels/"):
 			_ = json.NewEncoder(w).Encode(map[string]string{"name": strings.TrimPrefix(p, "/repos/acme/widget/labels/")})
@@ -200,6 +221,14 @@ func newPromotionSweepAPI(t *testing.T, fx *promotionSweepFixture) *httptest.Ser
 
 func promotionLaneRules() []config.PromotionRule {
 	return []config.PromotionRule{{Source: "main", Target: "stable", Authors: []string{"github-actions[bot]"}, HeadRefPrefix: "auto/promote-"}}
+}
+
+// promotionInheritRules is promotionLaneRules with inherit_human_merge_paths
+// on: the repository's human-merge list does not stop that rule's promotions.
+func promotionInheritRules() []config.PromotionRule {
+	rules := promotionLaneRules()
+	rules[0].InheritHumanMergePaths = true
+	return rules
 }
 
 // promotionWorkflowChange is the workflow file main already carries.
@@ -760,5 +789,249 @@ func TestPromotionLaneMergesCommitTreePromotion(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("audits = %+v, want a merged decision for ct46", *audits)
+	}
+}
+
+// inherit_human_merge_paths (automerge_promotion_human_merge_paths.go). On
+// v6 tip PromotionRule has no such field, so none of the tests below
+// compile; with the field alone and no lane change, the first one fails as
+// human-merge-path.
+
+// promotionHumanMergePaths is a repository whose workflows a person merges.
+var promotionHumanMergePaths = []string{".github/workflows/**"}
+
+// promotionInheritSetAsideLog starts the line the lane logs, once per head,
+// when it sets the human-merge-path gate aside for a head that changes a
+// listed file under a rule with inherit_human_merge_paths on
+// (promotionInheritedHumanMergePaths).
+const promotionInheritSetAsideLog = "promotion lane: the rule has inherit_human_merge_paths on"
+
+// promotionLogProbe is a slog.Handler that hands each record's message to
+// seen, so a test can tell which point of a pass the lane has reached.
+type promotionLogProbe struct{ seen func(msg string) }
+
+func (p promotionLogProbe) Enabled(context.Context, slog.Level) bool { return true }
+func (p promotionLogProbe) Handle(_ context.Context, r slog.Record) error {
+	p.seen(r.Message)
+	return nil
+}
+func (p promotionLogProbe) WithAttrs([]slog.Attr) slog.Handler { return p }
+func (p promotionLogProbe) WithGroup(string) slog.Handler      { return p }
+
+// watchPromotionInheritSetAside makes c set setAside when the lane sets the
+// human-merge-path gate aside under the option.
+func watchPromotionInheritSetAside(c *Engine, setAside *atomic.Bool) {
+	c.logger = slog.New(promotionLogProbe{seen: func(msg string) {
+		if strings.HasPrefix(msg, promotionInheritSetAsideLog) {
+			setAside.Store(true)
+		}
+	}})
+}
+
+func promotionAuditWith(audits []hgithub.AuditRecord, wants ...string) bool {
+	for _, a := range audits {
+		all := true
+		for _, want := range wants {
+			all = all && strings.Contains(a.Detail, want)
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
+// With the rule's option on, a tree-identical promote that changes a file on
+// the repository's human-merge list merges on green checks: nothing is
+// labelled, no notice is posted, and the merge's audit entry says the list
+// was set aside by the rule's option (human_merge_paths=promotion-rule-option),
+// with the files and the tree. With the option off (the default) the same
+// pull request is left for a person exactly as before.
+func TestPromotionLaneInheritHumanMergePaths(t *testing.T) {
+	newFx := func() *promotionSweepFixture {
+		return &promotionSweepFixture{number: 47, head: "tip47", tips: []string{"tip47"}, trees: map[string]string{"tip47": "tree47"}, files: promotionWorkflowChange()}
+	}
+	t.Run("option on merges and audits", func(t *testing.T) {
+		fx := newFx()
+		api := newPromotionSweepAPI(t, fx)
+		defer api.Close()
+		c, audits := newPromotionEngine(t, api.URL, promotionEngineOpts{rules: promotionInheritRules(), humanPaths: promotionHumanMergePaths})
+		event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 47, true)
+		if err != nil || reason != "" {
+			t.Fatalf("trySweepSelfAuthoredPR = %q, %v; want a merge", reason, err)
+		}
+		if len(fx.merged) != 1 || event.Tier != lanePromotion {
+			t.Fatalf("merged=%v event=%+v, want PR 47 merged on the promotion lane", fx.merged, event)
+		}
+		// The gate labels before it posts its notice, so no label means the
+		// pull request was never handed to a person.
+		if fx.labelPosts != 0 {
+			t.Fatalf("labels=%d, want the pull request not labelled needs-owner-merge", fx.labelPosts)
+		}
+		if fx.branchHits != 2 {
+			t.Fatalf("source branch read %d times, want 2 (routing, then right before the merge)", fx.branchHits)
+		}
+		if !promotionAuditWith(*audits, "decision=merged", "tree=tree47", "source_sha=tip47", "human_merge_paths="+hgithub.PromotionHumanMergePathsRuleOption, "human_merge_path_files=.github/workflows/build.yml") {
+			t.Fatalf("audits = %+v, want the merge recorded with the rule-option note, the listed files and the tree", *audits)
+		}
+	})
+	t.Run("option off is a person's merge as before", func(t *testing.T) {
+		fx := newFx()
+		api := newPromotionSweepAPI(t, fx)
+		defer api.Close()
+		c, audits := newPromotionEngine(t, api.URL, promotionEngineOpts{rules: promotionLaneRules(), humanPaths: promotionHumanMergePaths})
+		_, reason, _ := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 47, true)
+		if reason != autoMergeReasonHumanMergePath || len(fx.merged) != 0 || fx.labelPosts != 1 {
+			t.Fatalf("reason=%q merged=%v labels=%d, want %s, no merge and the needs-owner-merge label", reason, fx.merged, fx.labelPosts, autoMergeReasonHumanMergePath)
+		}
+		if promotionAuditWith(*audits, "human_merge_paths=") {
+			t.Fatalf("audits = %+v, want nothing recorded as inherited", *audits)
+		}
+	})
+	t.Run("option on with no listed file changed records nothing inherited", func(t *testing.T) {
+		fx := newFx()
+		fx.files = []map[string]any{{"filename": "README.md", "status": "modified", "additions": 1, "deletions": 0, "changes": 1}}
+		api := newPromotionSweepAPI(t, fx)
+		defer api.Close()
+		c, audits := newPromotionEngine(t, api.URL, promotionEngineOpts{rules: promotionInheritRules(), humanPaths: promotionHumanMergePaths})
+		if _, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 47, true); err != nil || reason != "" || len(fx.merged) != 1 {
+			t.Fatalf("reason=%q err=%v merged=%v, want a merge", reason, err, fx.merged)
+		}
+		if !promotionAuditWith(*audits, "decision=merged") || promotionAuditWith(*audits, "human_merge_paths=") {
+			t.Fatalf("audits = %+v, want a merge with no inherited note", *audits)
+		}
+	})
+}
+
+// The option lifts the hive's own human-merge-path stop and nothing else. A
+// person's hold, a needs-owner-merge label on the pull request (the lane
+// never decides whose it is; only the stage pass removes one, and only the
+// hive's own), the sentinel label and a failing required check stop the
+// promotion before the lane reaches the gate the option sets aside. The
+// review verdict hold comes after it: the lane sets the human-merge list
+// aside, labels nothing, and is still stopped by the verdict.
+func TestPromotionLaneInheritHumanMergePathsOtherGatesStillBlock(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		labels      []string
+		checkState  string
+		verdictHold bool
+		want        string
+		// pastGate: the lane got past the human-merge-path gate (set aside
+		// under the option) before it was stopped.
+		pastGate bool
+	}{
+		{name: "a person's hold", labels: []string{"hold"}, want: "label:hold"},
+		{name: "a person's needs-owner-merge", labels: []string{"needs-owner-merge"}, want: autoMergeReasonHumanMergeRequired},
+		{name: "sentinel label", labels: []string{"sentinel-alert"}, want: "sentinel"},
+		{name: "failing required check", checkState: "failure", want: "required-check-failing:ci/build"},
+		{name: "review verdict hold, after the gate the option sets aside", verdictHold: true, want: autoMergeReasonReviewRequiresHuman, pastGate: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := &promotionSweepFixture{number: 48, head: "tip48", tips: []string{"tip48"}, trees: map[string]string{"tip48": "tree48"}, files: promotionWorkflowChange(), labels: tc.labels, checkState: tc.checkState}
+			api := newPromotionSweepAPI(t, fx)
+			defer api.Close()
+			c, audits := newPromotionEngine(t, api.URL, promotionEngineOpts{rules: promotionInheritRules(), humanPaths: promotionHumanMergePaths})
+			if tc.verdictHold {
+				// A hold with no recording time cannot have been released
+				// since, so the gate answers without reading GitHub.
+				c.reviewVerdictHold = func(string, int) ReviewVerdictHold {
+					return ReviewVerdictHold{Held: true, Verdict: "requires_human", HeadSHA: "tip48"}
+				}
+			}
+			var setAside atomic.Bool
+			watchPromotionInheritSetAside(c, &setAside)
+			_, reason, _ := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 48, true)
+			if len(fx.merged) != 0 || reason != tc.want {
+				t.Fatalf("reason=%q merged=%v, want %q and no merge", reason, fx.merged, tc.want)
+			}
+			if got := setAside.Load(); got != tc.pastGate {
+				t.Fatalf("human-merge-path gate set aside = %v, want %v: the case must stop the lane %s that gate", got, tc.pastGate, map[bool]string{true: "after", false: "before"}[tc.pastGate])
+			}
+			if fx.labelPosts != 0 {
+				t.Fatalf("labels=%d, want the pull request not labelled needs-owner-merge: the option lifts that stop, and no other gate here labels", fx.labelPosts)
+			}
+			if promotionAuditWith(*audits, "decision=merged") {
+				t.Fatalf("audits = %+v, want no merge recorded", *audits)
+			}
+		})
+	}
+}
+
+// A head whose tree differs from the source by one file is not the lane's,
+// option or no option: the self-authored sweep does not own it, no other
+// lane hands it off, and the human-merge-path gate those lanes run still
+// refuses and labels it.
+func TestPromotionLaneInheritHumanMergePathsNeedsTheTreeMatch(t *testing.T) {
+	fx := &promotionSweepFixture{number: 49, head: "old49", tips: []string{"tip49"}, trees: map[string]string{"tip49": "tree-tip"}, headTree: "tree-old", files: promotionWorkflowChange()}
+	api := newPromotionSweepAPI(t, fx)
+	defer api.Close()
+	c, _ := newPromotionEngine(t, api.URL, promotionEngineOpts{rules: promotionInheritRules(), humanPaths: promotionHumanMergePaths})
+	ctx := context.Background()
+	if _, reason, err := c.trySweepSelfAuthoredPR(ctx, "widget", "acme", "widget", 49, true); err != nil || reason != "not-app-authored" || len(fx.merged) != 0 {
+		t.Fatalf("reason=%q err=%v merged=%v, want not-app-authored and no merge", reason, err, fx.merged)
+	}
+	pr := &gh.PullRequest{
+		Number: gh.Ptr(49), State: gh.Ptr("open"), ChangedFiles: gh.Ptr(len(fx.files)),
+		User: &gh.User{Login: gh.Ptr("github-actions[bot]")},
+		Head: &gh.PullRequestBranch{SHA: gh.Ptr("old49"), Ref: gh.Ptr("auto/promote-main-to-stable"), Repo: &gh.Repository{FullName: gh.Ptr("acme/widget")}},
+		Base: &gh.PullRequestBranch{Ref: gh.Ptr("stable"), Repo: &gh.Repository{FullName: gh.Ptr("acme/widget")}},
+	}
+	if c.promotionLaneOwns(ctx, "acme", "widget", pr) {
+		t.Fatal("the lane claims a head whose tree is not the source's")
+	}
+	// Today's path: the gate the trusted-author, contributor and queued
+	// lanes run on a pull request they keep.
+	if reason, err := c.humanMergePathGate(ctx, "widget", "acme", "widget", pr); err != nil || reason != autoMergeReasonHumanMergePath {
+		t.Fatalf("humanMergePathGate = %q, %v; want %s", reason, err, autoMergeReasonHumanMergePath)
+	}
+	if fx.labelPosts != 1 || fx.commentPosts != 1 {
+		t.Fatalf("labels=%d comments=%d, want the label and the notice", fx.labelPosts, fx.commentPosts)
+	}
+}
+
+// The rule is read again right before the merge. If it lost the option
+// after the lane set the gate aside, the human-merge list binds again in
+// full: nothing merges and the pull request is labelled for a person.
+//
+// The option goes off at the first read of the pull request that follows
+// the lane setting the gate aside (the lane says so in its log), which is
+// at the latest the re-read right before the merge recheck. It does not
+// hang on which read of the changed files is the gate's, so a files read
+// added earlier in the pass cannot turn the option off before the gate and
+// let this test pass through the plain gate.
+func TestPromotionLaneInheritHumanMergePathsSwitchedOffMidPass(t *testing.T) {
+	fx := &promotionSweepFixture{number: 50, head: "tip50", tips: []string{"tip50"}, trees: map[string]string{"tip50": "tree50"}, files: promotionWorkflowChange()}
+	var setAside, off atomic.Bool
+	fx.onPRRead = func() {
+		if setAside.Load() {
+			off.Store(true)
+		}
+	}
+	api := newPromotionSweepAPI(t, fx)
+	defer api.Close()
+	c, audits := newPromotionEngine(t, api.URL, promotionEngineOpts{rules: promotionInheritRules(), humanPaths: promotionHumanMergePaths})
+	watchPromotionInheritSetAside(c, &setAside)
+	c.promotions = func(repo string) []config.PromotionRule {
+		if !strings.EqualFold(repo, "acme/widget") {
+			return nil
+		}
+		if off.Load() {
+			return promotionLaneRules()
+		}
+		return promotionInheritRules()
+	}
+	_, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "widget", "acme", "widget", 50, true)
+	if !setAside.Load() || !off.Load() {
+		t.Fatalf("gate set aside = %v, option switched off = %v (reason=%q); want the lane to set the gate aside under the option and the option to go off before the recheck", setAside.Load(), off.Load(), reason)
+	}
+	if err != nil || reason != autoMergeReasonHumanMergePath || len(fx.merged) != 0 {
+		t.Fatalf("reason=%q err=%v merged=%v, want %s and no merge", reason, err, fx.merged, autoMergeReasonHumanMergePath)
+	}
+	if fx.labelPosts != 1 {
+		t.Fatalf("labels=%d, want the needs-owner-merge label", fx.labelPosts)
+	}
+	if promotionAuditWith(*audits, "decision=merged") {
+		t.Fatalf("audits = %+v, want no merge recorded", *audits)
 	}
 }

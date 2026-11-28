@@ -492,7 +492,9 @@
     // without a person. Stages auto_merge.promotions in full: every row
     // with anything filled in, grouped by repository; a repository with no
     // filled row drops out, which removes its rules. A half-filled row is
-    // sent as is, so the server names what it is missing.
+    // sent as is, so the server names what it is missing. A rule's
+    // inherit_human_merge_paths is sent only when its box is ticked (absent
+    // means off); a tick alone does not make an empty row a rule.
     function markDirtyAutoMergePromotions() {
       const rules = {};
       document.querySelectorAll('#am-promotions .am-promotion-row').forEach(row => {
@@ -504,6 +506,8 @@
           authors: splitConfigLines(val('.am-promotion-authors'))
         };
         if (!row.dataset.repo || (!rule.source && !rule.target && !rule.head_ref_prefix && !rule.authors.length)) return;
+        const inherit = row.querySelector('.am-promotion-inherit');
+        if (inherit && inherit.checked) rule.inherit_human_merge_paths = true;
         (rules[row.dataset.repo] = rules[row.dataset.repo] || []).push(rule);
       });
       markDirty('auto-merge', 'promotions', rules);

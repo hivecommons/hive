@@ -568,6 +568,18 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 	if len(fenceScopeChanges) > 0 {
 		auditKV = append(auditKV, "workflow_fence_scope_repos", strings.Join(fenceScopeChanges, "; "))
 	}
+	if body.Promotions != nil {
+		// Which promotion rules had inherit_human_merge_paths switched on or
+		// off: on, the rule's promotions carry files on the repository's
+		// human-merge list to the target with no person.
+		on, off := promotionInheritAuditChanges(previousAutoMerge.Promotions, cfg.AutoMerge.Promotions)
+		if len(on) > 0 {
+			auditKV = append(auditKV, "promotion_inherit_on", strings.Join(on, " "))
+		}
+		if len(off) > 0 {
+			auditKV = append(auditKV, "promotion_inherit_off", strings.Join(off, " "))
+		}
+	}
 	s.auditFromRequest(r, "config_auto_merge", auditDetail(auditKV...), "")
 	s.refreshAndPersist()
 	jsonResponse(w, s.autoMergeSectionResponseWithBots(cfg))
@@ -960,6 +972,45 @@ func (s *Server) autoMergeHumanMergePaths(paths map[string][]string) (map[string
 		return nil, ""
 	}
 	return out, ""
+}
+
+// promotionInheritAuditChanges names the promotion rules whose
+// inherit_human_merge_paths a save switched on or off, each as
+// "owner/repo:target" (a target is named by one rule per repository),
+// sorted, for the config_auto_merge audit entry. A rule added with the
+// option on counts as switched on; a rule removed while it had the option,
+// or kept without it, counts as switched off. A branch name is made safe
+// for the flat audit detail (ghpkg.AuditDetailToken).
+func promotionInheritAuditChanges(before, after map[string][]config.PromotionRule) (on, off []string) {
+	inheriting := func(m map[string][]config.PromotionRule) map[string]string {
+		out := map[string]string{}
+		for repo, rules := range m {
+			repo = strings.TrimSpace(repo)
+			for _, rule := range rules {
+				rule = rule.Normalized()
+				if rule.InheritHumanMergePaths {
+					// Repository names are case-insensitive, branch names
+					// are not.
+					out[strings.ToLower(repo)+":"+rule.Target] = ghpkg.AuditDetailToken(repo + ":" + rule.Target)
+				}
+			}
+		}
+		return out
+	}
+	was, now := inheriting(before), inheriting(after)
+	for key, name := range now {
+		if _, had := was[key]; !had {
+			on = append(on, name)
+		}
+	}
+	for key, name := range was {
+		if _, has := now[key]; !has {
+			off = append(off, name)
+		}
+	}
+	sort.Strings(on)
+	sort.Strings(off)
+	return on, off
 }
 
 // autoMergePromotions validates auto_merge.promotions sent by the dashboard

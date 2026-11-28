@@ -81,7 +81,7 @@ const (
 	// decision on a branch-promotion pull request (promotion.go): the
 	// sentinel's content exemption, the promotion lane's merge, or its
 	// refusal because the live tree check failed right before the merge.
-	// Detail carries decision=, head=, source=, source_sha= and tree=.
+	// Detail: decision=, head=, source=, source_sha=, tree= (PromotionAuditDetail).
 	AuditActionPromotionDecision = "promotion_decision"
 	// AuditActionReleaseCreated is the audit action recorded when an eligible
 	// owner approval makes the hub create a GitHub release.

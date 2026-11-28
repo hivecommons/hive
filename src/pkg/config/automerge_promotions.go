@@ -31,14 +31,29 @@ type PromotionRule struct {
 	// HeadRefPrefix is the start of the promotion branch's name, for
 	// example auto/promote-.
 	HeadRefPrefix string `yaml:"head_ref_prefix" json:"head_ref_prefix"`
+	// InheritHumanMergePaths lets a promotion the lane owns merge although
+	// it changes a file on the repository's auto_merge.human_merge_paths
+	// list. Off (the default) keeps that list binding: such a promotion is
+	// left for a person. On, the list is not asked on the way into Target.
+	// The hive proves only that the promotion's tree is Source's current
+	// tree; it does not check how or when a listed file's content reached
+	// Source, so the option is not a record that a person merged it there
+	// (the path may have been listed later, or the file landed by a merge
+	// the list does not bind, a human_merge_pin_only exception or a bypass
+	// actor; src/docs/hive-merge.md lists the cases). It lifts only the
+	// hive's own human-merge-path stop, and only for a pull request that
+	// passes both live tree checks; a person's hold or needs-owner-merge
+	// label and every other gate still apply.
+	InheritHumanMergePaths bool `yaml:"inherit_human_merge_paths,omitempty" json:"inherit_human_merge_paths,omitempty"`
 }
 
 // Normalized returns r with every field trimmed and empty authors dropped.
 func (r PromotionRule) Normalized() PromotionRule {
 	out := PromotionRule{
-		Source:        strings.TrimSpace(r.Source),
-		Target:        strings.TrimSpace(r.Target),
-		HeadRefPrefix: strings.TrimSpace(r.HeadRefPrefix),
+		Source:                 strings.TrimSpace(r.Source),
+		Target:                 strings.TrimSpace(r.Target),
+		HeadRefPrefix:          strings.TrimSpace(r.HeadRefPrefix),
+		InheritHumanMergePaths: r.InheritHumanMergePaths,
 	}
 	for _, a := range r.Authors {
 		if a = strings.TrimSpace(a); a != "" {

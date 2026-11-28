@@ -140,6 +140,16 @@ func (c *Engine) liftStaleHumanMergePathHold(ctx context.Context, obs stageObser
 // caller has them (nil lists them). It returns the comments and the App's
 // login; ok false keeps the label.
 func (c *Engine) humanMergePathLiftCleared(ctx context.Context, obs stageObservation, head string, comments []*gh.IssueComment, othersLog string) (_ []*gh.IssueComment, appBot string, ok bool, err error) {
+	return c.humanMergePathLiftClearedWith(ctx, obs, head, comments, func(sources []string) {
+		c.info(othersLog, "repo", obs.Display, "pr", obs.Number, "head", head, "sources", strings.Join(sources, ","))
+	})
+}
+
+// humanMergePathLiftClearedWith is humanMergePathLiftCleared with the
+// caller's own report of another hold source: onOthers is called with the
+// sources that keep the PR from merging (never empty), in place of the info
+// line, so a lift that runs every pass can say so once per head.
+func (c *Engine) humanMergePathLiftClearedWith(ctx context.Context, obs stageObservation, head string, comments []*gh.IssueComment, onOthers func(sources []string)) (_ []*gh.IssueComment, appBot string, ok bool, err error) {
 	if obs.HeadSHA != "" && obs.HeadSHA != head {
 		return nil, "", false, nil
 	}
@@ -154,7 +164,9 @@ func (c *Engine) humanMergePathLiftCleared(ctx context.Context, obs stageObserva
 		}
 	}
 	if sources := others.OtherHoldSourcesForPR(obs.Owner+"/"+obs.Repo, obs.Number, obs.Labels, comments); len(sources) > 0 {
-		c.info(othersLog, "repo", obs.Display, "pr", obs.Number, "head", head, "sources", strings.Join(sources, ","))
+		if onOthers != nil {
+			onOthers(sources)
+		}
 		return nil, "", false, nil
 	}
 	appBot = strings.TrimSpace(c.transport.AppBotLogin())

@@ -239,7 +239,7 @@ review:
   pending_fix_ttl: 2h                       # optional; dispatch the next bounded fix attempt when a fixer has pushed no new head after this long (default 2h; negative disables expiry)
   max_redispatch: 3                         # optional; expiries per head before the PR is held for a human (default 3)
   bot_author_model: ""                      # optional; model (or backend/model) that reviews PRs opened by bot_authors, e.g. gpt-6-luna (default empty = off)
-  bot_authors: [dependabot[bot], renovate[bot], github-actions[bot], "*[bot]"]  # optional; other bots: routed to bot_author_model, never pushed to by the fixer; the hive's own App never matches
+  bot_authors: ["dependabot[bot]", "renovate[bot]", "github-actions[bot]", "*[bot]"]  # optional; other bots: routed to bot_author_model, never pushed to by the fixer; the hive's own App never matches
   bot_author_full_review_paths: [".github/workflows/**", "Dockerfile*", "**/Dockerfile*"]  # optional; a bot PR touching these keeps the full-strength model
   delta_rereview: true                      # optional; re-review a PR already judged at an earlier head by its diff since that head (default on)
   delta_trivial_lines: 20                   # optional; a delta under this many lines in files a prior approve passed re-stamps it without a model call (default 20; negative disables; never carries changes_requested/requires_human)
