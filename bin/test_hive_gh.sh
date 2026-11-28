@@ -233,6 +233,9 @@ if argv_has "--json" && argv_has "feat-branch"; then pass "a non-numeric target 
 : >"$ARGV_LOG"
 out="$(PATH="${STUB_DIR}:${PATH}" STUB_ARGV_LOG="$ARGV_LOG" STUB_FIXTURE="$PR_FIXTURE" HIVE_GH_READ_REQUEST_DIR="$READ_DIR" HIVE_GH_FORGE_TIMEOUT=1 bash "$SCRIPT" pr view 7 --repo o/r 2>&1)"; rc=$?
 if [ "$rc" -eq 0 ] && argv_has "--json" && argv_has "o/r"; then pass "a bare --repo o/r falls through to gh when no relay serves the queue"; else fail "bare --repo with no relay to gh" "rc=$rc $out / gh argv: $(tr '\n' ' ' <"$ARGV_LOG")"; fi
+: >"$ARGV_LOG"
+out="$(PATH="${STUB_DIR}:${PATH}" STUB_ARGV_LOG="$ARGV_LOG" STUB_FIXTURE="$PR_FIXTURE" HIVE_GH_READ_REQUEST_DIR="$READ_DIR" HIVE_GH_FORGE_TIMEOUT=60 HIVE_GH_FORGE_PICKUP_TIMEOUT=1 timeout 15 bash "$SCRIPT" pr view 7 --repo o/r 2>&1)"; rc=$?
+if [ "$rc" -eq 0 ] && argv_has "--json" && argv_has "o/r" && grep -q "did not pick up" <<<"$out"; then pass "a bare --repo o/r goes to gh after the pickup window when nothing picks up the request"; else fail "bare --repo unpicked request to gh" "rc=$rc $out / gh argv: $(tr '\n' ' ' <"$ARGV_LOG")"; fi
 run_forge --full pr view 50 --repo acme/widgets >/dev/null
 if ! argv_has "--json" && argv_has "50"; then pass "--full still hands the call to gh untouched"; else fail "--full on forge repo"; fi
 if [ -z "$(find "$READ_DIR" -name '*.json' ! -name '*.result.json' ! -name '*.rejected')" ]; then pass "no request left behind by the gh paths"; else fail "stray request"; fi

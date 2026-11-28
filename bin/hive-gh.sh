@@ -148,7 +148,9 @@ _verb "$subcmd" "$action" || exec gh "$@"
 # relay creates its queue only on a hive whose repos are all off GitHub, so
 # on a GitHub hive the queue is absent and nothing here changes. A queue left
 # behind by a reload that adds a GitHub repo gets no answer, and the call
-# then goes to gh after HIVE_GH_FORGE_TIMEOUT.
+# then goes to gh: after HIVE_GH_FORGE_PICKUP_TIMEOUT (30s, three relay
+# polls) when no other request is queued ahead of it, else after
+# HIVE_GH_FORGE_TIMEOUT.
 READ_DIR="${HIVE_GH_READ_REQUEST_DIR:-/var/run/hive-metrics/read-requests}"
 FIRST_AGENT_UID=2001
 
@@ -223,7 +225,12 @@ except Exception:
 print("true" if v is True else "false" if v is False else v)
 PY
   }
-  local waited=0 timeout="${HIVE_GH_FORGE_TIMEOUT:-120}"
+  local waited=0 timeout="${HIVE_GH_FORGE_TIMEOUT:-120}" pickup="${HIVE_GH_FORGE_PICKUP_TIMEOUT:-30}"
+  # _queued_ahead reports another pending request in the queue, which a
+  # serving relay may still be working through (it reads a few per poll).
+  _queued_ahead() {
+    [ -n "$(find "$READ_DIR" -maxdepth 1 -name '*.json' ! -name '*.result.json' ! -path "$req" -print -quit 2>/dev/null)" ]
+  }
   while :; do
     if [ -f "$result" ] && ! _trusted; then
       echo "hive-gh: $result is not the hive's; refusing it" >&2; rm -f "$req"; exit 1
@@ -231,6 +238,14 @@ PY
     if _trusted && [ "$(_field ok)" = "true" ]; then break; fi
     if _trusted && [ ! -f "$req" ]; then
       echo "hive-gh: the hive refused the read of $repo#$number: $(_field error)" >&2; exit 1
+    fi
+    # A relay that serves the queue answers a lone request on its next poll.
+    # Still untouched after a few polls means none is serving it, so go to
+    # gh now instead of waiting out the full timeout.
+    if [ "$waited" -ge "$pickup" ] && [ -f "$req" ] && [ ! -e "$result" ] && ! _queued_ahead; then
+      rm -f "$req"
+      echo "hive-gh: the hive's read relay did not pick up the request within ${pickup}s; asking gh" >&2
+      return 0
     fi
     if [ "$waited" -ge "$timeout" ]; then
       rm -f "$req"
