@@ -338,6 +338,13 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 	if err != nil {
 		return res, err
 	}
+	if copyMode {
+		// Fail closed before any object exists when nothing constrains the
+		// copy Role's grants (#19971).
+		if err := l.verifyCopyAdmission(ctx, ns); err != nil {
+			return res, err
+		}
+	}
 	var relays *relayPlan
 	// The relay spool needs a directory hive and the Job share while the
 	// kick runs, which the copy transport does not have.

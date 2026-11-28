@@ -207,7 +207,13 @@ because HIVE_REQUIRE_HARDENED is set` (copy mode skips the relay containment
 preflight; use the claim transport on a hardened hive) or `kubejob:
 workspace_transport: copy is refused because hive's own pod runs under
 runtimeClassName "<class>" and job.runtime_class_name is empty` (set
-`job.runtime_class_name`, usually to the same class). See
+`job.runtime_class_name`, usually to the same class). It is also refused with
+`kubejob: workspace_transport: copy is refused: a server-side dry run of a
+Secret the admission policy hive-sandbox-copy-objects must deny was admitted`
+or `... could not confirm the admission policy hive-sandbox-copy-objects is
+enforced` when nothing enforces the copy Role's limits (apply
+`deploy/k8s/sandbox-job-copy-admission.yaml` and label the namespace
+`hivecommons.dev/service-account=<sa>`; the next kick checks again). See
 [Sandbox isolation](sandbox-isolation.md).
 
 ### unknown_agent
