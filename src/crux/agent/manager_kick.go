@@ -14,6 +14,15 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
+// noActionWatch is the no-action watchdog's per-kick baseline, embedded in
+// AgentProcess and kept here so manager.go stays under the crux file-size
+// ratchet. Guarded by m.mu like the rest of AgentProcess.
+type noActionWatch struct {
+	lastInferKickMarks  int       // tool-marker count after lastInferKickAnchor just after kick delivery
+	lastInferKickAnchor string    // scrollback lines just above the screen at kick delivery; markers are counted only after them (#20214)
+	lastInferKickBusyAt time.Time // last time a governor pass saw the kicked turn still working (#20214)
+}
+
 // SetRecordPromptCallback wires a function that persists a delivered kick
 // prompt (agent, trigger, full text). Safe to call at any time; a nil fn
 // clears it. Never takes m.mu — see recordPromptCallback.
@@ -746,6 +755,12 @@ const (
 	// post-Enter window (kick echoed, spinner not yet rendered) as a
 	// completed prose-only response.
 	inferenceActionNudgeGrace = 2 * time.Minute
+	// inferenceActionNudgeMaxTurn is the longest kicked turn the no-action
+	// check still treats as a possible prose-only reply. A prose-only answer
+	// to a kick finishes in seconds to a couple of minutes; a turn that kept
+	// the CLI busy longer than this did real work (#20214), even when the
+	// pane no longer shows the tool markers (cleared or reset mid-turn).
+	inferenceActionNudgeMaxTurn = 5 * time.Minute
 	// inferenceActionNudgeMessage is typed into the CLI when the model
 	// answered a kick with prose only — a plan addressed to a reader with
 	// zero tool executions (observed live with weak OSS models on
@@ -783,7 +798,13 @@ func (m *Manager) recordInferenceKick(agent *AgentProcess, at time.Time) {
 	agent.stallNudgeSent = false
 	// Baseline for the no-action check: markers already in scrollback from
 	// work done before this kick must not count as post-kick tool activity.
-	agent.lastInferKickMarks = countToolMarkers(m.captureTmuxPaneForAgent(agent))
+	// The capture is a moving window, so the baseline is anchored to lines
+	// that are already in scrollback rather than taken over the whole window
+	// (#20214).
+	capture := m.captureTmuxPaneForAgent(agent)
+	agent.lastInferKickAnchor = scrollbackAnchor(capture, visible)
+	agent.lastInferKickMarks, _ = toolMarkersAfterAnchor(capture, agent.lastInferKickAnchor)
+	agent.lastInferKickBusyAt = time.Time{}
 	agent.actionNudgeSent = false
 }
 
@@ -845,7 +866,15 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 		m.mu.Unlock()
 		return
 	}
-	if paneShowsActiveWork(pane) || !strings.Contains(pane, cliInputPromptMarker) {
+	if paneShowsActiveWork(pane) {
+		// Remember how long the kicked turn has kept the CLI busy, so the
+		// no-action check can tell a long turn from a quick prose reply
+		// however coarse the governor tick is (#20214).
+		agent.lastInferKickBusyAt = now
+		m.mu.Unlock()
+		return
+	}
+	if !strings.Contains(pane, cliInputPromptMarker) {
 		m.mu.Unlock()
 		return
 	}
@@ -908,8 +937,21 @@ func (m *Manager) nudgeIfKickStalled(name, pane string) {
 		m.mu.Unlock()
 		return
 	}
-	if countToolMarkers(m.captureTmuxPaneForAgent(agent)) > agent.lastInferKickMarks {
-		// Real tool activity since the kick — the agent is acting. Disarm.
+	if kickTurnLength(agent) >= inferenceActionNudgeMaxTurn {
+		// A long turn is evidence of work, not a prose-only reply (#20214).
+		// The length is how long the turn was seen busy, not the time
+		// since the kick: with a governor tick longer than the cutoff, the
+		// time since the kick would pass it before the first check.
+		agent.lastInferKickPane = ""
+		m.mu.Unlock()
+		return
+	}
+	if marks, ok := toolMarkersAfterAnchor(m.captureTmuxPaneForAgent(agent), agent.lastInferKickAnchor); !ok || marks != agent.lastInferKickMarks {
+		// More markers: real tool activity since the kick, the agent is
+		// acting. Anchor gone or fewer markers: the pane was cleared or
+		// reset, or the kick-time lines scrolled out of the capture window,
+		// so the count says nothing about this turn (#20214). Either way,
+		// disarm rather than nudge.
 		agent.lastInferKickPane = ""
 		m.mu.Unlock()
 		return
