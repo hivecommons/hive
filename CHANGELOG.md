@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.386.2)
+
+### Fixed
+
+- `hive-review --record-verdict` now says the verdict was queued for the relay instead of claiming it was recorded, since the relay can still reject the request after the script exits (#20290).
+
 ## 2026-11-28 (v5.386.1)
 
 ### Fixed

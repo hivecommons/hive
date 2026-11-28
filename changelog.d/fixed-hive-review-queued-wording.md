@@ -1,1 +1,0 @@
-- `hive-review --record-verdict` now says the verdict was queued for the relay instead of claiming it was recorded, since the relay can still reject the request after the script exits (#20290).
