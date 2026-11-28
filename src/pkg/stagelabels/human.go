@@ -106,7 +106,9 @@ type Evidence struct {
 	// Head is the current head SHA (rendered short in comments).
 	Head string
 	// HeadFresh is true when nothing has reported on the head yet: it was
-	// just pushed, so the hive withholds an opinion.
+	// just pushed, or its runs wait for approval. Without a verdict for the
+	// head the hive withholds an opinion (050); with one it is the
+	// reviewer's answer, and an approved head waits at 060 for its checks.
 	HeadFresh bool
 	Verdict   VerdictState
 	Checks    CheckSummary
@@ -748,10 +750,16 @@ func routeProgress(e Evidence) Route {
 		}
 		return route
 	}
-	// A fresh head waits for its verdict — unless the reviewer has already
-	// answered requires_human for this very head, in which case the person
-	// is owed a decision now, not after CI reports (hivecommons/hive#13115).
-	if len(e.ForkGuard) == 0 && (e.Verdict == VerdictPending || (e.HeadFresh && e.Verdict != VerdictRequiresHuman)) {
+	// A fresh head waits for its verdict, unless the reviewer has already
+	// answered for this very head. requires_human owes the person a decision
+	// now, not after CI reports (hivecommons/hive#13115). An approve verdict
+	// is the reviewer's answer too: the head is reviewed, and the wait below
+	// names the checks that have not reported, so it is 060, never 090 (the
+	// rule #12531 set for a fresh head). Read as 050 "no reviewer verdict",
+	// an approved head whose runs wait for a maintainer's "Approve and run"
+	// sat at 050 on every good check read and flipped to 060 whenever the
+	// read failed ("checks could not be read"), on the same head.
+	if len(e.ForkGuard) == 0 && (e.Verdict == VerdictPending || (e.HeadFresh && e.Verdict != VerdictRequiresHuman && e.Verdict != VerdictApproved)) {
 		return Route{Stage: ReviewPending, Reasons: []string{"no reviewer verdict for this head yet"}, Summary: summary}
 	}
 	var decide []string
@@ -831,6 +839,10 @@ func routeProgress(e Evidence) Route {
 		wait = append(wait, "checks could not be read")
 	case e.Checks.Pending > 0:
 		wait = append(wait, fmt.Sprintf("%d check(s) still running", e.Checks.Pending))
+	case e.HeadFresh && e.Verdict == VerdictApproved:
+		// An approved head nothing has reported on: without this wait a
+		// repository whose required set is unknown would read it as 090.
+		wait = append(wait, "no check has reported on this head yet")
 	}
 	if e.Checks.Known && len(e.Checks.Missing) > 0 {
 		wait = append(wait, "required check(s) `"+strings.Join(e.Checks.Missing, "`, `")+"` not reported on this head (a PR opened with GITHUB_TOKEN triggers no workflow): GitHub will not merge it until they run")
