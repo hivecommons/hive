@@ -379,7 +379,8 @@ func TestWorkSourceSeamNamesForgeToolsOnForgejoOnlyHive(t *testing.T) {
 	msg := modeKick(t, s, "scanner")
 	for _, want := range []string{"hive-clone --repo <owner/repo> [--pr <N>]", "hive-push-branch", "no Forgejo equivalent", "hive-gh pr view <N> --repo <owner/repo>", "hive-gh pr checks <N>", "overrides your role policy below",
 		"hive-gh pr reviews <N> --repo <owner/repo>", "hive-gh pr comments <N>", "hive-gh issue comments <N>", "hive-gh run view <run-id> --log",
-		"hive-open-issue comment <N> --repo <owner/repo> --body-file <path>"} {
+		"hive-open-issue comment <N> --repo <owner/repo> --body-file <path>",
+		"`hive-review` in every form, `--record-verdict` included, is not served on a forge-only hive", "`gh`, `gh api`, `hive-review` or any `hive-gh` verb"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("Forgejo-only kick lacks %q:\n%s", want, msg)
 		}
