@@ -86,7 +86,7 @@ func TestKnownMergeRefusal(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			clock := time.Date(2026, 10, 25, 10, 34, 0, 0, time.UTC)
 			c := &Engine{now: func() time.Time { return clock }}
-			c.refusedMerge(base, tc.refused)
+			c.refusedMerge(context.Background(), base, tc.refused)
 			clock = clock.Add(tc.advance)
 			next := base
 			if tc.next != nil {

@@ -42,6 +42,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	// re-engagement cap; nobody is fixing it any more.
 	fixerAttempts, fixerExhausted := stagelabels.ParseFixerExhausted(base)
 	hiveSupersederStop := stagelabels.HiveSupersederHardStopReason(base)
+	// GitHub refused the merge for unresolved review conversations the hive
+	// does not resolve itself: a person answers them on GitHub.
+	unresolvedThreads := lower == stageengineprstage.AutoMergeReasonUnresolvedReviewThreads
 
 	// WHAT it is waiting on: the question, most specific source first. A
 	// reviewer's own question is quoted verbatim — it is the text the
@@ -128,6 +131,8 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	case changes:
 		d.AskedBy = decisionAskedByReviewer
 		d.Question = "A reviewer requested changes" + at + ". Give direction for a new commit, or close it?"
+	case unresolvedThreads:
+		d.Question = "GitHub will not merge this until every review conversation is resolved, and the hive left the open ones for a person. Answer and resolve them on GitHub, or close the PR?"
 	case laneRule:
 		d.Question = "The hive never merges this by itself (" + decisionPlainReason(base) + "). Approve it for a maintainer to merge, give direction, or close it?"
 	default:
@@ -153,6 +158,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		if base == "" {
 			d.BlockerReason = decisionBlockerSentinel
 		}
+	case unresolvedThreads:
+		d.Blocker = "The repository requires conversation resolution. The hive resolves its own non-blocking threads itself when nothing else is open; it leaves a person's or another bot's thread, a hive thread someone replied in and any hive finding not marked non-blocking (with review.severity.block_at: P3, every finding), and it also parks here when GitHub kept refusing with nothing left it could resolve. The hive tries the merge again within 30 minutes or on a new push."
+		approveOK, approveWhy = false, "Approving does not resolve review threads on GitHub."
 	case laneRule:
 		d.Blocker = "The hive never merges this by itself. After approval, a maintainer merges."
 	case forkGuarded:
