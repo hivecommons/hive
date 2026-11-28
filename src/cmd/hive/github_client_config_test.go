@@ -53,6 +53,8 @@ var clientSetterAllowlist = map[string]string{
 	"SetRepos": "constructor argument (every rebuild passes b.cfg.Project.Repos); " +
 		"re-synced on config reload, bootState overrides and heartbeat project claims",
 	"SetAppBotLogin": "constructor argument: NewClientFromAppWithBotLogin records the bot login itself",
+	"SetReviewedPRReader": "not wired yet: nil keeps the GitHub REST read for the review verdict writer; " +
+		"the Forgejo relay installs a PullView-backed reader in #20292",
 	"SetApprovalDesk": "not wired in production: the self-authored auto-merge sweep receives " +
 		"the approval desk through automerge.Options.ApprovalDesk",
 	"SetMergeRequestPolicy": "combined form of SetMergeRequestAllowUnprotectedBaseRepos and " +
