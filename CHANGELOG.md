@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.4)
+
+### Fixed
+
+- Avoid restarting working agents when their own claude or codex transcript or their inference requests show activity; the busy-no-activity silence clock still starts at `busy_since` when neither is known ([#20213](https://github.com/hivecommons/hive/issues/20213)).
+- Allow Forgejo spokes serving their own key list to start before integration audiences exist, warning about unconfigured tiers until setup is complete.
+
 ## 2026-11-28 (v5.384.3)
 
 ### Fixed
