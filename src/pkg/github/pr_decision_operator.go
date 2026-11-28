@@ -712,6 +712,21 @@ func (c *Client) warnOperatorApproval(what, repo string, number int, head string
 // carry it: ErrPullRequestNotHiveAuthored, leave a review instead. The
 // caller is responsible for having verified actor's write access.
 func (c *Client) RecordOperatorPullRequestDecision(ctx context.Context, repo string, number int, actor, decision string, store review.HumanChangeRequestStore) (PullRequestDecisionEvent, error) {
+	return c.RecordOperatorPullRequestDecisionWith(ctx, repo, number, actor, decision, store, PullRequestDecisionOptions{})
+}
+
+// PullRequestDecisionOptions are the optional facts a recorded direction
+// carries.
+type PullRequestDecisionOptions struct {
+	// Delegated says the hive's delegate wrote the direction for actor
+	// ("Let hive decide"); it is stored on the record
+	// (review.HumanChangeRequest.Delegated).
+	Delegated bool
+}
+
+// RecordOperatorPullRequestDecisionWith is RecordOperatorPullRequestDecision
+// plus opts.
+func (c *Client) RecordOperatorPullRequestDecisionWith(ctx context.Context, repo string, number int, actor, decision string, store review.HumanChangeRequestStore, opts PullRequestDecisionOptions) (PullRequestDecisionEvent, error) {
 	owner, name, err := c.operatorPRTarget(repo, number, actor, "RecordOperatorPullRequestDecision")
 	if err != nil {
 		return PullRequestDecisionEvent{}, err
@@ -742,14 +757,15 @@ func (c *Client) RecordOperatorPullRequestDecision(ctx context.Context, repo str
 		return PullRequestDecisionEvent{}, ErrPullRequestNotHiveAuthored
 	}
 	req := review.HumanChangeRequest{
-		Repo:     owner + "/" + name,
-		Number:   number,
-		HeadSHA:  head,
-		Source:   review.HumanChangeRequestSourceDecision,
-		SourceID: operatorDecisionMarkerID,
-		Actor:    actor,
-		Body:     decision,
-		Kind:     mode.kind(),
+		Repo:      owner + "/" + name,
+		Number:    number,
+		HeadSHA:   head,
+		Source:    review.HumanChangeRequestSourceDecision,
+		SourceID:  operatorDecisionMarkerID,
+		Actor:     actor,
+		Body:      decision,
+		Kind:      mode.kind(),
+		Delegated: opts.Delegated,
 	}
 	// Record before replying: a reply without a record would promise a fix
 	// nothing is queued to make.

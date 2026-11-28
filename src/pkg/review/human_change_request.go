@@ -79,6 +79,19 @@ type HumanChangeRequest struct {
 	// head is a merge of the base branch into CarriedFromHead that left the
 	// PR's diff untouched (hivecommons/hive#15649 → see CarryOverBaseRefresh).
 	CarriedFromHead string `json:"carried_from_head,omitempty"`
+	// Delegated marks a direction the hive's own delegate recorded for the
+	// person who clicked "Let hive decide", not one that person wrote.
+	// Actor is still that person. A trusted APPROVED review of Head
+	// submitted after RecordedAt supersedes it: the hive's own direction is
+	// never a maintainer's change request (hivecommons/hive#15063). Records
+	// written before the field existed read false.
+	Delegated bool `json:"delegated,omitempty"`
+	// SupersedesDelegated marks an approval-kind record of a GitHub review
+	// that the stage pass recorded over a Delegated direction on Head. The
+	// pass revalidates it against the live review whenever it reads it:
+	// once the review is dismissed the record is dropped and the direction
+	// stands again.
+	SupersedesDelegated bool `json:"supersedes_delegated,omitempty"`
 }
 
 // CarriesOverBaseRefresh reports whether the decision carrier

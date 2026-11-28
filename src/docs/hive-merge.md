@@ -2152,7 +2152,24 @@ human-authored PR → `stage/071-needs-author`, on a clanker PR →
 `stage/072-returned-to-contributor`, a trusted human's changes-requested
 review or `/hive decision <text>` on a hive-authored PR's current head →
 `stage/070-fixing` with reason `human-changes-requested` and one fix kick
-carrying the text ([#13041](https://github.com/hivecommons/hive/issues/13041)),
+carrying the text ([#13041](https://github.com/hivecommons/hive/issues/13041);
+a direction the *Let hive decide* delegate recorded is marked as the
+delegate's. On contributor and adopted PRs, where the stage pass reads the
+recorded decision, a trusted maintainer's APPROVED review of the same head
+submitted after the direction supersedes it: the head reads as approved and
+no fixer is kicked for the direction again, unless a person's
+changes-requested review stands on the head or was carried onto it over the
+hive's base merge. The pass re-checks that approval against GitHub and drops
+it only when a read shows the review no longer stands, so a dismissal
+brings the direction back while a failed read keeps the approval. Both hold
+on that head only: once an approval has superseded the direction, the
+hive's base merge carries neither record to the new head. The self-authored
+sweep (the hive's own PRs and trusted bots' PRs, and the contributor lane's
+sentinel-blocked and human-merge-required paths) keeps its existing rule
+for every recorded decision, typed or delegated: a trusted approval of the
+head submitted after the decision supersedes it unless a changes-requested
+review stands on that head itself; there too a failed review read no longer
+revokes a recorded approval),
 hold / sentinel alert → a **gate on the PR's real stage**, not a stage of its own (the column follows CI / review / merge-queue progress, the Merge queue cell reads *Held · sentinel · confirm intent* / *Held · hold*, and the lanes refuse the merge on the label itself — a parked PR never merges unattended, [#17327](https://github.com/hivecommons/hive/issues/17327); a gated head GitHub reports `dirty` still goes back to its author for the conflict, 072 / 071 / 070, with the gate kept), hive-authored PR whose fix
 dispatch is refused with `fix-attempts-exhausted` → `stage/085-needs-decision`
 with reason `fixer-exhausted:<N>` and a once-per-head decision comment (re-author /

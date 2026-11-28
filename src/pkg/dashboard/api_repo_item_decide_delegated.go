@@ -1260,8 +1260,10 @@ func (s *Server) executeDelegatedDecision(ctx context.Context, in delegatedecisi
 			} else if d.Verdict == delegatedecision.VerdictDirection && (in.HiveAuthored || in.AdoptedByHive) {
 				// The relay reads the adoption from the stage store itself: it
 				// routes to the hive's fixer only while the hive owns and can
-				// push the branch, else to the contributor's hive.
-				if event, err := client.RecordOperatorPullRequestDecision(ctx, repoFull, number, user, d.Text, repoItemDecisionChangeRequests()); err != nil && !errors.Is(err, ghpkg.ErrPullRequestNotHiveAuthored) {
+				// push the branch, else to the contributor's hive. The record is
+				// marked as the delegate's, so a trusted approval of the head
+				// after it supersedes it on every lane (foldRecordedDecision).
+				if event, err := client.RecordOperatorPullRequestDecisionWith(ctx, repoFull, number, user, d.Text, repoItemDecisionChangeRequests(), ghpkg.PullRequestDecisionOptions{Delegated: true}); err != nil && !errors.Is(err, ghpkg.ErrPullRequestNotHiveAuthored) {
 					return notes, fmt.Errorf("recording PR direction: %w", err)
 				} else if err == nil {
 					switch {
