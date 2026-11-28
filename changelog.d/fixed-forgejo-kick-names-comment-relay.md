@@ -1,0 +1,1 @@
+- On a Forgejo-only hive, the kick text now names `hive-open-issue comment <N> --repo <owner/repo> --body-file <path>` as the way to publish a review, finding or status note, so a reviewer no longer ends its kick with its result left in the terminal (#20283).
