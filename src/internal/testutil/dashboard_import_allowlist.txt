@@ -56,6 +56,8 @@ github.com/hivecommons/hive/pkg/github
 github.com/hivecommons/hive/pkg/governor
 github.com/hivecommons/hive/pkg/hiveadvisor
 github.com/hivecommons/hive/pkg/hivestate
+# holdguard: dashboard releases record the reviewed head in the governor's shared hold-guard ledger (hivecommons/hive#20164).
+github.com/hivecommons/hive/pkg/holdguard
 github.com/hivecommons/hive/pkg/hooks
 github.com/hivecommons/hive/pkg/housestyle
 github.com/hivecommons/hive/pkg/hub

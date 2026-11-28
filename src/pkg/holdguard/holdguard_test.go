@@ -89,6 +89,27 @@ func TestSnapshotFirstHeldWinsAndPersists(t *testing.T) {
 	}
 }
 
+func TestReleaseReceiptPersistsOnlyForItsHoldEpisode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hold-guard.json")
+	s := Load(path)
+	s.RecordRelease("acme/widgets", 7, "m1", "owner")
+	if _, ok := s.Recorded("acme/widgets", 7); ok {
+		t.Fatal("release must not create a hold snapshot")
+	}
+	s.Snapshot("acme/widgets", 7, "c1", nil)
+	s.RecordRelease("acme/widgets", 7, "m1", "owner")
+	s = Load(path)
+	rec, ok := s.Recorded("acme/widgets", 7)
+	if !ok || rec.ReleasedHead != "m1" || rec.ReleasedBy != "owner" {
+		t.Fatalf("reloaded receipt = %+v, exists=%v", rec, ok)
+	}
+	s.ReArm("acme/widgets", 7, "m1", nil)
+	rec, _ = s.Recorded("acme/widgets", 7)
+	if rec.ReleasedHead != "" || rec.ReleasedBy != "" {
+		t.Fatalf("re-armed hold kept old release: %+v", rec)
+	}
+}
+
 func TestSnapshotBoundsTrackedCommits(t *testing.T) {
 	s, _ := newTestStore(t)
 	commits := make([]Commit, maxTrackedCommits+50)

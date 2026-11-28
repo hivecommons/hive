@@ -94,8 +94,10 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// (hivecommons/hive#20136), plus pkg/reviewrules, the leaf whose VaultDir
 	// names the review-rules channel the ACMM cross-session-knowledge credit
 	// counts approved reviewer rules from, so it reads the same vault the
-	// review-feedback sweep writes (hivecommons/hive#20128).
-	const maxDashboardInternalImports = 72
+	// review-feedback sweep writes (hivecommons/hive#20128), plus pkg/holdguard
+	// so dashboard releases record the reviewed head in the same ledger used
+	// by the governor (hivecommons/hive#20164).
+	const maxDashboardInternalImports = 73
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

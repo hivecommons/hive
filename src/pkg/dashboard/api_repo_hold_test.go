@@ -12,11 +12,13 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/holdguard"
 )
 
 type repoHoldMock struct {
 	permission  map[string]string
 	issueLabels []string
+	head        string
 	added       []string
 	created     []string
 	removed     []string
@@ -63,6 +65,8 @@ func newRepoHoldMockServer(t *testing.T, m *repoHoldMock) *httptest.Server {
 			_, _ = io.WriteString(w, `{"permission":"`+m.permission["writer"]+`"}`)
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/collaborators/reader/permission"):
 			_, _ = io.WriteString(w, `{"permission":"read"}`)
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pulls/7"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "head": map[string]any{"sha": m.head}})
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/issues/7"):
 			labels := make([]map[string]string, 0, len(m.issueLabels))
 			for _, label := range m.issueLabels {
@@ -345,5 +349,43 @@ func TestRepoHoldReleaseOnIssueNamesCoveringPRHold(t *testing.T) {
 	}
 	if want := "Nothing to release on #17558 — the hold is on #17561."; res.Outcome != want {
 		t.Fatalf("outcome = %q, want %q", res.Outcome, want)
+	}
+}
+
+func TestRepoItemReleaseRecordsOnlyTheReviewedHead(t *testing.T) {
+	for _, tc := range []struct {
+		name, requested, current string
+		wantStatus               int
+	}{
+		{name: "current head", requested: "new", current: "new", wantStatus: http.StatusOK},
+		{name: "stale head", requested: "old", current: "new", wantStatus: http.StatusConflict},
+		{name: "missing head", current: "new", wantStatus: http.StatusConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := holdguard.Load("")
+			store.Snapshot("testorg/testrepo", 7, "old", nil)
+			oldStore := repoHoldGuardStore
+			repoHoldGuardStore = func() *holdguard.Store { return store }
+			t.Cleanup(func() { repoHoldGuardStore = oldStore })
+			mock := &repoHoldMock{issueLabels: []string{"ready-for-review"}, head: tc.current}
+			srv := newRepoHoldServer(t, mock)
+			req := httptest.NewRequest(http.MethodPost, "/api/repos/testorg/testrepo/items/7/hold",
+				strings.NewReader(fmt.Sprintf(`{"held":false,"type":"pr","head":%q}`, tc.requested)))
+			markOwnerRequest(req)
+			req.Header.Set("X-Hive-User", "owner")
+			w := httptest.NewRecorder()
+			srv.mux.ServeHTTP(w, req)
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status=%d body=%s, want %d", w.Code, w.Body.String(), tc.wantStatus)
+			}
+			rec, _ := store.Recorded("testorg/testrepo", 7)
+			if tc.wantStatus == http.StatusOK {
+				if rec.ReleasedHead != tc.requested || rec.ReleasedBy != "owner" || len(mock.removed) != 1 {
+					t.Fatalf("release=%+v removed=%v", rec, mock.removed)
+				}
+			} else if rec.ReleasedHead != "" || len(mock.removed) != 0 {
+				t.Fatalf("refused release=%+v removed=%v", rec, mock.removed)
+			}
+		})
 	}
 }

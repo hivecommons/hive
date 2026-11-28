@@ -1403,7 +1403,7 @@
       const type = item.kind === 'pr' ? 'pr' : 'issue';
       switch (id) {
         case 'hold': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: true, type } };
-        case 'release': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type } };
+        case 'release': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type, head: item.head || '' } };
         case 'sha-waive': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/sha-waiver', body: { waived: true } };
         case 'sha-restore': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/sha-waiver', body: { waived: false } };
         case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };

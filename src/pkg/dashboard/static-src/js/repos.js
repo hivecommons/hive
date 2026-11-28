@@ -762,7 +762,7 @@
         const resp = await fetch('/api/repos/' + encodeURIComponent(p.owner) + '/' + encodeURIComponent(p.repo) + '/items/' + number + '/hold', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ held: wantHeld, type: type })
+          body: JSON.stringify({ held: wantHeld, type: type, head: moved && moved.item && moved.item.head_sha || '' })
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));

@@ -548,7 +548,7 @@ func TestStageTrackerBulkActionsCallEndpointPerRow(t *testing.T) {
 const i1 = { repo: 'o/r', kind: 'issue', number: 1, url: 'u1' }, p2 = { repo: 'o/r', kind: 'pr', number: 2, url: 'u2' }, i3 = { repo: 'o/x', kind: 'issue', number: 3, url: 'u3' };
 // Mapping.
 assert.deepStrictEqual(stageTrackerActionRequest(i1, 'hold'), { url: '/api/repos/o/r/items/1/hold', body: { held: true, type: 'issue' } });
-assert.deepStrictEqual(stageTrackerActionRequest(p2, 'release'), { url: '/api/repos/o/r/items/2/hold', body: { held: false, type: 'pr' } });
+assert.deepStrictEqual(stageTrackerActionRequest(p2, 'release'), { url: '/api/repos/o/r/items/2/hold', body: { held: false, type: 'pr', head: '' } });
 assert.deepStrictEqual(stageTrackerActionRequest(p2, 'retry'), { url: '/api/repos/rescan', body: {}, once: true });
 assert.deepStrictEqual(stageTrackerActionRequest(p2, 'needs-human', { comment: 'loop' }), { url: '/api/review/pipeline/o/r/2/send-to-human', body: { reason: 'loop' } });
 assert.deepStrictEqual(stageTrackerActionRequest(i1, 'decide:approve'), { url: '/api/repos/o/r/items/1/decision', body: { decision: 'approve', comment: '', type: 'issue' } });
@@ -2094,7 +2094,7 @@ _stageTracker = { items: [t1, plain, t2, pr] };
 func TestStageTrackerReleaseHoldTargetsCoveringPR(t *testing.T) {
 	html := indexHTML(t)
 	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+`
-const pr = { number: 17561, url: 'https://github.com/o/r/pull/17561', stage: 90, modifiers: ['hold'], hold: { by: 'hive' }, sentinel_alert: true };
+const pr = { number: 17561, url: 'https://github.com/o/r/pull/17561', stage: 90, head: 'head123', modifiers: ['hold'], hold: { by: 'hive' }, sentinel_alert: true };
 const issue = { repo: 'o/r', kind: 'issue', number: 17558, url: 'u17558', stage: 50, modifiers: [], linked_prs: [pr] };
 const ownHold = Object.assign({}, issue, { number: 17600, modifiers: ['hold'] });
 const twoPRs = Object.assign({}, issue, { number: 17601, linked_prs: [pr, { number: 17562, stage: 40, modifiers: ['hold'] }] });
@@ -2109,7 +2109,7 @@ _stageTracker = { items: [issue, ownHold, twoPRs] };
 (async () => {
   await runRowAction('release', issue);
   assert.deepStrictEqual(calls.map(c => c.url), ['/api/repos/o/r/items/17561/hold'], 'Release hold on the issue row posts to the covering PR');
-  assert.deepStrictEqual(calls[0].body, { held: false, type: 'pr' });
+  assert.deepStrictEqual(calls[0].body, { held: false, type: 'pr', head: 'head123' });
 
   calls.length = 0;
   await runRowAction('gate:confirm-sentinel', issue);
