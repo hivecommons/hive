@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v6.65.2)
+
+### Fixed
+
+- A pull request whose current head the hive's reviewer has approved, but whose CI has not reported anything yet (for example a first-time contributor's workflow runs waiting for a maintainer's "Approve and run"), now stays at `060-reviewed` instead of flipping between `050-review-pending` and `060-reviewed` on the same head. The stage pass read a head with no reported checks as "no reviewer verdict for this head yet" even with the approval recorded for it, so the PR sat at 050 with the caption "waiting for a verdict on the current head" and jumped to 060 only when a check read failed. It now waits at 060 with "no check has reported on this head yet", any sentinel alert or hold still shown as the gate, and never reaches 090 until its checks report. A head with no verdict yet is still 050. Behind a lane rule that needs a person (a workflow-path or tests-removed fence, a withheld approval), the same approved head now goes straight to `085-needs-decision` instead of waiting at 050 for CI.
+
 ## 2026-11-28 (v6.65.1)
 
 ### Fixed
