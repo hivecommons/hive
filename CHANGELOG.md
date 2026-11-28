@@ -11,6 +11,40 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.3)
+
+### Fixed
+
+- Hive no longer types the "You produced a plan but executed nothing" action nudge after a kicked turn that was seen working for more than 5 minutes, or when the output from before the kick has been cleared or has scrolled out of the captured window, since neither case is a prose-only reply (#20214). The turn length now comes from how long the turn was seen busy, so a slow governor tick no longer skips the check, and tool markers are counted only after the lines that were in scrollback when the kick was sent.
+- Allow pod-run agents to fetch a Forgejo AGit pull request head through `hive-clone --pr` without treating it as a writable branch.
+
+## 2026-11-28 (v5.384.2)
+
+### Fixed
+
+- Hub dashboard: a hub running with `HIVE_HUB_MODE=self-hosted` no longer shows hosted-fleet controls (Usage by cluster, Cluster Health, the Scale Controls fleet knobs and per-cluster limits, `+ Add Hosted Hive`, Request a hive, and the Users quota column); Register your own hive is the only way to add a hive. Hubs without the mode set are unchanged.
+- Show self-registered spokes' project names and disambiguate duplicate hive titles on the hub dashboard.
+
+## 2026-11-28 (v5.384.1)
+
+### Fixed
+
+- Creating an agent with a custom prompt in the Create Agent dialog now saves the prompt as `<name>.md` and points `kick_template` at it, so the new agent runs your prompt instead of the built-in one; `POST /api/agents` takes the text in `agent.prompt_template` and refuses a `kick_template` that is not a bare file name with a 400 (#20205).
+
+## 2026-11-28 (v5.384.0)
+
+### Added
+
+- Hubs that provision no hives can set `HIVE_HUB_MODE=self-hosted`. With no cluster registry file, such a hub now uses an empty cluster registry instead of synthesizing an `OKE (default)` cluster, so Usage, Cluster Health and Scale Controls no longer show a phantom `hive-oke` cluster. The mode is reported to the dashboard as `hub_mode` in `/api/auth/user` ([#20196](https://github.com/hivecommons/hive/issues/20196)).
+
+## 2026-11-27 (v5.383.7)
+
+### Fixed
+
+- A hive whose repositories are all on another forge (Forgejo, Gitea, GitLab) no longer asks the GitHub Search API for its merged-PR and closed-issue counts or warns `github client not configured` every hour; the counts show as unsupported, and a mixed hive counts only its GitHub repositories (#20179).
+- `hive-clone` works in the stock Kubernetes pod again: when the hive cannot `chown` the clone bundle to the agent (no effective `CAP_CHOWN`), it writes the bundle as the agent's UID through `su-exec` instead of failing and quarantining the request (#20195).
+- Hub dashboard: the NPS card, Customers profile sharing and Ask AI help panels no longer take space when their feature is off (one "Optional features off" line names what is off), and the Hub admins field asks for the identity form of the hub's sign-in provider, such as `custom:<subject>` on a custom-OIDC hub, instead of always saying GitHub login.
+
 ## 2026-11-27 (v5.383.6)
 
 ### Fixed

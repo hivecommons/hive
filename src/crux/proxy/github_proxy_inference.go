@@ -343,6 +343,7 @@ func (p *GitHubProxy) inferenceTranslatorHandlerFor(identify func(*http.Request)
 			http.Error(w, `{"type":"error","error":{"type":"authentication_error","message":"caller could not be identified"}}`, http.StatusUnauthorized)
 			return
 		}
+		p.noteInferenceRequest(agentName, r.Method, r.URL.Path)
 
 		p.logger.Info("inference request",
 			"agent", agentName,
@@ -619,6 +620,7 @@ func (p *GitHubProxy) handleAnthropicReroute(conn net.Conn, r *http.Request, hos
 // handleInferenceRequest translates a single Anthropic API request and
 // forwards it to the inference backend.
 func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, agentName string, route *InferenceRoute) {
+	p.noteInferenceRequest(agentName, req.Method, req.URL.Path)
 	route = p.routeWithEntitledModel(routeWithCurrentKey(route), agentName)
 	_ = conn.SetReadDeadline(time.Now().Add(httpReadTimeout))
 	body, err := io.ReadAll(req.Body)
@@ -782,19 +784,4 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		Body:       io.NopCloser(bytes.NewReader(translated)),
 	}
 	_ = httpResp.Write(conn)
-}
-
-func (p *GitHubProxy) recordInferenceResponseError(route *InferenceRoute, agentName, upstreamURL string, resp *http.Response, body []byte) {
-	// recordInferenceError already emits the operator-action auth warning for
-	// a 401. The generic log would file a second fleet report for the same rejection.
-	if !isInferenceAuthStatus(resp.StatusCode) {
-		p.logger.Error("inference upstream error",
-			"agent", agentName,
-			"status", resp.StatusCode,
-			"url", upstreamURL,
-			"server", resp.Header.Get("Server"),
-			"body", truncateBytes(body, 500),
-		)
-	}
-	p.recordInferenceError(route, agentName, resp.StatusCode, body)
 }

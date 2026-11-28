@@ -232,6 +232,11 @@ forgejo:
    to have the spoke serve them (see
    [Let the spoke serve the key list](#let-the-spoke-serve-the-key-list)).
    The key host must be live before step 2.
+   When the spoke serves the list, start it with `issuer`, `key_file` and
+   `serve_key_list: true`, leaving `audiences` unset until step 3. It logs
+   one warning while `audiences` is empty. Git clone and push
+   fail for tiers without an available less-privileged integration; no
+   shared access token is substituted.
 2. For each tier, run
 
    ```sh
@@ -254,6 +259,7 @@ forgejo:
    continue. This is the only end-to-end check of the key host before the
    first clone.
 3. Copy each integration's audience under `audiences`, keyed by tier.
+   Update the spoke configuration and restart it to pick up the audiences.
 
 If the issuer host resolves to a private or loopback address, Forgejo refuses
 it by default, and step 2 fails with `authorized_integration can only call
@@ -380,6 +386,14 @@ instead ([#19997](https://github.com/hivecommons/hive/issues/19997)):
 hive-clone --repo <owner/repo> [--dir <path>]          # new checkout
 hive-clone --repo <owner/repo> --fetch [--dir <path>]  # update a checkout
 ```
+
+For an AGit pull request without a head branch, add `--pr <number>` to
+either command. The relay fetches only that PR's `refs/pull/<number>/head`,
+and the checkout receives it as `refs/hive/pull/<number>/head`. Inspect it
+with `git diff origin/main...refs/hive/pull/<number>/head` (substitute the
+PR's base branch for `main`), or check it out detached. It is a pull ref,
+not a writable source branch. If the forge cannot fetch the requested ref,
+the request fails rather than returning a checkout without the PR.
 
 The hive's clone relay serves the request on a hive whose repos are all off
 GitHub, as the push relay does:

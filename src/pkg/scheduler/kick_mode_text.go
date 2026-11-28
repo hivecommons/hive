@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 )
 
@@ -51,6 +52,30 @@ const (
 // policy forbids every GitHub call (#20038). It names no GitHub command, so an
 // agent cannot read it as a hint to use one.
 const governorWorkSourceRuleNoGitHub = "This kick lists no PRs or issues, and you have no GitHub access: do not run `gh` or any other GitHub command to find or read work. Work from the bead store and the hive's own state as your policy describes."
+
+// governorWorkSourceRuleForgejo is the work-source seam for a hive whose
+// repos are all on Forgejo (#20222). Such a hive has no GitHub client, so
+// `gh` and `hive-gh` cannot read anything there, and an agent told only about
+// them never learns that the clone relay (hive-clone, forge_clone_relay.go)
+// and the push relay (hive-push-branch) exist. It names those tools instead.
+const governorWorkSourceRuleForgejo = "The PRs/issues for this kick are listed in this prompt by the governor, and every repository of this hive is on Forgejo. `gh` and `hive-gh` have no Forgejo equivalent: do not run them, and do not call the Forgejo API or `git clone` a private repo directly, since you hold no forge credential. For a checkout run `hive-clone --repo <owner/repo> [--pr <N>]`; the hive's clone relay fetches the repo and checks out its default branch. With `--pr <N>` the pull request's head arrives as the read-only ref `refs/hive/pull/<N>/head`: read its commits and diff with `git log` / `git diff origin/<base>...refs/hive/pull/<N>/head` (use the PR's base branch for `<base>`), or check it out detached. To update a checkout run `hive-clone --repo <owner/repo> --fetch [--pr <N>]` instead of `git fetch origin`. Of a pull request you can read what this prompt lists and its commits and diff through that checkout; there is no agent tool to read its comments, reviews or CI checks. When your mode allows a push, publish a topic branch with `hive-push-branch --repo <owner/repo> [--branch <name>]`, never a direct `git push`."
+
+// hiveOnForgejoOnly reports whether every repo of the hive resolves to
+// Forgejo: config.AllReposOffGitHub holds, project.forge is Forgejo and no
+// repo_policies override moves a repo to another forge. The clone relay
+// serves Forgejo repos only, so a GitLab or Gitea hive is not one. A mixed
+// hive keeps the GitHub text.
+func (s *Scheduler) hiveOnForgejoOnly() bool {
+	if s.cfg == nil || !s.cfg.AllReposOffGitHub() || s.cfg.Project.ForgeKind() != config.ForgeForgejo {
+		return false
+	}
+	for _, repo := range s.cfg.Project.Repos {
+		if s.cfg.ForgeKindForRepo(repo) != config.ForgeForgejo {
+			return false
+		}
+	}
+	return true
+}
 
 // kickWriteMode is the GitHub mode the relays check for this agent: the
 // configured mode (tools-derived when set, as agentEffectiveMode resolves it),
@@ -126,6 +151,9 @@ func (s *Scheduler) isNoGitHubAgent(agentName string) bool {
 func (s *Scheduler) governorWorkSourceRuleFor(agentName string) string {
 	if s.isNoGitHubAgent(agentName) {
 		return governorWorkSourceRuleNoGitHub
+	}
+	if s.hiveOnForgejoOnly() {
+		return governorWorkSourceRuleForgejo
 	}
 	return governorWorkSourceRule
 }

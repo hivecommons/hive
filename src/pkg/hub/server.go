@@ -169,12 +169,12 @@ type RegistryEntry struct {
 	Name  string   `json:"name"`
 	Org   string   `json:"org"`
 	Repos []string `json:"repos"`
-	// ProjectName is the hive's operator-editable display name, overlaid onto the
-	// registry entry from the authoritative SaaSHive record (sh.ProjectName) on
-	// the heartbeat path — NOT reported by the spoke. It is what the My Hives row
-	// renders as the editable top line; when empty the client falls back to the
-	// org/repo-derived label (see hiveLabel in the dashboard JS), exactly as
-	// before this field existed. handleRenameHive is the only writer.
+	// ProjectName is reported by self-hosted spokes; for hosted hives the
+	// operator-editable SaaS record is authoritative and handleRenameHive
+	// persists changes to that record. The My Hives row renders the name
+	// as its top line; when empty, the client falls back to an org/repo
+	// label. Older spokes that omit the field retain their last reported
+	// name rather than clearing it on the next heartbeat.
 	ProjectName string `json:"projectName,omitempty"`
 	// AIAuthor is the GitHub account this hive's agents open PRs as, as
 	// reported by the spoke. The hub needs it to echo project config back
@@ -2065,6 +2065,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			return safe
 		}(),
+		ProjectName: func() string {
+			if payload.ProjectName == nil {
+				return ""
+			}
+			return sanitizeProseField(strings.TrimSpace(*payload.ProjectName))
+		}(),
 		PrimaryRepo:       safePrimary,
 		AIAuthor:          sanitizeField(payload.AIAuthor),
 		AIAuthorEffective: sanitizeField(payload.AIAuthorEffective),
@@ -2344,10 +2350,7 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		entry.ProvStatus = sh.Status
 		isPub := sh.IsPublic
 		saasVisibility = &isPub
-		// The SaaS store is authoritative for the operator-editable display name
-		// (handleRenameHive persists it here), so overlay it onto the registry
-		// entry the dashboard renders. The spoke never reports this, so a blank
-		// ProjectName simply leaves the client on its org/repo fallback label.
+		// Hosted names remain authoritative over the spoke's report.
 		entry.ProjectName = sh.ProjectName
 		// SECURITY (C1/N3, CWE-639): Owner is an authorization principal — every
 		// saas.go handler gates writes on `h.Owner == username`. The SaaS store is
@@ -2798,6 +2801,10 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 				if len(entry.PRHistory) > sparkMaxPoints {
 					entry.PRHistory = entry.PRHistory[len(entry.PRHistory)-sparkMaxPoints:]
 				}
+			}
+			// Older spokes omit this field; preserve the last reported name.
+			if !hasSaaSRecord && payload.ProjectName == nil {
+				entry.ProjectName = h.ProjectName
 			}
 			s.registry.Hives[i] = entry
 			found = true

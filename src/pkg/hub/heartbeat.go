@@ -251,6 +251,7 @@ type HeartbeatPayload struct {
 	Org                          string                          `json:"org"`
 	Repos                        []string                        `json:"repos"`
 	PrimaryRepo                  string                          `json:"primary_repo"`
+	ProjectName                  *string                         `json:"project_name"`
 	AIAuthor                     string                          `json:"ai_author,omitempty"`
 	AIAuthorEffective            string                          `json:"ai_author_effective,omitempty"`
 	GitHubAPIURL                 string                          `json:"github_api_url,omitempty"`

@@ -4383,6 +4383,16 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		b.logger.Error("failed to create github proxy", "error", err)
 	} else {
 		b.githubProxy.SetUpstreamProxy(upstreamproxy.Default())
+		b.inferenceSinkMu.Lock()
+		b.inferenceActivity = b.githubProxy.InferenceActivity
+		b.inferenceSinkMu.Unlock()
+		if mgr, ok := b.agentMgr.(interface {
+			StartInferenceActivityRefresh(context.Context, func(context.Context) (map[string]time.Time, error))
+		}); ok {
+			go mgr.StartInferenceActivityRefresh(b.ctx, func(context.Context) (map[string]time.Time, error) {
+				return b.githubProxy.InferenceActivity(), nil
+			})
+		}
 		b.githubProxy.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, canaryLeakHandler)
 		// REST accounting and the shared core-bucket snapshot the agent
 		// GitHub budget reads live in pkg/github; the proxy takes them through
@@ -4987,6 +4997,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}(),
 				HiveID:            b.cfg.HiveID,
 				Org:               b.cfg.Project.Org,
+				ProjectName:       b.cfg.Project.Name,
 				AIAuthor:          b.cfg.Project.AIAuthor,
 				AIAuthorEffective: b.cfg.EffectiveAIAuthor(),
 				StartedAt:         b.processStartedAt.UTC().Format(time.RFC3339),
@@ -5444,6 +5455,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						// exactly as cheap as Org above.
 						Repos:                   b.cfg.Project.Repos,
 						PrimaryRepo:             b.cfg.Project.PrimaryRepo,
+						ProjectName:             b.cfg.Project.Name,
 						ACMMLevel:               acmmLvl,
 						Agents:                  agents,
 						GitHash:                 gitShort,
@@ -6118,6 +6130,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					Org:                     b.cfg.Project.Org,
 					Repos:                   b.cfg.Project.Repos,
 					PrimaryRepo:             b.cfg.Project.PrimaryRepo,
+					ProjectName:             b.cfg.Project.Name,
 					ACMMLevel:               acmmLvl,
 					Agents:                  agents,
 					Governor:                spoke.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs, OpenIssues: openIssues, OpenPRs: openPRs},

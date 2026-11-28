@@ -115,6 +115,7 @@ var heartbeatMirrorFieldPolicy = map[string]mirrorFieldPolicy{
 	"Org":               mirrorFieldMirrored,
 	"Repos":             mirrorFieldMirrored,
 	"PrimaryRepo":       mirrorFieldMirrored,
+	"ProjectName":       mirrorFieldMirrored,
 	"AIAuthor":          mirrorFieldMirrored,
 	"AIAuthorEffective": mirrorFieldMirrored,
 	"GitHubAPIURL":      mirrorFieldMirrored,
