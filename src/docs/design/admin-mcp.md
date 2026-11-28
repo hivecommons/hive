@@ -128,6 +128,7 @@ The preview returns a `WritePreview` containing the operator-facing summary, wid
 Phase 6 adds `tools_repo_ops.go`, registering repository, spend, contributor and operations writes:
 
 - `repository.pause`, `repository.resume`, and `repository.item_hold` use the existing repository pause and hold endpoints and disclose that the target is exactly one repository or repository item.
+- `repository.auto_merge` (added later, in `tools_repo_auto_merge_ops.go`) sets one repository's `project.repo_policies[].auto_merge` through the repository card's endpoint, `POST /api/repos/auto-merge`. Its preview reads the switch from the `repo_auto_merge` block of the merge settings section and shows it before and after; switching on is disclosed as widening, and `write_confirm` refuses a preview the switch has moved since.
 - `budget.update`, `budget.reset`, and `budget.ignore` use the existing budget settings, reset, and budget-bypass endpoints. Budget reset and budget bypass previews explicitly disclose that they can widen agent activity by reopening or bypassing the budget gate.
 - `contributor.trust`, `contributor.agent_role`, `contributor.agent_role_grants`, `contributor.revoke`, `contributor.requeue`, and `contributor.delete` use the existing contributor administration endpoints and disclose whether they widen, narrow, or move contributor authority/work.
 - `backup.create` uses `POST /api/backup`, but the admin MCP result reports only metadata (content type, byte count and backup summary headers where available) and never exposes the encrypted archive bytes to the model.
@@ -545,6 +546,7 @@ start-up script, its process launch, PIDs, signal handling and exit codes are un
 | Let hive decide settings | `PUT /api/config/decisions/delegate` | `requireOwnerRole` on the read and the write; `repos` is a full replace, the op sends the merged map |
 | code scanning sweep settings | `PUT /api/config/code-scanning` | `requireOwnerRole` on the read and the write; `repos` is a full replace, the op sends the merged map; the candidate is checked with the `hive.yaml` load checks before anything changes |
 | repository pause / resume | `POST /api/repos/pause`, `/api/repos/resume` | `requireRepoPausePermission` → `canToggleRepoHold` |
+| repository auto-merge switch | `POST /api/repos/auto-merge` | on: `requireOwnerRole`; off: `requireRepoPausePermission`; the preview's read of `GET /api/config/auto-merge` (`repo_auto_merge`) is `requireOwnerRole`, so the op is owner only; refused for a repository not in `project.repos`, and switching on refused below L6 |
 | item hold | `POST /api/repos/{owner}/{repo}/items/{number}/hold` | `canToggleRepoHold` |
 | re-evaluate now | `POST /api/repos/rescan` | none beyond write access |
 | accept triage | `POST /api/repos/{owner}/{repo}/items/{number}/accept-triage` | `canToggleRepoHold` |

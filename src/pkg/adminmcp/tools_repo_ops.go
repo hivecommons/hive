@@ -32,6 +32,7 @@ func repoOpsWriteOps() []WriteOp {
 	return []WriteOp{
 		repoPauseOp{},
 		repoResumeOp{},
+		repoAutoMergeOp{},
 		repositoryItemHoldOp{},
 		budgetUpdateOp{},
 		budgetResetOp{},

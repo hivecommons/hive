@@ -528,4 +528,6 @@ the `hive-merge` relay, App self-authored sweep, and proxy direct-merge seam.
 The dashboard toggle (`POST /api/repos/auto-merge`) is gated asymmetrically:
 switching auto-merge *off* needs the same tier as pausing the repo (verified
 owner or GitHub repo write), but switching it back *on* restores Hive's merge
-authority and requires a verified owner (#9070).
+authority and requires a verified owner (#9070). The admin MCP `repository.auto_merge`
+operation sends the same request, and is owner only in both directions because
+its preview first reads the owner-only merge settings.
