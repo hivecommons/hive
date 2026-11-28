@@ -161,10 +161,21 @@ func (c *Engine) markSelfAuthoredLaneRunning() func() {
 // selfAuthoredLaneRunning reports whether a self-authored sweep (and so the
 // promotion lane) runs over this client, with an App login to merge as.
 func (c *Engine) selfAuthoredLaneRunning() bool {
-	if c == nil || c.transport == nil || strings.TrimSpace(c.transport.AppBotLogin()) == "" {
+	if c == nil {
 		return false
 	}
-	n := selfAuthoredLaneState(c.transport)
+	return SelfAuthoredLaneRunning(c.transport)
+}
+
+// SelfAuthoredLaneRunning is selfAuthoredLaneRunning for a caller outside
+// the engine (the sentinel's promotion exemption), over the same transport
+// the self-authored sweep runs on. A transport that keeps no shared state,
+// or another client than the sweep's, reads as not running.
+func SelfAuthoredLaneRunning(t Transport) bool {
+	if t == nil || strings.TrimSpace(t.AppBotLogin()) == "" {
+		return false
+	}
+	n := selfAuthoredLaneState(t)
 	return n != nil && n.Load() > 0
 }
 

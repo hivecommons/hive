@@ -5,6 +5,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/github/automerge"
 )
 
 // promotionRulesFunc resolves auto_merge.promotions for one owner/repo, read
@@ -22,6 +23,22 @@ func promotionRulesFunc(cfg *config.Config) func(repo string) []config.Promotion
 			return nil
 		}
 		return cfg.PromotionRulesFor(repo)
+	}
+}
+
+// sentinelPromotionRulesFunc is promotionRulesFunc for the sentinel, which
+// also requires the self-authored sweep to be running over client right
+// now (an App login and a live sweep loop, automerge.SelfAuthoredLaneRunning):
+// config can allow self-merge on a hive whose sweep is not running, and
+// there the promotion lane merges nothing, so the sentinel must not set
+// sensitive_path aside for a promote a person will merge by hand.
+func sentinelPromotionRulesFunc(cfg *config.Config, client *github.Client) func(repo string) []config.PromotionRule {
+	rules := promotionRulesFunc(cfg)
+	return func(repo string) []config.PromotionRule {
+		if client == nil || !automerge.SelfAuthoredLaneRunning(client) {
+			return nil
+		}
+		return rules(repo)
 	}
 }
 

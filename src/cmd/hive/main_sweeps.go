@@ -1499,8 +1499,9 @@ func sentinelSweepOptions(cfg *config.Config, ghClient *github.Client, dashSrv *
 		// Per-repo sensitive paths (project.repo_policies[].sentinel_sensitive_paths).
 		SensitivePathsForRepo: sentinelRepoSensitivePathsFunc(cfg),
 		// Branch-promotion rules (auto_merge.promotions), gated exactly like
-		// the promotion merge lane (promotionRulesFunc).
-		PromotionsForRepo: promotionRulesFunc(cfg),
+		// the promotion merge lane (promotionRulesFunc), and only while the
+		// self-authored sweep is running over this client.
+		PromotionsForRepo: sentinelPromotionRulesFunc(cfg, ghClient),
 	}
 }
 

@@ -40,6 +40,15 @@ func TestPromotionRulesFuncGatesOnTheSelfAuthoredSweep(t *testing.T) {
 		t.Fatalf("the repository's auto-merge switch off: %+v, want none", got)
 	}
 	cfg.Project.RepoPolicies = nil
+	// The sentinel also needs the self-authored sweep running over its
+	// client: config alone allows self-merge here, but no sweep runs, so
+	// nothing is set aside for a promote a person would merge.
+	if got := sentinelPromotionRulesFunc(cfg, github.NewClientForTest("http://127.0.0.1:1", "acme", []string{"widget"}, sweepTestLogger(nil)))("acme/widget"); got != nil {
+		t.Fatalf("sentinel with no self-authored sweep running: %+v, want none", got)
+	}
+	if got := sentinelPromotionRulesFunc(cfg, nil)("acme/widget"); got != nil {
+		t.Fatalf("sentinel with no client: %+v, want none", got)
+	}
 	off := false
 	cfg.AutoMerge.SelfAuthored = &off
 	if got := rules("acme/widget"); got != nil {
