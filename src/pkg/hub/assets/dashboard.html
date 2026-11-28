@@ -7521,34 +7521,17 @@
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); loadHives(); }
     }
 
-    /* hiveLabel derives the two-line name-cell label from the hive's PROJECT
-       (org + primary repo) rather than by splitting h.name.
-
-       Why not h.name: the hub synthesises name as org + "/" + primaryRepo on
-       every heartbeat (see RegistryEntry construction in server.go), so
-       splitting it back apart is a lossy round-trip of the two fields we
-       already have on the row — and it breaks whenever either field itself
-       contains a slash. Live fleet evidence: a URL-parsing bug put a HOST in
-       the org position, so the listing showed 'github.ibm.com / forthehive'.
-       Reading org/primaryRepo directly makes the label reflect the project.
-
-       Precedence, most specific first:
-         1. org + primaryRepo  — the real project, the whole point
-         2. h.name             — a hive that reported a name but no project
-         3. h.id               — last resort, never blank
-
-       Returns {line1, line2}. line2 is '' whenever there is no SECOND thing
-       worth saying, so the caller never renders an empty link or a stray '/'.
-       An unassigned placeholder (org 'available-*' or 'placeholder', no
-       primaryRepo) therefore keeps showing its org on line 1 with no empty
-       second line — the same headline it shows today.
+    /* Derive the name and repository lines from project metadata, preserving a
+       custom name when present and avoiding an empty or repeated second line.
+       Duplicate titles are disambiguated by hiveLabel below.
+       Unassigned placeholders keep their org as the headline.
 
        primaryRepo is rendered VERBATIM, including any embedded slash
        ('enricom-ibm/jackrabbit' is a real live value produced by the same
        corruption). Taking only the last segment would silently hide half of
        a legitimate value, and the repo path is what the adjacent GitHub link
        resolves to — the label and the link must agree. */
-    function hiveLabel(h) {
+    function hiveBaseLabel(h) {
       if (!h) return { line1: '', line2: '' };
       var org = h.org || '';
       var repo = h.primaryRepo || '';
@@ -7584,6 +7567,21 @@
          old label showed (org on top, repo below), just with the repo now
          qualified by its org. */
       return { line1: fallback, line2: (repoLine === fallback ? '' : repoLine) };
+    }
+
+    function hiveLabel(h) {
+      var label = hiveBaseLabel(h);
+      if (!h) return label;
+      var peers = (_allDashHives || []).filter(function(other) {
+        return other && other.id !== h.id && hiveBaseLabel(other).line1 === label.line1;
+      });
+      if (!peers.length) return label;
+      var repo = label.line2;
+      var repoUnique = repo && peers.every(function(other) {
+        return hiveBaseLabel(other).line2 !== repo;
+      });
+      label.line1 += ' — ' + (repoUnique ? repo : (h.id || repo));
+      return label;
     }
 
     /* hiveNameSortValue is the value the Hive column SORTS on. It must track

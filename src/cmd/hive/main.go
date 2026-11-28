@@ -2989,6 +2989,10 @@ func (b *boot) bootCollectorsWith(deps bootCollectorsDeps) {
 		return github.NewReviewEvidenceVerifier(b.cfg.Evidence.SigningKeyPath())
 	})
 	b.metricsCollector.SetPRIssueWindowStartProvider(b.dashSrv.CostWindowStart)
+	// Merged / closed counts come from the GitHub Search API; repos on
+	// another forge are left out of them instead of failing every reconcile
+	// (#20179). Before wireForgeStateCounts, which builds the counters.
+	b.metricsCollector.SetRepoOnGitHubProvider(func(repo string) bool { return b.cfg.RepoOnGitHub(repo) })
 	// Merged / closed counts move on webhook events and the Search API is
 	// asked only hourly; with forgestate.enabled the Overview's open totals
 	// come from the cache the governor already reads (#13376).
@@ -4982,6 +4986,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}(),
 				HiveID:            b.cfg.HiveID,
 				Org:               b.cfg.Project.Org,
+				ProjectName:       b.cfg.Project.Name,
 				AIAuthor:          b.cfg.Project.AIAuthor,
 				AIAuthorEffective: b.cfg.EffectiveAIAuthor(),
 				StartedAt:         b.processStartedAt.UTC().Format(time.RFC3339),
@@ -5433,6 +5438,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						// exactly as cheap as Org above.
 						Repos:                   b.cfg.Project.Repos,
 						PrimaryRepo:             b.cfg.Project.PrimaryRepo,
+						ProjectName:             b.cfg.Project.Name,
 						ACMMLevel:               acmmLvl,
 						Agents:                  agents,
 						GitHash:                 gitShort,
@@ -6102,6 +6108,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 					Org:                     b.cfg.Project.Org,
 					Repos:                   b.cfg.Project.Repos,
 					PrimaryRepo:             b.cfg.Project.PrimaryRepo,
+					ProjectName:             b.cfg.Project.Name,
 					ACMMLevel:               acmmLvl,
 					Agents:                  agents,
 					Governor:                spoke.GovernorSummary{Mode: string(govState.Mode), Issues: govState.QueueIssues, PRs: govState.QueuePRs, OpenIssues: openIssues, OpenPRs: openPRs},
