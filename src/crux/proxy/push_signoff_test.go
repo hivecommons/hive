@@ -388,3 +388,35 @@ func TestPushSignoffRefusalMultiCommitPack(t *testing.T) {
 		})
 	}
 }
+
+// Commits and resolved commit deltas are held until the pack is parsed, so
+// their total is capped: a chain of tiny OFS deltas that each copy a ~1 MiB
+// commit is refused once the retained bytes pass maxPushSignoffBody.
+func TestPushSignoffRefusalTooManyRetainedCommitBytes(t *testing.T) {
+	t.Setenv("HIVE_GIT_BOT_EMAIL_DOMAIN", "")
+	lane := "scanner <scanner@hive.kubestellar.io>"
+	msg := "msg\n\nSigned-off-by: " + lane + "\n\n"
+	head := testCommit(lane, lane, msg, 1)
+	base := testCommit(lane, lane, msg+strings.Repeat("x", maxPushDelta-1000-len(head)), 1)
+	objs := [][]byte{packObjBytes(1, nil, []byte(base))}
+	n := len(objs[0])
+	// Copy the whole base: offset 0 (no offset bytes), 3-byte length.
+	delta := append(deltaVarintBytes(len(base)), deltaVarintBytes(len(base))...)
+	delta = append(delta, 0x80|0x10|0x20|0x40, byte(len(base)), byte(len(base)>>8), byte(len(base)>>16))
+	for len(objs)*len(base) <= maxPushSignoffBody {
+		off := n
+		enc := []byte{byte(off & 0x7f)}
+		for off >>= 7; off > 0; off >>= 7 {
+			off--
+			enc = append([]byte{byte(off&0x7f) | 0x80}, enc...)
+		}
+		o := packObjBytes(6, enc, delta)
+		objs = append(objs, o)
+		n += len(o)
+	}
+	body := append(pktCmd(" report-status"), wrapPack(objs...)...)
+	reason, refused, _ := pushSignoffRefusal(pushReq(body), "scanner", nil)
+	if !refused || !strings.Contains(reason, "commits over") {
+		t.Fatalf("pack over the retained commit cap: refused=%v reason=%q, want refused", refused, reason)
+	}
+}

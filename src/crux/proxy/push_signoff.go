@@ -167,6 +167,16 @@ func parsePushCommits(body []byte) ([]pushCommit, error) {
 	bySha := map[string]*packObj{}
 	var commits []pushCommit
 	var zr io.ReadCloser // one inflater, reset per object
+	// Commits and resolved commit deltas stay in byOff until the end, so cap
+	// their total: small deltas each inflating to maxPushDelta would otherwise
+	// retain up to maxPushPackObjects MiB.
+	var retained int
+	retain := func(i int, data []byte) error {
+		if retained += len(data); retained > maxPushSignoffBody {
+			return fmt.Errorf("pack object %d: commits over the %d bytes checked", i, maxPushSignoffBody)
+		}
+		return nil
+	}
 	for i := 0; i < count; i++ {
 		start := offset()
 		typ, size, err := readPackObjectHeader(br)
@@ -230,6 +240,9 @@ func parsePushCommits(body []byte) ([]pushCommit, error) {
 			if err != nil || int64(len(data)) != size {
 				return nil, fmt.Errorf("pack commit %d unreadable", i)
 			}
+			if err := retain(i, data); err != nil {
+				return nil, err
+			}
 			obj = &packObj{typ: packTypeCommit, data: data}
 			sha = hashPackObject("commit", data)
 			commits = append(commits, parseCommitObject(data))
@@ -258,6 +271,9 @@ func parsePushCommits(body []byte) ([]pushCommit, error) {
 				data, err := applyPackDelta(base.data, delta)
 				if err != nil {
 					return nil, fmt.Errorf("pack object %d: %w", i, err)
+				}
+				if err := retain(i, data); err != nil {
+					return nil, err
 				}
 				obj = &packObj{typ: packTypeCommit, data: data}
 				sha = hashPackObject("commit", data)
