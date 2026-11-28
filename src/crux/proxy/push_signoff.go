@@ -43,8 +43,10 @@ import (
 // Limits: this is a best-effort guard against accidental sign-off mistakes,
 // not the enforcement point. A crafted thin delta that starts with a copy op
 // instead of a "tree " literal is not inspected, and neither are commits made
-// through the REST git/commits API or GraphQL createCommitOnBranch. GitHub-side
-// DCO remains the enforcement.
+// through the REST git/commits API or GraphQL createCommitOnBranch. The
+// noreply@github.com committer skip below matches on the committer email
+// alone, which the pod controls, so a lane can set that committer to bypass
+// the check. GitHub-side DCO remains the enforcement.
 //
 // Scope: the proxy only reads a push when it decrypts github.com traffic,
 // which is when HIVE_PROXY_INJECT_GH_AUTH=true. On a hive without it, in-pod
