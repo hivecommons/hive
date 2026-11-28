@@ -153,7 +153,7 @@ if ! argv_has "--json"; then pass "bare hive-gh passes through (gh help)"; else 
 
 echo "=== --fields documents the table and names the gate fields ==="
 out="$(bash "$SCRIPT" --fields)"
-for v in "pr view" "pr list" "pr checks" "issue view" "issue list" "run view"; do
+for v in "pr view" "pr list" "pr checks" "pr reviews" "pr comments" "issue view" "issue list" "issue comments" "run view"; do
   if grep -q "^${v} " <<<"$out"; then pass "--fields lists '$v'"; else fail "--fields lists '$v'"; fi
 done
 if grep -q "Gate fields retained" <<<"$out" && grep -q "headRefOid" <<<"$out"; then pass "--fields enumerates retained gate fields"; else fail "--fields gate enumeration"; fi
@@ -221,6 +221,52 @@ out="$(run_forge pr view 50 --repo acme/other)"; rc=$?; wait
 if [ "$rc" -ne 0 ] && grep -q "the hive refused the read" <<<"$out" && grep -q "not managed" <<<"$out"; then
   pass "a refusal is reported with the relay's reason and a non-zero exit"
 else fail "refusal reported" "rc=$rc $out"; fi
+
+echo "=== Forgejo repos: reviews, comments and job logs go through the read relay (#20277) ==="
+# forge_kind <expected kind/number> <hive-gh args…>
+forge_kind() {
+  local want="$1"; shift
+  : >"$ARGV_LOG"
+  rm -f "${WORK}/last-read-request"
+  fake_relay true &
+  out="$(run_forge "$@")"; wait
+  if [ -f "${WORK}/last-read-request" ] && [ "$(jq -r '.kind + "/" + (.number|tostring) + "/" + .repo' "${WORK}/last-read-request")" = "$want/acme/widgets" ] && [ ! -s "$ARGV_LOG" ]; then
+    pass "hive-gh $* goes to the relay as $want"
+  else fail "hive-gh $* through the relay as $want" "$out / gh argv: $(tr '\n' ' ' <"$ARGV_LOG")"; fi
+}
+forge_kind reviews/50 pr reviews 50 --repo acme/widgets
+forge_kind comments/50 pr comments 50 --repo acme/widgets
+forge_kind comments/3 issue comments 3 -R acme/widgets
+forge_kind run-log/12 run view 12 --log --repo acme/widgets
+forge_kind run-log-failed/12 run view 12 --log-failed --repo acme/widgets
+forge_kind job-log/77 run view --job 77 --log --repo acme/widgets
+forge_kind job-log/78 run view 12 --job=78 --log --repo acme/widgets
+: >"$ARGV_LOG"
+run_forge run view 12 --repo acme/widgets >/dev/null
+if argv_has "--json" && [ -z "$(find "$READ_DIR" -name '*.json' ! -name '*.result.json' ! -name '*.rejected')" ]; then
+  pass "run view without --log still goes to gh"
+else fail "run view without --log to gh" "$(tr '\n' ' ' <"$ARGV_LOG")"; fi
+run_forge run view 12 --log --repo github.com/o/r >/dev/null
+if argv_has "--log" && ! argv_has "--json"; then pass "run view --log on a github.com repo goes to gh untouched"; else fail "github run log to gh" "$(tr '\n' ' ' <"$ARGV_LOG")"; fi
+
+echo "=== GitHub: pr reviews / pr comments / issue comments run as gh <subcmd> view ==="
+REVIEW_FIXTURE='{"number":7,"reviews":[{"id":"R1","author":{"login":"alice","is_bot":false},"authorAssociation":"MEMBER","state":"APPROVED","body":"ok","submittedAt":"s","commit":{"oid":"abc123"}}],"comments":[{"id":"C1","author":{"login":"bot","is_bot":true},"body":"hi","createdAt":"c","url":"u","viewerDidAuthor":false}]}'
+out="$(run "$REVIEW_FIXTURE" pr reviews 7 --repo o/r)"
+if [ "$(sed -n 2p "$ARGV_LOG")" = "view" ] && [ "$(argv_after_json)" = "reviews" ] && [ "$(jq -r '.reviews[0] | .author + "/" + .state + "/" + .commit' <<<"$out")" = "alice/APPROVED/abc123" ]; then
+  pass "pr reviews on GitHub is gh pr view --json reviews, with author, state and commit"
+else fail "pr reviews on GitHub" "$out / $(tr '\n' ' ' <"$ARGV_LOG")"; fi
+out="$(run "$REVIEW_FIXTURE" issue comments 7 --repo o/r)"
+if [ "$(sed -n 1,2p "$ARGV_LOG" | tr '\n' ' ')" = "issue view " ] && [ "$(jq -r '.comments[0] | .author + "/" + .body' <<<"$out")" = "bot[bot]/hi" ] && [ "$(jq -r '.comments[0] | has("viewerDidAuthor")' <<<"$out")" = "false" ]; then
+  pass "issue comments on GitHub is gh issue view --json comments, compacted"
+else fail "issue comments on GitHub" "$out / $(tr '\n' ' ' <"$ARGV_LOG")"; fi
+run "$REVIEW_FIXTURE" pr comments 7 --json comments >/dev/null
+if [ "$(sed -n 2p "$ARGV_LOG")" = "view" ] && [ "$(grep -c -- '--json' "$ARGV_LOG")" = "1" ] && ! argv_has "--jq"; then
+  pass "pr comments with the caller's own --json runs gh pr view with it alone"
+else fail "pr comments own --json" "$(tr '\n' ' ' <"$ARGV_LOG")"; fi
+run "$REVIEW_FIXTURE" --full pr reviews 7 >/dev/null
+if [ "$(sed -n 2p "$ARGV_LOG")" = "view" ] && [ "$(argv_after_json)" = "reviews" ] && ! argv_has "--jq"; then
+  pass "--full pr reviews is gh pr view --json reviews, unprojected"
+else fail "--full pr reviews" "$(tr '\n' ' ' <"$ARGV_LOG")"; fi
 
 echo "=== GitHub repos are unchanged even where the read queue exists ==="
 run_forge pr view 7 --repo github.com/o/r >/dev/null

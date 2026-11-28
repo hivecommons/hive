@@ -26,14 +26,20 @@
 #   hive-gh pr view <n> [--repo o/r]      hive-gh pr list [gh flags]
 #   hive-gh pr checks <n> [--repo o/r]    hive-gh issue view <n> [--repo o/r]
 #   hive-gh issue list [gh flags]         hive-gh run view <id> [--repo o/r]
+#   hive-gh pr reviews <n> [--repo o/r]   hive-gh pr comments <n> [--repo o/r]
+#   hive-gh issue comments <n> [--repo o/r]
 #   hive-gh --full <verb> …               explicit full fetch (plain gh)
 #   hive-gh --fields                      print the per-verb field-set table
 #
-# Verbs outside the table pass through to gh unchanged.
+# Verbs outside the table pass through to gh unchanged. `pr reviews`,
+# `pr comments` and `issue comments` are hive-gh's own: on GitHub they run
+# `gh pr view` / `gh issue view` with the reviews / comments fields.
 #
-# On a forge-only hive, `pr view` / `issue view` / `pr checks <n>` on a repo
-# off github.com are answered by the hive's read relay with a subset of the
-# compact keys (see "Forgejo repos" below); GitHub calls are unchanged.
+# On a forge-only hive, `pr view` / `issue view` / `pr checks` / `pr reviews`
+# / `pr comments` / `issue comments <n>` and `run view <id> --log` /
+# `--log-failed` / `run view --job <id> --log` on a repo off github.com are
+# answered by the hive's read relay (see "Forgejo repos" below); GitHub calls
+# are unchanged.
 
 set -euo pipefail
 
@@ -56,7 +62,7 @@ _jq_jobs='.jobs |= (map({name, status, conclusion, failed_steps: [(.steps // [])
 
 # _verb <subcmd> <action> sets FIELDS / JQ / DROPPED for a tabled verb and
 # returns 1 for anything else (which passes through to gh untouched).
-VERBS=("pr view" "pr list" "pr checks" "issue view" "issue list" "run view")
+VERBS=("pr view" "pr list" "pr checks" "pr reviews" "pr comments" "issue view" "issue list" "issue comments" "run view")
 _verb() {
   FIELDS=""; JQ=""; DROPPED=""
   case "$1 $2" in
@@ -84,6 +90,14 @@ _verb() {
       FIELDS="databaseId,name,workflowName,displayTitle,status,conclusion,event,headBranch,headSha,attempt,url,jobs"
       JQ="${_jq_jobs}"
       DROPPED="per-step detail and logs (use --full, or 'gh run view <id> --log-failed')" ;;
+    "pr reviews")
+      FIELDS="reviews"
+      JQ="{reviews: ((.reviews // []) | map(${_jq_author} | {id, author, state, body, submittedAt, commit: (.commit.oid // null)}))}"
+      DROPPED="authorAssociation, includesPullRequest, reactionGroups (inline review comments are on Forgejo only)" ;;
+    "pr comments"|"issue comments")
+      FIELDS="comments"
+      JQ="{comments: ((.comments // []) | map(${_jq_author} | {id, author, body, createdAt, url}))}"
+      DROPPED="authorAssociation, includesCreatedEdit, isMinimized, minimizedReason, reactionGroups, viewerDidAuthor" ;;
     *) return 1 ;;
   esac
   return 0
@@ -110,11 +124,14 @@ if [ "${1:-}" = "--fields" ]; then _print_fields; exit 0; fi
 # (--repo o/r, -R o/r) must not be mistaken for them. Only the global flags that
 # can legally precede the subcommand are special-cased here; everything after
 # the action is forwarded verbatim.
-subcmd=""; action=""; target=""; repo_flag=""; expect=""
+subcmd=""; action=""; target=""; repo_flag=""; job_flag=""; log_mode=""; expect=""
+action_idx=-1; i=-1
 has_own_projection=false
 for a in "$@"; do
+  i=$((i + 1))
   if [ -n "$expect" ]; then
     [ "$expect" = repo ] && repo_flag="$a"
+    [ "$expect" = job ] && job_flag="$a"
     expect=""; continue
   fi
   case "$a" in
@@ -122,19 +139,27 @@ for a in "$@"; do
       has_own_projection=true ;;
   esac
   case "$a" in
+    --log) [ -z "$log_mode" ] && log_mode=log ;;
+    --log-failed) log_mode=log-failed ;;
+  esac
+  case "$a" in
     --repo|-R) expect=repo; continue ;;
+    --job|-j) expect=job; continue ;;
     --hostname) expect=1; continue ;;
     --repo=*|-R=*) repo_flag="${a#*=}"; continue ;;
+    --job=*) job_flag="${a#*=}"; continue ;;
     -*) continue ;;
   esac
-  if [ -z "$subcmd" ]; then subcmd="$a"; elif [ -z "$action" ]; then action="$a"; elif [ -z "$target" ]; then target="$a"; fi
+  if [ -z "$subcmd" ]; then subcmd="$a"; elif [ -z "$action" ]; then action="$a"; action_idx=$i; elif [ -z "$target" ]; then target="$a"; fi
 done
 
-if $full || $has_own_projection || [ -z "$subcmd" ] || [ -z "$action" ]; then
-  exec gh "$@"
-fi
-
-_verb "$subcmd" "$action" || exec gh "$@"
+# `pr reviews`, `pr comments` and `issue comments` are hive-gh's own verbs
+# (#20277): gh has no such action, so on GitHub they run as `<subcmd> view`
+# with the reviews / comments field set.
+gh_args=("$@")
+case "$subcmd $action" in
+  "pr reviews"|"pr comments"|"issue comments") gh_args[action_idx]=view ;;
+esac
 
 # ── Forgejo repos (#20230) ─────────────────────────────────────────────────
 # On a forge-only hive the agent holds no forge credential and gh has no
@@ -287,15 +312,48 @@ PY
   exit 0
 }
 
+_is_number() { [[ "$1" =~ ^[1-9][0-9]{0,17}$ ]]; }
+
+# `run view <id> --log` / `--log-failed` and `run view --job <id> --log` on a
+# forge repo (#20277): the relay answers with JSON, one entry per job with
+# the tail of its log (at most 256 KiB a job, 512 KiB a run). gh prints
+# these as plain text; the caller's log flag is a projection of its own on
+# GitHub, so this is decided before that hand-off.
+if ! $full && [ -d "$READ_DIR" ] && [ "$subcmd $action" = "run view" ] && [ -n "$log_mode" ]; then
+  if [ -n "$job_flag" ]; then
+    if _is_number "$job_flag" && forge_repo="$(_forge_repo)"; then _forge_read job-log "$forge_repo" "$job_flag"; fi
+  elif _is_number "$target" && forge_repo="$(_forge_repo)"; then
+    _forge_read "run-$log_mode" "$forge_repo" "$target"
+  fi
+fi
+
+if [ -z "$subcmd" ] || [ -z "$action" ]; then
+  exec gh "$@"
+fi
+if $full || $has_own_projection; then
+  # A full fetch of hive-gh's own verbs is the unprojected field gh has.
+  if ! $has_own_projection; then
+    case "$subcmd $action" in
+      "pr reviews") exec gh "${gh_args[@]}" --json reviews ;;
+      "pr comments"|"issue comments") exec gh "${gh_args[@]}" --json comments ;;
+    esac
+  fi
+  exec gh "${gh_args[@]}"
+fi
+
+_verb "$subcmd" "$action" || exec gh "$@"
+
 case "$subcmd $action" in
-  "pr view"|"issue view"|"pr checks")
-    if [ -d "$READ_DIR" ] && [[ "$target" =~ ^[1-9][0-9]{0,17}$ ]] && forge_repo="$(_forge_repo)"; then
+  "pr view"|"issue view"|"pr checks"|"pr reviews"|"pr comments"|"issue comments")
+    if [ -d "$READ_DIR" ] && _is_number "$target" && forge_repo="$(_forge_repo)"; then
       case "$subcmd $action" in
         "pr view") _forge_read pr "$forge_repo" "$target" ;;
         "issue view") _forge_read issue "$forge_repo" "$target" ;;
         "pr checks") _forge_read checks "$forge_repo" "$target" ;;
+        "pr reviews") _forge_read reviews "$forge_repo" "$target" ;;
+        "pr comments"|"issue comments") _forge_read comments "$forge_repo" "$target" ;;
       esac
     fi ;;
 esac
 
-exec gh "$@" --json "$FIELDS" --jq "$JQ"
+exec gh "${gh_args[@]}" --json "$FIELDS" --jq "$JQ"

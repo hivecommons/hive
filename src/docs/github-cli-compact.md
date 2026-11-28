@@ -52,6 +52,15 @@ source of truth.
 | `issue view` | number, title, state, stateReason, url, author, **labels**, assignees, milestone, createdAt, updatedAt, body | labels → names; author → login; assignees → logins; milestone → title | comments (`--full`, or `gh issue view <n> --comments`), projectCards, reactionGroups, closedByPullRequestsReferences |
 | `issue list` | number, title, state, url, author, **labels**, assignees, updatedAt | per item, as above | body, milestone, comments |
 | `run view` | databaseId, name, workflowName, displayTitle, status, **conclusion**, event, headBranch, **headSha**, attempt, url, jobs | jobs → `{name,status,conclusion,failed_steps[]}` | per-step detail and logs (`--full`, or `gh run view <id> --log-failed`) |
+| `pr reviews` | reviews (runs `gh pr view <n>`) | `{reviews: [{id, author, state, body, submittedAt, commit}]}`; author → login; commit → oid | authorAssociation, includesPullRequest, reactionGroups |
+| `pr comments`, `issue comments` | comments (runs `gh pr view` / `gh issue view <n>`) | `{comments: [{id, author, body, createdAt, url}]}`; author → login | authorAssociation, includesCreatedEdit, isMinimized, minimizedReason, reactionGroups, viewerDidAuthor |
+
+`pr reviews`, `pr comments` and `issue comments` are `hive-gh`'s own verbs
+(#20277): `gh` has no such action, so on GitHub `hive-gh` runs `gh pr view` or
+`gh issue view` with the field above. On a Forgejo repo of a forge-only hive
+the hive's read relay answers them, and `run view <id> --log` /
+`--log-failed` / `run view --job <id> --log`, with the same keys; see
+[Forgejo](integrations/forgejo.md).
 
 Bold marks the gate fields. `body` is kept on the `view` verbs because it is
 the work content; it is dropped from the `list` verbs.

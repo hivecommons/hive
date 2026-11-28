@@ -11,6 +11,24 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.386.1)
+
+### Fixed
+
+- On a Forgejo-only hive, the kick text now names `hive-open-issue comment <N> --repo <owner/repo> --body-file <path>` as the way to publish a review, finding or status note, so a reviewer no longer ends its kick with its result left in the terminal (#20283).
+
+## 2026-11-28 (v5.386.0)
+
+### Added
+
+- On a Forgejo-only hive, agents can now read a pull request's reviews (`hive-gh pr reviews <N>`), the comments of a pull request or issue (`hive-gh pr comments <N>`, `hive-gh issue comments <N>`) and a Forgejo Actions job log (`hive-gh run view <run-id> --log`, `--log-failed`, or `--job <job-id> --log`, cut to the last 256 KiB a job) through the hive's read relay; on GitHub, `pr reviews` and `pr comments` / `issue comments` run `gh pr view` / `gh issue view` with the reviews or comments fields (#20277).
+
+## 2026-11-28 (v5.385.3)
+
+### Fixed
+
+- Automerge lanes and the intent maintainer-approval check now read a reviewer's standing review by submission time through the same rule as the merge-time change-request gate, instead of taking whichever review the API listed last.
+
 ## 2026-11-28 (v5.385.2)
 
 ### Changed
