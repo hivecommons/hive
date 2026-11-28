@@ -250,6 +250,7 @@ func (h *ContributeWSHub) rollbackAssignment(c *ContributorConnection, taskID st
 // that do not know a key can print it as is.
 const (
 	filterDisabledRepo     = "disabled_repo"
+	filterUnsupportedForge = "unsupported_forge"
 	filterOperatorHold     = "operator_hold"
 	filterCooldown         = "cooldown"
 	filterNoWorkVerdict    = "no_work_verdict"
@@ -794,16 +795,18 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		if len(repo.ActionableIssues) == 0 {
 			continue
 		}
-		// Non-GitHub repositories cannot receive GitHub App credentials.
-		if h.server.deps != nil && h.server.deps.Config.ForgeKindForRepo(repo.Full) != config.ForgeGitHub {
-			continue
-		}
 		if config.MatchesAny(repo.Full, disabledRepos) || config.MatchesAny(repo.Name, disabledRepos) {
 			issuesSeen += len(repo.ActionableIssues)
 			filtered[filterDisabledRepo] += len(repo.ActionableIssues)
 			continue
 		}
 		if !repoScope.allows(repoScopeID(repoScopeDefaultForge, scopeHost, repo.Full)) {
+			continue
+		}
+		// Contributor credentials are minted by the GitHub App.
+		if h.server.deps != nil && !h.server.deps.Config.RepoOnGitHub(repo.Full) {
+			issuesSeen += len(repo.ActionableIssues)
+			filtered[filterUnsupportedForge] += len(repo.ActionableIssues)
 			continue
 		}
 		if h.repoUnmintable(repo.Full, time.Now()) {
@@ -1139,7 +1142,11 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			return h.taskUnavailable(taskUnavailableRepoUnmintable)
 		}
 		if repoScope.restricts() {
-			return h.taskUnavailable(taskUnavailableNoSelectedWork)
+			msg := h.taskUnavailable(taskUnavailableNoSelectedWork)
+			if filtered[filterUnsupportedForge] > 0 {
+				msg.Filtered = map[string]int{filterUnsupportedForge: filtered[filterUnsupportedForge]}
+			}
+			return msg
 		}
 		if issuesSeen == 0 {
 			return h.taskUnavailable(taskUnavailableQueueEmpty)

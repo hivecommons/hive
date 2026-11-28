@@ -355,7 +355,28 @@ func TestContributeRepositories_ExcludesUnsupportedForges(t *testing.T) {
 	}
 	other := lockScopeConn(hub, "forge-other", "c-forge-other")
 	msg = hub.selectTask(other)
-	if msg == nil || msg.Type != "task_unavailable" {
-		t.Fatalf("Forgejo-only hive must not assign work: %+v", msg)
+	if msg == nil || msg.Type != "task_unavailable" || msg.Reason != taskUnavailableNoMatchingWork || msg.Filtered[filterUnsupportedForge] != 2 {
+		t.Fatalf("Forgejo-only hive must report two unsupported issues: %+v", msg)
+	}
+
+	selected := lockScopeConn(hub, "forge-selected", "c-forge-selected")
+	ackScope(selected, 1, repoScopeModeSelected, scopeIDReview)
+	msg = hub.selectTask(selected)
+	if msg == nil || msg.Reason != taskUnavailableNoSelectedWork || msg.Filtered[filterUnsupportedForge] != 1 {
+		t.Fatalf("selected scope must report only its unsupported issue: %+v", msg)
+	}
+}
+
+func TestContributeRepositories_UnknownForgeFallsBackToGitHub(t *testing.T) {
+	hub, s := covK2Hub(t)
+	twoRepoStatus(s)
+	s.deps.Config.Project.Forge = "GitHub"
+
+	if repos := s.contributeEligibleRepositories(); len(repos) != 2 {
+		t.Fatalf("unknown forge must retain GitHub catalog: %+v", repos)
+	}
+	conn := lockScopeConn(hub, "forge-fallback", "c-forge-fallback")
+	if msg := hub.selectTask(conn); msg == nil || msg.Type != "task_assign" || msg.Repo != "myorg/review" {
+		t.Fatalf("unknown forge must permit GitHub selection: %+v", msg)
 	}
 }

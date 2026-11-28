@@ -831,7 +831,7 @@ func (s *Server) contributeEligibleRepositories() []contributeRepository {
 			continue
 		}
 		// Contributor credentials are minted by the GitHub App.
-		if cfg.ForgeKindForRepo(full) != config.ForgeGitHub {
+		if !cfg.RepoOnGitHub(full) {
 			continue
 		}
 		if config.MatchesAny(r.full, disabled) || config.MatchesAny(r.name, disabled) {
