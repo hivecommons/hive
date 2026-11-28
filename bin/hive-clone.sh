@@ -37,18 +37,19 @@ DEFAULT_TIMEOUT_SECONDS=1800
 # Per-agent UIDs start here (crux/agent uid map); lower UIDs are not agents.
 FIRST_AGENT_UID=2001
 
-REPO=""; DIR=""; FETCH="false"; TIMEOUT="$DEFAULT_TIMEOUT_SECONDS"
+REPO=""; DIR=""; PR=""; PR_SET="false"; FETCH="false"; TIMEOUT="$DEFAULT_TIMEOUT_SECONDS"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --repo|--dir|--timeout)
+    --repo|--dir|--timeout|--pr)
       if [ $# -lt 2 ]; then echo "hive-clone: $1 needs a value" >&2; exit 2; fi
       case "$1" in
-        --repo) REPO="$2";; --dir) DIR="$2";; --timeout) TIMEOUT="$2";;
+        --repo) REPO="$2";; --dir) DIR="$2";; --timeout) TIMEOUT="$2";; --pr) PR="$2"; PR_SET="true";;
       esac
       shift 2;;
     --fetch)     FETCH="true"; shift;;
     --repo=*)    REPO="${1#*=}"; shift;;
     --dir=*)     DIR="${1#*=}"; shift;;
+    --pr=*)      PR="${1#*=}"; PR_SET="true"; shift;;
     --timeout=*) TIMEOUT="${1#*=}"; shift;;
     *) echo "hive-clone: unknown argument $1" >&2; exit 2;;
   esac
@@ -59,6 +60,10 @@ if [ -z "$REPO" ]; then
   exit 2
 fi
 case "$TIMEOUT" in ''|*[!0-9]*) echo "hive-clone: --timeout must be a number of seconds" >&2; exit 2;; esac
+if [ "$PR_SET" = "true" ] && [[ ! "$PR" =~ ^[1-9][0-9]{0,17}$ ]]; then
+  echo "hive-clone: --pr must be a positive pull request number" >&2
+  exit 2
+fi
 if ! command -v python3 >/dev/null 2>&1; then
   echo "hive-clone: python3 is required to read the relay's result" >&2
   exit 2
@@ -105,12 +110,15 @@ fi
 
 REQ_FILE="$REQ_DIR/${AGENT}-$(date +%s%N).json"
 RESULT="${REQ_FILE%.json}.result.json"
-python3 - "$REQ_FILE" "$REPO" "$AGENT" <<'PY'
+python3 - "$REQ_FILE" "$REPO" "$AGENT" "$PR" <<'PY'
 import json, os, sys
-path, repo, agent = sys.argv[1:4]
+path, repo, agent, pr = sys.argv[1:5]
 tmp = path + ".tmp"
 with open(tmp, "w") as f:
-    json.dump({"repo": repo, "agent": agent}, f)
+    request = {"repo": repo, "agent": agent}
+    if pr:
+        request["pr"] = int(pr)
+    json.dump(request, f)
 os.rename(tmp, path)
 PY
 echo "hive-clone: requested $REPO from the hive (request $REQ_FILE)"
@@ -195,4 +203,8 @@ else
     git -C "$DIR" checkout -q
   fi
   echo "hive-clone: cloned $REPO into $DIR"
+fi
+if [ -n "$PR" ]; then
+  git -C "$DIR" fetch --no-recurse-submodules "$BUNDLE" "+refs/hive/pull/$PR/head:refs/hive/pull/$PR/head"
+  echo "hive-clone: PR $PR is available at refs/hive/pull/$PR/head"
 fi

@@ -803,6 +803,11 @@
          from components.css; a button when the viewer may resume. */
       .hive-paused-pill { margin-left: var(--sp-3); vertical-align: middle; font-family: inherit; cursor: help; }
       button.hive-paused-pill { appearance: none; cursor: pointer; }
+      /* HIVE_HUB_MODE=self-hosted (#20199): a hub that provisions no hives
+         hides every hosted-fleet control. applyHubMode() sets the root class
+         from hub_mode in /api/auth/user; !important wins over the inline
+         display the pollers write. Mode unset: the class is never set. */
+      .hub-self-hosted .hosted-fleet-only { display: none !important; }
   </style>
 </head>
 <body>
@@ -885,10 +890,10 @@
              /get-started (files a provision request via POST
              /api/saas/request-provision). Shown when the user has NO hosted
              quota (cannot self-create); hidden otherwise. No new modal. -->
-        <a class="hv-btn btn-primary btn-primary" id="btn-request-hive" href="/get-started" style="display:none;text-decoration:none" title="We host the hive for you — files a provision request">Request a hive</a>
+        <a class="hv-btn btn-primary btn-primary hosted-fleet-only" id="btn-request-hive" href="/get-started" style="display:none;text-decoration:none" title="We host the hive for you — files a provision request">Request a hive</a>
         <!-- Self-create path, for users who DO have hosted quota. Hidden when the
              user has no quota (the Request-a-hive link above takes over). -->
-        <button class="hv-btn btn-primary btn-primary" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex';hiveHubRememberModalOpen(document.getElementById('create-modal'))">+ Add Hosted Hive</button>
+        <button class="hv-btn btn-primary btn-primary hosted-fleet-only" id="btn-add-hive" disabled onclick="document.getElementById('create-modal').style.display='flex';hiveHubRememberModalOpen(document.getElementById('create-modal'))">+ Add Hosted Hive</button>
       </div>
     </div>
 
@@ -982,8 +987,9 @@
         <!-- NPS feedback from every hive's dashboard (#9610). Double gated:
              this section is hidden until the admin check passes, and
              /api/admin/nps is behind requireAdmin. Free text is rendered with
-             textContent only, never as markup. Empty/disabled fleets still show
-             the existing no-responses state instead of hiding the section. -->
+             textContent only, never as markup. A hub with NPS switched off and
+             no stored response hides the whole section (#20197); an enabled
+             hub with no responses yet keeps the no-responses state. -->
         <div id="nps-container"></div>
       </div>
     </div>
@@ -1003,9 +1009,10 @@
             <div>
               <div class="hub-admins-title">Hub admins</div>
               <div class="fs-sm text-muted">Root admins come from hub configuration. Root admins can add or remove UI-granted admins.</div>
+              <div id="hub-admins-id-hint" class="fs-sm text-muted">Enter the admin's GitHub login.</div>
             </div>
             <form id="hub-admins-add" class="hub-admins-add" onsubmit="grantHubAdmin(event)">
-              <input id="hub-admins-login" class="hub-admins-login" type="text" placeholder="GitHub login" autocomplete="off">
+              <input id="hub-admins-login" class="hub-admins-login" type="text" placeholder="GitHub login" aria-label="GitHub login" autocomplete="off">
               <button class="hv-btn btn-primary" type="submit">Add admin</button>
             </form>
           </div>
@@ -1069,7 +1076,7 @@
       </div>
     </div>
 
-    <div id="cluster-health-section" style="display:none;margin-top:48px">
+    <div id="cluster-health-section" class="hosted-fleet-only" style="display:none;margin-top:48px">
       <div onclick="toggleClusterHealth()" style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;user-select:none;margin-bottom:var(--sp-6)">
         <span id="cluster-health-toggle" style="font-size:0.7rem;color:var(--muted);transition:transform 0.2s">&#9654;</span>
         <h2 style="font-size:1.3rem;color:var(--hub-dashboard-accent);margin:var(--sp-0)">Cluster Health</h2>
@@ -1091,31 +1098,37 @@
       <div onclick="toggleScaleControls()" style="display:flex;align-items:center;gap:var(--sp-4);cursor:pointer;user-select:none;margin-bottom:var(--sp-6)">
         <span id="scale-controls-toggle" style="font-size:0.7rem;color:var(--muted);transition:transform 0.2s">&#9654;</span>
         <h2 style="font-size:1.3rem;color:var(--hub-dashboard-accent);margin:var(--sp-0)">Scale Controls</h2>
-        <span id="scale-controls-summary" style="font-size:0.8rem;color:var(--muted);margin-left:var(--sp-4)"></span>
+        <span id="scale-controls-summary" class="hosted-fleet-only" style="font-size:0.8rem;color:var(--muted);margin-left:var(--sp-4)"></span>
       </div>
       <div id="scale-controls-body" style="display:none">
-        <div style="font-size:0.8rem;color:var(--muted);margin-bottom:var(--sp-5)">
+        <!-- The fleet knobs and per-cluster limits are hosted-fleet controls
+             (#20199); the optional feature panels stay in self-hosted mode. -->
+        <div class="hosted-fleet-only" style="font-size:0.8rem;color:var(--muted);margin-bottom:var(--sp-5)">
           Fleet throughput knobs. Blank/0 = use the default shown. Changes apply live
           (worker-count reductions apply on the next hub restart).
         </div>
-        <div id="scale-globals" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--sp-5);margin-bottom:var(--sp-6)"></div>
-        <div class="customers-share-setting">
+        <div id="scale-globals" class="hosted-fleet-only" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--sp-5);margin-bottom:var(--sp-6)"></div>
+        <!-- Optional feature panels (#20197): each panel is hidden while its
+             feature is off, so a disabled feature takes no space. The one
+             optional-features-off line names what is off and how to turn it on. -->
+        <div id="customers-share-setting" class="customers-share-setting" hidden>
           <h3>Customers profile sharing</h3>
           <p>In force: <strong id="customers-share-effective">Unknown</strong> · Default: Off</p>
           <p id="customers-share-counts" class="customers-share-counts" hidden></p>
           <p>Set <code>HIVE_HUB_CUSTOMERS_SHARE_ENABLED</code> on the hub to enable the personal profile and consent page. The environment is authoritative; this setting cannot be changed here. A hive receives a person's real name, organization or country only after that person consents for that hive, and only values they entered themselves. Counts above are per hive; no person or value is shown.</p>
         </div>
-        <div class="customers-share-setting">
+        <div id="ask-setting" class="customers-share-setting" hidden>
           <h3>Ask AI help <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hub-deployment.md#ask-ai-help" target="_blank" rel="noopener noreferrer" aria-label="Help: Ask AI help">?</a></h3>
           <p>In force: <strong id="ask-effective">Unknown</strong> · Default: Off</p>
           <p>Set <code>HIVE_ASK_ENABLED</code> and the Kapa values on the hub to show an Ask panel on this dashboard. When on, a signed-in person's question and the label of the section they are in are sent to Kapa.ai after they confirm a notice; nothing else is sent. The environment is authoritative; this setting cannot be changed here.</p>
         </div>
-        <div style="font-size:0.85rem;color:var(--text);margin:var(--sp-5) var(--sp-0) var(--sp-4);font-weight:600">Per-cluster limits</div>
-        <div class="table-wrap"><table style="width:100%;font-size:0.85rem"><thead><tr>
+        <p id="optional-features-off" class="fs-sm text-muted" hidden></p>
+        <div class="hosted-fleet-only" style="font-size:0.85rem;color:var(--text);margin:var(--sp-5) var(--sp-0) var(--sp-4);font-weight:600">Per-cluster limits</div>
+        <div class="table-wrap hosted-fleet-only"><table style="width:100%;font-size:0.85rem"><thead><tr>
           <th style="text-align:left">Cluster</th><th style="text-align:right">Hives</th><th style="text-align:right">Pool avail</th>
           <th style="text-align:right">Max hives</th><th style="text-align:right">Pool min</th><th style="text-align:right">Pool target</th>
         </tr></thead><tbody id="scale-clusters-body"></tbody></table></div>
-        <div style="display:flex;align-items:center;gap:var(--sp-5);margin-top:14px">
+        <div class="hosted-fleet-only" style="display:flex;align-items:center;gap:var(--sp-5);margin-top:14px">
           <button class="hv-btn btn-primary btn-primary" onclick="saveScaleSettings()">Save Scale Settings</button>
           <span id="scale-save-status" style="font-size:0.8rem;color:var(--muted)"></span>
         </div>
@@ -4793,6 +4806,7 @@
         var resp = await fetch('/api/auth/user');
         var data = await resp.json();
         applyImpersonationBanner(data);
+        applyHubMode(hubSelfHosted(data));
         if (data.authenticated) {
           _personalProfileLinksAllowed = !data.impersonating;
           _isAdmin = !!data.hub_admin;
@@ -4828,6 +4842,19 @@
     }
 
     var _userQuota = 0, _userUsed = 0, _isAdmin = false, _isRootAdmin = false;
+    /* HIVE_HUB_MODE=self-hosted (#20199, server side #20196): the hub
+       provisions no hives, so hosted-fleet controls are hidden and Register
+       your own hive is the only way to add one. False until loadUser() reads
+       hub_mode; an absent or any other value keeps the hosted dashboard. */
+    var _hubSelfHosted = false;
+    var HUB_MODE_SELF_HOSTED = 'self-hosted';
+    function hubSelfHosted(data) {
+      return !!data && String(data.hub_mode || '').toLowerCase() === HUB_MODE_SELF_HOSTED;
+    }
+    function applyHubMode(selfHosted) {
+      _hubSelfHosted = !!selfHosted;
+      document.documentElement.classList.toggle('hub-self-hosted', _hubSelfHosted);
+    }
     var _personalProfileLinksAllowed = false;
     var _profileShareHiveIDs = new Set();
     var _profileShareHiveSignature = '';
@@ -7494,34 +7521,17 @@
       } catch(e) { hiveToast('Error: ' + e.message, 'error'); loadHives(); }
     }
 
-    /* hiveLabel derives the two-line name-cell label from the hive's PROJECT
-       (org + primary repo) rather than by splitting h.name.
-
-       Why not h.name: the hub synthesises name as org + "/" + primaryRepo on
-       every heartbeat (see RegistryEntry construction in server.go), so
-       splitting it back apart is a lossy round-trip of the two fields we
-       already have on the row — and it breaks whenever either field itself
-       contains a slash. Live fleet evidence: a URL-parsing bug put a HOST in
-       the org position, so the listing showed 'github.ibm.com / forthehive'.
-       Reading org/primaryRepo directly makes the label reflect the project.
-
-       Precedence, most specific first:
-         1. org + primaryRepo  — the real project, the whole point
-         2. h.name             — a hive that reported a name but no project
-         3. h.id               — last resort, never blank
-
-       Returns {line1, line2}. line2 is '' whenever there is no SECOND thing
-       worth saying, so the caller never renders an empty link or a stray '/'.
-       An unassigned placeholder (org 'available-*' or 'placeholder', no
-       primaryRepo) therefore keeps showing its org on line 1 with no empty
-       second line — the same headline it shows today.
+    /* Derive the name and repository lines from project metadata, preserving a
+       custom name when present and avoiding an empty or repeated second line.
+       Duplicate titles are disambiguated by hiveLabel below.
+       Unassigned placeholders keep their org as the headline.
 
        primaryRepo is rendered VERBATIM, including any embedded slash
        ('enricom-ibm/jackrabbit' is a real live value produced by the same
        corruption). Taking only the last segment would silently hide half of
        a legitimate value, and the repo path is what the adjacent GitHub link
        resolves to — the label and the link must agree. */
-    function hiveLabel(h) {
+    function hiveBaseLabel(h) {
       if (!h) return { line1: '', line2: '' };
       var org = h.org || '';
       var repo = h.primaryRepo || '';
@@ -7557,6 +7567,21 @@
          old label showed (org on top, repo below), just with the repo now
          qualified by its org. */
       return { line1: fallback, line2: (repoLine === fallback ? '' : repoLine) };
+    }
+
+    function hiveLabel(h) {
+      var label = hiveBaseLabel(h);
+      if (!h) return label;
+      var peers = (_allDashHives || []).filter(function(other) {
+        return other && other.id !== h.id && hiveBaseLabel(other).line1 === label.line1;
+      });
+      if (!peers.length) return label;
+      var repo = label.line2;
+      var repoUnique = repo && peers.every(function(other) {
+        return hiveBaseLabel(other).line2 !== repo;
+      });
+      label.line1 += ' — ' + (repoUnique ? repo : (h.id || repo));
+      return label;
     }
 
     /* hiveNameSortValue is the value the Hive column SORTS on. It must track
@@ -7930,7 +7955,8 @@
                label says so; the JSON field keeps its original name. */
             renderUsageSection('By org / repo', d.byOrg, 'org') +
             renderUsageSection('By owner', d.byOwner, 'owner') +
-            renderUsageSection('By cluster', d.byCluster, 'cluster') +
+            /* A self-hosted hub runs no clusters of its own (#20199). */
+            (_hubSelfHosted ? '' : renderUsageSection('By cluster', d.byCluster, 'cluster')) +
           '</div>' +
           zeroHtml +
           '<div style="margin-top:10px;font-size:0.66rem;color:var(--muted);line-height:1.4">' + esc(d.currencyNote || '') + '</div>' +
@@ -9168,11 +9194,11 @@
         document.getElementById('hives-container').innerHTML =
           '<div class="empty-state">' +
           '<p style="font-size:1.2rem;margin-bottom:var(--sp-4)">No hives yet</p>' +
-          '<p class="mb-6">Get started in one of two ways:</p>' +
+          '<p class="mb-6">' + (_hubSelfHosted ? 'Register a hive you run to attach it to this hub:' : 'Get started in one of two ways:') + '</p>' +
           '<div style="display:flex;gap:var(--sp-5);justify-content:center;flex-wrap:wrap;margin-bottom:var(--sp-5)">' +
           /* Request-a-hive → the EXISTING Request-a-Hive wizard at /get-started
              (POST /api/saas/request-provision). We host it for you. */
-          '<a class="hv-btn btn-primary btn-primary" href="/get-started" style="text-decoration:none" title="We host the hive for you">Request a hive</a>' +
+          '<a class="hv-btn btn-primary btn-primary hosted-fleet-only" href="/get-started" style="text-decoration:none" title="We host the hive for you">Request a hive</a>' +
           /* Register-your-own-hive → with HIVE_HUB_SELFSERVICE_REGISTRATION on,
              selfServiceCtaClick opens the registration form (#18145); with the
              flag off it falls through to the self-host guide at
@@ -11779,6 +11805,27 @@
         }).join(' · ');
       } catch (e) { /* transient: next poll retries */ }
     }
+    /* Optional feature panels (#20197): a panel shows only while its feature
+       is on; every feature that is off is named once in the
+       optional-features-off line with the env var that turns it on. */
+    var OPTIONAL_FEATURE_PANELS = [
+      {key: 'customers_share_enabled', panel: 'customers-share-setting', label: 'Customers profile sharing', env: 'HIVE_HUB_CUSTOMERS_SHARE_ENABLED'},
+      {key: 'ask_enabled', panel: 'ask-setting', label: 'Ask AI help', env: 'HIVE_ASK_ENABLED'}
+    ];
+    function applyOptionalFeaturePanels(eff) {
+      eff = eff || {};
+      var off = [];
+      OPTIONAL_FEATURE_PANELS.forEach(function(f) {
+        var on = eff[f.key] === true;
+        var panel = document.getElementById(f.panel);
+        if (panel) panel.hidden = !on;
+        if (!on) off.push(f.label + ' (' + f.env + ')');
+      });
+      var line = document.getElementById('optional-features-off');
+      if (!line) return;
+      line.hidden = off.length === 0;
+      line.textContent = off.length ? 'Optional features off: ' + off.join(', ') + '. See the hub deployment docs to enable them.' : '';
+    }
     async function loadScaleSettings() {
       if (!_isAdmin) return;
       try {
@@ -11796,6 +11843,7 @@
           typeof eff.customers_share_enabled !== 'boolean' ? 'Unknown' : (eff.customers_share_enabled ? 'On' : 'Off');
         document.getElementById('ask-effective').textContent =
           typeof eff.ask_enabled !== 'boolean' ? 'Unknown' : (eff.ask_enabled ? 'On' : 'Off');
+        applyOptionalFeaturePanels(eff);
         loadCustomerConsentCounts(eff.customers_share_enabled === true);
         document.getElementById('scale-controls-summary').textContent =
           'wave ' + eff.upgrade_wave_size + ' · workers ' + eff.provision_workers +
@@ -11973,7 +12021,7 @@
     }
 
     async function loadClusterHealth() {
-      if (!_isAdmin) return;
+      if (!_isAdmin || _hubSelfHosted) return;
       try {
         var resp = await fetch('/api/saas/cluster-health');
         if (resp.status === 403) {
@@ -12915,6 +12963,32 @@
       }).join('');
     }
 
+    /* hubAdminIdentityField (#20198): the "Add admin" field asks for the
+       identity form the hub's sign-in provider stores. A GitHub hub stores a
+       GitHub login; any other provider stores provider:subject, for example
+       custom:<subject> on a custom-OIDC hub. An unknown provider list (older
+       hub) keeps the GitHub wording. */
+    function hubAdminIdentityField(providers) {
+      providers = Array.isArray(providers) ? providers.map(function(p) { return String(p || '').toLowerCase(); }).filter(Boolean) : [];
+      var others = providers.filter(function(p) { return p !== 'github'; });
+      if (!others.length) {
+        return {label: 'GitHub login', placeholder: 'GitHub login', hint: "Enter the admin's GitHub login."};
+      }
+      var example = others[0] + ':<subject>';
+      if (providers.indexOf('github') !== -1) {
+        return {label: 'Admin identity', placeholder: 'GitHub login or ' + example,
+          hint: 'Enter a GitHub login, or provider:subject for other sign-in providers (e.g. ' + example + ').'};
+      }
+      return {label: 'Admin identity', placeholder: 'Admin identity (e.g. ' + example + ')',
+        hint: 'Enter the admin identity as provider:subject (e.g. ' + example + ').'};
+    }
+    function applyHubAdminIdentityField(field) {
+      var input = document.getElementById('hub-admins-login');
+      if (input) { input.placeholder = field.placeholder; input.setAttribute('aria-label', field.label); }
+      var hint = document.getElementById('hub-admins-id-hint');
+      if (hint) hint.textContent = field.hint;
+    }
+
     async function loadHubAdmins() {
       if (!_isAdmin) return;
       try {
@@ -12922,6 +12996,7 @@
         if (!resp.ok) return;
         var data = await resp.json();
         if (typeof data.root_admin === 'boolean') _isRootAdmin = data.root_admin;
+        applyHubAdminIdentityField(hubAdminIdentityField(data.login_providers));
         renderHubAdmins(data.admins || []);
       } catch(e) {}
     }
@@ -13050,10 +13125,13 @@
       if (!ts) return '';
       var d = new Date(ts);
       if (isNaN(d.getTime())) return ts.substring(0, 10);
-      // 12-hour clock with a compact single-letter meridiem (e.g. "9:21p").
-      var parts = d.toLocaleString('en-US', {year:'numeric',month:'2-digit',day:'2-digit',hour:'numeric',minute:'2-digit',hour12:true,timeZone:'America/New_York'}).replace(',','').split(' ');
+      // 12-hour clock with a compact single-letter meridiem (e.g. "9:21p"),
+      // in the viewer's own time zone, with the zone name taken from the
+      // formatter so it follows daylight saving time (#20190).
+      var parts = d.toLocaleString('en-US', {year:'numeric',month:'2-digit',day:'2-digit',hour:'numeric',minute:'2-digit',hour12:true,timeZoneName:'short'}).replace(',','').split(' ');
+      var zone = parts.pop() || ''; // e.g. "PST", "EDT", "GMT+1"
       var meridiem = (parts.pop() || '').toLowerCase().charAt(0); // "AM"->"a", "PM"->"p"
-      return parts.join(' ') + meridiem + ' EDT';
+      return parts.join(' ') + meridiem + (zone ? ' ' + zone : '');
     }
 
     function sortUsers(key) {
@@ -13109,7 +13187,8 @@
           return;
         }
         _adminLoaded = true;
-        document.getElementById('nps-section').hidden = false;
+        /* nps-section is unhidden by loadAdminNPS, and only when NPS is on
+           for this hub or has responses (#20197). */
         document.getElementById('admin-section').style.display = '';
         var navFleet = document.getElementById('nav-fleet');
         if (navFleet) navFleet.style.display = '';
@@ -13418,13 +13497,27 @@
       }
     }
 
+    /* npsCardVisible (#20197): the NPS card is shown only when NPS is on for
+       this hub (enabled) or responses are already stored. A hub that never
+       opted in gets no empty "NPS 0 · 0 responses" card. A payload without
+       the enabled flag (older hub) keeps the card. */
+    function npsCardVisible(data) {
+      if (!data) return false;
+      if (data.enabled === false && !((Number(data.total) || 0) > 0)) return false;
+      return true;
+    }
+
     async function loadAdminNPS() {
       try {
         var resp = await fetch('/api/admin/nps');
         /* 403 means not admin: leave the container empty, so a non-admin
            learns nothing about this surface, not even that it exists. */
         if (!resp.ok) return;
-        renderAdminNPS(await resp.json());
+        var data = await resp.json();
+        var section = document.getElementById('nps-section');
+        if (!npsCardVisible(data)) { if (section) section.hidden = true; return; }
+        if (section) section.hidden = false;
+        renderAdminNPS(data);
       } catch(e) {}
     }
 
@@ -14560,7 +14653,8 @@
           '<td style="text-align:left">' + renderContactCell(u) + '</td>' +
           '<td>' + countryCell(u) + '</td>' +
           '<td>' + statusCell + '</td>' +
-          '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:var(--sp-2);background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>' +
+          /* Hosted-hive quota: no such thing on a self-hosted hub (#20199). */
+          (_hubSelfHosted ? '' : '<td><input type="number" min="0" max="10" value="' + (u.saas_quota || 0) + '" style="width:50px;padding:var(--sp-2);background:var(--bg);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--text);text-align:center" onchange="updateUser(\'' + esc(u.github_username) + '\',{saas_quota:parseInt(this.value)||0})"></td>') +
           '<td>' + affiliationCell(u) + '</td>' +
           '<td>' + (hiveCount > 0 ? '<a href="#" onclick="toggleAdminExpand(\'' + esc(u.github_username) + '\');return false" style="color:var(--blue);font-size:0.8rem">' + hiveCount + ' hive' + (hiveCount > 1 ? 's' : '') + '</a>' : '<span class="text-muted">0</span>') + '</td>' +
           '<td class="users-actions-cell">' + userActions + '</td>' +
@@ -14572,7 +14666,7 @@
         // as new companies are entered.
         '<datalist id="contact-company-suggestions">' + companyDatalistOptionsHTML() + '</datalist>' +
         '<table class="hive-table"><thead><tr>' +
-        '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'full_name\')" style="cursor:pointer">Contact ⇅</th><th onclick="sortUsers(\'country\')" style="cursor:pointer">Country ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th><th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th><th onclick="sortUsers(\'affiliation\')">AFFILIATION ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
+        '<th onclick="sortUsers(\'github_username\')" style="cursor:pointer">User ⇅</th><th onclick="sortUsers(\'created_at\')" style="cursor:pointer">Joined ⇅</th><th onclick="sortUsers(\'last_login\')" style="cursor:pointer">Last Login ⇅</th><th onclick="sortUsers(\'full_name\')" style="cursor:pointer">Contact ⇅</th><th onclick="sortUsers(\'country\')" style="cursor:pointer">Country ⇅</th><th onclick="sortUsers(\'status\')" style="cursor:pointer">Status ⇅</th>' + (_hubSelfHosted ? '' : '<th onclick="sortUsers(\'saas_quota\')" style="cursor:pointer">Quota ⇅</th>') + '<th onclick="sortUsers(\'affiliation\')">AFFILIATION ⇅</th><th onclick="sortUsers(\'hiveCount\')" style="cursor:pointer">Hives ⇅</th><th>Actions</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table>';
       // The contact panels are built as raw HTML above; wire their listeners
       // once the rows are actually in the DOM. Inline on* handlers are avoided

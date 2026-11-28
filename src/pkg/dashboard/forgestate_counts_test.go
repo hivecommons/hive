@@ -335,3 +335,55 @@ func TestGitHubWebhookFeedsForgeOutcomeCounters(t *testing.T) {
 		t.Fatalf("counters = %+v, want 1 merged / 1 closed from webhooks", got)
 	}
 }
+
+// A hive whose repos are all on another forge never asks the GitHub Search
+// API for its counts and reports them as unsupported, not as a GitHub
+// failure (hivecommons/hive#20179).
+func TestCollectPRIssueCountsForgejoOnlyHiveSkipsReconcile(t *testing.T) {
+	var logs strings.Builder
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	mc := NewMetricsCollector(nil, "o", "r", "", "hive-bot[bot]", "P", logger)
+	mc.prIssueCachePath = filepath.Join(t.TempDir(), "counts.json")
+	mc.SetProjectScope("o", "r", []string{"r", "s"}, "hive-bot[bot]")
+	mc.SetRepoOnGitHubProvider(func(string) bool { return false })
+	fc := mc.EnableForgeCounts(nil)
+	if got := fc.Repos(); len(got) != 0 {
+		t.Fatalf("counter repos = %v, want none for a Forgejo-only hive", got)
+	}
+	for i := 0; i < 3; i++ {
+		mc.collectPRIssueCounts(context.Background())
+	}
+	if got := mc.GetPRIssueCounts(); got != nil {
+		t.Fatalf("counts = %+v, want none", got)
+	}
+	if got := mc.GetPRIssueCountError(); !strings.HasPrefix(got, "unsupported") {
+		t.Fatalf("count error = %q, want unsupported", got)
+	}
+	out := logs.String()
+	if strings.Contains(out, "level=WARN") || strings.Contains(out, "github client not configured") {
+		t.Fatalf("logs = %s, want no warning", out)
+	}
+	if n := strings.Count(out, "every repo is on another forge"); n != 1 {
+		t.Fatalf("unsupported DEBUG lines = %d, want 1; logs = %s", n, out)
+	}
+}
+
+// In a mixed hive only the GitHub repos are reconciled and counted.
+func TestCollectPRIssueCountsMixedForgeCountsGitHubReposOnly(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	mc := NewMetricsCollector(nil, "o", "r", "", "hive-bot[bot]", "P", logger)
+	mc.prIssueCachePath = filepath.Join(t.TempDir(), "counts.json")
+	mc.SetProjectScope("o", "r", []string{"r", "fj"}, "hive-bot[bot]")
+	mc.SetRepoOnGitHubProvider(func(repo string) bool { return repo != "o/fj" })
+	if got := mc.githubCountRepos(mc.countReposQualified()); len(got) != 1 || got[0] != "o/r" {
+		t.Fatalf("github repos = %v, want [o/r]", got)
+	}
+	// A Forgejo repo reaching the reconciler (added by a later event) is
+	// answered without asking GitHub and without an error.
+	if m, c, err := mc.reconcileOutcomeCounts(context.Background(), "o/fj"); err != nil || m != 0 || c != 0 {
+		t.Fatalf("reconcile o/fj = %d, %d, %v; want 0, 0, nil", m, c, err)
+	}
+	if _, _, err := mc.reconcileOutcomeCounts(context.Background(), "o/r"); err == nil {
+		t.Fatal("reconcile o/r with no client = nil error, want github client not configured")
+	}
+}

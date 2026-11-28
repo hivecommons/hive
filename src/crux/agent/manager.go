@@ -442,7 +442,7 @@ type AgentProcess struct {
 	TransientNudges             int       // total transient-API-error nudges sent (surfaced to the dashboard)
 	launchGen                   int       // increments per launch; stale deliverStartupKick goroutines check it and drop
 	lastCLILaunchAt             time.Time // when the CLI was last typed into the pane; dates watchdog boot grace on relaunch (#17320)
-	lastInferKickMarks          int       // no-action watchdog: tool-marker count in pane+scrollback just after kick delivery
+	noActionWatch                         // no-action watchdog kick baseline; see manager_kick.go
 	ProviderErrorClass          string
 	ProviderErrorLine           string
 	ProviderErrorBackoffUntil   time.Time

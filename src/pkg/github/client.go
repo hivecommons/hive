@@ -3818,7 +3818,7 @@ const (
 // comment-only because its head is not in the base repository and the fork
 // did not grant maintainer edits.
 func ReachableAction(pr PullRequest) string {
-	if pr.FromFork && !pr.MaintainerCanModify {
+	if strings.HasPrefix(pr.HeadRef, "refs/pull/") || (pr.FromFork && !pr.MaintainerCanModify) {
 		return ReachableActionCommentOnly
 	}
 	return ReachableActionPush

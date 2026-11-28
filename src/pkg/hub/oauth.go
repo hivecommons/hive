@@ -1323,6 +1323,9 @@ func (s *HubServer) handleAuthUser(w http.ResponseWriter, r *http.Request) {
 		"avatar_url":    avatar,
 		"hub_admin":     isAdmin,
 		"root_admin":    isRootHubAdmin(username),
+		// HIVE_HUB_MODE (#20196), "hosted" or "self-hosted", so the dashboard
+		// can hide the hosted-fleet controls on a hub that hosts nothing.
+		"hub_mode": hubMode(),
 	}
 	// Only ship the key when there is a country to ship. An absent key and an
 	// empty string both render no flag, but omitting it keeps the payload for
