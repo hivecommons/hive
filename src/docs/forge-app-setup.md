@@ -381,6 +381,14 @@ hive-clone --repo <owner/repo> [--dir <path>]          # new checkout
 hive-clone --repo <owner/repo> --fetch [--dir <path>]  # update a checkout
 ```
 
+For an AGit pull request without a head branch, add `--pr <number>` to
+either command. The relay fetches only that PR's `refs/pull/<number>/head`,
+and the checkout receives it as `refs/hive/pull/<number>/head`. Inspect it
+with `git diff origin/main...refs/hive/pull/<number>/head` (substitute the
+PR's base branch for `main`), or check it out detached. It is a pull ref,
+not a writable source branch. If the forge cannot fetch the requested ref,
+the request fails rather than returning a checkout without the PR.
+
 The hive's clone relay serves the request on a hive whose repos are all off
 GitHub, as the push relay does:
 
@@ -412,6 +420,11 @@ GitHub, as the push relay does:
   one left behind after 30 minutes. Each scan serves at most one request per
   agent, oldest first. `HIVE_FORGE_CLONE_MAX_BUNDLE_BYTES` caps a bundle (2 GiB
   by default).
+- The hive needs no `CAP_CHOWN` for this. Where it can give the bundle away
+  with `chown` it does; where it cannot (the stock pod, whose hive process
+  keeps only an ambient `CAP_NET_ADMIN`), it writes the bundle as the agent's
+  UID through the image's `su-exec` helper, so the result is the same 0600
+  agent-owned file.
 
 A later `git fetch origin` has no credential either; run `hive-clone --fetch`.
 Publish work with `hive-push-branch`, which pushes through the push relay.

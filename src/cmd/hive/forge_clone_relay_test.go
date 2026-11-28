@@ -8,10 +8,13 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -73,8 +76,14 @@ func newCloneHarness(t *testing.T) *cloneHarness {
 		}
 		return agentmode.TokenTierContributor, nil
 	})
-	prevExec, prevDef, prevChown := forgeCloneExec, forgeRepoDefaultBranch, forgeCloneChown
-	t.Cleanup(func() { forgeCloneExec, forgeRepoDefaultBranch, forgeCloneChown = prevExec, prevDef, prevChown })
+	prevExec, prevDef, prevChown, prevAsAgent := forgeCloneExec, forgeRepoDefaultBranch, forgeCloneChown, forgeCloneWriteAsAgent
+	t.Cleanup(func() {
+		forgeCloneExec, forgeRepoDefaultBranch, forgeCloneChown, forgeCloneWriteAsAgent = prevExec, prevDef, prevChown, prevAsAgent
+	})
+	// A test never runs the real su-exec.
+	forgeCloneWriteAsAgent = func(context.Context, int, string, io.Reader) error {
+		return errors.New("su-exec is not available in tests")
+	}
 	forgeCloneExec = func(_ context.Context, dir string, env []string, args ...string) (string, error) {
 		h.calls = append(h.calls, gitCall{dir: dir, env: env, args: args})
 		switch args[0] {
@@ -203,6 +212,90 @@ func TestForgeCloneRelayHandsTheAgentABundle(t *testing.T) {
 	}
 	if args := strings.Join(fetch.args, " "); !strings.Contains(args, "https://fj.example/acme/widgets.git") || !strings.Contains(args, "--no-recurse-submodules") {
 		t.Errorf("fetch args = %q", args)
+	}
+}
+
+func TestForgeCloneRelayPullRef(t *testing.T) {
+	h := newCloneHarness(t)
+	req := goodClone()
+	req.PR = 50
+	path := writeRelayRequest(t, h.relay.cloneDir, "worker-pr.json", req)
+	h.relay.scanOnce(context.Background())
+	var resp forgeCloneResponse
+	readRelayResult(t, path, &resp)
+	if !resp.OK {
+		t.Fatalf("clone failed: %+v", resp)
+	}
+	fetches := h.callsOf("fetch")
+	if len(fetches) != 1 || !strings.Contains(strings.Join(fetches[0].args, " "), "+refs/pull/50/head:refs/hive/pull/50/head") {
+		t.Fatalf("PR head not fetched: %+v", fetches)
+	}
+}
+
+func TestForgeCloneRelayRejectsNegativePR(t *testing.T) {
+	h := newCloneHarness(t)
+	req := goodClone()
+	req.PR = -1
+	path := writeRelayRequest(t, h.relay.cloneDir, "worker-invalid-pr.json", req)
+	h.relay.scanOnce(context.Background())
+	var resp forgeCloneResponse
+	readRelayResult(t, path, &resp)
+	if resp.OK || !strings.Contains(resp.Error, "positive pull request number") || len(h.callsOf("fetch")) != 0 {
+		t.Fatalf("invalid PR was not rejected before fetch: %+v", resp)
+	}
+}
+
+func TestForgeCloneRelayDeliversUnbranchedPullCommit(t *testing.T) {
+	upstream := t.TempDir()
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull,
+			"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git(upstream, "init", "-b", "main")
+	git(upstream, "commit", "--allow-empty", "-m", "base")
+	git(upstream, "checkout", "--detach")
+	git(upstream, "commit", "--allow-empty", "-m", "pull head")
+	head := git(upstream, "rev-parse", "HEAD")
+	git(upstream, "update-ref", "refs/pull/50/head", head)
+
+	h := newCloneHarness(t)
+	forgeCloneExec = func(ctx context.Context, dir string, _ []string, args ...string) (string, error) {
+		if args[0] == "fetch" {
+			for i, arg := range args {
+				if arg == "https://fj.example/acme/widgets.git" {
+					args[i] = upstream
+				}
+			}
+		}
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_DIR="+dir, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	req := goodClone()
+	req.PR = 50
+	path := writeRelayRequest(t, h.relay.cloneDir, "worker-real-pr.json", req)
+	h.relay.scanOnce(context.Background())
+	var resp forgeCloneResponse
+	readRelayResult(t, path, &resp)
+	if !resp.OK {
+		t.Fatalf("clone failed: %+v", resp)
+	}
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	git("", "clone", "--no-checkout", resp.Bundle, checkout)
+	git(checkout, "fetch", resp.Bundle, "+refs/hive/pull/50/head:refs/hive/pull/50/head")
+	if got := git(checkout, "rev-parse", "refs/hive/pull/50/head"); got != head {
+		t.Fatalf("pull head = %s, want %s", got, head)
 	}
 }
 
@@ -470,6 +563,68 @@ func TestForgeCloneRelayRetriesAndCaps(t *testing.T) {
 	}
 	if bundles, _ := filepath.Glob(filepath.Join(h.relay.cloneDir, "*"+forgeCloneBundleSuffix)); len(bundles) != 0 {
 		t.Fatalf("a bundle the agent does not own was left: %v", bundles)
+	}
+}
+
+// A hive without an effective CAP_CHOWN (the stock pod) gets EPERM from the
+// chown and still hands the agent a 0600 bundle it owns, written as the
+// agent through su-exec (#20195).
+func TestForgeCloneRelayDeliversWithoutChown(t *testing.T) {
+	h := newCloneHarness(t)
+	forgeCloneChown = func(f *os.File, uid int) error {
+		h.chowned = append(h.chowned, uid)
+		return &fs.PathError{Op: "chown", Path: f.Name(), Err: syscall.EPERM}
+	}
+	var asAgent []int
+	forgeCloneWriteAsAgent = func(_ context.Context, uid int, path string, src io.Reader) error {
+		asAgent = append(asAgent, uid)
+		// What `umask 077 && set -C && cat > "$1"` does as uid.
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(f, src); err != nil {
+			_ = f.Close()
+			return err
+		}
+		return f.Close()
+	}
+	path := writeRelayRequest(t, h.relay.cloneDir, "worker-1.json", goodClone())
+	h.relay.scanOnce(context.Background())
+
+	var resp forgeCloneResponse
+	readRelayResult(t, path, &resp)
+	if !resp.OK {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if len(asAgent) != 1 || asAgent[0] != os.Getuid() {
+		t.Fatalf("written as %v, want the request file's owner %d", asAgent, os.Getuid())
+	}
+	fi, err := os.Lstat(resp.Bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fi.Mode().IsRegular() || fi.Mode().Perm() != 0o600 || forgeCloneFileUID(fi) != os.Getuid() {
+		t.Fatalf("bundle %v owned by %d, want a regular 0600 file owned by %d", fi.Mode(), forgeCloneFileUID(fi), os.Getuid())
+	}
+	if got, _ := os.ReadFile(resp.Bundle); string(got) != fakeBundle {
+		t.Fatalf("bundle = %q", got)
+	}
+	if bundles, _ := filepath.Glob(filepath.Join(h.relay.cloneDir, "*"+forgeCloneBundleSuffix)); len(bundles) != 1 {
+		t.Fatalf("bundles in the queue: %v, want just the agent's", bundles)
+	}
+
+	// When the agent-side write fails too, nothing is left behind.
+	forgeCloneWriteAsAgent = func(context.Context, int, string, io.Reader) error { return errors.New("su-exec: permission denied") }
+	_ = os.Remove(resp.Bundle)
+	path = writeRelayRequest(t, h.relay.cloneDir, "worker-2.json", goodClone())
+	h.relay.scanOnce(context.Background())
+	readRelayResult(t, path, &resp)
+	if resp.OK || !strings.Contains(resp.Error, "writing it as the agent") {
+		t.Fatalf("failed fallback: resp %+v", resp)
+	}
+	if bundles, _ := filepath.Glob(filepath.Join(h.relay.cloneDir, "*"+forgeCloneBundleSuffix)); len(bundles) != 0 {
+		t.Fatalf("a bundle was left after a failed fallback: %v", bundles)
 	}
 }
 

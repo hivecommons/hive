@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -96,6 +97,7 @@ type forgeCloneAuthorizerSource interface {
 type forgeCloneRequest struct {
 	Agent string `json:"agent"`
 	Repo  string `json:"repo"`
+	PR    int    `json:"pr,omitempty"`
 }
 
 // forgeCloneResponse is written next to the request as .result.json.
@@ -135,6 +137,23 @@ var forgeCloneReadRequest = github.ReadRequestFileOwner
 // forgeCloneChown gives the bundle to the requesting agent's UID. It is a
 // variable so tests, which cannot chown to another UID, can observe it.
 var forgeCloneChown = func(f *os.File, uid int) error { return f.Chown(uid, -1) }
+
+// forgeCloneWriteAsAgent creates path as uid through the setuid su-exec
+// helper and fills it from src, for a hive that cannot chown (#20195). The
+// shell runs with umask 077 and noclobber, so the file is new and mode 0600;
+// the path is an argument, never shell text. It is a variable so tests,
+// which have no su-exec, can stand in for it.
+var forgeCloneWriteAsAgent = func(ctx context.Context, uid int, path string, src io.Reader) error {
+	ctx, cancel := context.WithTimeout(ctx, forgeCloneExecTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "su-exec", strconv.Itoa(uid), "sh", "-c", `umask 077 && set -C && cat > "$1"`, "sh", path)
+	cmd.Stdin = src
+	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("su-exec %d: %w: %s", uid, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
 
 // forgeCloneBaseEnv is the hive's environment for a clone git: inherited
 // forge and GitHub credentials stripped (pushbroker.PushEnv), and git's
@@ -333,6 +352,10 @@ func (r *forgeRequestRelay) handleClone(ctx context.Context, path string) (fetch
 		r.settle(path, ".rejected", false)
 		r.logger.Warn("forge request relay: clone REJECTED", "agent", req.Agent, "repo", req.Repo, "reason", reason)
 	}
+	if req.PR < 0 {
+		reject("pr must be a positive pull request number")
+		return
+	}
 	if r.cloneAuthz == nil {
 		deny("no authorizer configured (fail closed)")
 		return
@@ -435,8 +458,12 @@ func (r *forgeRequestRelay) handleClone(ctx context.Context, path string) (fetch
 	fetchEnv := append(forgeCloneWithConfig(github.PushBranchGitEnv(stage, remoteURL, token), "http.followRedirects", "false"), "GIT_DIR="+stage)
 	scrub := forgeCloneScrubber(token, fetchEnv)
 	fetched = true
-	if out, err := forgeCloneExec(ctx, stage, fetchEnv, "fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head",
-		remoteURL, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"); err != nil {
+	fetchArgs := []string{"fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head",
+		remoteURL, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"}
+	if req.PR > 0 {
+		fetchArgs = append(fetchArgs, fmt.Sprintf("+refs/pull/%d/head:refs/hive/pull/%d/head", req.PR, req.PR))
+	}
+	if out, err := forgeCloneExec(ctx, stage, fetchEnv, fetchArgs...); err != nil {
 		retry("git fetch failed: " + scrub(github.FirstOutputLines(out, forgePushOutputLines)))
 		return
 	}
@@ -493,6 +520,12 @@ func forgeCloneStage(defaultBranch string) (string, func(), error) {
 // (random name, created exclusively, so nothing the agent planted is
 // written through) of mode 0600, then gives it to uid. It returns the
 // bundle's path. On any failure the new file is removed.
+//
+// A hive without an effective CAP_CHOWN (the stock pod, whose hive keeps
+// only an ambient CAP_NET_ADMIN) gets EPERM from the chown. It then writes
+// the bundle again at the same name as uid itself through su-exec, the way
+// the agent manager writes other agent-owned files (#20195), so the agent
+// still gets a 0600 file it alone owns, which is what hive-clone checks.
 func (r *forgeRequestRelay) deliverCloneBundle(reqPath, staged string, uid int) (string, error) {
 	src, err := os.Open(staged)
 	if err != nil {
@@ -526,13 +559,61 @@ func (r *forgeRequestRelay) deliverCloneBundle(reqPath, staged string, uid int) 
 		return "", err
 	}
 	if err := forgeCloneChown(dst, uid); err != nil {
-		return "", fmt.Errorf("giving the bundle to uid %d: %w", uid, err)
+		if !errors.Is(err, syscall.EPERM) {
+			return "", fmt.Errorf("giving the bundle to uid %d: %w", uid, err)
+		}
+		if err := r.deliverCloneBundleAsAgent(src, dst, name, uid, info.Size()); err != nil {
+			return "", fmt.Errorf("giving the bundle to uid %d: chown: %v; writing it as the agent: %w", uid, syscall.EPERM, err)
+		}
+		ok = true
+		return name, nil
 	}
 	if err := dst.Close(); err != nil {
 		return "", err
 	}
 	ok = true
 	return name, nil
+}
+
+// deliverCloneBundleAsAgent replaces the hive-owned file at name with one
+// that uid creates itself, filled from src, and checks that the result is a
+// regular 0600 file of size bytes owned by uid. On failure it removes
+// whatever is at name.
+func (r *forgeRequestRelay) deliverCloneBundleAsAgent(src *os.File, dst *os.File, name string, uid int, size int64) error {
+	_ = dst.Close()
+	if err := os.Remove(name); err != nil {
+		return err
+	}
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	err := forgeCloneWriteAsAgent(context.Background(), uid, name, src)
+	if err == nil {
+		err = forgeCloneCheckAgentBundle(name, uid, size)
+	}
+	if err != nil {
+		_ = os.Remove(name)
+	}
+	return err
+}
+
+// forgeCloneCheckAgentBundle verifies what the agent-side write produced.
+func forgeCloneCheckAgentBundle(name string, uid int, size int64) error {
+	fi, err := os.Lstat(name)
+	if err != nil {
+		return err
+	}
+	switch {
+	case !fi.Mode().IsRegular():
+		return fmt.Errorf("%s is not a regular file", name)
+	case fi.Mode().Perm() != 0o600:
+		return fmt.Errorf("%s has mode %v, want 0600", name, fi.Mode().Perm())
+	case forgeCloneFileUID(fi) != uid:
+		return fmt.Errorf("%s is owned by uid %d, want %d", name, forgeCloneFileUID(fi), uid)
+	case fi.Size() != size:
+		return fmt.Errorf("%s is %d bytes, want %d", name, fi.Size(), size)
+	}
+	return nil
 }
 
 // forgeCloneScrubber returns a function that removes token from text, and

@@ -685,10 +685,12 @@
         };
         if (generalData.bobSessionLabel) agent.bob = { session_label: generalData.bobSessionLabel };
         // Create mode has a Prompt Template tab but no agent to PUT to yet, so
-        // the edited template rides along in the create payload's kick_template.
+        // the edited template rides along in the create payload's
+        // prompt_template; the server writes it to <name>.md and points
+        // kick_template (a bare file name, never the text) at it (#20205).
         capturePromptTemplate();
         if (_configState.promptTemplateDirty && _configState.promptTemplateValue) {
-          agent.kick_template = _configState.promptTemplateValue;
+          agent.prompt_template = _configState.promptTemplateValue;
         }
         if (generalData.sandboxEnabled !== undefined) agent.sandbox = { enabled: generalData.sandboxEnabled };
         const ps = collectPromptSource();
