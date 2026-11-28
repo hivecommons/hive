@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.5)
+
+### Fixed
+
+- Name `hive-clone` and `hive-push-branch` instead of `hive-gh` in the kick text on a hive whose repos are all on Forgejo, so an agent learns how to get a checkout ([#20222](https://github.com/hivecommons/hive/issues/20222)).
+
 ## 2026-11-28 (v5.384.4)
 
 ### Fixed
