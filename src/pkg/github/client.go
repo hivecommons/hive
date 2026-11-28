@@ -129,10 +129,11 @@ type Client struct {
 	humanClaims humanClaimState
 	// openPRLinkState backs the pre-dispatch open-PR guard and the
 	// duplicate-fix resolver (open_pr_links.go); built lazily.
-	openPRLinkOnce  sync.Once
-	openPRLinkState *openPRLinkCache
-	sentinelMu      sync.RWMutex
-	sentinelLabel   string
+	openPRLinkOnce   sync.Once
+	openPRLinkState  *openPRLinkCache
+	conversationRule conversationRuleSlot // conversation_resolution.go; built lazily
+	sentinelMu       sync.RWMutex
+	sentinelLabel    string
 	// issueFilter is the operator's project.issue_filter (require_labels
 	// allow-list) gating which issues become actionable at all. The exclude
 	// polarity is NOT here — it is exemptLabels above (governor.labels.exempt,

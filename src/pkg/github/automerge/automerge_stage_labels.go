@@ -1387,6 +1387,12 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				firstErr = err
 			}
 		}
+		if obs.Route != nil && err == nil && !out.Suppressed && want.Stage == stagelabels.ReadyForHumanMerge && out.Stage == stagelabels.ReadyForHumanMerge {
+			// The hive's own non-blocking threads must not block the
+			// person's merge on a base that requires conversation
+			// resolution (automerge_review_threads_ready.go). Once per head.
+			c.resolveOwnThreadsAtReady(ctx, obs, *obs.Route)
+		}
 		// Explicit delegated adoption also applies to a PR parked at 085,
 		// whether or not a nudge was ever sent — except for a PR a person
 		// pushed themselves, which adoptContributorPR refuses and records
