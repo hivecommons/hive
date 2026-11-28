@@ -80,6 +80,7 @@ const {
   paneShowsUnretryableAPIError,
   paneQuotaExhaustion,
   headlessQuotaExhaustion,
+  CLAUDE_LIMIT_RESET_MAX_MS,
   paneShowsLoginRequiredError,
   paneUnknownAPIErrorLine,
   classifyPane,
@@ -1563,7 +1564,9 @@ function logContributorQuotaDecision(task, decision) {
 // QUOTA_HOLD_FALLBACK_MS is used when the banner states no expiry (most
 // backends do not print one). Short enough that a wrongly-held relay costs
 // minutes rather than an evening, and the hold re-arms on the next refusal if
-// the quota is genuinely still out.
+// the quota is genuinely still out. It is the FIRST window only: refusals in a
+// row with no task finished in between double it, up to QUOTA_HOLD_MAX_MS (see
+// quotaFallbackStreak).
 const QUOTA_HOLD_FALLBACK_MS = RELAY_TEST_TIMING ? 50 : 15 * 60 * 1000;
 // Hard ceiling on a PARSED window. The duration comes off a provider banner —
 // text this relay does not control and cannot validate — so a malformed or
@@ -1575,6 +1578,30 @@ const QUOTA_HOLD_MAX_MS = RELAY_TEST_TIMING ? 200 : 6 * 60 * 60 * 1000;
 // theirs. Asking one second after the stated reset invites an immediate second
 // refusal and another full hold; a small grace makes the first re-ask count.
 const QUOTA_HOLD_GRACE_MS = RELAY_TEST_TIMING ? 10 : 30 * 1000;
+// QUOTA_HOLD_MAX_MS above was sized for a COUNTDOWN ("Resets in 4h42m28s"),
+// where six hours is already longer than any window a provider counts down.
+// A weekly limit is not that shape. A contributor on a production hive got
+// "You've hit your weekly limit · resets Dec 1, 3pm (UTC)" from the Claude
+// Code CLI with the reset three days out; cut to six hours, the relay would
+// have come back a dozen times before the reset, and every one of those
+// re-probes is a real assignment that fails in two seconds and books a
+// failure cooldown on an issue nothing is wrong with.
+//
+// So a hint the classifier marks calendarReset (a calendar reset with a stated
+// zone, already refused there when it is more than eight days off) gets the
+// classifier's own bound as its ceiling, plus the grace so the grace
+// is not what gets clipped. Still a ceiling: the text is the provider's, and
+// nothing on a banner may park a contributor for a month.
+const QUOTA_HOLD_CALENDAR_MAX_MS = CLAUDE_LIMIT_RESET_MAX_MS + QUOTA_HOLD_GRACE_MS;
+// A timed hold is released by a timer, and Node's timers run on a monotonic
+// clock, which on Linux does not count the time a machine spends suspended.
+// Over a four-hour countdown that hardly matters. Over a hold of days on a
+// contributor's laptop it does: every night asleep would push the release a
+// night later, while quotaHoldActive(), which reads the wall clock, already
+// said the hold was over, so `ready` was no longer withheld and nothing was
+// left to send it. The timer therefore wakes at least this often and compares
+// the wall clock itself.
+const QUOTA_HOLD_RECHECK_MS = RELAY_TEST_TIMING ? 50 : 5 * 60 * 1000;
 
 // RELAY_PROTOCOL_VERSION is the contributor-protocol version this relay speaks
 // (kubestellar/hive#2567). It is DECLARED to the hub in auth_response (additive,
@@ -2409,6 +2436,27 @@ let quotaHoldReason = '';
 let quotaHoldTimer = null;
 let quotaRecoveryRequired = false;
 let quotaExhaustedAt = 0;
+// How many fallback holds (a refusal with no reset time this relay can use)
+// have been entered in a row with no task finished in between. The fallback
+// window is fifteen minutes, which is right for the first one: it may be a
+// wrong call, and a wrong call should cost minutes. But a provider that is
+// still refusing when the window ends costs a real assignment each time, and a
+// limit whose reset the relay cannot read (the Claude Code CLI prints a monthly
+// spend limit weeks ahead, past the bound the reset parser accepts) would fail
+// a task every fifteen minutes until it lifted. So each further refusal doubles
+// the window, up to QUOTA_HOLD_MAX_MS, and any task that finishes for a reason
+// other than a quota refusal puts it back (noteTaskFinishedForQuotaFallback).
+// In process memory, like the hold itself: a restart starts at fifteen minutes.
+let quotaFallbackStreak = 0;
+const QUOTA_FALLBACK_STREAK_MAX = 30;
+
+// noteTaskFinishedForQuotaFallback is called where a task ends, completed or
+// failed. A task that ran to an end while no quota hold is in force is the
+// evidence that the provider is serving this account again; a quota refusal
+// enters its hold BEFORE it fails the task, so it never counts here.
+function noteTaskFinishedForQuotaFallback() {
+  if (!quotaHoldActive()) quotaFallbackStreak = 0;
+}
 
 function quotaHoldActive() {
   return quotaHoldUntil > Date.now();
@@ -2417,10 +2465,21 @@ function quotaHoldActive() {
 function formatQuotaHoldRemaining(ms) {
   if (!Number.isFinite(ms)) return 'an unknown duration (until quota recovery is confirmed)';
   const total = Math.max(0, Math.round(ms / 1000));
-  const h = Math.floor(total / 3600);
+  const d = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
+  // A weekly limit holds for days. "71h59m30s" makes the operator do the
+  // division, and seconds mean nothing at that range.
+  if (d > 0) return `${d}d${h}h${m}m`;
   return h > 0 ? `${h}h${m}m${s}s` : (m > 0 ? `${m}m${s}s` : `${s}s`);
+}
+
+// formatQuotaHoldDeadline states a release time the way an operator can check
+// against any clock: UTC, to the minute. Used for a dated reset, where "in
+// 2d23h0m" alone leaves the reader to work out which afternoon that is.
+function formatQuotaHoldDeadline(epochMs) {
+  return `${new Date(epochMs).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 }
 
 // enterQuotaHold parks the relay until the provider's stated reset.
@@ -2430,6 +2489,11 @@ function formatQuotaHoldRemaining(ms) {
 // is out and we know nothing about when" is still a reason not to ask for the
 // next task immediately.
 //
+// headlessQuotaExhaustion()'s hint has the same shape, and for the Claude Code
+// CLI's dated limit line also carries calendarReset: the reset is a calendar
+// time with a stated zone, possibly days away, and is held to
+// QUOTA_HOLD_CALENDAR_MAX_MS instead of the countdown ceiling.
+//
 // SAID ONCE, AND SAID LOUDLY. Before this, the banner lived only inside the agy
 // pane while the relay log said `[environment]`; an operator reading the log had
 // no way to learn their provider quota was gone for the next four hours, or that
@@ -2437,9 +2501,18 @@ function formatQuotaHoldRemaining(ms) {
 // information surfaces outside the pane.
 function enterQuotaHold(hint) {
   const stated = hint && Number.isFinite(hint.resetMs) && hint.resetMs > 0 ? hint.resetMs : null;
+  // A dated reset (headlessQuotaExhaustion's calendarReset) may be days away
+  // and takes the longer ceiling; see QUOTA_HOLD_CALENDAR_MAX_MS.
+  const dated = stated !== null && !!(hint && hint.calendarReset);
+  // No usable reset: the fallback window, doubled for each refusal in a row
+  // (see quotaFallbackStreak). A repeat banner DURING a hold restates the
+  // refusal that hold is already for, so it is sized as that hold was: it is
+  // not another refusal and must not double anything.
+  const fallbackLevel = quotaHoldActive() ? Math.max(0, quotaFallbackStreak - 1) : quotaFallbackStreak;
+  const fallbackMs = Math.min(QUOTA_HOLD_FALLBACK_MS * 2 ** fallbackLevel, QUOTA_HOLD_MAX_MS);
   const holdMs = Math.min(
-    stated !== null ? stated + QUOTA_HOLD_GRACE_MS : QUOTA_HOLD_FALLBACK_MS,
-    QUOTA_HOLD_MAX_MS
+    stated !== null ? stated + QUOTA_HOLD_GRACE_MS : fallbackMs,
+    dated ? QUOTA_HOLD_CALENDAR_MAX_MS : QUOTA_HOLD_MAX_MS
   );
   const requiresRecovery = quotaRecoveryRequired || !!(hint && hint.requiresRecovery);
   const until = requiresRecovery ? Infinity : Date.now() + holdMs;
@@ -2453,6 +2526,9 @@ function enterQuotaHold(hint) {
   quotaRecoveryRequired = requiresRecovery;
   quotaExhaustedAt = Date.now();
   quotaHoldReason = (hint && hint.line) || 'provider quota exhausted';
+  if (stated === null && !requiresRecovery) {
+    quotaFallbackStreak = Math.min(fallbackLevel + 1, QUOTA_FALLBACK_STREAK_MAX);
+  }
   if (quotaHoldTimer) clearTimeout(quotaHoldTimer);
 
   console.warn('');
@@ -2463,9 +2539,24 @@ function enterQuotaHold(hint) {
     console.warn('│ Not asking for work until a fresh quota reading confirms recovery.');
     console.warn('│ The displayed reset time has no established timezone; it is not a release deadline.');
     console.warn('│ Without a quota reader, verify recovery for the configured model, then restart the relay.');
+  } else if (dated) {
+    // Days, not hours: say the date, and say that nothing is wrong meanwhile,
+    // or a relay that sits silent for half a week reads as a relay that hung.
+    console.warn(`│ The ${BACKEND} account limit is reached. Not asking the hub for work until ` +
+      `${formatQuotaHoldDeadline(until)} (in ${formatQuotaHoldRemaining(holdMs)}), the reset the provider stated.`);
+    console.warn('│ The relay stays connected and resumes by itself then. Nothing needs doing until that time.');
+    console.warn('│ To work sooner: switch AGENT_MODEL/AGENT_BACKEND, or upgrade the plan. If the limit lifts early, restart the relay.');
   } else {
     console.warn(`│ Not asking the hub for work for ${formatQuotaHoldRemaining(holdMs)}` +
-      `${stated === null ? ' (the banner stated no reset time — will re-probe)' : ' (the reset the provider stated)'}.`);
+      `${stated === null ? ' (the provider stated no reset time this relay can use, so it will try again then)' : ' (the reset the provider stated)'}.`);
+    if (stated === null) {
+      const ceiling = formatQuotaHoldRemaining(QUOTA_HOLD_MAX_MS);
+      console.warn(fallbackLevel > 0
+        ? `│ This is refusal ${fallbackLevel + 1} in a row with no task finished in between, so the wait has grown. ` +
+          `It doubles each time while the provider keeps refusing, up to ${ceiling}, and goes back to ` +
+          `${formatQuotaHoldRemaining(QUOTA_HOLD_FALLBACK_MS)} once a task finishes.`
+        : `│ If the provider is still refusing then, the wait doubles each time, up to ${ceiling}, until a task finishes.`);
+    }
     console.warn('│ To work sooner: switch AGENT_MODEL/AGENT_BACKEND, or upgrade the plan.');
   }
   console.warn('└────────────────────────────────────────────────────────────');
@@ -2475,10 +2566,25 @@ function enterQuotaHold(hint) {
     armQuotaRecoveryProbe();
     return;
   }
+  armQuotaHoldRelease();
+}
+
+// armQuotaHoldRelease releases a timed hold once the WALL clock passes
+// quotaHoldUntil. It sleeps for what is left, but never longer than
+// QUOTA_HOLD_RECHECK_MS, and looks again: see that constant for why one long
+// setTimeout is not trusted with a hold of days.
+function armQuotaHoldRelease() {
+  if (quotaHoldTimer) { clearTimeout(quotaHoldTimer); quotaHoldTimer = null; }
+  if (!quotaHoldUntil || quotaRecoveryRequired) return;
+  const remaining = quotaHoldUntil - Date.now();
+  if (remaining <= 0) {
+    releaseQuotaHold('the provider reset window has passed');
+    return;
+  }
   quotaHoldTimer = setTimeout(() => {
     quotaHoldTimer = null;
-    releaseQuotaHold('the provider reset window has passed');
-  }, holdMs);
+    armQuotaHoldRelease();
+  }, Math.min(remaining, QUOTA_HOLD_RECHECK_MS));
   // A hold outliving the work it bounds must not keep the process alive on its
   // own — every other timer here is cleared on a task exit, and this one has no
   // task to hang off.
@@ -5711,7 +5817,12 @@ function runHeadlessTask(task) {
         setPiInvocationState('failed');
         console.error(`Headless task ${task.task_id} failed: ${reason}`);
         writeHeadlessStatus(HEADLESS_STATE_FAILED, { task_id: task.task_id, task_gen: task.task_gen, result: 'failed', reason });
-        const quota = wasTimedOut || spawnError ? null : headlessQuotaExhaustion(diagnostic, BACKEND);
+        // The classifier reads provider text; whatever it is handed, it must
+        // not be able to take this failure path down with it.
+        let quota = null;
+        if (!wasTimedOut && !spawnError) {
+          try { quota = headlessQuotaExhaustion(diagnostic, BACKEND); } catch (_) { quota = null; }
+        }
         if (quota) {
           enterQuotaHold(quota);
           failCurrentTask(reason, { permanent: false, kind: 'environment', skipReady: true, outputTail: outTail });
@@ -5768,6 +5879,7 @@ function runHeadlessTask(task) {
       releaseQuotaPoolReservation();
       taskAssignedAt = 0;
       tasksCompletedCount++;
+      noteTaskFinishedForQuotaFallback();
       writeHeadlessStatus(HEADLESS_STATE_WAITING);
       if (STANDBY_MODE) {
         console.log('Standby mode: headless task complete; remaining connected without requesting ordinary work');
@@ -9114,6 +9226,9 @@ function failCurrentTask(reason, opts) {
   writeRelayStatus();
   releaseQuotaPoolReservation();
   taskAssignedAt = 0;
+  // A quota refusal entered its hold before it got here, so this resets the
+  // fallback back-off only for a task that failed for some other reason.
+  noteTaskFinishedForQuotaFallback();
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
   if (taskTimeoutHandle) { clearTimeout(taskTimeoutHandle); taskTimeoutHandle = null; }
   // skipReady: the caller knows this contributor cannot run anything right now
@@ -9453,6 +9568,7 @@ function finishCurrentTask({ completionSignal, summary, tmuxLines, prURL, noWork
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
   if (taskTimeoutHandle) { clearTimeout(taskTimeoutHandle); taskTimeoutHandle = null; }
   tasksCompletedCount++;
+  noteTaskFinishedForQuotaFallback();
   // #6664: record what this completion actually SHIPPED, which is the thing
   // the review cycle exists to follow up on. A completion is not a PR: the
   // counter used to conflate the two, so five consecutive no_work_needed
@@ -11559,7 +11675,12 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     LOGIN_WALL_GRACE_TICKS,
     QUOTA_HOLD_FALLBACK_MS,
     QUOTA_HOLD_MAX_MS,
+    QUOTA_HOLD_CALENDAR_MAX_MS,
+    QUOTA_HOLD_RECHECK_MS,
     QUOTA_HOLD_GRACE_MS,
+    formatQuotaHoldRemaining,
+    getQuotaHoldTimer: () => quotaHoldTimer,
+    getQuotaFallbackStreak: () => quotaFallbackStreak,
     evaluateContributorQuota,
     normalizeTaskComplexity,
     quotaRequiredReserve,
