@@ -1,1 +1,0 @@
-- The egress proxy's in-pod push sign-off check now caps the total bytes of commits and resolved commit deltas it holds while parsing a pack at 64 MiB, refusing a larger total with reason `push_signoff` (fail closed). A chain of small deltas that each inflate to a 1 MiB commit could otherwise make the proxy retain far more memory than the 64 MiB body cap suggests (#20267).

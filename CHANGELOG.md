@@ -11,6 +11,21 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.385.2)
+
+### Changed
+
+- The egress proxy now applies the push broker's sign-off rules to in-pod agent pushes: a lane-authored commit without the lane's `Signed-off-by`, or a lane `Signed-off-by` on a commit the lane did not author and commit, is refused with reason `push_signoff` (#19297). The proxy buffers the receive-pack body to inspect it, so an in-pod push whose body is over 64 MiB, whose pack cannot be parsed, or whose pack holds a commit object over 1 MiB, is also refused with `push_signoff` (fail closed) and, for the oversize case, the connection is closed. A commit is the lane's when its name is the lane and its email is either identity the pod can be given: `<lane>@HIVE_GIT_BOT_EMAIL_DOMAIN`, or on App-authored hives the App bot's `<id>+<login>@users.noreply.github.com` address. This is a best-effort guard against accidental sign-off mistakes, not the enforcement point: a crafted thin delta that starts with a copy op, and commits made through the REST git/commits API or GraphQL `createCommitOnBranch`, are not inspected. GitHub-side DCO remains the enforcement. The guard runs only where the proxy decrypts github.com traffic (`HIVE_PROXY_INJECT_GH_AUTH=true`); elsewhere in-pod pushes are tunneled unread. Forgejo hosts are not checked, and commits GitHub created server-side (committer `noreply@github.com`) are skipped.
+
+### Fixed
+
+- Agent workdirs under `/data/agents/<agent>` and `/data/home/agents/<agent>` are regrouped to `node` at startup after a kubelet fsGroup re-group, so new clones no longer inherit the pod fsGroup gid, and the permissions watcher hint now names a repair that runs. SaaS spokes now set `fsGroupChangePolicy: OnRootMismatch`, as the base deployment does, so kubelet no longer re-groups the whole PVC on every mount; existing spokes pick the policy up from the hub reconcile sweep or on their next self-upgrade.
+- The egress proxy's in-pod push sign-off check now caps the total bytes of commits and resolved commit deltas it holds while parsing a pack at 64 MiB, refusing a larger total with reason `push_signoff` (fail closed). A chain of small deltas that each inflate to a 1 MiB commit could otherwise make the proxy retain far more memory than the 64 MiB body cap suggests (#20267).
+
+### Security
+
+- The egress proxy's in-pod push sign-off check now bounds the pack it parses: a pack whose header claims more than 100000 objects is refused with reason `push_signoff` (fail closed, like the 64 MiB body cap), one zlib inflater is reused across objects instead of allocating one per object, and trees, blobs and tags no longer get a per-object allocation while delta bases are tracked (#20265). Real pushes are unaffected; this stops a lane from making the proxy walk millions of minimal objects packed under the 64 MiB cap.
+
 ## 2026-11-28 (v5.385.1)
 
 ### Fixed
