@@ -859,6 +859,19 @@ type HeartbeatPayload struct {
 	// default is only ever a fallback for spokes too old to report this.
 	// Empty on such spokes — the hub falls back rather than guessing.
 	GitHubHost string `json:"github_host,omitempty"`
+	// ForgeKind is the forge family the hive's primary repo lives on
+	// ("github", "gitlab", "gitea", "forgejo"). GitHubHost alone cannot say a
+	// hive is NOT on GitHub: a Forgejo-only spoke has an empty github block,
+	// whose host label defaults to github.com (hivecommons/hive#20181). Empty
+	// on older spokes.
+	ForgeKind string `json:"forge_kind,omitempty"`
+	// ForgeBaseURL is the instance root of a non-GitHub forge
+	// ("https://code.example.org"). Empty for GitHub, whose host is GitHubHost.
+	ForgeBaseURL string `json:"forge_base_url,omitempty"`
+	// ForgeLogin is the hive's own user on a non-GitHub forge (forgejo.login,
+	// else project.ai_author), shown on the hub where a GitHub hive shows
+	// AIAuthorEffective. Display-only; empty when not configured.
+	ForgeLogin string `json:"forge_login,omitempty"`
 	// ForgeUnreachable is true when the spoke's last forge probe (the
 	// github_auth token check in Health) timed out or failed at the transport
 	// layer: GitHubHost cannot be reached from the pod. The probe runs under

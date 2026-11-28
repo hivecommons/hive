@@ -299,6 +299,9 @@ type HeartbeatPayload struct {
 	GitBranch                    string                          `json:"git_branch,omitempty"`
 	ImageRef                     string                          `json:"image_ref,omitempty"`
 	GitHubHost                   string                          `json:"github_host,omitempty"`
+	ForgeKind                    string                          `json:"forge_kind,omitempty"`
+	ForgeBaseURL                 string                          `json:"forge_base_url,omitempty"`
+	ForgeLogin                   string                          `json:"forge_login,omitempty"`
 	ForgeUnreachable             bool                            `json:"forge_unreachable,omitempty"`
 	Timestamp                    string                          `json:"timestamp"`
 	GitHubAppRequired            bool                            `json:"github_app_required,omitempty"`

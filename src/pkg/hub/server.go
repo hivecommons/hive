@@ -341,6 +341,15 @@ type RegistryEntry struct {
 	Agents      []AgentSummary     `json:"agents,omitempty"`
 	Leaderboard []LeaderboardEntry `json:"leaderboard,omitempty"`
 	Online      bool               `json:"online"`
+	// ForgeKind, ForgeBaseURL and ForgeLogin are the spoke-reported forge of
+	// the hive's primary repo (heartbeat_forge.go). For a kind other than
+	// GitHub they, not GitHubHost, drive the Location pill, the repo link and
+	// the "as:" identity line: a Forgejo-only spoke's GitHubHost is the
+	// github.com default of an empty github block (hivecommons/hive#20181).
+	// ForgeBaseURL and ForgeLogin are empty for a GitHub hive.
+	ForgeKind    string `json:"forgeKind,omitempty"`
+	ForgeBaseURL string `json:"forgeBaseUrl,omitempty"`
+	ForgeLogin   string `json:"forgeLogin,omitempty"`
 	// StatsStale marks a liveness beat whose expensive heartbeat stats came
 	// from cache. The hive is online, but health/agent-derived truth must be
 	// rendered as stale/unknown unless the beat explicitly carried a fresh
@@ -2140,6 +2149,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 			}
 			return sanitizeHeartbeatField(githubHostLabel(payload.GitHubHost))
 		}(),
+		ForgeKind:    sanitizeHeartbeatForgeKind(payload.ForgeKind),
+		ForgeBaseURL: sanitizeHeartbeatForgeBaseURL(payload.ForgeKind, payload.ForgeBaseURL),
+		ForgeLogin:   sanitizeHeartbeatForgeLogin(payload.ForgeKind, payload.ForgeLogin),
 		Agents: func() []AgentSummary {
 			for i := range payload.Agents {
 				payload.Agents[i].Name = sanitizeHeartbeatField(payload.Agents[i].Name)
@@ -2476,6 +2488,12 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 					}
 					if len(entry.Repos) == 0 && len(h.Repos) > 0 {
 						entry.Repos = h.Repos
+					}
+					// The identity-only minimal beat carries no forge
+					// fields; without this a Forgejo hive falls back to a
+					// github.com pill and link until the next full collect.
+					if entry.ForgeKind == "" && h.ForgeKind != "" {
+						entry.ForgeKind, entry.ForgeBaseURL, entry.ForgeLogin = h.ForgeKind, h.ForgeBaseURL, h.ForgeLogin
 					}
 				}
 				if entry.StartedAt == "" && h.StartedAt != "" {
