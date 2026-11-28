@@ -42,6 +42,13 @@ or oldest actionable issue/PR of at least 14 days. SURGE is hive-wide; item ages
 and merge samples cover only authorized repos in the kick snapshot. The merge
 sample is bounded and may be cached or incomplete, and no merges means unknown,
 not zero. Do not describe the sample as all PRs or infer a cause from dwell alone.
+`clogged_by=` names each tripped threshold (`surge`, `mttm`, `oldest`). When it
+lacks `mttm` and `merged_sample=0`, there is no merge evidence: do not call the
+repo's merges slow. Drafts and PRs with changes requested are not counted in
+`oldest_actionable`. Before naming a long-lived item as a blocker, read the
+operator and repo knowledge in this kick; PRs it says are held on purpose (a
+release PR waiting for a release decision, an update waiting for its release
+age) are not congestion. Do not recommend batching, closing or sweeping them.
 
 When clogged:
 
