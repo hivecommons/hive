@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v6.67.0)
+
+### Added
+
+- The admin MCP can now switch one repository's auto-merge on or off with the new `repository.auto_merge` operation (`{"repo": "owner/repo", "enabled": true}`), the same change as the auto-merge switch on the dashboard's repository card. Until now only that switch could set `project.repo_policies[].auto_merge`, so an operator could not even preview turning it on from an assistant. The preview shows the switch before and after, says plainly that switching on lets the hive merge pull requests in that repository once its own gates and GitHub's rules pass, and answers "nothing would change" when the switch is already set. A repository the hive does not manage is refused, nothing is offered below autonomy level 6, the operation is owner only, and `write_confirm` refuses a preview that a dashboard toggle has overtaken, then reads the switch back. The merge settings read (`settings_read` section `auto_merge`) now reports every project repository's switch under `repo_auto_merge`.
+
 ## 2026-11-28 (v6.66.0)
 
 ### Added
