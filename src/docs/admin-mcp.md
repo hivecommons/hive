@@ -1034,7 +1034,7 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 | Code scanning sweep          | `code_scanning.settings`                                                                                                                                                                                                                |
 | Review settings              | `review.settings`                                                                                                                                                                                                                       |
 | Advisor lane                 | `advisor.settings`, `advisor.agent`, `advisor.roles`                                                                                                                                                                                    |
-| Repositories                 | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                                                                                                         |
+| Repositories                 | `repository.pause`, `repository.resume`, `repository.auto_merge`, `repository.item_hold`                                                                                                                                                |
 | Activity monitor row actions | see below                                                                                                                                                                                                                               |
 | Budget                       | `budget.update`, `budget.reset`, `budget.ignore`                                                                                                                                                                                        |
 | Contributor queue            | `contributor_queue.order`, `contributor_queue.hold`, `contributor_queue.hold_clear`                                                                                                                                                     |
@@ -1448,6 +1448,35 @@ only.
   full fence, and names the repositories in the change that have none. The
   hive-wide scope and the human-merge paths it read are part of the stale
   check.
+- It never merges a pull request.
+
+`repository.auto_merge` switches one repository's auto-merge on or off
+(`project.repo_policies[].auto_merge`) through `POST /api/repos/auto-merge`,
+the same endpoint as the auto-merge switch on the dashboard's repository card.
+It is owner only.
+
+- **It takes `repo` and `enabled`.** `repo` is `owner/repo` or the bare name
+  of a repository in `project.repos`; any other repository is refused. The
+  request is exactly what the card sends:
+  `{"repo": "owner/repo", "enabled": true}`.
+- **The preview shows the switch before and after.** It reads `settings_read`
+  section `auto_merge`, whose `repo_auto_merge` block reports the hive's
+  autonomy level and, for each project repository, the effective switch
+  (`enabled`) and the stored override (`value`, absent when unset). A switch
+  that is already as requested is refused with "nothing would change".
+- **Switching on is widening:** "the hive may merge PRs in owner/repo once its
+  own gates and GitHub's rules pass". The preview does not read the
+  repository's GitHub branch protection or rulesets; whatever approvals they
+  require still apply. Switching off is narrowing: every Hive merge path stops
+  for that repository, and agents still open, review and hold pull requests
+  there.
+- **Below autonomy level 6 nothing is offered.** Auto-merge is off for every
+  repository there, the endpoint refuses to switch it on, and moving to level 6
+  turns it on for every active repository, so switch a repository off after
+  the move.
+- **A stale preview is refused.** `write_confirm` reads the switch again and
+  refuses if it changed after the preview, for example on the dashboard. After
+  the write it reads the switch back and reports what the hive now holds.
 - It never merges a pull request.
 
 `decisions.delegate_settings` changes the "Let hive decide" settings

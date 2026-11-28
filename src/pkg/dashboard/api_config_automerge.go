@@ -662,7 +662,32 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 	for _, o := range fenceOverrides {
 		contributorLaneFenceScopeRepos = append(contributorLaneFenceScopeRepos, map[string]interface{}{"repo": o.Repo, "workflow_fence_scope": o.Scope})
 	}
+	// Each project repository's auto-merge switch
+	// (project.repo_policies[].auto_merge, set by the repo card through POST
+	// /api/repos/auto-merge), read from the live config so the admin MCP
+	// repository.auto_merge preview, stale check and read-back see a toggle
+	// as soon as it is saved. /api/status carries the same switch, but in a
+	// snapshot rebuilt after the write (#11020). enabled is the effective
+	// value (config.RepoAutoMergeEnabled: off for every repository below
+	// min_acmm_level); value is the stored override, absent when unset.
+	repoAutoMergeRepos := make([]map[string]interface{}, 0, len(cfg.Project.Repos))
+	for _, repo := range cfg.Project.Repos {
+		full := config.QualifyRepo(cfg.Project.Org, repo)
+		if full == "" {
+			continue
+		}
+		entry := map[string]interface{}{"repo": full, "enabled": cfg.RepoAutoMergeEnabled(repo)}
+		if rp, ok := cfg.RepoPolicyFor(repo); ok && rp.AutoMerge != nil {
+			entry["value"] = *rp.AutoMerge
+		}
+		repoAutoMergeRepos = append(repoAutoMergeRepos, entry)
+	}
 	return map[string]interface{}{
+		"repo_auto_merge": map[string]interface{}{
+			"acmm_level":     cfg.ACMMLevelOrZero(),
+			"min_acmm_level": config.SelfMergeMinACMMLevel,
+			"repos":          repoAutoMergeRepos,
+		},
 		"self_authored":                    selfAuthored,
 		"self_authored_set":                am.SelfAuthored != nil,
 		"max_merges":                       am.MaxMerges,

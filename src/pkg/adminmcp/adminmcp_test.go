@@ -488,6 +488,7 @@ func TestPhase6WriteOpsRegistered(t *testing.T) {
 	for _, name := range []string{
 		WriteOpRepoPause,
 		WriteOpRepoResume,
+		WriteOpRepoAutoMerge,
 		WriteOpRepositoryItemHold,
 		WriteOpBudgetUpdate,
 		WriteOpBudgetReset,
