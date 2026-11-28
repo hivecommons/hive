@@ -1168,7 +1168,7 @@ var (
 func (k *KnowledgeAPI) gitSourceSnapshot() []*GitSource {
 	k.mu.RLock()
 	defer k.mu.RUnlock()
-	return k.gitSources
+	return append([]*GitSource(nil), k.gitSources...)
 }
 
 func gitSourceID(gs *GitSource) string {
@@ -1276,8 +1276,9 @@ func (k *KnowledgeAPI) DisconnectGitSource(url, subpath string) error {
 
 // GitSources returns info about all connected git sources.
 func (k *KnowledgeAPI) GitSources() []GitSourceInfo {
-	infos := make([]GitSourceInfo, len(k.gitSources))
-	for i, gs := range k.gitSources {
+	sources := k.gitSourceSnapshot()
+	infos := make([]GitSourceInfo, len(sources))
+	for i, gs := range sources {
 		infos[i] = gs.Info()
 	}
 	return infos

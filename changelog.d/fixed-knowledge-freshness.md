@@ -1,0 +1,1 @@
+- Repository knowledge receives a weekly guide freshness review, git-source confidence uses the file's commit date, and prolonged git-source sync failures raise dashboard warnings.

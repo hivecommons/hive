@@ -44,18 +44,21 @@ by the runtime type `GitSourceConfig`, `pkg/knowledge/gitsource.go:33-39`):
 |---|---|---|---|
 | `name` | Yes | — | Display name; also the key used to look up/remove the source via the API. |
 | `url` | Yes | — | Git remote URL. **`https://` only** — see Auth below. |
-| `branch` | No | `main` (`gitsource.go:66-68`) | Branch to shallow-clone (`--depth 1 --branch <branch>`). Connecting through the dashboard/API with a blank branch resolves the remote default (`git ls-remote --symref <url> HEAD`) and records it in the saved config. |
+| `branch` | No | `main` | Branch to clone. Connecting through the dashboard/API with a blank branch resolves the remote default (`git ls-remote --symref <url> HEAD`) and records it in the saved config. |
 | `subpath` | No | — (whole repo) | When set, only this subdirectory is checked out (git sparse-checkout, `gitsource.go:199-219,232-248`) and indexed. |
 | `layer` | No | `project` when set via the API (`api_knowledge.go:1032-1034`); **required, no code default, when set via `hive.yaml`** | One of `personal`, `project`, `org`, `community` — see Layer semantics below. |
 
 ### What "indexed" means
 
-On connect, the source is shallow-cloned (depth 1) into
-`<knowledge-data-dir>/git-sources/<slug>` and the clone (or its `subpath`) is
-handed to a `FileStore`, which indexes markdown files under it
-(`gitsource.go:78-114`). If `subpath` doesn't exist after cloning, connection
-fails with `subpath "<x>" not found after clone` — check the path relative
-to the *repository root*, not the branch's top-level display in GitHub's UI.
+On connect, the source is cloned into `<knowledge-data-dir>/git-sources/<slug>`
+and the clone (or its `subpath`) is handed to a `FileStore`, which indexes
+markdown files under it. Git sources fetch complete branch history so freshness
+uses the last commit touching each file, rather than the checkout time. Existing
+shallow clones are unshallowed; if fetching history fails, the source still
+connects and file freshness is unknown. A later sync still reindexes the
+pulled files but reports the history-fetch failure. Full history increases network and
+disk use for large repositories. If `subpath` does not exist after cloning,
+connection fails with `subpath "<x>" not found after clone`.
 
 ### Layer semantics
 
@@ -106,14 +109,23 @@ in-cluster git server (e.g. an internal GitLab) needs
 
 ### Refresh / staleness
 
-Once connected, a background loop pulls and reindexes every 5 minutes
-(`gitSourceSyncInterval`, `gitsource.go:25`, `StartSyncLoop`,
-`gitsource.go:161-180`). A failed sync is logged at `warn` and the loop
-keeps retrying on the next tick — it does not surface as a dashboard alert,
-so staleness is only visible in the hive's logs
-(`git source sync failed`). There is no operator-facing "last synced"
-timestamp in `GitSourceInfo` (`gitsource.go:531-540`) — only whether the
-source is `Ready` and its current page count.
+Once connected, a background loop pulls and reindexes every 5 minutes.
+Failed syncs are logged at `warn` and retried on the next tick. After one
+hour of continuous failures, a dashboard warning identifies the affected
+source and advises checking the logs. The warning clears when sync succeeds
+or the source is disconnected. A restart resets the failure interval.
+
+### Repository knowledge review
+
+On ordinary kicks, the built-in guide lane reviews approved repository-owned
+knowledge against the current repository and its changes since each note's
+last commit, at most once every seven days per authorized repository. It
+reports confirmed discrepancies through the lane's existing advisory, issue
+or review-gated documentation PR permissions; it does not directly change
+lifecycle state. Incomplete source identity, history or knowledge listings
+prevent a completed checkpoint, so the next kick can retry. This review depends
+on guide being enabled and receiving kicks; it does not bypass cadence, pause
+or budget gates.
 
 ### Static config vs. the runtime API
 

@@ -43,8 +43,10 @@ signals Hive already stores:
    - newer than 30 days: `+0.03`
    - newer than 180 days: `+0.01`
    - older than 365 days: `-0.04`
-   - freshness adjusts an otherwise scored fact; file modification time alone
-     does not turn an otherwise signal-free fact into a scored one
+   - freshness adjusts an otherwise scored fact; a timestamp alone does not
+     turn an otherwise signal-free fact into a scored one. Git-source facts use
+     their last file commit date rather than the local checkout modification
+     time; if that date is unavailable, it is treated as unknown.
 
 Scores are clamped to `0.05..0.99` and rounded to percentage precision.
 Facts with no explicit confidence and no provenance, validation, related-link,

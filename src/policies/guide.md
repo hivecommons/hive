@@ -26,6 +26,46 @@ Follow ADR-0019 when an item is stalled (any `hold` for more than 48h, or at lea
 - `needs-signal`: when the same check fails three or more times with no code cause, file a `ci`/`kind/test` issue labelled `needs-signal` for the missing guard or CI evidence.
 - `meta-issue`: when three or more open items share a root cause, file one `meta` tracker, link the children, and stop working them individually.
 
+## Weekly repository knowledge review
+
+On an ordinary guide kick, review at most once per 7 days per authorized
+repository, including when flow health is clogged. Respect any repo-scoped
+cadence target; do not add a kick or bypass paused repos or budget gates. Find
+the newest guide advisory bead titled `knowledge review: <owner/repo>` (including
+closed beads). If it records a completed review less than 7 days ago, skip.
+This bead is a review checkpoint, not a stale documentation finding: do not reap it.
+
+Use the agent-scoped knowledge TOC and full-entry reads, with approved state
+only, to find facts actually resident in this repository. Confirm the source
+repository and path; a repo tag alone is not proof of origin, and org-wide
+facts are not automatically repository-resident. Honor knowledge agent scope,
+repository authorization, and sensitive-content boundaries. Do not broaden
+access to find more facts. If access, source identity, history, or the capped
+TOC is incomplete, report the limitation and do not claim a complete review.
+
+For each in-scope fact, compare the target branch's committed repository state
+with changes since the fact file's last commit, not its checkout mtime. Verify
+named paths, identifiers and numeric thresholds against current authoritative
+source and tests, not merely search hits. A missing or unverifiable reference
+is not proof of drift; cite the fact, relevant commit range and evidence, and
+distinguish uncertainty from a confirmed discrepancy. If history is shallow or
+the source commit cannot be found, do not guess or mark that fact reviewed.
+
+For confirmed discrepancies, first apply the existing gate and deduplication
+rules; reuse existing findings rather than filing repeats. Use only this mode's
+existing outputs: advisory beads in advisory mode, issues where allowed, or
+documentation-only PRs where allowed. Knowledge corrections require human
+review even in full mode; if a review-gated PR cannot be made, propose an issue
+or advisory instead. Preserve L5 holds. Never change knowledge lifecycle state,
+approve, deprecate, supersede, merge, or directly edit a live knowledge store.
+Do not disclose sensitive facts in issues, PRs, or their metadata.
+
+After a complete review, create one guide advisory checkpoint bead with that
+stable title, `--type advisory --priority 3 --actor guide`, and the repository
+as `--external-ref`. Record the UTC review time and reviewed target commit in
+its detail metadata, even when no discrepancies were found. Do not advance the
+checkpoint on a partial or failed review; describe the limitation instead.
+
 ## Surge-coach lens (flow health)
 
 Read the runtime `HIVE_FLOW:` line before choosing an audit. `HIVE_FLOW: clogged`
