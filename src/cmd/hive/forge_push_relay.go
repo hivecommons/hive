@@ -43,9 +43,11 @@ import (
 //     (github.PushBranchConfigRefusal, hivecommons/hive#19959), and the push
 //     itself runs from a hive-owned GIT_DIR over the checkout's objects
 //     (github.PushBranchIsolatedGitDir), so it never reads that config.
-//   - review-requests and merge-requests are NOT served on a forge-only hive
-//     yet. Each is answered with a reason and renamed .rejected, so the agent
-//     stops waiting instead of polling a queue no relay reads.
+//   - review-requests serve record_verdict only (forge_review_relay.go,
+//     #20292); every other review event, and every merge-request, is NOT
+//     served on a forge-only hive yet. Each is answered with a reason and
+//     renamed .rejected, so the agent stops waiting instead of polling a
+//     queue no relay reads.
 
 // forgePushRelayTier is the token tier a relayed push mints for. The push
 // authorizer has already required CanPush, which is the contributor tier's
@@ -63,7 +65,8 @@ const forgePushOutputLines = 3
 const forgePushExecTimeout = 5 * time.Minute
 
 // forgeRelayReviewUnsupported and forgeRelayMergeUnsupported are the reasons a
-// forge-only hive gives for the request kinds it does not serve.
+// forge-only hive gives for the request kinds it does not serve: every review
+// event but record_verdict, and every merge.
 const (
 	forgeRelayReviewUnsupported = "review requests are not served on a forge-only hive yet; post the review text as a comment through the issue relay (kind \"comment\") instead"
 	forgeRelayMergeUnsupported  = "merge requests are not served on a forge-only hive yet; the forge's automerge sweep merges eligible pull requests, or a human merges them"
@@ -319,21 +322,6 @@ func (r *forgeRequestRelay) handlePushBranch(ctx context.Context, path string) {
 	result(github.PushBranchResponse{OK: true, Branch: branch, SHA: sha, Attempts: attempt})
 	r.settle(path, "", false)
 	r.logger.Info("forge request relay: branch pushed", "agent", req.Agent, "repo", repo, "branch", branch, "sha", sha, "force_with_lease", req.ForceWithLease)
-}
-
-// handleReviewRequest answers a review request a forge-only hive does not
-// serve, so the agent stops waiting on it.
-func (r *forgeRequestRelay) handleReviewRequest(path string) {
-	var req github.ReviewRequest
-	fail := func(msg string) {
-		writeRelayResult(path, github.ReviewResponse{OK: false, Number: req.Number, Error: msg, At: r.stamp()})
-	}
-	if !r.readRequest(path, &req, fail) {
-		return
-	}
-	fail(forgeRelayReviewUnsupported)
-	r.settle(path, ".rejected", false)
-	r.logger.Warn("forge request relay: review request REJECTED (not served on a forge-only hive)", "agent", req.Agent, "repo", req.Repo, "number", req.Number)
 }
 
 // handleMergeRequest answers a merge request a forge-only hive does not

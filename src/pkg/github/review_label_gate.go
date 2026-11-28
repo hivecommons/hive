@@ -30,13 +30,24 @@ func (c *Client) reviewRequireLabels() []string {
 // trusts nothing the agent wrote in the request) and matched with
 // config.ReviewConfig.AdmitsPRLabels. A fetch error is returned so the caller
 // can retry rather than either post or quarantine on a transient failure.
+// With no REST client the labels come from the forge-neutral PR reader
+// (SetReviewedPRReader), so a relay on another forge applies the same gate
+// (hivecommons/hive#20292).
 func (c *Client) reviewLabelGateAdmits(ctx context.Context, repo string, number int) (bool, error) {
 	required := c.reviewRequireLabels()
 	if len(required) == 0 {
 		return true, nil
 	}
 	if c.client == nil {
-		return false, ErrNoGitHubClient
+		reader := c.verdictPRReader()
+		if reader == nil {
+			return false, ErrNoGitHubClient
+		}
+		pr, err := reader.ReviewedPR(ctx, repo, number)
+		if err != nil {
+			return false, err
+		}
+		return config.ReviewConfig{RequireLabels: required}.AdmitsPRLabels(pr.Labels), nil
 	}
 	owner, repoName := c.splitRepo(repo)
 	pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:review_label_gate"), owner, repoName, number)

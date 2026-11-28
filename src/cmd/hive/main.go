@@ -2459,13 +2459,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// idles on each scan unless every repo is off GitHub, so a reload either
 	// way hands the queues to the right relays. It stops with b.ctx, which
 	// is all shutdown needs, so its done channel is not joined. It also
-	// serves push-branch requests with the manager's push authorizer, and
-	// answers review and merge requests with a reason (#19916). Clone
+	// serves push-branch requests with the manager's push authorizer,
+	// record_verdict review requests with the manager's review authorizer
+	// (#20292), and answers the other review events and merge requests with a
+	// reason (#19916). Clone
 	// requests are served with the manager's clone authorizer when the
 	// runtime has one, and denied otherwise (#19997).
 	if deps.startForgeRequestRelay != nil {
 		relay := newForgeRequestRelay(func() *config.Config { return b.cfg },
-			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger).withPushRelay(b.agentMgr.AuthorizePushBranch).withPushAudit(b.recordWriteAudit)
+			b.agentMgr.AuthorizePROpen, b.agentMgr.AuthorizeIssueOpen, b.logger).withPushRelay(b.agentMgr.AuthorizePushBranch).withPushAudit(b.recordWriteAudit).
+			withReviewRelay(b.agentMgr.AuthorizeReviewRequest, b.wakeForReviewVerdict)
 		if a, ok := b.agentMgr.(forgeCloneAuthorizerSource); ok {
 			relay.withCloneRelay(a.AuthorizeForgeClone)
 		}

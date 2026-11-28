@@ -480,18 +480,34 @@ func TestForgeRelayAuditsPushedBranch(t *testing.T) {
 
 // Review and merge requests are answered with a reason on a forge-only hive,
 // so the agent does not wait on a queue nothing reads (#19916).
+//
+// Only record_verdict is served on the review queue (#20292): every review
+// event that writes to the forge, thread events included, is still rejected
+// with the same reason.
 func TestForgeRelayRejectsReviewAndMergeRequests(t *testing.T) {
 	h := newPushHarness(t)
-	review := writeRelayRequest(t, h.relay.reviewDir, "r.json", github.ReviewRequest{Repo: "widgets", Number: 7, Event: "approve", Agent: "worker"})
+	reviews := map[string]github.ReviewRequest{
+		"approve.json":         {Repo: "widgets", Number: 7, Event: "approve", Agent: "worker"},
+		"request_changes.json": {Repo: "widgets", Number: 7, Event: "request_changes", Body: "fix it", Agent: "worker"},
+		"comment.json":         {Repo: "widgets", Number: 7, Event: "comment", Body: "looks fine", Agent: "worker"},
+		"reply.json":           {Repo: "widgets", Number: 7, Event: "comment", Body: "done", ThreadID: "PRRT_1", Agent: "worker"},
+		"resolve.json":         {Repo: "widgets", Number: 7, Event: "resolve_thread", ThreadID: "PRRT_1", Agent: "worker"},
+	}
+	reviewPaths := map[string]string{}
+	for name, req := range reviews {
+		reviewPaths[name] = writeRelayRequest(t, h.relay.reviewDir, name, req)
+	}
 	merge := writeRelayRequest(t, h.relay.mergeDir, "m.json", github.MergeRequest{Repo: "widgets", Number: 8, Agent: "worker"})
 	h.relay.scanOnce(context.Background())
 
-	var rr github.ReviewResponse
-	readRelayResult(t, review, &rr)
-	if rr.OK || rr.Number != 7 || rr.Error != forgeRelayReviewUnsupported {
-		t.Errorf("review resp = %+v", rr)
+	for name, review := range reviewPaths {
+		var rr github.ReviewResponse
+		readRelayResult(t, review, &rr)
+		if rr.OK || rr.Number != 7 || rr.Error != forgeRelayReviewUnsupported {
+			t.Errorf("%s: review resp = %+v", name, rr)
+		}
+		assertExists(t, review+".rejected", true)
 	}
-	assertExists(t, review+".rejected", true)
 	var mr github.MergeResponse
 	readRelayResult(t, merge, &mr)
 	if mr.OK || mr.Number != 8 || mr.Error != forgeRelayMergeUnsupported {
