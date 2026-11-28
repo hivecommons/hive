@@ -47,6 +47,9 @@ var ErrNoGitHubClient = errors.New("no github client configured (hive is running
 type Client struct {
 	client      *gh.Client
 	linearTeams map[string][]string
+	// reviewedPRReader reads the reviewed PR for the verdict writer. Nil
+	// reads it through client (SetReviewedPRReader, hivecommons/hive#20289).
+	reviewedPRReader ReviewedPRReader
 	// blockedOwnerReasons maps repo#N to the owner-action reason the blocked
 	// sweep read from a comment marker (blockedReasonFor). Zero value ready.
 	blockedOwnerReasons sync.Map

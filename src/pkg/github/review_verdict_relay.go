@@ -182,8 +182,9 @@ type reviewedPRSnapshot struct {
 }
 
 // reviewedPRSnapshotFunc returns a memoized lookup of req's PR head SHA and
-// body digest: one REST call per relayed request at most, and none when
-// nothing asks. A fetch failure is logged once and yields an empty snapshot.
+// body digest through the forge-neutral PR reader (verdictPRReader): one read
+// per relayed request at most, and none when nothing asks. A fetch failure is
+// logged once and yields an empty snapshot.
 func (c *Client) reviewedPRSnapshotFunc(ctx context.Context, req ReviewRequest) func() reviewedPRSnapshot {
 	var (
 		snap    reviewedPRSnapshot
@@ -194,25 +195,23 @@ func (c *Client) reviewedPRSnapshotFunc(ctx context.Context, req ReviewRequest) 
 			return snap
 		}
 		fetched = true
-		if c == nil || c.client == nil {
+		reader := c.verdictPRReader()
+		repo := strings.TrimSpace(req.Repo)
+		if reader == nil || repo == "" || req.Number <= 0 {
 			return snap
 		}
-		owner, name := c.splitRepo(strings.TrimSpace(req.Repo))
-		if owner == "" || name == "" || req.Number <= 0 {
-			return snap
-		}
-		pr, _, err := c.client.PullRequests.Get(WithRESTCaller(ctx, "hive:review_verdict_relay"), owner, name, req.Number)
-		if err != nil || pr == nil {
+		pr, err := reader.ReviewedPR(ctx, repo, req.Number)
+		if err != nil {
 			c.logger.Warn("review-request watcher: could not fetch PR to bind verdict head and body digest",
 				slog.String("repo", req.Repo), slog.Int("number", req.Number))
 			return snap
 		}
 		snap = reviewedPRSnapshot{
-			Head:       strings.TrimSpace(pr.GetHead().GetSHA()),
-			BodyDigest: review.PullRequestBodyDigest(pr.GetTitle(), pr.GetBody()),
-			Author:     safeGetLogin(pr.GetUser()),
-			Base:       strings.TrimSpace(pr.GetBase().GetRef()),
-			Supersedes: prSupersedesNumberOrZero(pr.GetBody()),
+			Head:       strings.TrimSpace(pr.HeadSHA),
+			BodyDigest: review.PullRequestBodyDigest(pr.Title, pr.Body),
+			Author:     strings.TrimSpace(pr.Author),
+			Base:       strings.TrimSpace(pr.Base),
+			Supersedes: prSupersedesNumberOrZero(pr.Body),
 		}
 		return snap
 	}
