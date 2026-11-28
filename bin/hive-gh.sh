@@ -30,6 +30,10 @@
 #   hive-gh --fields                      print the per-verb field-set table
 #
 # Verbs outside the table pass through to gh unchanged.
+#
+# On a forge-only hive, `pr view` / `issue view` / `pr checks <n>` on a repo
+# off github.com are answered by the hive's read relay with the same compact
+# keys (see "Forgejo repos" below); GitHub calls are unchanged.
 
 set -euo pipefail
 
@@ -106,20 +110,24 @@ if [ "${1:-}" = "--fields" ]; then _print_fields; exit 0; fi
 # (--repo o/r, -R o/r) must not be mistaken for them. Only the global flags that
 # can legally precede the subcommand are special-cased here; everything after
 # the action is forwarded verbatim.
-subcmd=""; action=""; expect=""
+subcmd=""; action=""; target=""; repo_flag=""; expect=""
 has_own_projection=false
 for a in "$@"; do
-  if [ -n "$expect" ]; then expect=""; continue; fi
+  if [ -n "$expect" ]; then
+    [ "$expect" = repo ] && repo_flag="$a"
+    expect=""; continue
+  fi
   case "$a" in
     --json|--json=*|--jq|--jq=*|-q|--template|--template=*|-t|--web|-w|--comments|-c|--log|--log-failed|--exit-status|--watch|--required|--verbose)
       has_own_projection=true ;;
   esac
   case "$a" in
-    --repo|-R|--hostname) expect=1; continue ;;
-    --repo=*|-R=*) continue ;;
+    --repo|-R) expect=repo; continue ;;
+    --hostname) expect=1; continue ;;
+    --repo=*|-R=*) repo_flag="${a#*=}"; continue ;;
     -*) continue ;;
   esac
-  if [ -z "$subcmd" ]; then subcmd="$a"; elif [ -z "$action" ]; then action="$a"; fi
+  if [ -z "$subcmd" ]; then subcmd="$a"; elif [ -z "$action" ]; then action="$a"; elif [ -z "$target" ]; then target="$a"; fi
 done
 
 if $full || $has_own_projection || [ -z "$subcmd" ] || [ -z "$action" ]; then
@@ -127,5 +135,130 @@ if $full || $has_own_projection || [ -z "$subcmd" ] || [ -z "$action" ]; then
 fi
 
 _verb "$subcmd" "$action" || exec gh "$@"
+
+# ── Forgejo repos (#20230) ─────────────────────────────────────────────────
+# On a forge-only hive the agent holds no forge credential and gh has no
+# GitHub repo to talk to. There, `pr view` / `issue view` / `pr checks` on a
+# repo that is not on github.com are answered by the hive's read relay
+# (src/cmd/hive/forge_read_relay.go), which reads the forge adapter and
+# hands back the same compact JSON keys as the GitHub projection below. The
+# relay creates its queue only on a hive whose repos are all off GitHub, so
+# on a GitHub hive the queue is absent and nothing here changes.
+READ_DIR="${HIVE_GH_READ_REQUEST_DIR:-/var/run/hive-metrics/read-requests}"
+FIRST_AGENT_UID=2001
+
+# _forge_repo prints owner/repo when the call targets a repo off github.com,
+# from --repo (OWNER/REPO or HOST/OWNER/REPO) or the checkout's origin.
+_forge_repo() {
+  local spec="$repo_flag" url host path
+  if [ -n "$spec" ]; then
+    spec="${spec#https://}"; spec="${spec%.git}"; spec="${spec%/}"
+    case "$spec" in
+      */*/*) host="${spec%%/*}"; path="${spec#*/}" ;;
+      */*) host=""; path="$spec" ;;
+      *) return 1 ;;
+    esac
+  else
+    url="$(git remote get-url origin 2>/dev/null)" || return 1
+    case "$url" in
+      https://*|http://*) url="${url#*://}"; url="${url#*@}"; host="${url%%/*}"; path="${url#*/}" ;;
+      ssh://*) url="${url#ssh://}"; url="${url#*@}"; host="${url%%/*}"; host="${host%%:*}"; path="${url#*/}" ;;
+      *@*:*) url="${url#*@}"; host="${url%%:*}"; path="${url#*:}" ;;
+      *) return 1 ;;
+    esac
+    path="${path%.git}"; path="${path%/}"
+  fi
+  case "$host" in github.com|*.github.com|www.github.com) return 1 ;; esac
+  case "$path" in */*/*|/*|*/) return 1 ;; */*) printf '%s\n' "$path" ;; *) return 1 ;; esac
+}
+
+_forge_read() {
+  local kind="$1" repo="$2" number="$3"
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "hive-gh: python3 is required to read the hive's answer" >&2; exit 2
+  fi
+  local agent uid map mapped
+  agent="${HIVE_AGENT:-agent}"
+  uid="$(id -u 2>/dev/null || echo 0)"
+  map="/var/run/hive/uid-map.json"
+  if [ "$uid" -ge "$FIRST_AGENT_UID" ] && [ -f "$map" ]; then
+    mapped="$(python3 - "$map" "$uid" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    for n, u in json.load(open(sys.argv[1])).get("agents", {}).items():
+        if u == int(sys.argv[2]):
+            print(n)
+            break
+except Exception:
+    pass
+PY
+)"
+    [ -n "$mapped" ] && agent="$mapped"
+  fi
+  local req="$READ_DIR/${agent}-$(date +%s%N).json"
+  local result="${req%.json}.result.json"
+  python3 - "$req" "$agent" "$repo" "$kind" "$number" <<'PY'
+import json, os, sys
+path, agent, repo, kind, number = sys.argv[1:6]
+with open(path + ".tmp", "w") as f:
+    json.dump({"agent": agent, "repo": repo, "kind": kind, "number": int(number)}, f)
+os.rename(path + ".tmp", path)
+PY
+  # Trust a result only when it is a regular file owned by the owner of the
+  # queue, which is the hive (as hive-clone does).
+  local hive_uid; hive_uid="$(stat -c %u "$READ_DIR")"
+  _trusted() { [ -f "$result" ] && [ ! -L "$result" ] && [ "$(stat -c %u "$result")" = "$hive_uid" ]; }
+  _field() {
+    python3 - "$result" "$1" <<'PY'
+import json, sys
+try:
+    v = json.load(open(sys.argv[1])).get(sys.argv[2], "")
+except Exception:
+    v = ""
+print("true" if v is True else "false" if v is False else v)
+PY
+  }
+  local waited=0 timeout="${HIVE_GH_FORGE_TIMEOUT:-120}"
+  while :; do
+    if [ -f "$result" ] && ! _trusted; then
+      echo "hive-gh: $result is not the hive's; refusing it" >&2; rm -f "$req"; exit 1
+    fi
+    if _trusted && [ "$(_field ok)" = "true" ]; then break; fi
+    if _trusted && [ ! -f "$req" ]; then
+      echo "hive-gh: the hive refused the read of $repo#$number: $(_field error)" >&2; exit 1
+    fi
+    if [ "$waited" -ge "$timeout" ]; then
+      local msg="no answer yet"
+      _trusted && msg="$(_field error)"
+      rm -f "$req"
+      echo "hive-gh: timed out after ${timeout}s waiting for the hive to read $repo#$number: $msg" >&2; exit 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  local view; view="$(_field view)"
+  local base; base="$(basename "${req%.json}")"
+  case "$view" in
+    "$READ_DIR/$base".*.view) ;;
+    *) echo "hive-gh: the reported view $view is not this request's" >&2; exit 1 ;;
+  esac
+  if [ ! -f "$view" ] || [ -L "$view" ] || [ "$(stat -c %u "$view")" != "$uid" ] || [ "$(stat -c %a "$view")" != "600" ]; then
+    echo "hive-gh: the reported view $view is not a 0600 file owned by this agent" >&2; exit 1
+  fi
+  cat "$view"; echo
+  rm -f "$view" 2>/dev/null || true
+  exit 0
+}
+
+case "$subcmd $action" in
+  "pr view"|"issue view"|"pr checks")
+    if [ -d "$READ_DIR" ] && [[ "$target" =~ ^[1-9][0-9]{0,17}$ ]] && forge_repo="$(_forge_repo)"; then
+      case "$subcmd $action" in
+        "pr view") _forge_read pr "$forge_repo" "$target" ;;
+        "issue view") _forge_read issue "$forge_repo" "$target" ;;
+        "pr checks") _forge_read checks "$forge_repo" "$target" ;;
+      esac
+    fi ;;
+esac
 
 exec gh "$@" --json "$FIELDS" --jq "$JQ"
