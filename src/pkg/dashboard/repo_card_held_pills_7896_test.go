@@ -187,7 +187,6 @@ func TestRepoCardHeldPillStructure(t *testing.T) {
 		"holdToggleChip(cardRepo, p, 'pr', held, canToggleHold, heldTip)",
 		"const text = held ? '▶ Release' : '⏸ Hold';",
 		"Release hold — removes hold label(s)",
-		"body: JSON.stringify({ held: wantHeld, type: type })",
 		"data.minStatusSeq",
 		// The tooltip reasons from the labels.
 		"function holdLabels(labels) {",

@@ -1,0 +1,1 @@
+- Honor a trusted dashboard hold release for the reviewed PR head, without treating it as a general approval.

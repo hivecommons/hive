@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/holdguard"
 )
 
 const repoHoldPermissionCacheTTL = 2 * time.Minute
@@ -18,6 +19,7 @@ const repoHoldPermissionCacheTTL = 2 * time.Minute
 type repoHoldRequest struct {
 	Held bool   `json:"held"`
 	Type string `json:"type"`
+	Head string `json:"head"`
 }
 
 type repoHoldResponse struct {
@@ -639,6 +641,8 @@ func (s *Server) handleRepoHoldPermission(w http.ResponseWriter, r *http.Request
 // passes through with the GitHub error the operator can act on.
 const repoHoldDependencyStatus = http.StatusFailedDependency
 
+var repoHoldGuardStore = holdguard.DefaultStore
+
 // repoHoldGitHubError answers a hold toggle whose GitHub step failed with
 // the step and GitHub's reason, and logs the same so the spoke's log names
 // the failure the dashboard shows.
@@ -694,11 +698,33 @@ func (s *Server) handleRepoItemHold(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		removed = holdCausingLabels(labels, canonical)
+		// The client supplies the head displayed when Release was clicked.
+		// Verify it against a fresh forge read; an older dashboard row must
+		// not silently authorize a newer push.
+		head := strings.TrimSpace(body.Head)
+		if len(removed) > 0 && strings.EqualFold(body.Type, "pr") {
+			if head == "" {
+				jsonError(w, "pull request head unavailable; refresh and review it before releasing the hold", http.StatusConflict)
+				return
+			}
+			pr, _, err := s.deps.GHClient.GoGitHub().PullRequests.Get(ctx, owner, repoName, number)
+			if err != nil {
+				s.repoHoldGitHubError(w, "read pull request", repoFull, number, canonical, err)
+				return
+			}
+			if !strings.EqualFold(pr.GetHead().GetSHA(), head) {
+				jsonError(w, "pull request head changed; refresh and review it before releasing the hold", http.StatusConflict)
+				return
+			}
+		}
 		for _, label := range removed {
 			if err := s.deps.GHClient.RemoveLabel(ctx, repoFull, number, label); err != nil {
 				s.repoHoldGitHubError(w, "remove hold label", repoFull, number, label, err)
 				return
 			}
+		}
+		if len(removed) > 0 && strings.EqualFold(body.Type, "pr") {
+			repoHoldGuardStore().RecordRelease(repoFull, number, head, requestUser(r))
 		}
 		s.auditFromRequest(r, "repo_item_hold_remove", auditDetail("repo", repoFull, "number", strconv.Itoa(number), "labels", strings.Join(removed, ",")), "")
 		if len(removed) > 0 {

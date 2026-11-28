@@ -2,6 +2,8 @@
 
 Part of the [Dashboard REST API reference](../api-reference.md); see that page for how auth levels and `pkg/<file>:<line>` source citations are read and checked. Edit this file for routes in this area and run `src/scripts/check-api-reference-citations.sh --fix` to resync citations.
 
+For a PR hold release, send `{"held": false, "type": "pr", "head": "<displayed head SHA>"}`. When hold labels are present, a missing or changed head returns `409` before any label is removed; refresh and review the current head before retrying. Issue releases do not require a head.
+
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|

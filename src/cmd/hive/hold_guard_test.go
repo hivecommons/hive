@@ -1228,3 +1228,39 @@ func TestEnforceHoldGuardOperatorApprovalMustCoverCurrentHeadByTrustedMerger(t *
 		})
 	}
 }
+
+func TestEnforceHoldGuardDashboardRelease(t *testing.T) {
+	for _, tc := range []struct {
+		name, head, actor string
+		accepted          bool
+	}{
+		{name: "trusted release of current head", head: "m1", actor: "clubanderson", accepted: true},
+		{name: "release of old head", head: "c1", actor: "clubanderson"},
+		{name: "release by untrusted actor", head: "m1", actor: "visitor"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newTestHoldGuardStore(t)
+			swapHoldGuardHumanChangeRequests(t)
+			store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "quality"}})
+			store.RecordRelease("acme/widgets", 7, tc.head, tc.actor)
+			fake := &holdGuardServer{commits: map[int][]map[string]any{
+				7: {ghCommit("c1", "quality", "change"), ghCommit("m1", "quality", "Merge origin/main")},
+			}, timeline: map[int][]map[string]any{
+				7: gateLiftTimeline("ready-for-review", "hive[bot]", "Bot", "2026-11-27T00:32:00Z"),
+			}}
+			client := newHoldGuardClient(t, fake)
+			client.SetAppBotLogin("hive[bot]")
+			cfg := escalationTestConfig()
+			cfg.Dashboard.AuthorizedUsers = []string{"clubanderson:owner", "visitor:read-write"}
+			got := enforceHoldGuard(context.Background(), cfg, client, client,
+				actionableWith(github.PullRequest{Repo: "widgets", Number: 7, Author: "quality", HeadSHA: "m1"}), discardLogger())
+			if got["widgets/7"] == tc.accepted {
+				t.Fatalf("re-review gated=%v, accepted=%v", got["widgets/7"], tc.accepted)
+			}
+			_, exists := store.Recorded("acme/widgets", 7)
+			if exists == tc.accepted {
+				t.Fatalf("snapshot exists=%v, accepted=%v", exists, tc.accepted)
+			}
+		})
+	}
+}

@@ -26930,7 +26930,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const type = item.kind === 'pr' ? 'pr' : 'issue';
       switch (id) {
         case 'hold': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: true, type } };
-        case 'release': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type } };
+        case 'release': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type, head: item.head || '' } };
         case 'sha-waive': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/sha-waiver', body: { waived: true } };
         case 'sha-restore': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/sha-waiver', body: { waived: false } };
         case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };
@@ -36111,7 +36111,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const resp = await fetch('/api/repos/' + encodeURIComponent(p.owner) + '/' + encodeURIComponent(p.repo) + '/items/' + number + '/hold', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ held: wantHeld, type: type })
+          body: JSON.stringify({ held: wantHeld, type: type, head: moved && moved.item && moved.item.head_sha || '' })
         });
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) throw new Error(data.error || ('HTTP ' + resp.status));

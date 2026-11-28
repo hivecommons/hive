@@ -25,16 +25,12 @@ var (
 	holdGuardStore     *holdguard.Store
 )
 
-// holdGuardLedgerPath sits beside the fix-loop ledger on the PVC: same
-// lifetime, same operator expectations, same backup story.
-const holdGuardLedgerPath = "/data/metrics/hold-guard.json"
-
 // getHoldGuardStore lazily loads the hold-gate snapshot ledger (#5589) — a
 // sidecar to (never a tenant of) the escalation store, so the formally
 // verified escalation Entry lifecycle is untouched by this concern.
 func getHoldGuardStore() *holdguard.Store {
 	holdGuardStoreOnce.Do(func() {
-		holdGuardStore = holdguard.Load(holdGuardLedgerPath)
+		holdGuardStore = holdguard.DefaultStore()
 	})
 	return holdGuardStore
 }
@@ -203,6 +199,15 @@ func enforceHoldGuard(
 					"repo", repo, "pr", pr.Number)
 				continue
 			}
+		}
+		// A dashboard release is not a general approval: it only resolves
+		// this hold episode, and only for the head the operator selected.
+		if cfg != nil && pr.HeadSHA != "" && strings.EqualFold(rec.ReleasedHead, pr.HeadSHA) &&
+			trustedMergerFunc(cfg)(rec.ReleasedBy) {
+			store.Clear(repo, pr.Number)
+			logger.Info("hold guard: current head released by a trusted merger",
+				"repo", repo, "pr", pr.Number, "head_sha", pr.HeadSHA, "actor", rec.ReleasedBy)
+			continue
 		}
 		// A dashboard Approve (or `/hive decision approve`) is recorded
 		// against the exact head the person saw; the hive then removes the

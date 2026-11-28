@@ -134,6 +134,10 @@ type Entry struct {
 	// it. Empty on records written before the field existed; those fail
 	// closed.
 	ObservedHeldHeadSHA string `json:"observed_held_head_sha,omitempty"`
+	// ReleasedHead and ReleasedBy record a dashboard release against the
+	// head supplied by the operator. ReArm clears them for the next hold.
+	ReleasedHead string `json:"released_head,omitempty"`
+	ReleasedBy   string `json:"released_by,omitempty"`
 	// HeldAt is when the snapshot was first recorded.
 	HeldAt    time.Time `json:"held_at"`
 	UpdatedAt time.Time `json:"updated_at"`
@@ -165,6 +169,17 @@ type Store struct {
 	// clock is the time source; nil means time.Now().UTC(). Overridable via
 	// SetClock so retention tests are deterministic.
 	clock func() time.Time
+}
+
+var defaultStoreOnce sync.Once
+var defaultStore *Store
+
+// DefaultStore is shared by the dashboard and the governor.
+func DefaultStore() *Store {
+	defaultStoreOnce.Do(func() {
+		defaultStore = Load("/data/metrics/hold-guard.json")
+	})
+	return defaultStore
 }
 
 // Load reads the ledger at path, returning an empty usable store on any error
@@ -253,6 +268,21 @@ func (s *Store) Clear(repo string, number int) {
 	s.saveLocked()
 }
 
+// RecordRelease records a successful dashboard release only for an existing
+// hold episode. The guard checks the actor's current trust and the exact head.
+func (s *Store) RecordRelease(repo string, number int, head, actor string) {
+	head, actor = strings.TrimSpace(head), strings.TrimSpace(actor)
+	if head == "" || actor == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e := s.entries[Key(repo, number)]; e != nil {
+		e.ReleasedHead, e.ReleasedBy = head, actor
+		s.saveLocked()
+	}
+}
+
 // MarkCommented records that the drift comment posted for the current drift
 // episode, so a retried hold-label write never duplicates the evidence.
 func (s *Store) MarkCommented(repo string, number int) {
@@ -286,6 +316,7 @@ func (s *Store) ReArm(repo string, number int, headSHA string, commits []Commit)
 	e.ObservedHeldHeadSHA = headSHA
 	e.CommitSHAs, e.Authors = commitSets(commits)
 	e.Commented = false
+	e.ReleasedHead, e.ReleasedBy = "", ""
 	e.UpdatedAt = now
 	s.saveLocked()
 }
