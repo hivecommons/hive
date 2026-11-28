@@ -3,9 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -249,7 +249,9 @@ func kickUndeliverableTranscriptLiveness(agent *AgentProcess, now time.Time) (ti
 	return silentFor, silentFor < agent.Config.EffectiveBusyNoActivityThreshold()
 }
 
-// lastBusyActivity never treats an unknown transcript as evidence of silence.
+// lastBusyActivity is the newest known transcript or in-episode inference
+// activity, or zero when neither is known. Callers then still fall back to
+// BusySince, so a wedged pane with no transcript stays recoverable.
 func lastBusyActivity(agent *AgentProcess) time.Time {
 	last := agent.LastTranscriptActivity
 	if !agent.LastInferenceActivity.Before(agent.BusySince) && agent.LastInferenceActivity.After(last) {
@@ -360,40 +362,123 @@ var scanAgentTranscript = func(scan transcriptActivityScan, cache *transcriptSes
 	}
 	switch scan.backend {
 	case "claude":
-		return newestJSONLActivity(filepath.Join(scan.home, ".claude", "projects"))
+		return newestClaudeProjectActivity(scan.home, scan.target.workDir)
 	case "codex":
-		return newestJSONLActivity(filepath.Join(codexHomePath(scan.name), "sessions"))
+		return newestCodexSessionActivity(filepath.Join(codexHomePath(scan.name), "sessions"))
 	}
 	handle, ok := resumehandle.CaptureResumeHandleIn(scan.home, codexHomePath(scan.name), scan.backend, scan.target.workDir, now)
 	return handle.LastActive, ok
 }
 
-// newestJSONLActivity considers subagent transcripts as well as parent sessions.
-// An incomplete scan must not be mistaken for evidence of silence.
-func newestJSONLActivity(root string) (time.Time, bool) {
-	const maxEntries = 2000
+const (
+	// claudeSubagentSessions is how many of the most recently written claude
+	// sessions also have their subagents/ transcripts stat'd. A subagent runs
+	// inside a live parent session, so only the newest parents matter.
+	claudeSubagentSessions = 3
+	// codexRecentSessionDays is how many of the newest codex
+	// sessions/YYYY/MM/DD buckets are read. A rollout stays in the bucket of
+	// the day it started, so a turn that spans midnight is still seen.
+	codexRecentSessionDays = 3
+)
+
+// newestClaudeProjectActivity reads only this agent's own claude project
+// directory, ~/.claude/projects/<slug of workDir>. AgentHome can return a
+// HOME shared by several agents (uid<=0, HIVE_SHARED_AGENT_HOME), so walking
+// every project would count a sibling's activity as this agent's and keep a
+// wedged pane from being recovered. Without a workDir there is no project to
+// read, and the caller falls back to BusySince.
+func newestClaudeProjectActivity(home, workDir string) (time.Time, bool) {
+	if home == "" || workDir == "" {
+		return time.Time{}, false
+	}
+	dir := filepath.Join(home, ".claude", "projects", claudeSlugUnsafe.ReplaceAllString(filepath.Clean(workDir), "-"))
+	sessions := jsonlModTimes(dir)
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].mod.After(sessions[j].mod) })
 	var newest time.Time
-	entries := 0
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	for i, session := range sessions {
+		if session.mod.After(newest) {
+			newest = session.mod
 		}
-		entries++
-		if entries > maxEntries {
-			return fmt.Errorf("transcript scan exceeded %d entries", maxEntries)
+		if i >= claudeSubagentSessions {
+			continue
 		}
-		if entry.Type().IsRegular() && strings.HasSuffix(entry.Name(), ".jsonl") {
-			info, err := entry.Info()
-			if err != nil {
-				return err
-			}
-			if info.ModTime().After(newest) {
-				newest = info.ModTime()
+		id := strings.TrimSuffix(session.name, ".jsonl")
+		for _, sub := range jsonlModTimes(filepath.Join(dir, id, "subagents")) {
+			if sub.mod.After(newest) {
+				newest = sub.mod
 			}
 		}
+	}
+	return newest, !newest.IsZero()
+}
+
+// newestCodexSessionActivity reads only the newest codexRecentSessionDays
+// date buckets under sessions/YYYY/MM/DD, descending newest-first, so the
+// cost does not grow with the age of the CODEX_HOME.
+func newestCodexSessionActivity(root string) (time.Time, bool) {
+	var newest time.Time
+	days := 0
+	for _, year := range dirNamesNewestFirst(root) {
+		for _, month := range dirNamesNewestFirst(filepath.Join(root, year)) {
+			for _, day := range dirNamesNewestFirst(filepath.Join(root, year, month)) {
+				sessions := jsonlModTimes(filepath.Join(root, year, month, day))
+				if len(sessions) == 0 {
+					continue
+				}
+				for _, session := range sessions {
+					if session.mod.After(newest) {
+						newest = session.mod
+					}
+				}
+				if days++; days >= codexRecentSessionDays {
+					return newest, true
+				}
+			}
+		}
+	}
+	return newest, !newest.IsZero()
+}
+
+type jsonlModTime struct {
+	name string
+	mod  time.Time
+}
+
+// jsonlModTimes lists the regular .jsonl files directly in dir.
+func jsonlModTimes(dir string) []jsonlModTime {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
 		return nil
-	})
-	return newest, err == nil && !newest.IsZero()
+	}
+	var out []jsonlModTime
+	for _, entry := range entries {
+		if !entry.Type().IsRegular() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		out = append(out, jsonlModTime{name: entry.Name(), mod: info.ModTime()})
+	}
+	return out
+}
+
+// dirNamesNewestFirst lists the subdirectories of dir in descending lexical
+// order, which is newest-first for zero-padded date buckets.
+func dirNamesNewestFirst(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for _, entry := range entries {
+		if entry.IsDir() {
+			names = append(names, entry.Name())
+		}
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(names)))
+	return names
 }
 
 // scanTranscriptActivity stats each agent's sessions, up to

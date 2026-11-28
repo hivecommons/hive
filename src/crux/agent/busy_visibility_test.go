@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -522,12 +523,13 @@ func TestTranscriptRefreshUsesBackendHomes(t *testing.T) {
 		codexHomePrefix = oldCodex
 	})
 	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	agents := filepath.Join(root, "agents")
 	for _, tc := range []struct {
 		name, backend, path string
 		uid                 int
 	}{
-		{"claude", "claude", filepath.Join(root, "home", ".claude", "projects", "p", "12345678-1234-1234-1234-123456789abc.jsonl"), 0},
-		{"inference", "litellm", filepath.Join(root, "inference-inference", ".claude", "projects", "p", "12345678-1234-1234-1234-123456789abc.jsonl"), 1001},
+		{"claude", "claude", filepath.Join(root, "home", ".claude", "projects", testClaudeSlug(filepath.Join(agents, "claude")), "12345678-1234-1234-1234-123456789abc.jsonl"), 0},
+		{"inference", "litellm", filepath.Join(root, "inference-inference", ".claude", "projects", testClaudeSlug(filepath.Join(agents, "inference")), "12345678-1234-1234-1234-123456789abc.jsonl"), 1001},
 		{"codex", "codex", filepath.Join(root, "codex-codex", "sessions", "2026", "11", "28", "rollout-2026-11-28T12-00-00-12345678-1234-1234-1234-123456789abc.jsonl"), 1002},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -541,6 +543,7 @@ func TestTranscriptRefreshUsesBackendHomes(t *testing.T) {
 				t.Fatal(err)
 			}
 			m := NewManager(map[string]config.AgentConfig{tc.name: {Backend: tc.backend}}, slog.New(slog.NewTextHandler(io.Discard, nil)), ProjectContext{})
+			m.workDir = agents
 			a := m.agents[tc.name]
 			a.UID = tc.uid
 			a.BusySince = now.Add(-2 * time.Hour)
@@ -556,22 +559,87 @@ func TestTranscriptRefreshUsesBackendHomes(t *testing.T) {
 	}
 }
 
-func TestNewestJSONLActivityIncludesSubagents(t *testing.T) {
-	root := t.TempDir()
-	dir := filepath.Join(root, "session", "subagents")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+func testClaudeSlug(workDir string) string {
+	return claudeSlugUnsafe.ReplaceAllString(filepath.Clean(workDir), "-")
+}
+
+func writeTranscriptAt(t *testing.T, path string, mod time.Time) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "agent-worker.jsonl")
 	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
-	if err := os.Chtimes(path, now, now); err != nil {
+	if err := os.Chtimes(path, mod, mod); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := newestJSONLActivity(root); !ok || !got.Equal(now) {
+}
+
+func TestClaudeProjectActivityIncludesSubagents(t *testing.T) {
+	home := t.TempDir()
+	workDir := "/data/agents/worker"
+	project := filepath.Join(home, ".claude", "projects", testClaudeSlug(workDir))
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	writeTranscriptAt(t, filepath.Join(project, "session.jsonl"), now.Add(-time.Hour))
+	writeTranscriptAt(t, filepath.Join(project, "session", "subagents", "agent-worker.jsonl"), now)
+	scan := transcriptActivityScan{name: "worker", backend: "claude", home: home, target: kickTranscriptTarget{workDir: workDir}}
+	if got, ok := scanAgentTranscript(scan, nil, now); !ok || !got.Equal(now) {
 		t.Fatalf("subagent activity = %v, %v; want %v, true", got, ok, now)
+	}
+}
+
+// A HOME shared by several agents (uid<=0, HIVE_SHARED_AGENT_HOME) holds
+// every agent's claude projects; a sibling's fresh transcript must not keep a
+// wedged pane from being recovered.
+func TestClaudeTranscriptScanIgnoresSiblingProjectsInSharedHome(t *testing.T) {
+	home := t.TempDir()
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	writeTranscriptAt(t, filepath.Join(home, ".claude", "projects", testClaudeSlug("/data/agents/sibling"), "s.jsonl"), now)
+	scan := transcriptActivityScan{name: "wedged", backend: "claude", home: home, target: kickTranscriptTarget{workDir: "/data/agents/wedged"}}
+	if got, ok := scanAgentTranscript(scan, nil, now); ok {
+		t.Fatalf("sibling activity counted for wedged agent: %v", got)
+	}
+	writeTranscriptAt(t, filepath.Join(home, ".claude", "projects", testClaudeSlug("/data/agents/wedged"), "w.jsonl"), now.Add(-3*time.Hour))
+	if got, ok := scanAgentTranscript(scan, nil, now); !ok || !got.Equal(now.Add(-3*time.Hour)) {
+		t.Fatalf("own activity = %v, %v; want %v, true", got, ok, now.Add(-3*time.Hour))
+	}
+	scan.target.workDir = ""
+	if got, ok := scanAgentTranscript(scan, nil, now); ok {
+		t.Fatalf("scan without a workDir read the shared home: %v", got)
+	}
+}
+
+// Long-lived transcript roots hold thousands of old sessions; the newest
+// session must still be found rather than the scan giving up (#20213).
+func TestTranscriptScanFindsNewestSessionInLargeRoots(t *testing.T) {
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-30 * 24 * time.Hour)
+
+	home := t.TempDir()
+	workDir := "/data/agents/worker"
+	project := filepath.Join(home, ".claude", "projects", testClaudeSlug(workDir))
+	for i := 0; i < 2100; i++ {
+		writeTranscriptAt(t, filepath.Join(project, fmt.Sprintf("old-%04d.jsonl", i)), old)
+	}
+	writeTranscriptAt(t, filepath.Join(project, "zz-new.jsonl"), now)
+	scan := transcriptActivityScan{name: "worker", backend: "claude", home: home, target: kickTranscriptTarget{workDir: workDir}}
+	if got, ok := scanAgentTranscript(scan, nil, now); !ok || !got.Equal(now) {
+		t.Fatalf("claude activity = %v, %v; want %v, true", got, ok, now)
+	}
+
+	oldCodex := codexHomePrefix
+	codexHomePrefix = filepath.Join(t.TempDir(), "codex-")
+	t.Cleanup(func() { codexHomePrefix = oldCodex })
+	sessions := filepath.Join(codexHomePath("worker"), "sessions")
+	for i := 0; i < 2100; i++ {
+		day := old.AddDate(0, 0, -i)
+		writeTranscriptAt(t, filepath.Join(sessions, day.Format("2006"), day.Format("01"), day.Format("02"), fmt.Sprintf("rollout-%d.jsonl", i)), old)
+	}
+	writeTranscriptAt(t, filepath.Join(sessions, "2026", "11", "28", "rollout-new.jsonl"), now)
+	scan = transcriptActivityScan{name: "worker", backend: "codex"}
+	if got, ok := scanAgentTranscript(scan, nil, now); !ok || !got.Equal(now) {
+		t.Fatalf("codex activity = %v, %v; want %v, true", got, ok, now)
 	}
 }
 
