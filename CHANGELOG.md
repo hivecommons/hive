@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.385.3)
+
+### Fixed
+
+- Automerge lanes and the intent maintainer-approval check now read a reviewer's standing review by submission time through the same rule as the merge-time change-request gate, instead of taking whichever review the API listed last.
+
 ## 2026-11-28 (v5.385.2)
 
 ### Changed
