@@ -32,6 +32,14 @@ func TestPromotionRulesFuncGatesOnTheSelfAuthoredSweep(t *testing.T) {
 	if got := rules("acme/removed"); got != nil {
 		t.Fatalf("a repository outside project.repos: %+v, want none", got)
 	}
+	// The repository's own auto-merge switch off: the self-authored sweep
+	// skips it, so nothing is routed or exempted there.
+	repoOff := false
+	cfg.Project.RepoPolicies = []config.RepoPolicy{{Repo: "widget", AutoMerge: &repoOff}}
+	if got := rules("acme/widget"); got != nil {
+		t.Fatalf("the repository's auto-merge switch off: %+v, want none", got)
+	}
+	cfg.Project.RepoPolicies = nil
 	off := false
 	cfg.AutoMerge.SelfAuthored = &off
 	if got := rules("acme/widget"); got != nil {

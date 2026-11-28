@@ -13,10 +13,12 @@ import (
 // does not run (auto_merge.self_authored off, or below its ACMM level) it
 // returns nothing: every merge lane routes the pull request as before, and
 // the sentinel exempts nothing, so a person who merges by hand sees every
-// finding. A rule for a repository that left project.repos never applies.
+// finding. The same holds for a repository whose auto-merge switch is off
+// (project.repo_policies[].auto_merge), where that sweep skips the repo. A
+// rule for a repository that left project.repos never applies.
 func promotionRulesFunc(cfg *config.Config) func(repo string) []config.PromotionRule {
 	return func(repo string) []config.PromotionRule {
-		if cfg == nil || !cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel) {
+		if cfg == nil || !cfg.AutoMerge.SelfAuthoredAutoMergeAllowed(cfg.ACMMLevel) || !cfg.RepoAutoMergeEnabled(repo) {
 			return nil
 		}
 		return cfg.PromotionRulesFor(repo)
