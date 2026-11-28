@@ -1,1 +1,0 @@
-- ACMM `acmm:cross-session-knowledge` now also passes, marked as satisfied by Hive's knowledge store, when the kick primer is registered and the store holds at least one approved git-source fact or reviewer rule; bead-synth facts do not count (#20128).
