@@ -91,8 +91,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// two hash identically (hivecommons/hive#19439), plus pkg/atomicfile, the
 	// stdlib-only leaf the merged ledger persists through so its temp-file +
 	// fsync + rename write cannot drift from every other store's
-	// (hivecommons/hive#20136).
-	const maxDashboardInternalImports = 71
+	// (hivecommons/hive#20136), plus pkg/reviewrules, the leaf whose VaultDir
+	// names the review-rules channel the ACMM cross-session-knowledge credit
+	// counts approved reviewer rules from, so it reads the same vault the
+	// review-feedback sweep writes (hivecommons/hive#20128).
+	const maxDashboardInternalImports = 72
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

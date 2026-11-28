@@ -93,6 +93,8 @@ github.com/hivecommons/hive/pkg/repoagents
 github.com/hivecommons/hive/pkg/resolve
 github.com/hivecommons/hive/pkg/retro
 github.com/hivecommons/hive/pkg/review
+# reviewrules: the ACMM cross-session-knowledge credit reads the review-rules channel through reviewrules.VaultDir so it resolves the same vault the review-feedback sweep writes; a leaf importing no other hive package (hivecommons/hive#20128).
+github.com/hivecommons/hive/pkg/reviewrules
 github.com/hivecommons/hive/pkg/rotation
 github.com/hivecommons/hive/pkg/runtimeobs
 github.com/hivecommons/hive/pkg/scheduler
