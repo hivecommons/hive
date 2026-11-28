@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v6.65.0)
+
+### Added
+
+- The admin MCP can now change the GitHub API budget settings on Settings → Forge App. Before, it could set only the fleet agent cap there (`github.agent_api_hourly_cap`), so an operator who saw the ETag cache full and evicting in `github_api_usage` had to go to the dashboard to raise it. The new write operation `github.settings` changes any of `api_reserve`, `api_critical`, `agent_reserve_floor`, `pr_detail_ttl_s`, `graphql_pr_batch_page_size`, `etag_cache_max_mb` and `etag_cache_max_entries` through `PUT /api/config/github`, the endpoint the dashboard's Save button uses. It sends only the fields you name, so the other settings keep their values. The preview shows each field before and after. Lowering `api_reserve`, `api_critical` or `agent_reserve_floor` is named as widening, because the hive then spends deeper into its GitHub App's hourly rate limit before it cuts back. Raising an ETag cache bound says how much more memory the cache may use, and lowering `pr_detail_ttl_s` or `graphql_pr_batch_page_size` says it costs more API calls. The preview also says when each change applies: `agent_reserve_floor`, `pr_detail_ttl_s`, `graphql_pr_batch_page_size` and the ETag cache bounds apply without a restart, while `api_reserve` and `api_critical` apply when the hive rebuilds its GitHub client, which a hive running as a GitHub App does on the save (the result shows `reinit: ok`) and any other hive does at the next restart. `write_confirm` refuses if a named field changed after the preview, then reads the settings back and reports them. The operation is owner only, like the dashboard card. A value the endpoint refuses, such as an `etag_cache_max_mb` above 2048, comes back as the endpoint's own error.
+
 ## 2026-11-27 (v6.64.5)
 
 ### Fixed
