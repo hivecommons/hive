@@ -88,15 +88,14 @@ func (c *Engine) knownUnresolvedThreads(repo string, number int, head string) st
 	}
 	key := unresolvedThreadsKey(repo, number)
 	now := c.clock()
-	m := c.memory()
-	m.mergeRefusalsMu.Lock()
-	defer m.mergeRefusalsMu.Unlock()
-	r, ok := m.mergeRefusals[key]
+	c.mergeRefusalsMu.Lock()
+	defer c.mergeRefusalsMu.Unlock()
+	r, ok := c.mergeRefusals[key]
 	if !ok {
 		return ""
 	}
 	if !strings.EqualFold(r.head, strings.TrimSpace(head)) {
-		delete(m.mergeRefusals, key)
+		delete(c.mergeRefusals, key)
 		return ""
 	}
 	if r.state == unresolvedThreadsParked {
@@ -106,7 +105,7 @@ func (c *Engine) knownUnresolvedThreads(repo string, number int, head string) st
 			// instead of starting three fresh retries (and flipping the
 			// stage 085 → 100 → 085). A new head still starts over.
 			r.state = unresolvedThreadsRetry + strconv.Itoa(unresolvedThreadsRetryLimit)
-			m.mergeRefusals[key] = r
+			c.mergeRefusals[key] = r
 			return ""
 		}
 		return autoMergeReasonUnresolvedReviewThreads
@@ -120,10 +119,9 @@ func (c *Engine) knownUnresolvedThreads(repo string, number int, head string) st
 // unresolvedThreadsRetries is how many unexplained refusals head already
 // had.
 func (c *Engine) unresolvedThreadsRetries(repo string, number int, head string) int {
-	m := c.memory()
-	m.mergeRefusalsMu.Lock()
-	defer m.mergeRefusalsMu.Unlock()
-	r, ok := m.mergeRefusals[unresolvedThreadsKey(repo, number)]
+	c.mergeRefusalsMu.Lock()
+	defer c.mergeRefusalsMu.Unlock()
+	r, ok := c.mergeRefusals[unresolvedThreadsKey(repo, number)]
 	if !ok || !strings.EqualFold(r.head, strings.TrimSpace(head)) {
 		return 0
 	}
@@ -135,10 +133,9 @@ func (c *Engine) unresolvedThreadsRetries(repo string, number int, head string) 
 }
 
 func (c *Engine) forgetUnresolvedThreads(repo string, number int) {
-	m := c.memory()
-	m.mergeRefusalsMu.Lock()
-	defer m.mergeRefusalsMu.Unlock()
-	delete(m.mergeRefusals, unresolvedThreadsKey(repo, number))
+	c.mergeRefusalsMu.Lock()
+	defer c.mergeRefusalsMu.Unlock()
+	delete(c.mergeRefusals, unresolvedThreadsKey(repo, number))
 }
 
 // unresolvedThreadsRefusal answers GitHub's "All comments must be resolved"
