@@ -45,13 +45,15 @@ type GitSourceConfig struct {
 // It handles cloning, periodic pulling, and exposes the indexed markdown via
 // an embedded FileStore.
 type GitSource struct {
-	config   GitSourceConfig
-	cloneDir string
-	indexDir string
-	store    *FileStore
-	logger   *slog.Logger
-	mu       sync.RWMutex
-	ready    bool
+	config       GitSourceConfig
+	cloneDir     string
+	indexDir     string
+	store        *FileStore
+	logger       *slog.Logger
+	mu           sync.RWMutex
+	syncMu       sync.Mutex
+	failureSince time.Time
+	ready        bool
 }
 
 // NewGitSource creates a git source. Call Init() to clone the repo and start
@@ -90,13 +92,16 @@ func (g *GitSource) Init(ctx context.Context) error {
 	if err := g.ensureCloned(ctx); err != nil {
 		return fmt.Errorf("git source %s: clone failed: %w", g.config.Name, err)
 	}
+	if err := gitSourceEnsureFullHistory(ctx, g.cloneDir, g.config.URL, g.config.Branch); err != nil {
+		return fmt.Errorf("git source %s: fetching history: %w", g.config.Name, err)
+	}
 
 	if _, err := os.Stat(g.indexDir); err != nil {
 		return fmt.Errorf("git source %s: subpath %q not found after clone: %w",
 			g.config.Name, g.config.Subpath, err)
 	}
 
-	store, err := NewFileStore(g.indexDir, g.config.Name, g.logger)
+	store, err := newGitSourceFileStore(g.indexDir, g.cloneDir, g.config.Name, g.logger)
 	if err != nil {
 		return fmt.Errorf("git source %s: index failed: %w", g.config.Name, err)
 	}
@@ -141,13 +146,22 @@ func (g *GitSource) CloneDir() string {
 }
 
 // Sync pulls the latest changes and reindexes.
-func (g *GitSource) Sync(ctx context.Context) error {
+func (g *GitSource) Sync(ctx context.Context) (err error) {
+	g.syncMu.Lock()
+	defer g.syncMu.Unlock()
+	defer func() { g.recordSyncResult(ctx, err) }()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if !isGitRepo(g.cloneDir) {
 		return fmt.Errorf("clone dir %s is not a git repo", g.cloneDir)
 	}
 
 	if err := gitSourcePull(ctx, g.cloneDir, g.config.URL); err != nil {
 		return fmt.Errorf("git source %s: pull failed: %w", g.config.Name, err)
+	}
+	if err := gitSourceEnsureFullHistory(ctx, g.cloneDir, g.config.URL, g.config.Branch); err != nil {
+		return fmt.Errorf("git source %s: fetching history: %w", g.config.Name, err)
 	}
 
 	g.mu.RLock()
@@ -158,6 +172,58 @@ func (g *GitSource) Sync(ctx context.Context) error {
 		store.Reindex()
 	}
 	return nil
+}
+
+func (g *GitSource) recordSyncResult(ctx context.Context, err error) {
+	if ctx.Err() != nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err == nil {
+		g.failureSince = time.Time{}
+	} else if g.failureSince.IsZero() {
+		g.failureSince = time.Now()
+	}
+}
+
+func newGitSourceFileStore(indexDir, cloneDir, name string, logger *slog.Logger) (*FileStore, error) {
+	absoluteCloneDir, err := filepath.Abs(cloneDir)
+	if err != nil {
+		return nil, err
+	}
+	return newFileStore(indexDir, name, logger, func(path string) time.Time {
+		// A shallow boundary makes git attribute unchanged files to the boundary
+		// commit. Never report that synthetic date as their actual freshness.
+		if _, err := os.Stat(filepath.Join(absoluteCloneDir, ".git", "shallow")); err == nil || !os.IsNotExist(err) {
+			return time.Time{}
+		}
+		absolutePath, err := filepath.Abs(path)
+		if err != nil {
+			return time.Time{}
+		}
+		rel, err := filepath.Rel(absoluteCloneDir, absolutePath)
+		if err != nil {
+			return time.Time{}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), gitPullTimeout)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "git", "--git-dir="+filepath.Join(absoluteCloneDir, ".git"),
+			"--work-tree="+absoluteCloneDir, "--no-replace-objects", "--literal-pathspecs",
+			"log", "-1", "--no-show-signature", "--format=%ct", "--", filepath.ToSlash(rel))
+		cmd.Dir = absoluteCloneDir
+		cmd.Env = append(gitSourceEnv(), "GIT_NO_LAZY_FETCH=1", "GIT_ALLOW_PROTOCOL=")
+		out, err := cmd.Output()
+		if err != nil {
+			logger.Warn("git source file history unavailable", "path", path, "error", err)
+			return time.Time{}
+		}
+		seconds, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+		if err != nil {
+			return time.Time{}
+		}
+		return time.Unix(seconds, 0).UTC()
+	})
 }
 
 // StartSyncLoop runs periodic git pull + reindex until ctx is cancelled.
@@ -199,7 +265,7 @@ func (g *GitSource) ensureCloned(ctx context.Context) error {
 	cloneCtx, cancel := context.WithTimeout(ctx, gitSourceCloneTimeout)
 	defer cancel()
 
-	args := []string{"clone", "--depth", "1", "--branch", g.config.Branch}
+	args := []string{"clone", "--branch", g.config.Branch}
 
 	if g.config.Subpath != "" {
 		args = append(args, "--filter=blob:none", "--sparse")
@@ -680,29 +746,34 @@ func gitSourceSlug(url, subpath string) string {
 
 // GitSourceInfo describes a connected git source for the dashboard.
 type GitSourceInfo struct {
-	Name     string    `json:"name"`
-	URL      string    `json:"url"`
-	Branch   string    `json:"branch"`
-	Subpath  string    `json:"subpath"`
-	Layer    LayerType `json:"layer"`
-	CloneDir string    `json:"clone_dir"`
-	Ready    bool      `json:"ready"`
-	Pages    int       `json:"pages"`
+	Name         string    `json:"name"`
+	URL          string    `json:"url"`
+	Branch       string    `json:"branch"`
+	Subpath      string    `json:"subpath"`
+	Layer        LayerType `json:"layer"`
+	CloneDir     string    `json:"clone_dir"`
+	Ready        bool      `json:"ready"`
+	Pages        int       `json:"pages"`
+	FailureSince time.Time `json:"failure_since"`
 }
 
 // Info returns dashboard-friendly info about this git source.
 func (g *GitSource) Info() GitSourceInfo {
+	g.mu.RLock()
 	info := GitSourceInfo{
-		Name:     g.config.Name,
-		URL:      g.config.URL,
-		Branch:   g.config.Branch,
-		Subpath:  g.config.Subpath,
-		Layer:    g.config.Layer,
-		CloneDir: g.cloneDir,
-		Ready:    g.Ready(),
+		Name:         g.config.Name,
+		URL:          g.config.URL,
+		Branch:       g.config.Branch,
+		Subpath:      g.config.Subpath,
+		Layer:        g.config.Layer,
+		CloneDir:     g.cloneDir,
+		Ready:        g.ready,
+		FailureSince: g.failureSince,
 	}
-	if g.Ready() {
-		info.Pages = g.Store().Stats().TotalPages
+	store := g.store
+	g.mu.RUnlock()
+	if info.Ready && store != nil {
+		info.Pages = store.Stats().TotalPages
 	}
 	return info
 }

@@ -3289,6 +3289,9 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 		b.knowledgeAPIFallback = true
 		b.logger.Info("auto-enabled file-based knowledge API")
 	}
+	if b.dashSrv != nil && b.ctx != nil {
+		go runGitSourceAlerts(b.ctx, b.knowledgeAPI, b.dashSrv)
+	}
 	b.bootKnowledgeConnectors(deps)
 	if len(b.beadStores) > 0 {
 		synthVaultPath := b.beadSynthVaultPath()

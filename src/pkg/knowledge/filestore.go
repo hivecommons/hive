@@ -39,25 +39,27 @@ type FileStore struct {
 	prevPageCount int
 	embedCache    *EmbeddingCache
 	accessCounts  map[string]int
+	modTime       func(string) time.Time
 }
 
 type filePage struct {
-	Slug       string
-	Title      string
-	Type       FactType
-	Body       string
-	Tags       []string
-	Related    []string
-	Confidence float64
-	Layer      LayerType
-	Status     string
-	Source     string
-	SourceURL  string
-	SourceDate time.Time
-	Path       string
-	ModTime    time.Time
-	Embedding  []float64
-	Scope      *FactScope
+	Slug         string
+	Title        string
+	Type         FactType
+	Body         string
+	Tags         []string
+	Related      []string
+	Confidence   float64
+	Layer        LayerType
+	Status       string
+	Source       string
+	SourceURL    string
+	SourceDate   time.Time
+	Path         string
+	ModTime      time.Time
+	GitFreshness bool
+	Embedding    []float64
+	Scope        *FactScope
 
 	// Lifecycle frontmatter (#11102); see resolveLifecycleState for defaults.
 	State        LifecycleState
@@ -68,6 +70,10 @@ type filePage struct {
 
 // NewFileStore creates a store that indexes markdown files under rootDir.
 func NewFileStore(rootDir string, name string, logger *slog.Logger) (*FileStore, error) {
+	return newFileStore(rootDir, name, logger, nil)
+}
+
+func newFileStore(rootDir string, name string, logger *slog.Logger, modTime func(string) time.Time) (*FileStore, error) {
 	info, err := os.Stat(rootDir)
 	if err != nil {
 		return nil, fmt.Errorf("vault directory %s: %w", rootDir, err)
@@ -84,6 +90,7 @@ func NewFileStore(rootDir string, name string, logger *slog.Logger) (*FileStore,
 		logger:       logger,
 		embedCache:   embedder,
 		accessCounts: make(map[string]int),
+		modTime:      modTime,
 	}
 
 	s.loadAccessCounts()
@@ -201,22 +208,28 @@ func (s *FileStore) reindex() {
 		embeddingText := parsed.title + " " + strings.Join(parsed.tags, " ") + " " + parsed.body
 		embedding := s.embedCache.Embed(embeddingText)
 
+		modTime := info.ModTime()
+		if s.modTime != nil {
+			modTime = s.modTime(path)
+		}
+
 		page := filePage{
-			Slug:       slug,
-			Title:      parsed.title,
-			Type:       parsed.factType,
-			Body:       parsed.body,
-			Tags:       parsed.tags,
-			Related:    parsed.related,
-			Confidence: parsed.confidence,
-			Layer:      parsed.layer,
-			Status:     parsed.status,
-			Source:     parsed.source,
-			SourceURL:  parsed.sourceURL,
-			SourceDate: parsed.sourceDate,
-			Path:       path,
-			ModTime:    info.ModTime(),
-			Embedding:  embedding,
+			Slug:         slug,
+			Title:        parsed.title,
+			Type:         parsed.factType,
+			Body:         parsed.body,
+			Tags:         parsed.tags,
+			Related:      parsed.related,
+			Confidence:   parsed.confidence,
+			Layer:        parsed.layer,
+			Status:       parsed.status,
+			Source:       parsed.source,
+			SourceURL:    parsed.sourceURL,
+			SourceDate:   parsed.sourceDate,
+			Path:         path,
+			ModTime:      modTime,
+			GitFreshness: s.modTime != nil,
+			Embedding:    embedding,
 		}
 		page.State = parsed.state
 		page.Supersedes = parsed.supersedes
@@ -705,6 +718,10 @@ func (p filePage) applyLifecycle(f *Fact) {
 }
 
 func (p filePage) confidenceInput(accesses int) confidenceInput {
+	sourceDate := p.SourceDate
+	if p.GitFreshness {
+		sourceDate = time.Time{}
+	}
 	return confidenceInput{
 		Raw:        p.Confidence,
 		HasRaw:     p.Confidence >= 0,
@@ -715,7 +732,7 @@ func (p filePage) confidenceInput(accesses int) confidenceInput {
 		Related:    p.Related,
 		Source:     p.Source,
 		SourceURL:  p.SourceURL,
-		SourceDate: p.SourceDate,
+		SourceDate: sourceDate,
 		ModTime:    p.ModTime,
 		Accesses:   accesses,
 	}

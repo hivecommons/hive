@@ -2,10 +2,12 @@ package knowledge
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -119,6 +121,31 @@ func gitSourcePull(ctx context.Context, dir, remoteURL string) error {
 		return &gitPullError{dir: dir, err: err}
 	}
 	return gitPullWithEnv(pullCtx, dir, gitSourceEnv(), pin...)
+}
+
+// gitSourceEnsureFullHistory upgrades clones created before file freshness
+// required complete history. Fetch only from the validated, pinned source URL.
+func gitSourceEnsureFullHistory(ctx context.Context, dir, remoteURL, branch string) error {
+	if _, err := os.Stat(filepath.Join(dir, gitDirName, "shallow")); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	fetchCtx, cancel := context.WithTimeout(ctx, gitSourceCloneTimeout)
+	defer cancel()
+	pin, err := gitSourcePinArgs(fetchCtx, remoteURL)
+	if err != nil {
+		return err
+	}
+	args := append(pin, "fetch", "--unshallow", "--", remoteURL, branch)
+	cmd := exec.CommandContext(fetchCtx, "git", gitCmdArgs(args...)...)
+	cmd.Dir = dir
+	cmd.Env = gitSourceEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git fetch history: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
 }
 
 // gitPullWithEnv runs `git pull --ff-only` in dir. extra are leading `-c`
