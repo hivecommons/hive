@@ -377,12 +377,13 @@ func TestWorkSourceSeamNamesForgeToolsOnForgejoOnlyHive(t *testing.T) {
 
 	s.cfg.Project.Forge = config.ForgeForgejo
 	msg := modeKick(t, s, "scanner")
-	for _, want := range []string{"hive-clone --repo <owner/repo> [--pr <N>]", "hive-push-branch", "no Forgejo equivalent", "hive-gh pr view <N> --repo <owner/repo>", "hive-gh pr checks <N>", "overrides your role policy below"} {
+	for _, want := range []string{"hive-clone --repo <owner/repo> [--pr <N>]", "hive-push-branch", "no Forgejo equivalent", "hive-gh pr view <N> --repo <owner/repo>", "hive-gh pr checks <N>", "overrides your role policy below",
+		"hive-gh pr reviews <N> --repo <owner/repo>", "hive-gh pr comments <N>", "hive-gh issue comments <N>", "hive-gh run view <run-id> --log"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("Forgejo-only kick lacks %q:\n%s", want, msg)
 		}
 	}
-	for _, banned := range []string{governorWorkSourceRule, "gh pr view <n>", "do not run them", "no agent tool to read its comments, reviews or CI checks"} {
+	for _, banned := range []string{governorWorkSourceRule, "gh pr view <n>", "do not run them", "no agent tool to read its comments, reviews or CI checks", "no agent tool to read its comments or reviews"} {
 		if strings.Contains(msg, banned) {
 			t.Errorf("Forgejo-only kick still carries %q:\n%s", banned, msg)
 		}

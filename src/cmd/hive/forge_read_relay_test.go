@@ -21,8 +21,15 @@ type fakeReadAPI struct {
 	issue    forge.IssueView
 	state    string
 	statuses []forge.CommitStatus
+	reviews  []forge.Review
+	comments []forge.IssueComment
+	jobs     []forge.ActionJob
+	logs     map[int64]string
 	err      error
 	calls    int
+
+	maxCommentReads int
+	logLimits       []int
 }
 
 func (f *fakeReadAPI) PullView(context.Context, string, int) (forge.PullView, error) {
@@ -38,6 +45,32 @@ func (f *fakeReadAPI) IssueView(context.Context, string, int) (forge.IssueView, 
 func (f *fakeReadAPI) CommitStatuses(context.Context, string, string) (string, []forge.CommitStatus, error) {
 	f.calls++
 	return f.state, f.statuses, f.err
+}
+
+func (f *fakeReadAPI) PullReviews(_ context.Context, _ string, _, maxCommentReads int) ([]forge.Review, error) {
+	f.calls++
+	f.maxCommentReads = maxCommentReads
+	return f.reviews, f.err
+}
+
+func (f *fakeReadAPI) IssueComments(context.Context, string, int) ([]forge.IssueComment, error) {
+	f.calls++
+	return f.comments, f.err
+}
+
+func (f *fakeReadAPI) RunJobs(context.Context, string, int64) ([]forge.ActionJob, error) {
+	f.calls++
+	return f.jobs, f.err
+}
+
+func (f *fakeReadAPI) JobLog(_ context.Context, _ string, jobID int64, limit int) (string, bool, error) {
+	f.calls++
+	f.logLimits = append(f.logLimits, limit)
+	log := f.logs[jobID]
+	if len(log) > limit {
+		return log[len(log)-limit:], true, f.err
+	}
+	return log, false, f.err
 }
 
 type readHarness struct {

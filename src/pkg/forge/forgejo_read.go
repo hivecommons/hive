@@ -9,8 +9,9 @@ import (
 )
 
 // ReadAPI is the read surface an agent's `hive-gh pr view` / `issue view` /
-// `pr checks` is served from on a Forgejo repo (hivecommons/hive#20230). Only
-// the Forgejo adapter implements it.
+// `pr checks` (hivecommons/hive#20230) and `pr reviews` / `pr comments` /
+// `issue comments` / `run view --log` (hivecommons/hive#20277) are served
+// from on a Forgejo repo. Only the Forgejo adapter implements it.
 type ReadAPI interface {
 	// PullView reads one pull request with the fields an agent works from.
 	PullView(ctx context.Context, repo string, number int) (PullView, error)
@@ -19,6 +20,17 @@ type ReadAPI interface {
 	// CommitStatuses returns the combined commit status state at sha and
 	// each status it combines.
 	CommitStatuses(ctx context.Context, repo, sha string) (state string, statuses []CommitStatus, err error)
+	// PullReviews lists the reviews of a pull request with their inline
+	// comments. The comments of at most maxCommentReads reviews are read;
+	// CommentsRead is false on a review whose comments were not.
+	PullReviews(ctx context.Context, repo string, number, maxCommentReads int) ([]Review, error)
+	// IssueComments lists the comments of an issue or pull request.
+	IssueComments(ctx context.Context, repo string, number int) ([]IssueComment, error)
+	// RunJobs lists the jobs of a Forgejo Actions run.
+	RunJobs(ctx context.Context, repo string, runID int64) ([]ActionJob, error)
+	// JobLog returns the last limit bytes of a job's log, starting on a
+	// whole line, and whether the log was longer than that.
+	JobLog(ctx context.Context, repo string, jobID int64, limit int) (log string, truncated bool, err error)
 }
 
 // PullView is one pull request as an agent reads it.
