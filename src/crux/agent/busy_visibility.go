@@ -441,8 +441,6 @@ func (m *Manager) applyTranscriptActivityResultsLocked(results []transcriptActiv
 		agent.lastTranscriptScanAt = scannedAt
 		if result.ok {
 			agent.LastTranscriptActivity = result.at
-		} else {
-			agent.LastTranscriptActivity = time.Time{}
 		}
 		if agent.LastKick != nil && agent.LastKick.Equal(result.since) {
 			agent.CodeWork = cloneCodeWork(result.codeWork)
@@ -516,7 +514,7 @@ func (m *Manager) refreshTranscriptActivity(caches map[string]*transcriptSession
 func busyCondition(agent *AgentProcess, now time.Time) (string, string) {
 	threshold := agent.Config.EffectiveBusyNoActivityThreshold()
 	lastActivity := lastBusyActivity(agent)
-	if !agent.LastTranscriptActivity.IsZero() && agent.BusySince.After(lastActivity) {
+	if lastActivity.IsZero() {
 		lastActivity = agent.BusySince
 	}
 	silentFor := time.Duration(0)
@@ -619,7 +617,7 @@ func busyNoActivityStall(agent *AgentProcess, pane string, now time.Time) string
 		return ""
 	}
 	lastActivity := lastBusyActivity(agent)
-	if !agent.LastTranscriptActivity.IsZero() && agent.BusySince.After(lastActivity) {
+	if lastActivity.IsZero() {
 		lastActivity = agent.BusySince
 	}
 	if lastActivity.IsZero() {

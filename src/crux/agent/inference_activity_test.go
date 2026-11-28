@@ -13,7 +13,9 @@ func TestRefreshInferenceActivityPreservesLatestAndIgnoresFailures(t *testing.T)
 	m := &Manager{agents: map[string]*AgentProcess{"alice": {Name: "alice", LastInferenceActivity: old}, "bob": {Name: "bob"}}}
 	m.refreshInferenceActivity(context.Background(), func(context.Context) (map[string]time.Time, error) {
 		// The reader may perform I/O and must not run with the manager locked.
-		m.mu.Lock()
+		if !m.mu.TryLock() {
+			t.Fatal("reader ran with the manager mutex held")
+		}
 		m.mu.Unlock()
 		return map[string]time.Time{"alice": fresh, "unknown": fresh}, nil
 	})

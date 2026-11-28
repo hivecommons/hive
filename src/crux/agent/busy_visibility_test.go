@@ -325,23 +325,22 @@ func TestBusyNoActivityStallEscalatesOnlyPastRecoveryBars(t *testing.T) {
 		t.Fatalf("wedged pane reason = %q, want busy-no-activity restart reason", reason)
 	}
 
-	// Without a transcript, time spent busy is not evidence of silence.
+	// No transcript and no inference activity: silence is measured from the
+	// first undeliverable kick, so a wedged pane is still recovered.
 	noCache := stuck()
 	noCache.LastTranscriptActivity = time.Time{}
 	noCache.BusySince = now.Add(-61 * time.Minute)
-	if got := busyNoActivityStall(noCache, working, now); got != "" {
-		t.Fatalf("no-transcript pane escalated: %s", got)
-	}
-	if condition, _ := busyCondition(noCache, now); condition != "" {
-		t.Fatalf("no-transcript pane reported silence: %s", condition)
+	if got := busyNoActivityStall(noCache, working, now); got == "" {
+		t.Fatal("no-transcript wedged pane did not escalate")
 	}
 	noCache.LastInferenceActivity = now.Add(-time.Minute)
 	if got := busyNoActivityStall(noCache, working, now); got != "" {
 		t.Fatalf("agent with recent inference request escalated: %s", got)
 	}
+	// A request from before the busy episode is ignored, not a sign of life.
 	noCache.LastInferenceActivity = now.Add(-62 * time.Minute)
-	if got := busyNoActivityStall(noCache, working, now); got != "" {
-		t.Fatalf("request before the busy episode counted as silence: %s", got)
+	if got := busyNoActivityStall(noCache, working, now); got == "" {
+		t.Fatal("request before the busy episode suppressed recovery")
 	}
 	noCache.LastInferenceActivity = now.Add(-60 * time.Minute)
 	if got := busyNoActivityStall(noCache, working, now); got == "" {

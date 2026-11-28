@@ -212,25 +212,22 @@ type AgentProcess struct {
 	StartedAt *time.Time
 	LastKick  *time.Time
 	// KicksUndeliverable counts consecutive kicks that could not be delivered
-	// because the pane never became safe for input. It resets on successful
-	// delivery or restart and is surfaced so operators can distinguish "due
-	// now" from "due but still busy".
+	// because the pane never became safe for input. It resets on delivery or
+	// restart, so operators can tell "due now" from "due but still busy".
 	KicksUndeliverable int
 	// BusySince is the first undeliverable-kick time in the current busy run.
 	BusySince time.Time
-	// LastTranscriptActivity is the newest transcript mtime found under the
-	// agent's backend-specific session tree.
+	// LastTranscriptActivity is the newest backend transcript mtime seen;
+	// LastInferenceActivity is the last translator-authenticated request.
 	LastTranscriptActivity time.Time
-	// LastInferenceActivity is the last authenticated inference request seen
-	// by the translator, independent of the transcript scanner.
-	LastInferenceActivity time.Time
-	CodeWork              *crux.CodeWork
-	BusyCondition         string
-	BusyConditionMessage  string
-	Paused                bool
-	PausedAt              time.Time
-	PausedReason          string
-	PausedTrigger         string
+	LastInferenceActivity  time.Time
+	CodeWork               *crux.CodeWork
+	BusyCondition          string
+	BusyConditionMessage   string
+	Paused                 bool
+	PausedAt               time.Time
+	PausedReason           string
+	PausedTrigger          string
 	// PausedBy is the acting user behind the pause when one is known — the
 	// authenticated dashboard user for a dashboard-api pause, empty for
 	// system-initiated pauses (login-detector, fleet-breaker, acmm-pack).

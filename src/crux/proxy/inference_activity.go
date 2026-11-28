@@ -23,3 +23,11 @@ func (p *GitHubProxy) recordInferenceActivity(agent string) {
 	}
 	p.inferenceActivity[agent] = time.Now()
 }
+
+// noteInferenceRequest records activity for an identified caller's messages
+// request; other paths and anonymous callers are ignored.
+func (p *GitHubProxy) noteInferenceRequest(agent, method, path string) {
+	if agent != "" && classifyInferencePath(method, path) == inferencePathMessages {
+		p.recordInferenceActivity(agent)
+	}
+}
