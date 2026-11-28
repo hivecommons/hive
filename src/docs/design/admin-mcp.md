@@ -695,6 +695,23 @@ Phase 5 registers the fleet-level write operations under that contract:
   op merges nothing itself. `human_merge_pin_only` is set one repository at a time the same way
   (the whole exception for that repository, or `null` to remove it); turning one on or giving
   it more paths, kinds or trusted authors is named as widening.
+- `github.settings` wraps `PUT /api/config/github` for the seven GitHub API budget numbers on
+  Settings → Forge App (`api_reserve`, `api_critical`, `agent_reserve_floor`, `pr_detail_ttl_s`,
+  `graphql_pr_batch_page_size`, `etag_cache_max_mb`, `etag_cache_max_entries`). Each of these
+  seven is a pointer in the endpoint's body and an absent one is left alone, so the op sends
+  only the named fields.
+  The preview reads `settings_read` section `github_apps` for the before/after, its
+  `ConfirmGuard` fingerprints the named fields so a stale preview is refused, and
+  `ConfirmResult` reads them back. Lowering `api_reserve`, `api_critical` or
+  `agent_reserve_floor` is disclosed as widening; raising an ETag cache bound states the extra
+  memory. `agent_reserve_floor`, `pr_detail_ttl_s`, `graphql_pr_batch_page_size` and the ETag
+  bounds apply live; `api_reserve` and `api_critical` are copied into the GitHub client when it
+  is built, so they apply when the save rebuilds the client (a GitHub App hive, `reinit: ok` in
+  the endpoint's answer) and otherwise at the next restart, and the preview says so. The
+  endpoint's own validation is not repeated. A test in `pkg/dashboard` compares the op's field
+  list with the handler's `githubAPISettings` by reflection and lists the fields the op leaves
+  out: `agent_github_api_hourly_cap` has its own op, while `graphql_pr_batch`,
+  `app_authored_prs` and `app_signed_commits` are not yet reachable from the admin MCP.
 - `review.settings` wraps `PUT /api/config/review`, the endpoint behind Settings → Review Gate.
   Unlike the endpoints above, every field of its body is a pointer, so a partial update is
   native: the op sends only the fields the caller names and never reads the section to send it

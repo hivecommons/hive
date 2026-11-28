@@ -1020,7 +1020,7 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 | Area                         | Operations                                                                                                                                                                                                                              |
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Agents                       | `agent.pause`, `agent.resume`, `agent.nudge`, `agent.restart`, `agent.add`, `agent.remove`, `agent.model`, `agent.backend`, `agent.effort`, `agent.interaction_tier`, `agent.settings`, `agent.github_api_hourly_cap`, `agent.cadences` |
-| GitHub                       | `github.agent_api_hourly_cap`                                                                                                                                                                                                           |
+| GitHub                       | `github.agent_api_hourly_cap`, `github.settings`                                                                                                                                                                                        |
 | Fleet                        | `fleet.autonomy_level`                                                                                                                                                                                                                  |
 | Plans                        | `plan.propose`, `plan.approve`, `plan.reject`                                                                                                                                                                                           |
 | Governor                     | `governor.feature_settings`, `governor.general_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                                                           |
@@ -1060,6 +1060,47 @@ installation's shared hourly bucket and the agent reserve floor
 (`github.agent_reserve_floor`); lowering is not. When the current value cannot
 be read, the preview says the change may be widening. See
 [Changing the agent caps](operator-reference/runtime-and-quota.md#changing-the-agent-caps).
+
+`github.settings` changes the other GitHub API budget settings on Settings →
+Forge App through `PUT /api/config/github`, the same endpoint as that card's
+Save button. It is owner only.
+
+- **The fields** are `api_reserve`, `api_critical`, `agent_reserve_floor`,
+  `pr_detail_ttl_s`, `graphql_pr_batch_page_size`, `etag_cache_max_mb` and
+  `etag_cache_max_entries`, each a whole number. `0` restores the default.
+  The fleet agent cap on the same card is `github.agent_api_hourly_cap`.
+- **Pass only what changes,** for example `{"etag_cache_max_mb": 512}`. Only
+  those fields are sent; the endpoint leaves every field it is not sent as it
+  is, so a dashboard edit to another field is never overwritten. An unknown
+  field or `null` is refused.
+- **The preview shows each named field before and after,** read through
+  `settings_read` section `github_apps`. A field already at the requested
+  value is not sent.
+- **Lowering a floor is widening.** A lower `api_reserve` or `api_critical`
+  lets the hive keep its optional sweeps or unstick steps running until fewer
+  calls are left, and a lower `agent_reserve_floor` lets agents keep reading
+  through the API proxy deeper into the bucket the hive's own loops use. The
+  preview names each one as widening. Raising one is not.
+- **A bigger ETag cache uses more memory.** Raising `etag_cache_max_mb` says
+  how many MB more the cache may hold; raising `etag_cache_max_entries` says
+  how many more responses it may keep, still capped by `etag_cache_max_mb`.
+  Lowering `pr_detail_ttl_s` or `graphql_pr_batch_page_size` is not widening,
+  but the preview says it makes the hive spend more API calls.
+- **Not every field applies at once.** `agent_reserve_floor`,
+  `pr_detail_ttl_s`, `graphql_pr_batch_page_size` and the ETag cache bounds
+  apply without a restart. `api_reserve` and `api_critical` are copied into
+  the hive's GitHub client when it is built. A hive running as a GitHub App,
+  with its key in place, rebuilds the client on this save and the new floors
+  apply then; the write result shows `reinit: ok`. On a hive that uses a
+  personal access token, or when the rebuild fails (`reinit: failed`, with
+  `reinit_error`), they apply after the next restart. The preview says which.
+- **The endpoint's checks are its own.** A value it refuses, such as
+  `api_critical` not below `api_reserve` or an `etag_cache_max_mb` above 2048,
+  comes back as its error, unchanged.
+- **A stale preview is refused** when a named field changed after the
+  preview. After the write, `write_confirm` reads the settings back and
+  reports the named fields as the hive now holds them (`after`). The endpoint
+  records a `config_github` audit entry naming you.
 
 The three advisor operations change the same settings as the Advisor Lane
 panel (Settings → Features), through the endpoints it saves with. Only the
