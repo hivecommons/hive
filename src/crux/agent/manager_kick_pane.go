@@ -162,11 +162,14 @@ func paneAfterKickBaseline(pane, baseline string) string {
 // position in the scrollback capture.
 const scrollbackAnchorLines = 5
 
-// scrollbackAnchor returns the last few non-blank lines of capture that sit
-// above the visible screen. The screen is redrawn (input box, footer,
-// spinner), but lines already in scrollback never change, so they mark where
-// post-kick output begins even after the bounded capture window slides
-// (#20214). Returns "" when the capture holds no more than one screen.
+// scrollbackAnchor returns the block of capture lines just above the visible
+// screen that spans its last few non-blank lines. The screen is redrawn
+// (input box, footer, spinner), but lines already in scrollback never change,
+// so they mark where post-kick output begins even after the bounded capture
+// window slides (#20214). The block is a contiguous slice of the capture,
+// blank lines between output blocks included, so it is found verbatim by
+// toolMarkersAfterAnchor. Returns "" when the capture holds no more than one
+// screen or the scrollback is all blank.
 func scrollbackAnchor(capture, visible string) string {
 	lines := strings.Split(strings.TrimRight(capture, "\n"), "\n")
 	screen := len(strings.Split(strings.TrimRight(visible, "\n"), "\n"))
@@ -174,13 +177,21 @@ func scrollbackAnchor(capture, visible string) string {
 		return ""
 	}
 	lines = lines[:len(lines)-screen]
-	var anchor []string
-	for i := len(lines) - 1; i >= 0 && len(anchor) < scrollbackAnchorLines; i-- {
-		if strings.TrimSpace(lines[i]) != "" {
-			anchor = append([]string{lines[i]}, anchor...)
+	end, start, found := -1, -1, 0
+	for i := len(lines) - 1; i >= 0 && found < scrollbackAnchorLines; i-- {
+		if strings.TrimSpace(lines[i]) == "" {
+			continue
 		}
+		if end < 0 {
+			end = i
+		}
+		start = i
+		found++
 	}
-	return strings.Join(anchor, "\n")
+	if end < 0 {
+		return ""
+	}
+	return strings.Join(lines[start:end+1], "\n")
 }
 
 // toolMarkersAfterAnchor counts tool markers in capture after the first

@@ -1565,6 +1565,44 @@ func TestNudgeIfKickStalled_MarkersAnchoredInSlidingWindow(t *testing.T) {
 	}
 }
 
+// TestScrollbackAnchor_KeepsBlankLines: CapturePane keeps the blank lines
+// Claude Code prints between output blocks, so the anchor must be a
+// contiguous slice of the capture (blanks included) or strings.Index never
+// finds it and the watchdog always disarms (#20214).
+func TestScrollbackAnchor_KeepsBlankLines(t *testing.T) {
+	history := "⏺ Bash(git status)\n  ⎿ clean\n\n⏺ Bash(bd list)\n  ⎿ 3 beads\n\n" +
+		"⏺ Bash(gh pr list)\n  ⎿ none\n\n✻ Worked for 40s\n\n"
+	visible := "❯ [agent:scanner] report pipeline health\n❯ \n  ⏵⏵ bypass permissions on"
+	capture := history + visible
+
+	anchor := scrollbackAnchor(capture, visible)
+	if want := "⏺ Bash(bd list)\n  ⎿ 3 beads\n\n⏺ Bash(gh pr list)\n  ⎿ none\n\n✻ Worked for 40s"; anchor != want {
+		t.Fatalf("anchor = %q, want %q", anchor, want)
+	}
+	marks, ok := toolMarkersAfterAnchor(capture, anchor)
+	if !ok || marks != 0 {
+		t.Fatalf("kick-time capture: marks=%d ok=%v, want 0 true", marks, ok)
+	}
+
+	// Prose-only reply appended, window slid by one line: still found, no
+	// new markers.
+	later := strings.TrimPrefix(capture, "⏺ Bash(git status)\n") +
+		"\n\n⏺ Pipeline health: 3 agents idle.\n\n❯ \n  ⏵⏵ bypass permissions on"
+	if marks, ok := toolMarkersAfterAnchor(later, anchor); !ok || marks != 0 {
+		t.Fatalf("prose reply: marks=%d ok=%v, want 0 true", marks, ok)
+	}
+
+	// A tool ran after the kick: found, and counted.
+	acted := later + "\n\n⏺ Bash(bd ready)\n  ⎿ 1 bead\n"
+	if marks, ok := toolMarkersAfterAnchor(acted, anchor); !ok || marks == 0 {
+		t.Fatalf("tool reply: marks=%d ok=%v, want >0 true", marks, ok)
+	}
+
+	if got := scrollbackAnchor("\n\n\n"+visible, visible); got != "" {
+		t.Fatalf("all-blank scrollback should give no anchor, got %q", got)
+	}
+}
+
 // TestNudgeIfKickStalled_ActionNudgeSkippedWhenMarkersDrop: a marker count
 // below the kick baseline means the pane was cleared or reset, so the count
 // cannot show whether tools ran and the nudge must not fire (#20214).
