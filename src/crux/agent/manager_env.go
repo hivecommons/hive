@@ -342,6 +342,15 @@ func (m *Manager) agentEnvPairs(agent *AgentProcess) []agentEnvPair {
 	if m.project.GHHost != "" {
 		vars = append(vars, agentEnvPair{"GH_HOST", m.project.GHHost, false})
 	}
+	// HIVE_NO_GITHUB_FORGE: every repo is on another forge, so this hive mints
+	// no GitHub token. The gh wrapper reads it to name the forge tools instead
+	// of reporting a token-delivery fault (#20222). See
+	// ProjectContext.NonGitHubForge.
+	if m.project.NonGitHubForge != nil {
+		if kind := m.project.NonGitHubForge(); kind != "" {
+			vars = append(vars, agentEnvPair{"HIVE_NO_GITHUB_FORGE", kind, false})
+		}
+	}
 	if m.routableBackend(backend) {
 		vars = append(vars, agentEnvPair{"ANTHROPIC_API_KEY", "sk-hive-" + agent.Name, false})
 		vars = append(vars, agentEnvPair{"ANTHROPIC_BASE_URL", inferenceTranslatorBaseURL, false})

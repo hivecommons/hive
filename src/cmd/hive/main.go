@@ -1916,11 +1916,21 @@ func (b *boot) bootAdvisoryWith(deps bootAdvisoryDeps) bool {
 		AppBotLogin:        b.cfg.GitHub.BotLogin(),
 		AppBotUserID:       b.appBotUserIDResolver(),
 		BobSessionPrefix:   b.cfg.Governor.Bob.SessionPrefix,
+		NonGitHubForge:     b.nonGitHubForge,
 		InferenceDefaultModel: func(backend string) string {
 			return b.cfg.Governor.DefaultInferenceModel(backend)
 		},
 	}
 	return true
+}
+
+// nonGitHubForge is crux.ProjectContext.NonGitHubForge: the hive's forge kind
+// when every repo is off GitHub (config.AllReposOffGitHub), else "".
+func (b *boot) nonGitHubForge() string {
+	if b.cfg == nil || !b.cfg.AllReposOffGitHub() {
+		return ""
+	}
+	return b.cfg.Project.ForgeKind()
 }
 
 // appBotUserIDResolver returns the lazy lookup of the App bot's GitHub USER id

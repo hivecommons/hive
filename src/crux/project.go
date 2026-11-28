@@ -21,6 +21,14 @@ type ProjectContext struct {
 	// 2026-08-20: the security agent's issue/PR creation failed silently on
 	// every GHE-hosted hive). Empty ⇒ public github.com, nothing exported.
 	GHHost string
+	// NonGitHubForge returns the forge kind ("forgejo", "gitlab", "gitea")
+	// when every repo of the hive is off GitHub, else "" (hivecommons/hive#20222).
+	// Exported to agents as HIVE_NO_GITHUB_FORGE so the gh wrapper can say that
+	// this hive has no GitHub repository instead of blaming token delivery for a
+	// token such a hive never mints. The value only selects denial wording; it
+	// grants nothing. A live function so a config reload reaches the next launch.
+	// Nil means a GitHub hive.
+	NonGitHubForge func() string
 	// AppAuthoredPRs mirrors config github.app_authored_prs: when true, push-
 	// capable agents get the App installation token as GITHUB_TOKEN so the GitHub
 	// MCP server authors PRs/commits as the App bot. Default false → no token is

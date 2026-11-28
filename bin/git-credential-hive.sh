@@ -133,6 +133,12 @@ fi
 # rather than quietly escalating. The scoped cache is minted and kept fresh by
 # the hive, so this helper only reads it — it never refreshes the shared cache.
 AGENT_TOKEN_FILE="${HIVE_AGENT_TOKEN_CACHE:-}"
+if { [ -z "$AGENT_TOKEN_FILE" ] || [ ! -f "$AGENT_TOKEN_FILE" ] || [ ! -s "$AGENT_TOKEN_FILE" ]; } && [ -n "${HIVE_NO_GITHUB_FORGE:-}" ]; then
+  # Every repo is on another forge (#20222): no GitHub token is ever minted,
+  # so there is no token delivery to repair. Name the relays instead.
+  echo "⛔ git push blocked: this hive has no GitHub repository (every repo is on ${HIVE_NO_GITHUB_FORGE}) and you hold no forge credential. Push with 'hive-push-branch'; fetch with 'hive-clone --fetch'. This is not a token fault: do not report one to the operator." >&2
+  exit 1
+fi
 if [ -z "$AGENT_TOKEN_FILE" ] || [ ! -f "$AGENT_TOKEN_FILE" ]; then
   echo "⛔ git push blocked: per-agent scoped GitHub token not available (${AGENT_TOKEN_FILE:-HIVE_AGENT_TOKEN_CACHE unset})." >&2
   echo "⛔ Refusing to fall back to the shared full-privilege App token — that would defeat per-agent tier scoping (audit H3). Report this to the operator so token delivery is repaired." >&2
