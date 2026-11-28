@@ -1,0 +1,1 @@
+- On a Forgejo-only hive, the kick text now says `hive-review` in every form, `--record-verdict` included, is not served and the review goes in a comment through the issue relay, so a reviewer no longer runs a verdict step the forge relay rejects (#20291).
