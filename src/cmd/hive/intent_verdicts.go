@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/intent"
+	"github.com/hivecommons/hive/pkg/reviewgate"
 )
 
 // Lane names recorded on intent evaluation counters (#12362).
@@ -325,40 +326,36 @@ func alignmentSummary(alignment intent.AlignmentVerdict) string {
 
 func hasMaintainerApproval(ctx context.Context, client *gh.Client, owner, repo string, number int) (bool, error) {
 	opts := &gh.ListOptions{PerPage: 100}
-	latest := make(map[string]string)
-	maintainer := make(map[string]bool)
+	var maintainerReviews []reviewgate.Review
 	for {
 		reviews, resp, err := client.PullRequests.ListReviews(ctx, owner, repo, number, opts)
 		if err != nil {
 			return false, fmt.Errorf("listing PR reviews: %w", err)
 		}
 		for _, review := range reviews {
-			login := review.GetUser().GetLogin()
-			if login == "" {
+			if !maintainerAssociation(review.GetAuthorAssociation()) {
 				continue
 			}
-			if maintainerAssociation(review.GetAuthorAssociation()) {
-				switch review.GetState() {
-				case "APPROVED", "CHANGES_REQUESTED", "DISMISSED":
-					latest[login] = review.GetState()
-				}
-				maintainer[login] = true
-			}
+			maintainerReviews = append(maintainerReviews, reviewgate.Review{
+				ID:          review.GetID(),
+				Reviewer:    review.GetUser().GetLogin(),
+				State:       review.GetState(),
+				SubmittedAt: review.GetSubmittedAt().Time,
+			})
 		}
 		if resp == nil || resp.NextPage == 0 {
 			break
 		}
 		opts.Page = resp.NextPage
 	}
+	// reviewgate.Standing is the standing-review rule the merge-time gate
+	// uses: each maintainer's latest opinionated review by submission time.
 	approved := false
-	for login, state := range latest {
-		if !maintainer[login] {
-			continue
-		}
-		switch state {
-		case "CHANGES_REQUESTED":
+	for _, rv := range reviewgate.Standing(maintainerReviews) {
+		switch rv.State {
+		case reviewgate.StateChangesRequested:
 			return false, nil
-		case "APPROVED":
+		case reviewgate.StateApproved:
 			approved = true
 		}
 	}

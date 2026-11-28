@@ -63,6 +63,14 @@ func prReview(login, association, state string) map[string]any {
 	}
 }
 
+// prReviewAt is prReview with a submission time, for listings whose order
+// differs from the order the reviews were submitted in.
+func prReviewAt(login, association, state, submittedAt string) map[string]any {
+	r := prReview(login, association, state)
+	r["submitted_at"] = submittedAt
+	return r
+}
+
 func TestHasMaintainerApproval(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -104,6 +112,14 @@ func TestHasMaintainerApproval(t *testing.T) {
 				prReview("alice", "OWNER", "APPROVED"),
 			}},
 			want: true,
+		},
+		{
+			name: "latest by submission time, not listing order: later changes requested vetoes",
+			pages: [][]map[string]any{{
+				prReviewAt("alice", "OWNER", "CHANGES_REQUESTED", "2026-11-02T00:00:00Z"),
+				prReviewAt("alice", "OWNER", "APPROVED", "2026-11-01T00:00:00Z"),
+			}},
+			want: false,
 		},
 		{
 			name: "dismissed approval does not count",
