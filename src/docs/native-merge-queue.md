@@ -356,6 +356,81 @@ to its existing push/schedule events; candidate test jobs have read-only
 tokens. The coverage reporter's write permissions are job-scoped, not
 inherited by group test jobs.
 
+### Enqueues GitHub does not accept
+
+Before this, Hive named one enqueue refusal (unresolved conversations,
+above). Any other one came back as `native-merge-queue-enqueue` with an
+error, and Hive sent the same enqueue again on every pass: one PR produced
+about 950 refused mutations in 16 hours. A base whose rules require approving
+reviews would have done that for every PR that passed Hive's own gates
+before a person approved it.
+
+Hive now asks GitHub once per commit, and GitHub's answer decides what
+happens next.
+
+**Hive always sends the first enqueue for a commit.** The queue read Hive
+already makes for each PR also asks for GitHub's `reviewDecision` (one more
+field, no extra call), but that value never stops an enqueue on its own. A
+GitHub App that the base's rules allow to bypass the review requirement is
+enqueued as before, even while `reviewDecision` reads `REVIEW_REQUIRED`. If
+GitHub accepts the enqueue, nothing changes and nothing is remembered.
+
+**A refusal while a review is outstanding is the review refusal.** When
+GitHub refuses the enqueue on one of its rules for the PR (a GraphQL error
+typed `UNPROCESSABLE`) and `reviewDecision` reads `REVIEW_REQUIRED` or
+`CHANGES_REQUESTED`, the two together name the reason, whatever words the
+refusal uses. The PR parks at `stage/085-needs-decision` with
+`merge-refused:review-required`: the same reason, and the same request for a
+person's approval, as a direct merge GitHub refuses for a missing review.
+Hive does not enqueue that commit again while `reviewDecision` stays the
+same. The approval changes it, and Hive enqueues on the next pass. A new
+commit, or a change in the PR's `mergeable_state`, also tries again at once.
+Without any of those, Hive tries once more after 30 minutes, the same window
+as on a direct merge, which picks up a changed rule or a newly granted
+bypass.
+
+This naming depends on GitHub reporting a review decision for the PR. A
+refusal in the words GitHub uses on a direct merge ("At least 1 approving
+review is required ...") is treated the same way when `reviewDecision` shows
+nothing outstanding. GitHub's wording for the enqueue refusal has not been
+seen in a log yet. Where GitHub reports no review decision and the wording
+is not recognised, the PR is not named as waiting on a review: it waits
+under the backoff below, with GitHub's text in its reason.
+
+A refusal of another kind is never read as a missing review, whatever
+`reviewDecision` says. `FORBIDDEN` (the App may not enqueue) and `NOT_FOUND`
+back off under their own text, so a lost App permission does not read as "a
+person owes an approval".
+
+**Any other failed enqueue backs off.** The same commit waits 2 minutes
+after the first failure and twice as long after each further one. The wait
+stops growing at 1 hour when GitHub refused the enqueue, and at 15 minutes
+when the outcome is uncertain (see the table below). A new commit, a change
+in the PR's `mergeable_state` or `reviewDecision`, or the PR entering the
+queue starts over, and an accepted enqueue clears the wait. A single passing
+failure therefore delays a merge by 2 minutes at most. While it waits, the
+PR stays at `stage/100-merge-queue`, a merge train does not wait behind it,
+and its reason carries GitHub's error text:
+`native-merge-queue-enqueue: last try failed (<error>), next try 4m after it`.
+
+What the log and the mutation journal show depends on what GitHub answered.
+A refusal is a GraphQL error typed `UNPROCESSABLE`, `FORBIDDEN` or
+`NOT_FOUND`: GitHub turned the enqueue down, so nothing was queued. Anything
+else (a network error, a 5xx, a rate limit, a GraphQL error with no type)
+may or may not have queued the PR, and is reconciled on the next try as
+before. Its 15-minute cap keeps a waiting retry under the journal's
+30-minute stuck-operation report.
+
+| GitHub's answer             | Mutation journal | The pass that made the call                | Longest wait | Log line, once per wait                                            |
+|-----------------------------|------------------|--------------------------------------------|--------------|--------------------------------------------------------------------|
+| a refusal, review missing   | not applied      | `merge-refused:review-required`, no error  | 30 minutes   | INFO `automerge native queue enqueue refused for a missing review` |
+| a refusal, any other reason | not applied      | the backoff reason above, no error         | 1 hour       | WARN `automerge native queue enqueue refused, backing off`         |
+| anything else               | uncertain        | `native-merge-queue-enqueue` and the error | 15 minutes   | INFO `automerge native queue enqueue failed, backing off`          |
+
+A PR that is already in the queue is left alone, whatever its
+`reviewDecision` says. The waits are kept in memory, like the other
+remembered refusals, so a restart tries each waiting commit once more.
+
 ## Required checks and provider boundaries
 
 The existing eleven v5 checks cannot simply be required under their old

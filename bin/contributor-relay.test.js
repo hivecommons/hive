@@ -45,6 +45,8 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   const wsInstances = [];
   // Records every execFile (headless one-shot) invocation: { bin, args, opts }.
   const execFileCalls = [];
+  // Every `gh pr view` lookup the relay ran: { cmd, opts }.
+  const prViewCalls = [];
   const deferredExecFileCallbacks = [];
   let stateIdx = 0;
   // Guard against a runaway loop in the code under test eating all memory.
@@ -62,7 +64,7 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   let sessionGone = typeof sessionMissing === 'function' ? false : !!sessionMissing;
   const tmuxSessionGone = () => (typeof sessionMissing === 'function' ? sessionMissing() : sessionGone);
 
-  const fakeExecSync = (cmd) => {
+  const fakeExecSync = (cmd, opts) => {
     if (commands.length < MAX_RECORDED_COMMANDS) commands.push(cmd);
     if (/\btmux has-session\b/.test(cmd)) {
       if (tmuxSessionGone()) throw new Error('no server running on /tmp/tmux-1000/default');
@@ -152,7 +154,13 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
     //                  from one pane, each with its own metadata
     //   - unset      → '' falls through, which is what a JSON.parse failure and
     //                  therefore the UNVERIFIED path looks like.
+    // An Error may carry what a real execSync failure carries: `stderr` (gh's
+    // own words, which is how "no such pull request" is told from "could not
+    // look"), `status`, and `signal`/`code` for a lookup killed at its timeout.
+    // The options of each lookup are recorded, so a test can see that stderr
+    // is captured and the timeout is still in place.
     if (/gh pr view/.test(cmd)) {
+      prViewCalls.push({ cmd, opts });
       const asked = /gh pr view '([^']*)'/.exec(cmd);
       const answer = typeof prMeta === 'function' ? prMeta(asked ? asked[1] : '') : prMeta;
       if (answer instanceof Error) throw answer;
@@ -377,6 +385,7 @@ function loadRelay({ backend = 'copilot', backendBinary = null, backendPerm = '-
   relay.__wsInstances = wsInstances;
   relay.__tmpDir = tmpDir;
   relay.__execFileCalls = execFileCalls;
+  relay.__prViewCalls = prViewCalls;
   relay.__completeDeferredExecFile = (err, stdout = '', stderr = '') => {
     const callback = deferredExecFileCallbacks.shift();
     assert.ok(callback, 'no deferred execFile callback is pending');
@@ -16334,6 +16343,300 @@ test('#7862 detectPRURLs synthesizes a candidate from "PR #N" on the verdict lin
     assert.deepStrictEqual(relay.detectPRURLs(['HIVE_VERDICT: complete — fixes #198'], 'foo/bar'), [],
       'a bare #N is an issue reference');
   } finally { teardown(relay); }
+});
+
+// ── A cited pull request number that names nothing in the task repo ──────────
+//
+// #7862 synthesizes `https://github.com/<task repo>/pull/N` from "PR #N" on
+// the verdict line. An agent that cites a pull request in ANOTHER repository
+// by its number gets a URL that names nothing: a task in foo/bar whose verdict
+// mentioned "PR #1739" (a pull request in foo/common) had foo/bar/pull/1739
+// reported as its own, and so did the next task, in a third repository, off
+// the same number. verifyTaskPR() threw gh's stderr away and called every
+// failure UNKNOWN, an UNKNOWN candidate is reported, the hub answered 404 for
+// it and booked the completion idle as "relay reported a pull request the hub
+// could not verify". A completion that reports a PR sends no idle reason, so
+// nothing of what the agent had actually said reached the hub.
+//
+// "No such pull request" is an answer, not a lookup that could not be made, so
+// it refutes the candidate. Every other way gh can fail still means "could not
+// look", and is reported exactly as before.
+
+// What `gh pr view <url> --json …` writes to stderr for a number that names no
+// pull request in the repository (gh 2.106.0: exit status 1, empty stdout).
+const GH_PR_NOT_FOUND_STDERR = (n) =>
+  `GraphQL: Could not resolve to a PullRequest with the number of ${n}. (repository.pullRequest)\n`;
+// ghLookupError is an execSync failure as Node raises it: `stderr` holds what
+// the command wrote there, and the message repeats it under "Command failed".
+function ghLookupError(stderr, extra) {
+  const e = new Error(`Command failed: gh pr view\n${stderr}`);
+  e.status = 1;
+  e.stderr = stderr;
+  return Object.assign(e, extra || {});
+}
+const ghPRNotFound = (url) => ghLookupError(GH_PR_NOT_FOUND_STDERR(/\/pull\/(\d+)$/.exec(url)[1]));
+// The ways a lookup fails WITHOUT saying anything about the pull request.
+const GH_COULD_NOT_LOOK = [
+  ['gh is not installed', () => ghLookupError('/bin/sh: line 1: gh: command not found\n', { status: 127 })],
+  ['offline', () => ghLookupError('error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com\n')],
+  ['rate limited', () => ghLookupError('HTTP 403: API rate limit exceeded for user ID 1234. (https://api.github.com/graphql)\n')],
+  ['secondary rate limit', () => ghLookupError('HTTP 403: You have exceeded a secondary rate limit. Please wait a few minutes before you try again. (https://api.github.com/graphql)\n')],
+  ['not signed in', () => ghLookupError('To get started with GitHub CLI, please run:  gh auth login\n', { status: 4 })],
+  ['bad credentials', () => ghLookupError('HTTP 401: Bad credentials (https://api.github.com/graphql)\n')],
+  ['server error', () => ghLookupError('HTTP 502: Bad Gateway (https://api.github.com/graphql)\n')],
+  ['killed at the timeout', () => ghLookupError('', { status: null, signal: 'SIGTERM', code: 'ETIMEDOUT' })],
+  // GitHub gives this same answer for a repository the token cannot see, so
+  // it says nothing about whether the pull request exists.
+  ['repository not visible', () => ghLookupError("GraphQL: Could not resolve to a Repository with the name 'foo/bar'. (repository)\n")],
+];
+const CITED_ELSEWHERE = 'https://github.com/foo/bar/pull/1739';
+
+test('prLookupSaysNotFound is true only for an answer that the pull request does not exist', () => {
+  const relay = loadRelay({});
+  try {
+    for (const stderr of [
+      GH_PR_NOT_FOUND_STDERR(1739),
+      'GraphQL: Could not resolve to a PullRequest with the number of 7. (repository.pullRequest)',
+      // gh may print a notice ahead of the answer.
+      `A new release of gh is available: 2.105.0 -> 2.106.0\n${GH_PR_NOT_FOUND_STDERR(1739)}`,
+    ]) assert.strictEqual(relay.prLookupSaysNotFound(stderr), true, `not found: ${stderr}`);
+    for (const [label, make] of GH_COULD_NOT_LOOK) {
+      assert.strictEqual(relay.prLookupSaysNotFound(make().stderr), false, `could not look (${label})`);
+    }
+    for (const stderr of [
+      // A 404 that does not name the pull request: a repository the token
+      // cannot see, another endpoint, a proxy's error page.
+      'gh: Not Found (HTTP 404)',
+      // The pull request's own REST path: GitHub answers the same 404 for a
+      // repository the token cannot see, so it is not read as "no such PR".
+      'HTTP 404: Not Found (https://api.github.com/repos/foo/bar/pulls/1739)',
+      // gh's by-branch wording, which a lookup by URL never prints.
+      'no pull requests found for branch "fix/rollback"',
+      'HTTP 404: Not Found (https://api.github.com/repos/foo/bar)',
+      'HTTP 404: Not Found (https://api.github.com/repos/foo/bar/issues/1739)',
+      'GraphQL: Resource not accessible by integration (repository.pullRequest)',
+      'GraphQL: Could not resolve to an Issue with the number of 1739. (repository.issue)',
+      'Post "https://api.github.com/graphql": dial tcp: lookup api.github.com: no such host',
+      'Post "https://api.github.com/graphql": net/http: TLS handshake timeout',
+      'Post "https://api.github.com/graphql": context deadline exceeded',
+      'spawnSync /bin/sh ETIMEDOUT',
+      'gh: command not found',
+      '⛔ BLOCKED: gh pr view is not available to this agent. reason=restricted_command',
+      '', null, undefined, 404, {},
+    ]) assert.strictEqual(relay.prLookupSaysNotFound(stderr), false, `not an answer about the pull request: ${stderr}`);
+  } finally { teardown(relay); }
+});
+
+test('verifyTaskPR refutes a pull request GitHub says does not exist, and only that', () => {
+  const relay = loadRelay({ prMeta: ghPRNotFound });
+  try {
+    const found = relay.verifyTaskPR(CITED_ELSEWHERE, { repo: 'foo/bar', taskStartedAt: Date.now() - 60000, contributorLogin: 'me' });
+    assert.strictEqual(found.status, relay.PR_ATTRIBUTION_REFUTED, 'not found is a definite answer');
+    assert.strictEqual(found.reason, 'no such pull request in foo/bar');
+    assert.strictEqual(found.notFound, true);
+    // The lookup keeps its bound, and gh's stderr is captured instead of
+    // being thrown away by the shell.
+    assert.strictEqual(relay.__prViewCalls.length, 1);
+    const { cmd, opts } = relay.__prViewCalls[0];
+    assert.ok(cmd.includes(`gh pr view '${CITED_ELSEWHERE}' --json`), cmd);
+    assert.ok(!/2>\s*\/dev\/null/.test(cmd), `stderr must reach the relay: ${cmd}`);
+    assert.strictEqual(opts.timeout, 20000, 'the lookup is still bounded at 20s');
+    assert.deepStrictEqual(opts.stdio, ['ignore', 'pipe', 'pipe']);
+  } finally { teardown(relay); }
+
+  for (const [label, make] of GH_COULD_NOT_LOOK) {
+    const r = loadRelay({ prMeta: make });
+    try {
+      const found = r.verifyTaskPR(CITED_ELSEWHERE, { repo: 'foo/bar', taskStartedAt: Date.now() - 60000 });
+      assert.strictEqual(found.status, r.PR_ATTRIBUTION_UNKNOWN, `${label}: a lookup that could not be made is never a refutation`);
+      assert.strictEqual(found.notFound, undefined, label);
+      assert.ok(found.reason.startsWith(`could not query GitHub for ${CITED_ELSEWHERE}: `), `${label}: ${found.reason}`);
+    } finally { teardown(r); }
+  }
+});
+
+test('verifyTaskPR keeps what it repeats of a failed lookup short, on one line and free of tokens', () => {
+  const noisy = `remote said gho_abcdefghij0123456789 is not valid\n${'x'.repeat(60)}\n`.repeat(500);
+  const relay = loadRelay({ prMeta: () => ghLookupError(noisy) });
+  try {
+    const found = relay.verifyTaskPR(CITED_ELSEWHERE, {});
+    assert.strictEqual(found.status, relay.PR_ATTRIBUTION_UNKNOWN);
+    const prefix = `could not query GitHub for ${CITED_ELSEWHERE}: `;
+    assert.ok(found.reason.startsWith(prefix), found.reason);
+    const detail = found.reason.slice(prefix.length);
+    assert.ok(Number.isInteger(relay.PR_LOOKUP_ERROR_MAX_CHARS) && relay.PR_LOOKUP_ERROR_MAX_CHARS > 0 && relay.PR_LOOKUP_ERROR_MAX_CHARS <= 500,
+      `the bound must be a small finite integer, got ${relay.PR_LOOKUP_ERROR_MAX_CHARS}`);
+    assert.ok(detail.length <= relay.PR_LOOKUP_ERROR_MAX_CHARS + 3, `detail is ${detail.length} characters`);
+    assert.ok(!/[\r\n]/.test(found.reason), 'one line');
+    assert.ok(!found.reason.includes('gho_abcdefghij0123456789'), found.reason);
+    assert.ok(found.reason.includes('[REDACTED]'), found.reason);
+  } finally { teardown(relay); }
+  // With nothing on stderr the error's own message is what is repeated.
+  const quiet = loadRelay({ prMeta: new Error('gh: offline') });
+  try {
+    assert.strictEqual(quiet.verifyTaskPR(CITED_ELSEWHERE, {}).reason, `could not query GitHub for ${CITED_ELSEWHERE}: gh: offline`);
+  } finally { teardown(quiet); }
+});
+
+test('#7862 a "PR #N" that names no pull request in the task repo is refuted, and the verdict is left alone', () => {
+  const asked = [];
+  const relay = loadRelay({ prMeta: (url) => { asked.push(url); return ghPRNotFound(url); } });
+  const logged = [];
+  const log = console.log; console.log = (...a) => { logged.push(a.join(' ')); };
+  try {
+    const lines = ['HIVE_VERDICT: blocked — waiting on foo/common PR #1739 to land'];
+    assert.deepStrictEqual(relay.detectPRURLs(lines, 'foo/bar'), [CITED_ELSEWHERE], 'the number is still a candidate');
+    const found = relay.resolveTaskPR(lines, { repo: 'foo/bar', taskId: 't-cited', taskStartedAt: Date.now() - 60000, contributorLogin: 'me' });
+    assert.deepStrictEqual(asked, [CITED_ELSEWHERE]);
+    assert.strictEqual(found.url, '', 'a pull request that does not exist must not be reported as this task\'s');
+    assert.strictEqual(found.suppressesVerdict, false, 'the agent\'s verdict stands');
+    assert.strictEqual(found.evidence.status, relay.PR_ATTRIBUTION_REFUTED);
+    assert.strictEqual(found.evidence.reason, 'no such pull request in foo/bar');
+    assert.ok(logged.some(l => l.includes(`Ignoring PR ${CITED_ELSEWHERE} for t-cited`) && l.includes('no such pull request in foo/bar')),
+      `the refutation must be logged with its reason; got:\n${logged.join('\n')}`);
+    assert.ok(!logged.some(l => l.includes('Detected PR for t-cited')), `nothing is detected; got:\n${logged.join('\n')}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7862 the walk continues past a cited number that names nothing to the pull request the task opened', () => {
+  const SHIPPED = 'https://github.com/foo/bar/pull/205';
+  const taskStartedAt = Date.now() - 60 * 60 * 1000;
+  const asked = [];
+  const relay = loadRelay({
+    prMeta: (url) => {
+      asked.push(url);
+      if (url === SHIPPED) return { url: SHIPPED, author: { login: 'me' }, createdAt: new Date(taskStartedAt + 20 * 60 * 1000).toISOString(), mergedAt: null, state: 'OPEN' };
+      return ghPRNotFound(url);
+    },
+  });
+  const log = console.log; console.log = () => {};
+  try {
+    // The verdict line cites the other repository's pull request by number
+    // and its own only in the output above it, so the number is verified first.
+    const lines = [
+      `Opened ${SHIPPED}`,
+      'HIVE_VERDICT: complete — ported the change from foo/common PR #1739; the pull request is open',
+    ];
+    const found = relay.resolveTaskPR(lines, { repo: 'foo/bar', taskId: 't-ported', taskStartedAt, contributorLogin: 'me' });
+    assert.deepStrictEqual(asked, [CITED_ELSEWHERE, SHIPPED], 'not found must not end the walk');
+    assert.strictEqual(found.url, SHIPPED);
+    assert.strictEqual(found.evidence.status, relay.PR_ATTRIBUTION_CONFIRMED);
+    assert.strictEqual(found.suppressesVerdict, true);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7862 a "PR #N" that does exist in the task repo is still credited from the number alone', () => {
+  const OWN = 'https://github.com/foo/bar/pull/198';
+  const relay = loadRelay({ prMeta: { url: OWN, author: { login: 'me' }, createdAt: new Date().toISOString(), mergedAt: null, state: 'OPEN' } });
+  const log = console.log; console.log = () => {};
+  try {
+    const found = relay.resolveTaskPR(['HIVE_VERDICT: complete — PR #198 delivers it'],
+      { repo: 'foo/bar', taskStartedAt: Date.now() - 60000, contributorLogin: 'me' });
+    assert.strictEqual(found.url, OWN);
+    assert.strictEqual(found.evidence.status, relay.PR_ATTRIBUTION_CONFIRMED);
+    assert.strictEqual(found.suppressesVerdict, true);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7862 a cited number gh could not look up is still reported unverified, as before', () => {
+  for (const [label, make] of GH_COULD_NOT_LOOK) {
+    const asked = [];
+    const relay = loadRelay({ prMeta: (url) => { asked.push(url); return make(); } });
+    const log = console.log; console.log = () => {};
+    try {
+      const found = relay.resolveTaskPR(['HIVE_VERDICT: complete — PR #1739 delivers it'],
+        { repo: 'foo/bar', taskStartedAt: Date.now() - 60000, contributorLogin: 'me' });
+      assert.deepStrictEqual(asked, [CITED_ELSEWHERE], label);
+      assert.strictEqual(found.url, CITED_ELSEWHERE, `${label}: dropping it would start losing real pull requests`);
+      assert.strictEqual(found.evidence.status, relay.PR_ATTRIBUTION_UNKNOWN, label);
+      assert.strictEqual(found.suppressesVerdict, false, label);
+    } finally { console.log = log; teardown(relay); }
+  }
+});
+
+test('#7862 end to end: a verdict citing another repository\'s pull request reaches the hub with no PR and the agent\'s own words', () => {
+  const cases = [
+    {
+      label: 'no_work_needed',
+      said: 'nothing to change in this repository; the fix is foo/common PR #1739',
+      token: 'no_work_needed',
+      want: { verdict: 'no_work_needed', verdict_blocked: undefined },
+    },
+    {
+      label: 'blocked',
+      said: 'waiting on foo/common PR #1739 to land',
+      token: 'blocked',
+      want: { verdict: 'no_work_needed', verdict_blocked: true },
+    },
+    {
+      label: 'blocked on the contributor\'s own tooling',
+      said: 'the push to my fork is rejected, the same failure foo/common PR #1739 hit',
+      token: 'blocked',
+      want: { verdict: undefined, verdict_blocked: undefined },
+    },
+  ];
+  for (const c of cases) {
+    const relay = loadRelay({ backend: 'copilot', paneText: `HIVE_VERDICT: ${c.token} — ${c.said}\n${IDLE_PANE}`, prMeta: ghPRNotFound });
+    const log = console.log; console.log = () => {};
+    try {
+      dispatchTask(relay, `ct-cited-${c.label.replace(/[^a-z0-9]+/gi, '-')}`, 140);
+      relay.__crashTick();
+      const completed = relay.__sent.filter(m => m.type === 'task_complete');
+      assert.strictEqual(completed.length, 1, `${c.label}: the verdict completes the task`);
+      assert.strictEqual(completed[0].pr_url, '', `${c.label}: no pull request is reported`);
+      assert.strictEqual(completed[0].verdict, c.want.verdict, c.label);
+      assert.strictEqual(completed[0].verdict_blocked, c.want.verdict_blocked, c.label);
+      assert.strictEqual(completed[0].verdict_reason, c.said, `${c.label}: the agent's reason travels unchanged`);
+      assert.strictEqual(completed[0].completion_signal, 'verdict', c.label);
+    } finally { console.log = log; teardown(relay); }
+  }
+});
+
+test('#7862 end to end: a complete citing another repository\'s pull request is put to the agent once, then reported with what it said', () => {
+  const FIRST = 'HIVE_VERDICT: complete — the fix is committed, same change as foo/common PR #1739';
+  const SAID = 'could not open it: the push to my fork is rejected, as it was for foo/common PR #1739';
+  let pane = 'Working…';
+  const relay = loadRelay({ backend: 'copilot', paneText: () => pane, prMeta: ghPRNotFound });
+  const log = console.log; console.log = () => {};
+  try {
+    dispatchTask(relay, 'ct-cited-complete', 141);
+    const before = relay.__tmuxSends().length;
+    pane = `${FIRST}\n${IDLE_PANE}`;
+    relay.__crashTick();
+    // On the relay before this fix the completion went out here, carrying
+    // foo/bar/pull/1739 as the task's pull request.
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0,
+      'a complete whose only pull request does not exist is one that claims a PR nobody opened');
+    assert.strictEqual(relay.__tmuxSends().slice(before).filter(c => c.includes(relay.PR_CLAIM_FOLLOWUP_ANCHOR)).length, 1,
+      'the agent is asked once to open the pull request or say there is nothing to ship');
+
+    pane = `${FIRST}\n> ${relay.PR_CLAIM_FOLLOWUP_MESSAGE}\nHIVE_VERDICT: complete — ${SAID}\n${IDLE_PANE}`;
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1, 'the second verdict is final');
+    assert.strictEqual(completed[0].pr_url, '', 'no pull request is reported');
+    assert.strictEqual(completed[0].verdict, undefined, 'the hub books it idle');
+    assert.strictEqual(completed[0].verdict_reason, `agent reported complete without a pull request: ${SAID}`,
+      'the hub is told what the agent said, not that a pull request could not be verified');
+    assert.strictEqual(relay.__tmuxSends().filter(c => c.includes(relay.PR_CLAIM_FOLLOWUP_ANCHOR)).length, 1, 'one follow-up per task');
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#7862 end to end: an environment-failure verdict citing another repository\'s pull request still fails the task', () => {
+  const PANE = `HIVE_VERDICT: complete — environment failure: every command fails before running, as reported on foo/common PR #1739\n${IDLE_PANE}`;
+  const relay = loadRelay({ backend: 'copilot', paneText: PANE, prMeta: ghPRNotFound });
+  const log = console.log; console.log = () => {};
+  const warn = console.warn; console.warn = () => {};
+  const err = console.error; console.error = () => {};
+  try {
+    dispatchTask(relay, 'ct-cited-env', 142);
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0, 'never booked as completed');
+    const failed = relay.__sent.filter(m => m.type === 'task_failed');
+    assert.strictEqual(failed.length, 1, `expected one task_failed, sent ${JSON.stringify(relay.__sent.map(m => m.type))}`);
+    assert.strictEqual(failed[0].failure_kind, 'environment');
+    assert.ok(failed[0].reason.includes('every command fails before running'), failed[0].reason);
+  } finally { console.log = log; console.warn = warn; console.error = err; teardown(relay); }
 });
 
 // ── A PR opened in the contributor's own fork ────────────────────────────────

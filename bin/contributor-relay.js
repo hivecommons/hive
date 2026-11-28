@@ -7090,6 +7090,9 @@ function detectPRURLs(lines, repo) {
   // known, that IS a candidate — synthesized as the repo's URL and put
   // through the same verification as a pasted one, so a `#N` that turns out
   // to be someone else's PR is refuted like any other researched reference.
+  // So is a `#N` that names no pull request here at all, which is what the
+  // synthesis produces when the agent was citing a PR in ANOTHER repository
+  // by its number: verifyTaskPR() reads "no such pull request" as an answer.
   // Verdict lines only: a bare "#42" elsewhere in a transcript is usually an
   // issue.
   const PR_REF_RE = /\b(?:PR|pull[ -]request)\s*#(\d+)/gi;
@@ -7264,22 +7267,111 @@ function prAttributionEvidence(meta, opts) {
   return { status: PR_ATTRIBUTION_CONFIRMED, reason: 'authored by this contributor during this task' };
 }
 
+// ── "No such pull request" is an answer, not a failed lookup ─────────────────
+//
+// verifyTaskPR() used to run gh with `2>/dev/null` and call every failure
+// UNKNOWN, on the rule that a lookup which could not be made must never
+// discard a real PR. That rule is right, but one failure is not of that kind:
+// GitHub answering that the pull request does not exist. It was read as "could
+// not look" all the same, an UNKNOWN candidate is reported, and so the relay
+// reported pull requests that were never there.
+//
+// It took #7862's synthesis to make that routine. "PR #N" on a verdict line
+// becomes `https://github.com/<task repo>/pull/N`, and an agent that cites a
+// pull request in ANOTHER repository by its number gets a URL that names
+// nothing. Observed live on four tasks across two backends: a task in
+// org/repo-a reported org/repo-a/pull/1739 where 1739 was a pull request in
+// org/common; the next task, in org/repo-b, reported org/repo-b/pull/1739 off
+// the same number; a third reported a number its previous task had cited from
+// a sibling repository. The hub answered 404 for each and booked the
+// completion idle as "relay reported a pull request the hub could not verify".
+// A completion that reports a PR carries no idle reason (idleReasonWireFields),
+// so that sentence was all the record said, and what the agent had printed (in
+// those tasks, that its push had been rejected) was nowhere on the hub.
+//
+// What gh prints, checked against gh 2.106.0: `gh pr view <url> --json ...`
+// resolves the URL's number through GraphQL, exits 1 with nothing on stdout,
+// and writes one line to stderr:
+//
+//   GraphQL: Could not resolve to a PullRequest with the number of 1739. (repository.pullRequest)
+//
+// The matcher is deliberately narrow, because a false "not found" costs a real
+// PR its credit while a false "could not look" only leaves today's behaviour:
+//
+// only the GraphQL sentence above, the one answer that was observed. It names
+// the PullRequest, so the repository resolved and the number did not. (A
+// token that can see a private repository but not read its pull requests
+// should get "Resource not accessible", which stays UNKNOWN; that was not
+// checked against such a token.)
+//
+// Deliberately NOT matched, and so still UNKNOWN: "Could not resolve to a
+// Repository" and any `HTTP 404`, the pull request's own REST path
+// (`.../pulls/N`) included. GitHub gives the same 404 for a repository the
+// token cannot see as for a missing pull request, so it says nothing about
+// the pull request. gh's "no pull requests found" is its by-branch wording,
+// which a lookup by URL never prints and which can be wrong about a fresh
+// pull request. Every auth, rate-limit, network and timeout failure is
+// UNKNOWN as before, and so is a gh that is not installed ("command not
+// found" is not this "not found").
+const PR_LOOKUP_NOT_FOUND_RES = [
+  /Could not resolve to a PullRequest with the number of \d+/i,
+];
+
+// prLookupSaysNotFound says whether gh's stderr is GitHub answering that the
+// pull request does not exist. PURE, so the wordings are testable without a gh
+// binary. Anything that is not a string is "did not say so".
+function prLookupSaysNotFound(stderr) {
+  if (typeof stderr !== 'string' || !stderr) return false;
+  return PR_LOOKUP_NOT_FOUND_RES.some(re => re.test(stderr));
+}
+
+// PR_LOOKUP_ERROR_MAX_CHARS bounds how much of a failed lookup is repeated in
+// the evidence reason, which resolveTaskPR() logs. With stderr captured, Node
+// appends all of it to the error's message, and gh can print a page of it.
+const PR_LOOKUP_ERROR_MAX_CHARS = 200;
+
+// prLookupErrorDetail is what a failed lookup said, fit to log: gh's stderr
+// when it wrote any (else the error's own message), on one line, scrubbed by
+// redactTokens() and cut at PR_LOOKUP_ERROR_MAX_CHARS. The text is only ever
+// logged; it is never passed to a shell.
+function prLookupErrorDetail(e) {
+  const stderr = e && e.stderr ? String(e.stderr) : '';
+  const raw = stderr.trim() ? stderr : String((e && e.message) || '');
+  const flat = redactTokens(raw.replace(/\s+/g, ' ').trim()) || 'unknown error';
+  return flat.length > PR_LOOKUP_ERROR_MAX_CHARS ? `${flat.slice(0, PR_LOOKUP_ERROR_MAX_CHARS)}...` : flat;
+}
+
 // verifyTaskPR is the effectful half: ask gh about the candidate, then apply the
 // pure rules above. Bounded and non-fatal — a gh that is missing, rate-limited
-// or offline yields UNKNOWN, never a refutation.
+// or offline yields UNKNOWN, never a refutation. The one failure that IS a
+// refutation is GitHub saying the pull request does not exist
+// (prLookupSaysNotFound): that is a fact about the candidate, not about the
+// lookup. `notFound` marks it so the log can say the number names nothing
+// rather than that the agent researched it.
 function verifyTaskPR(url, opts) {
   if (!url) return { status: PR_ATTRIBUTION_UNKNOWN, reason: 'no candidate URL' };
   let meta = null;
   try {
+    // stderr is piped, not inherited and not sent to /dev/null: it is how the
+    // two kinds of failure are told apart, and the only place it goes is the
+    // catch below.
     const raw = execSync(
-      `gh pr view ${shellQuote(url)} --json url,author,createdAt,mergedAt,state 2>/dev/null`,
-      { encoding: 'utf8', timeout: 20000 }
+      `gh pr view ${shellQuote(url)} --json url,author,createdAt,mergedAt,state`,
+      { encoding: 'utf8', timeout: 20000, stdio: ['ignore', 'pipe', 'pipe'] }
     );
     meta = JSON.parse(raw);
   } catch (e) {
+    if (prLookupSaysNotFound(e && e.stderr ? String(e.stderr) : '')) {
+      const named = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/pull\/\d+/.exec(url);
+      return {
+        status: PR_ATTRIBUTION_REFUTED,
+        reason: `no such pull request in ${named ? named[1] : 'that repository'}`,
+        notFound: true,
+      };
+    }
     return {
       status: PR_ATTRIBUTION_UNKNOWN,
-      reason: `could not query GitHub for ${url}: ${(e && e.message) || 'unknown error'}`,
+      reason: `could not query GitHub for ${url}: ${prLookupErrorDetail(e)}`,
     };
   }
   return prAttributionEvidence(meta, opts);
@@ -7303,6 +7395,12 @@ function verifyTaskPR(url, opts) {
 // first, then newest-printed first), each refuted one is logged as before,
 // and the walk continues until a candidate survives.
 //
+// A candidate GitHub says does not exist is refuted like any other (see
+// prLookupSaysNotFound): the walk moves on to the next one, and when nothing
+// survives no PR is reported and the agent's verdict and reason go to the hub
+// as it printed them. For a `complete` that leaves the #7862 follow-up to ask
+// for the PR the verdict claimed, which is the right question to put to it.
+//
 // PR_ATTRIBUTION_MAX_LOOKUPS bounds the gh calls. Each is a blocking, up to
 // 20-second execSync in the tick loop, and a pane that rendered `gh pr view`
 // for a dozen prior PRs must not spend minutes refuting them one by one. The
@@ -7320,6 +7418,11 @@ function resolveTaskPR(lines, opts) {
     const candidate = candidates[i];
     evidence = verifyTaskPR(candidate, o);
     if (evidence.status === PR_ATTRIBUTION_REFUTED) {
+      if (evidence.notFound) {
+        console.log(`Ignoring PR ${candidate} for ${o.taskId || 'task'}: ${evidence.reason}; ` +
+          `the pane cited it, most likely a pull request or issue number from another repository`);
+        continue;
+      }
       console.log(`Ignoring PR ${candidate} for ${o.taskId || 'task'} — not this task's work (${evidence.reason}); ` +
         `it was visible in the pane because the agent researched it (kubestellar/hive#6662)`);
       continue;
@@ -11904,6 +12007,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     prAttributionEvidence,
     CLI_USAGE_ERROR_RE,
     verifyTaskPR,
+    // Telling "no such pull request" from "could not look" (see verifyTaskPR).
+    prLookupSaysNotFound,
+    PR_LOOKUP_ERROR_MAX_CHARS,
     resolveTaskPR,
     PR_ATTRIBUTION_CONFIRMED,
     PR_ATTRIBUTION_REFUTED,
