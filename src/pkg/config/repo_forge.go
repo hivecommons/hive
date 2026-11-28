@@ -247,3 +247,38 @@ func (c *Config) validateRepoForges() error {
 	}
 	return nil
 }
+
+// HeartbeatForge is the forge a hive reports to its hub for display: the kind
+// its primary repo lives on and, for a forge other than GitHub, that forge's
+// instance root and the hive's own login there. A GitHub hive reports only its
+// kind, because its host already rides the heartbeat as github_host
+// (hivecommons/hive#20181).
+type HeartbeatForge struct {
+	Kind    string
+	BaseURL string
+	Login   string
+}
+
+// HeartbeatForge returns the forge of the primary repo (project.forge when no
+// primary repo is set), read from config only so it is safe on every beat.
+// The login is forgejo.login for a Forgejo repo, else project.ai_author; it
+// is empty when neither is set, since resolving the token's user would need a
+// network call.
+func (c *Config) HeartbeatForge() HeartbeatForge {
+	if c == nil {
+		return HeartbeatForge{Kind: ForgeGitHub}
+	}
+	repo := c.Project.PrimaryRepo
+	kind := c.ForgeKindForRepo(repo)
+	if !onNonGitHubForge(kind) {
+		return HeartbeatForge{Kind: ForgeGitHub}
+	}
+	login := ""
+	if kind == ForgeForgejo {
+		login = strings.TrimSpace(c.Forgejo.Login)
+	}
+	if login == "" {
+		login = strings.TrimSpace(c.Project.AIAuthor)
+	}
+	return HeartbeatForge{Kind: kind, BaseURL: c.ForgeURLForRepo(repo), Login: login}
+}

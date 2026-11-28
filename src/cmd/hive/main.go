@@ -4963,6 +4963,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 			// Head of the hash-chained audit log (#19439), held by the hub out
 			// of reach of a writer on /data. One read so seq and hash agree.
 			auditChainHead := b.dashSrv.AuditChainHead()
+			heartbeatForge := b.cfg.HeartbeatForge()
 
 			return &spoke.HeartbeatPayload{
 				AgentsWithModel:      &agentsWithModel,
@@ -5137,6 +5138,11 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// api_url: github.ibm.com must report github.ibm.com, not be
 				// silently rendered as github.com in the spokes table.
 				GitHubHost: b.cfg.GitHub.HostLabel(),
+				// The forge the primary repo is on, so the hub does not draw
+				// a Forgejo-only hive as github.com (hivecommons/hive#20181).
+				ForgeKind:    heartbeatForge.Kind,
+				ForgeBaseURL: heartbeatForge.BaseURL,
+				ForgeLogin:   heartbeatForge.Login,
 				// Read after Health above, so it reflects this beat's probe.
 				ForgeUnreachable:         b.dashSrv.ForgeUnreachable(),
 				GitHubAppRequired:        b.dashSrv.IsGitHubAppRequired(),
@@ -5431,6 +5437,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						acmmLvl = *b.cfg.ACMMLevel
 					}
 					providerLimitReason, providerLimitRebuffs, providerLimitHiveWide, providerLimitAgents := spoke.ProviderLimitHeartbeatFields(agents, dashboard.InferenceBudgetExceeded)
+					hbForge := b.cfg.HeartbeatForge()
 					lastWriteKickAt, kickDisposition, kickSkipReason, notWritableQueued :=
 						outputFreshnessHeartbeatFields(acmmLvl, govState, agents)
 					return &spoke.HeartbeatPayload{
@@ -5475,6 +5482,11 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 						AgentErrorStreaks: b.tokenCollector.AgentErrorStreaks(),
 						ConsentWedged:     b.agentMgr.ConsentWedgedAgents(),
 						NoCadenceAgents:   b.gov.NoCadenceAgents(),
+						// Plain config reads like Repos above, so this beat does
+						// not redraw a Forgejo hive as github.com (#20181).
+						ForgeKind:    hbForge.Kind,
+						ForgeBaseURL: hbForge.BaseURL,
+						ForgeLogin:   hbForge.Login,
 					}
 
 				}, targetSHA, b.logger)
