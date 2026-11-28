@@ -188,6 +188,14 @@ type AuditLog struct {
 	// in the heartbeat, updated at write time rather than by scanning the log.
 	// Rebuilt from the on-disk audit log at startup, and the hub keeps the
 	// running maximum per user, so a spoke restart never regresses it there.
+	//
+	// Guarded by actMu, NOT mu: mu is held across the on-disk audit write
+	// (and its lumberjack rotation) and the PR-throughput counters rewrite,
+	// so on a slow /data volume a reader queued on mu can wait seconds. The
+	// heartbeat's user_last_actions collector reads this map and must never
+	// wait on disk I/O (#20300). actMu is a leaf lock: it may be taken while
+	// holding mu, never the other way round.
+	actMu      sync.Mutex
 	lastAction map[string]time.Time
 	// prCounters are the durable all-time PR throughput totals (opened /
 	// merged / closed), bumped at write time in Log. prCountersPath is where
@@ -326,7 +334,8 @@ func (a *AuditLog) logRecordAt(timestamp, user, action, detail, agent, repo stri
 // noteUserAction records ts as user's most recent audited action, skipping
 // pseudo-users and never moving a user's timestamp backwards (the on-disk
 // replay in loadFromDisk feeds entries oldest-first, but ordering is not
-// guaranteed across rotated files). Callers must hold a.mu.
+// guaranteed across rotated files). It takes a.actMu itself, so callers may
+// or may not hold a.mu.
 func (a *AuditLog) noteUserAction(user, ts string) {
 	if auditPseudoUsers[user] {
 		return
@@ -335,6 +344,8 @@ func (a *AuditLog) noteUserAction(user, ts string) {
 	if err != nil {
 		return
 	}
+	a.actMu.Lock()
+	defer a.actMu.Unlock()
 	// Lazy init: several tests (and any future caller) construct AuditLog as a
 	// bare struct literal rather than through newAuditLog.
 	if a.lastAction == nil {
@@ -354,9 +365,12 @@ func (a *AuditLog) noteUserAction(user, ts string) {
 // construction: bare usernames and timestamps only — no entry details, no
 // tokens. It rides the heartbeat so the hub can tell users who DO things
 // apart from users who merely leave a tab open.
+//
+// It takes only a.actMu, never a.mu, so a concurrent audit write blocked on a
+// slow disk cannot stall the heartbeat collect (#20300).
 func (a *AuditLog) LastUserActions() map[string]string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	a.actMu.Lock()
+	defer a.actMu.Unlock()
 	out := make(map[string]string, len(a.lastAction))
 	for user, t := range a.lastAction {
 		out[user] = t.UTC().Format(time.RFC3339)

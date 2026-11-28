@@ -1,0 +1,1 @@
+- The hub heartbeat no longer overruns its collect budget on hives with a slow `/data` volume: the `user_last_actions` collector reads its own lock instead of waiting behind in-flight audit-log disk writes ([#20300](https://github.com/hivecommons/hive/issues/20300)).
