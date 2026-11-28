@@ -97,6 +97,7 @@ type forgeCloneAuthorizerSource interface {
 type forgeCloneRequest struct {
 	Agent string `json:"agent"`
 	Repo  string `json:"repo"`
+	PR    int    `json:"pr,omitempty"`
 }
 
 // forgeCloneResponse is written next to the request as .result.json.
@@ -351,6 +352,10 @@ func (r *forgeRequestRelay) handleClone(ctx context.Context, path string) (fetch
 		r.settle(path, ".rejected", false)
 		r.logger.Warn("forge request relay: clone REJECTED", "agent", req.Agent, "repo", req.Repo, "reason", reason)
 	}
+	if req.PR < 0 {
+		reject("pr must be a positive pull request number")
+		return
+	}
 	if r.cloneAuthz == nil {
 		deny("no authorizer configured (fail closed)")
 		return
@@ -453,8 +458,12 @@ func (r *forgeRequestRelay) handleClone(ctx context.Context, path string) (fetch
 	fetchEnv := append(forgeCloneWithConfig(github.PushBranchGitEnv(stage, remoteURL, token), "http.followRedirects", "false"), "GIT_DIR="+stage)
 	scrub := forgeCloneScrubber(token, fetchEnv)
 	fetched = true
-	if out, err := forgeCloneExec(ctx, stage, fetchEnv, "fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head",
-		remoteURL, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"); err != nil {
+	fetchArgs := []string{"fetch", "--no-tags", "--no-recurse-submodules", "--no-write-fetch-head",
+		remoteURL, "+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*"}
+	if req.PR > 0 {
+		fetchArgs = append(fetchArgs, fmt.Sprintf("+refs/pull/%d/head:refs/hive/pull/%d/head", req.PR, req.PR))
+	}
+	if out, err := forgeCloneExec(ctx, stage, fetchEnv, fetchArgs...); err != nil {
 		retry("git fetch failed: " + scrub(github.FirstOutputLines(out, forgePushOutputLines)))
 		return
 	}
