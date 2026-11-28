@@ -369,6 +369,17 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 			}
 			continue
 		}
+		if h.server.deps != nil && !h.server.deps.Config.RepoOnGitHub(repo.Full) {
+			if scope.collects() {
+				for _, raw := range repo.ActionableIssues {
+					issue, ref, ok := decodeActionableIssue(repo.Full, raw)
+					if ok {
+						withheld.addReason(withheldCandidateFrom(repo.Full, ref, issue), filterUnsupportedForge)
+					}
+				}
+			}
+			continue
+		}
 		if until := h.repoUnmintableUntil(repo.Full, time.Now()); !until.IsZero() {
 			// Assignment already discovered this failure. Project its recorded
 			// cooldown without speculative GitHub token minting (#14003).

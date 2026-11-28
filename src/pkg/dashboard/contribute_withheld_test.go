@@ -593,6 +593,7 @@ func TestWithheld_EveryReasonHasALabel(t *testing.T) {
 		contributorAdmissionReasonDependencyBlocked,
 		contributorAdmissionReasonDependencyUnknown,
 		withheldReasonDisabledRepo,
+		filterUnsupportedForge,
 		withheldReasonRepoUnmintable,
 		withheldReasonTracker,
 		withheldReasonUmbrella,
