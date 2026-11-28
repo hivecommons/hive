@@ -40,6 +40,11 @@ import (
 //     changedFiles, and an issue no stateReason or milestone.
 //     The result next to the request only names that file. A view the agent
 //     leaves behind is removed after forgeReadViewTTL.
+//   - The same queue serves `hive-gh pr reviews`, `pr comments` / `issue
+//     comments` and `run view --log` / `--log-failed` / `--job <id> --log`
+//     (#20277) with the kinds reviews, comments, run-log, run-log-failed and
+//     job-log. A log view carries at most the last forgeReadJobLogLimit
+//     bytes of a job, and forgeReadRunLogLimit over a run.
 
 const (
 	// forgeReadRequestDir is the read-request queue. hive-gh writes it.
@@ -51,7 +56,30 @@ const (
 	forgeReadViewTTL = 10 * time.Minute
 	// forgeReadMaxPerScan bounds the forge reads served in one scan.
 	forgeReadMaxPerScan = 8
+	// forgeReadMaxReviewCommentReads bounds the per-review comment reads
+	// of one reviews request; a review past it reports commentsRead false.
+	forgeReadMaxReviewCommentReads = 30
+	// forgeReadJobLogLimit is the most of one job's log a view carries:
+	// its last bytes, where a failure usually is.
+	forgeReadJobLogLimit = 256 << 10
+	// forgeReadRunLogLimit is the most log one run view carries over all
+	// its jobs.
+	forgeReadRunLogLimit = 512 << 10
+	// forgeReadMaxRunJobs bounds the jobs whose logs one run view reads.
+	forgeReadMaxRunJobs = 20
 )
+
+// forgeReadKinds are the kinds the relay serves. pr, issue and checks
+// (#20230) carry a pull request or issue number, as do reviews and comments
+// (#20277); run-log and run-log-failed carry a Forgejo Actions run ID, and
+// job-log a job ID.
+var forgeReadKinds = map[string]bool{
+	"pr": true, "issue": true, "checks": true,
+	"reviews": true, "comments": true,
+	"run-log": true, "run-log-failed": true, "job-log": true,
+}
+
+const forgeReadKindList = "pr, issue, checks, reviews, comments, run-log, run-log-failed, job-log"
 
 // forgeReadRequest is what hive-gh writes.
 type forgeReadRequest struct {
@@ -144,14 +172,12 @@ func (r *forgeRequestRelay) handleRead(ctx context.Context, path string) (read b
 		r.settle(path, ".rejected", false)
 		r.logger.Warn("forge request relay: read REJECTED", "agent", req.Agent, "repo", req.Repo, "reason", reason)
 	}
-	switch req.Kind {
-	case "pr", "issue", "checks":
-	default:
-		reject(fmt.Sprintf("kind %q is not one of pr, issue, checks", req.Kind))
+	if !forgeReadKinds[req.Kind] {
+		reject(fmt.Sprintf("kind %q is not one of %s", req.Kind, forgeReadKindList))
 		return false
 	}
 	if req.Number <= 0 {
-		reject("number must be a positive pull request or issue number")
+		reject("number must be a positive pull request, issue, run or job number")
 		return false
 	}
 	if r.cloneAuthz == nil {
@@ -219,6 +245,8 @@ func (r *forgeRequestRelay) handleRead(ctx context.Context, path string) (read b
 func forgeReadView(ctx context.Context, api forge.ReadAPI, repo, kind string, number int) ([]byte, error) {
 	var view any
 	switch kind {
+	case "reviews", "comments", "run-log", "run-log-failed", "job-log":
+		return forgeReadDiscussionView(ctx, api, repo, kind, number)
 	case "issue":
 		is, err := api.IssueView(ctx, repo, number)
 		if err != nil {
@@ -280,6 +308,103 @@ func forgeReadView(ctx context.Context, api forge.ReadAPI, repo, kind string, nu
 		}
 	}
 	return json.Marshal(view)
+}
+
+// forgeReadDiscussionView serves the reviews, comments and log kinds
+// (#20277). Reviews and comments carry the key names of `gh pr view --json
+// reviews` / `--json comments` after hive-gh's projection (author is the
+// login); a log is JSON too, one entry per job with its log text.
+func forgeReadDiscussionView(ctx context.Context, api forge.ReadAPI, repo, kind string, number int) ([]byte, error) {
+	fj := string(forge.KindForgejo)
+	switch kind {
+	case "reviews":
+		reviews, err := api.PullReviews(ctx, repo, number, forgeReadMaxReviewCommentReads)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]map[string]any, 0, len(reviews))
+		for _, r := range reviews {
+			comments := make([]map[string]any, 0, len(r.Comments))
+			for _, c := range r.Comments {
+				comments = append(comments, map[string]any{
+					"id": c.ID, "author": c.Author, "path": c.Path, "line": c.Line, "body": c.Body,
+					"commit": c.CommitID, "url": c.URL, "createdAt": c.CreatedAt,
+				})
+			}
+			out = append(out, map[string]any{
+				"id": r.ID, "author": r.Author, "state": forgeReviewState(r.State, r.Dismissed), "body": r.Body,
+				"submittedAt": r.SubmittedAt, "commit": r.CommitID, "url": r.URL, "stale": r.Stale,
+				"dismissed": r.Dismissed, "official": r.Official, "commentCount": r.CommentCount,
+				"commentsRead": r.CommentsRead, "comments": comments,
+			})
+		}
+		return json.Marshal(map[string]any{"number": number, "reviews": out, "forge": fj})
+	case "comments":
+		comments, err := api.IssueComments(ctx, repo, number)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]map[string]any, 0, len(comments))
+		for _, c := range comments {
+			out = append(out, map[string]any{
+				"id": c.ID, "author": c.Author, "body": c.Body, "url": c.URL, "createdAt": c.CreatedAt, "updatedAt": c.UpdatedAt,
+			})
+		}
+		return json.Marshal(map[string]any{"number": number, "comments": out, "forge": fj})
+	case "job-log":
+		log, truncated, err := api.JobLog(ctx, repo, int64(number), forgeReadJobLogLimit)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(map[string]any{"jobId": number, "log": log, "logTruncated": truncated, "forge": fj})
+	}
+	// run-log, run-log-failed
+	jobs, err := api.RunJobs(ctx, repo, int64(number))
+	if err != nil {
+		return nil, err
+	}
+	budget, read := forgeReadRunLogLimit, 0
+	out := make([]map[string]any, 0, len(jobs))
+	for _, j := range jobs {
+		failed := forgeCheckBucket(j.Conclusion) == "fail"
+		entry := map[string]any{
+			"databaseId": j.ID, "name": j.Name, "status": strings.ToUpper(j.Status),
+			"conclusion": strings.ToUpper(j.Conclusion), "url": j.URL,
+		}
+		switch {
+		case kind == "run-log-failed" && !failed:
+			// Listed without a log, as gh's --log-failed prints none for it.
+		case read >= forgeReadMaxRunJobs || budget <= 0:
+			entry["logOmitted"] = "the run's log limit was reached; read it with hive-gh run view --job <databaseId> --log"
+		default:
+			read++
+			log, truncated, err := api.JobLog(ctx, repo, j.ID, min(forgeReadJobLogLimit, budget))
+			if err != nil {
+				return nil, err
+			}
+			budget -= len(log)
+			entry["log"], entry["logTruncated"] = log, truncated
+		}
+		out = append(out, entry)
+	}
+	return json.Marshal(map[string]any{"runId": number, "jobs": out, "forge": fj})
+}
+
+// forgeReviewState maps a Forgejo review state onto gh's review states
+// (APPROVED, CHANGES_REQUESTED, COMMENTED, PENDING, DISMISSED). Forgejo
+// keeps a dismissed review's state and flags it, where GitHub reports
+// DISMISSED.
+func forgeReviewState(state string, dismissed bool) string {
+	if dismissed {
+		return "DISMISSED"
+	}
+	switch strings.ToUpper(state) {
+	case "REQUEST_CHANGES":
+		return "CHANGES_REQUESTED"
+	case "COMMENT":
+		return "COMMENTED"
+	}
+	return strings.ToUpper(state)
 }
 
 // forgeCheckBucket maps a Forgejo commit status state onto gh's check
