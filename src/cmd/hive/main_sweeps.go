@@ -2043,13 +2043,7 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 		return
 	}
 	client.SetReviseRepos(cfg.Review.ReviseRepos)
-	client.SetPerspectives(reviewPerspectiveSet(cfg, logger))
-	client.SetReviewerAgentFunc(func(agent string) bool {
-		return review.ReviewCapable(reviewAgentCapability(cfg, agent), review.ReviewerAgentSet(cfg.Review.ReviewerAgents))
-	})
-	client.SetAgentBaseFunc(func(agent string) string {
-		return reviewAuthorBase(cfg, agent)
-	})
+	installReviewVerdictSettings(client, cfg, logger)
 	client.SetConfidenceScore(func() bool { return cfg.Review.ConfidenceScore })
 	client.SetReviewBacklog(func() (bool, int) {
 		return !cfg.Review.OutOfScopeBacklogDisabled, cfg.Review.MaxOutOfScopeBacklogIssues
@@ -2105,6 +2099,21 @@ func installReviewRelaySettings(client *github.Client, cfg *config.Config, logge
 	// review.require_labels (PR approval allow-list): the relay's half of the
 	// gate, read live so a Features-tab edit applies to the next request.
 	client.SetReviewRequireLabels(func() []string { return cfg.Review.RequireLabels })
+}
+
+// installReviewVerdictSettings installs what the verdict writer judges a
+// verdict by: the perspectives it may name, which lanes are reviewers, and
+// how a lane resolves to its base agent for the self-approval guard. The
+// GitHub client and the forge relay's verdict client (forge_review_relay.go)
+// share it, so the two cannot drift.
+func installReviewVerdictSettings(client *github.Client, cfg *config.Config, logger *slog.Logger) {
+	client.SetPerspectives(reviewPerspectiveSet(cfg, logger))
+	client.SetReviewerAgentFunc(func(agent string) bool {
+		return review.ReviewCapable(reviewAgentCapability(cfg, agent), review.ReviewerAgentSet(cfg.Review.ReviewerAgents))
+	})
+	client.SetAgentBaseFunc(func(agent string) string {
+		return reviewAuthorBase(cfg, agent)
+	})
 }
 
 // reviewBacklogRouting resolves review.severity / review.backlog and the

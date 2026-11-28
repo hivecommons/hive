@@ -556,7 +556,9 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	}
 
 	// Authorized and well-formed, but nothing to post: record and finish
-	// without touching the GitHub API.
+	// without touching the GitHub API. A forge-only hive serves the same
+	// event through ServeRecordVerdict (review_verdict_forge_relay.go,
+	// hivecommons/hive#20292); keep the two admission paths in step.
 	if recordOnly {
 		if noFindingsSuppressed {
 			// The clean verdict lands in the status comment, edited in

@@ -47,8 +47,10 @@ import (
 //     so the agent does not wait on them.
 //   - A forge 4xx (other than 408 and 429) is final; other failures are
 //     retried a bounded number of times.
-//   - Push-branch requests are served, and review and merge requests are
-//     answered with a reason (forge_push_relay.go, #19916).
+//   - Push-branch requests are served, and merge requests and every review
+//     event but record_verdict are answered with a reason
+//     (forge_push_relay.go, #19916). record_verdict is served with the GitHub
+//     review watcher's admission checks (forge_review_relay.go, #20292).
 //
 // Agent-written titles and bodies pass through prosefilter before they are
 // sent, as on the GitHub relays.
@@ -110,6 +112,11 @@ type forgeRequestRelay struct {
 	mergeDir    string
 	queuesReady bool
 
+	// record_verdict on the review queue (forge_review_relay.go, #20292).
+	// Without reviewAuthz every verdict is denied (fail closed).
+	reviewAuthz github.ReviewRequestAuthorizer
+	verdicts    *github.Client
+
 	// The clone queue (forge_clone_relay.go, #19997).
 	cloneAuthz forgeCloneAuthorizer
 	cloneDir   string
@@ -136,6 +143,7 @@ func newForgeRequestRelay(cfg func() *config.Config, prAuthz github.PRRequestAut
 		mergeDir:   github.MergeRequestDir,
 		cloneDir:   forgeCloneRequestDir,
 		readDir:    forgeReadRequestDir,
+		verdicts:   newForgeVerdictClient(cfg, logger),
 	}
 }
 
@@ -189,7 +197,7 @@ func (r *forgeRequestRelay) scanOnce(ctx context.Context) {
 		r.handleIssue(ctx, path)
 	}
 	for _, path := range pendingRequestFiles(r.reviewDir) {
-		r.handleReviewRequest(path)
+		r.handleReviewRequest(ctx, path)
 	}
 	for _, path := range pendingRequestFiles(r.mergeDir) {
 		r.handleMergeRequest(path)
