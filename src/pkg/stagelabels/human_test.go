@@ -106,28 +106,37 @@ func TestRouteHumanFixEvidence(t *testing.T) {
 	}
 }
 
-// TestRouteHumanPendingStaysAtReview: no current-head verdict, or a head
-// nothing has reported on yet, is 050 — never 090.
+// TestRouteHumanPendingStaysAtReview: no current-head verdict, on any head
+// or one nothing has reported on yet, is 050; an approved head nothing has
+// reported on is 060. Never 090 either way.
 func TestRouteHumanPendingStaysAtReview(t *testing.T) {
 	e := readyEvidence()
 	e.Verdict = VerdictPending
 	if r := RouteHuman(e); r.Stage != ReviewPending {
 		t.Fatalf("pending verdict route = %+v", r)
 	}
-	e = readyEvidence()
 	e.HeadFresh = true
 	e.Checks = CheckSummary{Known: true}
 	if r := RouteHuman(e); r.Stage != ReviewPending {
-		t.Fatalf("fresh head route = %+v", r)
+		t.Fatalf("fresh head + pending verdict route = %+v", r)
 	}
-	// A fresh head with a hold still waits for the verdict first.
+	// A fresh head with an approve verdict for it was 050 "no reviewer
+	// verdict" here, which the same head left for 060 whenever the check
+	// read failed. The reviewer has answered for this head, so it waits at
+	// 060 for its checks, still never 090.
+	e = readyEvidence()
+	e.HeadFresh = true
+	e.Checks = CheckSummary{Known: true}
+	if r := RouteHuman(e); r.Stage != Reviewed || !containsString(r.Reasons, "no check has reported on this head yet") {
+		t.Fatalf("fresh head + approve route = %+v", r)
+	}
+	// A hold rides the same 060 as a gate.
 	e.Holds = []string{"hold"}
-	if r := RouteHuman(e); r.Stage != ReviewPending {
-		t.Fatalf("fresh head + hold route = %+v", r)
+	if r := RouteHuman(e); r.Stage != Reviewed || len(r.Gates) == 0 {
+		t.Fatalf("fresh head + approve + hold route = %+v", r)
 	}
-	// Unless the verdict for that head is already requires_human: the
-	// reviewer has answered, so the PR is a decision, not a wait
-	// (hivecommons/hive#13115).
+	// A requires_human verdict for that head is an answer as well: the PR
+	// is a decision, not a wait (hivecommons/hive#13115).
 	e = readyEvidence()
 	e.HeadFresh = true
 	e.Checks = CheckSummary{Known: true}
@@ -138,6 +147,60 @@ func TestRouteHumanPendingStaysAtReview(t *testing.T) {
 	e.Cause = CauseDecision
 	if r := RouteHuman(e); r.Stage != NeedsDecision {
 		t.Fatalf("fresh head + requires_human decision route = %+v", r)
+	}
+}
+
+// TestRouteHumanApprovedFreshHeadIsReviewed: a sentinel-blocked
+// contributor PR whose head the reviewer approved, while its workflow runs
+// wait for a maintainer's "Approve and run", so nothing has reported on
+// it. The route is 060 with the sentinel as the gate whether the check
+// read succeeded (fresh head, required check missing or required set
+// unknown) or failed: the same head no longer flips 050 and 060 on the
+// read. A head with no verdict yet is still 050, and a requires_human
+// verdict still asks for the decision.
+func TestRouteHumanApprovedFreshHeadIsReviewed(t *testing.T) {
+	const sentinelGate = "a sentinel alert is open on this PR"
+	base := func() Evidence {
+		return Evidence{
+			Head:       "aff9bf545ee76ef183279676b17eb59f2bcc7a01",
+			Verdict:    VerdictApproved,
+			HeadFresh:  true,
+			Checks:     CheckSummary{Known: true, Missing: []string{"Unit tests"}},
+			Sentinel:   true,
+			Cause:      CauseTrust,
+			AuthorKind: authorkind.Clanker,
+		}
+	}
+	cases := []struct {
+		name   string
+		mutate func(*Evidence)
+		want   Stage
+		reason string
+	}{
+		{"fresh head, required check missing", func(*Evidence) {}, Reviewed, "no check has reported on this head yet"},
+		{"fresh head, required set unknown", func(e *Evidence) { e.Checks.Missing = nil }, Reviewed, "no check has reported on this head yet"},
+		{"check read failed", func(e *Evidence) { e.HeadFresh, e.Checks = false, CheckSummary{} }, Reviewed, "checks could not be read"},
+		{"fresh head, no verdict yet", func(e *Evidence) { e.Verdict = VerdictPending }, ReviewPending, "no reviewer verdict for this head yet"},
+		{"fresh head, requires_human", func(e *Evidence) { e.Verdict = VerdictRequiresHuman }, NeedsDecision, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := base()
+			tc.mutate(&e)
+			r := RouteHuman(e)
+			if r.Stage != tc.want {
+				t.Fatalf("stage = %v, want %v (route %+v)", r.Stage, tc.want, r)
+			}
+			if r.Stage == ReadyForHumanMerge {
+				t.Fatalf("route = %+v: a head nothing has reported on is never 090", r)
+			}
+			if tc.reason != "" && !containsString(r.Reasons, tc.reason) {
+				t.Fatalf("reasons = %v, want %q", r.Reasons, tc.reason)
+			}
+			if !containsString(r.Gates, sentinelGate) {
+				t.Fatalf("gates = %v, want the sentinel gate kept", r.Gates)
+			}
+		})
 	}
 }
 
