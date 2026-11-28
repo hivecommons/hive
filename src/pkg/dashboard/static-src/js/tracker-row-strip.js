@@ -699,10 +699,11 @@
     // full-width caption so detours and the next actor never need a hover.
     function stageTrackerCurrentStageHtml(item, stages, range, nowMs) {
       if (item.superseded && item.superseded.closer_pr) return `<p class="ham-current-stage">${esc(stageTrackerHeadline(item) + (item.superseded.keep_reason ? " · " + item.superseded.keep_reason : ""))}</p>`;
+      const blocker = item.review_conversation_blocker ? `<p class="ham-current-stage ham-review-conversation-blocker">${esc('Blocked: ' + item.review_conversation_blocker)}</p>` : '';
       const active = stageTrackerSegments(item, stages, nowMs).find(sg => sg.state === 'active'
         && (!range || range.from == null || sg.number >= range.from)
         && (!range || range.to == null || sg.number <= range.to));
-      if (!active) return '';
+      if (!active) return blocker;
       const actor = active.cap || active.number === 50 ? '' : stageTrackerActorTip(item);
       const by = active.cap && item.terminal_merge && typeof stageTrackerMergedByText === 'function' ? stageTrackerMergedByText(item.merged_by) : '';
       const regressed = stageTrackerRegressionText(item, Date.now());
@@ -729,7 +730,7 @@
         const moving = a.active || ['running', 'reviewing', 'adjudicating'].includes(a.state);
         return (a.caption || noData).replace(/^(CI|Review) unknown(?= ·|$)/, noData) + (!Number.isFinite(observed) ? ' · observation time unknown' : !fresh ? ' · last observed ' + stageTrackerAgoWord(observed, clock) + (moving ? ' · refreshing' : '') : '');
       }).join(' · ') : '';
-      return `<p class="ham-current-stage">${esc(text + (tracks ? ' · ' + tracks : ''))}</p>`;
+      return `<p class="ham-current-stage">${esc(text + (tracks ? ' · ' + tracks : ''))}</p>` + blocker;
     }
 
     // Phone progress pill (hivecommons/hive#17160): "Step 7/9 · Merge queue ·

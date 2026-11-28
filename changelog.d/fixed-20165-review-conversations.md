@@ -1,0 +1,1 @@
+- The Activity Monitor now shows when unresolved review threads block a GitHub PR. When write-back policy permits, the Hive status comment links to the threads on Hive-authored PRs and clears the notice when the blocker is gone. On v5, resolve the Hive reviewer's own threads by hand ([#20165](https://github.com/hivecommons/hive/issues/20165)).

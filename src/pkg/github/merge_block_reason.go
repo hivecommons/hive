@@ -68,6 +68,11 @@ type ProtectionFacts struct {
 	// "required check X has not reported" would be confidently wrong for all
 	// of them. See protectionCollector.attach.
 	MissingRequiredChecks []string `json:"missing_required_checks,omitempty"`
+
+	// UnresolvedReviewThreads is nonzero only when the base requires
+	// conversation resolution and a complete thread read found a blocker.
+	UnresolvedReviewThreads int `json:"unresolved_review_threads,omitempty"`
+	reviewThreadCommentIDs  []uint64
 }
 
 // BranchProtectionBlockReason names, in one place, the branch-protection rule
@@ -105,6 +110,9 @@ func (p PullRequest) BranchProtectionBlockReason() (string, bool) {
 	if f.ReviewDecision == ReviewDecisionReviewRequired {
 		return "an approving review is required by branch protection (" +
 			strconv.Itoa(f.ApprovalsGiven) + " given)", true
+	}
+	if reason := p.ReviewConversationBlockReason(); reason != "" {
+		return reason, true
 	}
 	return "", false
 }

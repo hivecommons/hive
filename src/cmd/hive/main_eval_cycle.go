@@ -650,6 +650,11 @@ func runEvalCycle(
 	// after those two calls: Mergeable and the failing-check names it sorts on
 	// are populated by EnrichCIStatus, not by EnumerateActionable.
 	if !budgetDecision.SkipOptional {
+		for _, prs := range [][]github.PullRequest{actionable.PRs.Items, actionable.PRs.Held} {
+			enrichGitHubPRs(cfg, prs, func(prs []github.PullRequest) {
+				ghClient.PostReviewConversationBlockers(ctx, prs)
+			})
+		}
 		postRecommendationsForCycle(ctx, cfg, ghClient, actionable, logger)
 	}
 

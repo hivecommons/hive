@@ -390,6 +390,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			Bucket: bucket, BucketReason: bucketReason,
 			URL: overviewItemURL(pr.URL, pr.Repo, pr.Number, "pr", status.GitHubBaseURL)}
 		it.BaseRef = pr.BaseRef
+		it.ReviewConversationBlocker = pr.ReviewConversationBlockReason()
 		it.ciRed = strings.EqualFold(pr.CIStatus, "failure") || len(pr.FailingChecks) > 0
 		it.ciChecking = it.Head != "" && !it.ciRed && strings.EqualFold(pr.CIStatus, "pending") && pr.CIChecksRunning
 		it.AuthorKind, it.AuthorKindSource = stageTrackerAuthorKind(pr.Labels, pr.Author, pr.AppAuthored, pr.HiveAttributed)

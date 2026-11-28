@@ -30,6 +30,21 @@ func (c *Client) UpsertPRStatusSection(ctx context.Context, repo string, number 
 	return res.Created, err
 }
 
+// upsertPRStatusSectionWrites is UpsertPRStatusSection for a caller that
+// reports the write to the write-back gate: wrote is set only when a
+// create, edit or delete reached GitHub, and writeErr is the error of the
+// write call itself. A no-op (nothing to clear) and a failed read of the
+// comments are neither, so they never count as a write outcome.
+func (c *Client) upsertPRStatusSectionWrites(ctx context.Context, repo string, number int, key, text string) (wrote bool, writeErr, err error) {
+	if c == nil {
+		return false, nil, ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	f := &clientStatusForge{c: c, owner: owner, repo: repoName, number: number}
+	_, err = prstatus.Write(ctx, f, prstatus.ItemKey(owner+"/"+repoName, number), key, text)
+	return f.wrote, f.writeErr, err
+}
+
 // UpsertPRStatusSectionFunc is UpsertPRStatusSection for a section whose
 // text is merged with what it already says (prstatus.WriteFunc): render
 // receives the section's current body ("" when none) and is re-run on every
@@ -62,6 +77,19 @@ type clientStatusForge struct {
 	owner  string
 	repo   string
 	number int
+	// wrote and writeErr track the write calls (not the reads) this forge
+	// made, for upsertPRStatusSectionWrites.
+	wrote    bool
+	writeErr error
+}
+
+func (f *clientStatusForge) noteWrite(err error) error {
+	if err != nil {
+		f.writeErr = err
+	} else {
+		f.wrote = true
+	}
+	return err
 }
 
 func (f *clientStatusForge) ListComments(ctx context.Context) ([]prstatus.Comment, error) {
@@ -81,21 +109,22 @@ func (f *clientStatusForge) ListComments(ctx context.Context) ([]prstatus.Commen
 
 func (f *clientStatusForge) EditComment(ctx context.Context, id int64, body string) error {
 	if _, _, err := f.c.client.Issues.EditComment(ctx, f.owner, f.repo, id, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
-		return fmt.Errorf("editing hive status comment on %s/%s#%d: %w", f.owner, f.repo, f.number, err)
+		return f.noteWrite(fmt.Errorf("editing hive status comment on %s/%s#%d: %w", f.owner, f.repo, f.number, err))
 	}
+	f.noteWrite(nil)
 	f.c.noteCommentEdited()
 	return nil
 }
 
 func (f *clientStatusForge) CreateComment(ctx context.Context, body string) error {
-	return f.c.CreateIssueComment(ctx, f.owner+"/"+f.repo, f.number, body)
+	return f.noteWrite(f.c.CreateIssueComment(ctx, f.owner+"/"+f.repo, f.number, body))
 }
 
 func (f *clientStatusForge) DeleteComment(ctx context.Context, id int64) error {
 	if _, err := f.c.client.Issues.DeleteComment(ctx, f.owner, f.repo, id); err != nil {
-		return fmt.Errorf("deleting hive status comment on %s/%s#%d: %w", f.owner, f.repo, f.number, err)
+		return f.noteWrite(fmt.Errorf("deleting hive status comment on %s/%s#%d: %w", f.owner, f.repo, f.number, err))
 	}
-	return nil
+	return f.noteWrite(nil)
 }
 
 // PostNoteOrFold delivers a hive note on repo#number. In quiet mode
