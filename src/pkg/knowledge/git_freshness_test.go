@@ -36,6 +36,58 @@ func freshnessCommit(t *testing.T, dir, date, file, body string) {
 	freshnessGit(t, dir, []string{"GIT_AUTHOR_DATE=" + date, "GIT_COMMITTER_DATE=" + date}, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", file)
 }
 
+func wrapFreshnessGit(t *testing.T) string {
+	t.Helper()
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	script := `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = log ]; then echo log >> "$TEST_GIT_LOG"; fi
+  if [ "$arg" = --unshallow ] && [ "$TEST_FAIL_UNSHALLOW" = 1 ]; then exit 1; fi
+done
+exec "$TEST_REAL_GIT" "$@"
+`
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_REAL_GIT", git)
+	t.Setenv("TEST_GIT_LOG", log)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return log
+}
+
+func TestGitSourceFreshnessReindexCachesHistory(t *testing.T) {
+	repo := t.TempDir()
+	freshnessGit(t, repo, nil, "init")
+	freshnessCommit(t, repo, "2020-01-02T03:04:05Z", "one.md", "# One")
+	freshnessCommit(t, repo, "2021-02-03T04:05:06Z", "two.md", "# Two")
+	log := wrapFreshnessGit(t)
+	store, err := newGitSourceFileStore(repo, repo, "test", slog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.Reindex()
+	after, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("unchanged HEAD reran file history: before %q, after %q", before, after)
+	}
+	assertFreshness(t, store, "one", "2020-01-02T03:04:05Z")
+	freshnessCommit(t, repo, "2022-03-04T05:06:07Z", "one.md", "# Updated")
+	store.Reindex()
+	assertFreshness(t, store, "one", "2022-03-04T05:06:07Z")
+}
+
 func assertFreshness(t *testing.T, store *FileStore, slug, want string) {
 	t.Helper()
 	fact, err := store.ReadPage(slug)
@@ -211,4 +263,16 @@ func TestGitSourceInitAndSyncWithCompleteHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertFreshness(t, reused.Store(), "old", "2020-01-02T03:04:05Z")
+
+	failedUnshallow := filepath.Join(t.TempDir(), "shallow")
+	freshnessGit(t, "", nil, "clone", "--depth=1", "--", "file://"+remote, failedUnshallow)
+	freshnessGit(t, failedUnshallow, nil, "config", "remote.origin.url", url)
+	wrapFreshnessGit(t)
+	t.Setenv("TEST_FAIL_UNSHALLOW", "1")
+	reused.cloneDir = failedUnshallow
+	reused.indexDir = filepath.Join(failedUnshallow, "docs")
+	if err := reused.Init(context.Background()); err != nil {
+		t.Fatalf("init after unshallow failure: %v", err)
+	}
+	assertFreshness(t, reused.Store(), "old", "")
 }

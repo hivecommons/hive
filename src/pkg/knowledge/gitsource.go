@@ -93,7 +93,10 @@ func (g *GitSource) Init(ctx context.Context) error {
 		return fmt.Errorf("git source %s: clone failed: %w", g.config.Name, err)
 	}
 	if err := gitSourceEnsureFullHistory(ctx, g.cloneDir, g.config.URL, g.config.Branch); err != nil {
-		return fmt.Errorf("git source %s: fetching history: %w", g.config.Name, err)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		g.logger.Warn("git source history unavailable; freshness may be unknown", "name", g.config.Name, "error", err)
 	}
 
 	if _, err := os.Stat(g.indexDir); err != nil {
@@ -192,37 +195,71 @@ func newGitSourceFileStore(indexDir, cloneDir, name string, logger *slog.Logger)
 	if err != nil {
 		return nil, err
 	}
-	return newFileStore(indexDir, name, logger, func(path string) time.Time {
-		// A shallow boundary makes git attribute unchanged files to the boundary
-		// commit. Never report that synthetic date as their actual freshness.
+	var mu sync.Mutex
+	var cachedHead string
+	var cachedTimes map[string]time.Time
+	unknown := func(string) time.Time { return time.Time{} }
+	return newFileStore(indexDir, name, logger, func() func(string) time.Time {
+		// A shallow boundary attributes unchanged files to the boundary commit.
 		if _, err := os.Stat(filepath.Join(absoluteCloneDir, ".git", "shallow")); err == nil || !os.IsNotExist(err) {
-			return time.Time{}
-		}
-		absolutePath, err := filepath.Abs(path)
-		if err != nil {
-			return time.Time{}
-		}
-		rel, err := filepath.Rel(absoluteCloneDir, absolutePath)
-		if err != nil {
-			return time.Time{}
+			return unknown
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), gitPullTimeout)
 		defer cancel()
 		cmd := exec.CommandContext(ctx, "git", "--git-dir="+filepath.Join(absoluteCloneDir, ".git"),
-			"--work-tree="+absoluteCloneDir, "--no-replace-objects", "--literal-pathspecs",
-			"log", "-1", "--no-show-signature", "--format=%ct", "--", filepath.ToSlash(rel))
+			"--work-tree="+absoluteCloneDir, "--no-replace-objects", "rev-parse", "--verify", "HEAD")
 		cmd.Dir = absoluteCloneDir
 		cmd.Env = append(gitSourceEnv(), "GIT_NO_LAZY_FETCH=1", "GIT_ALLOW_PROTOCOL=")
 		out, err := cmd.Output()
-		if err != nil {
-			logger.Warn("git source file history unavailable", "path", path, "error", err)
-			return time.Time{}
+		if err != nil || strings.TrimSpace(string(out)) == "" {
+			return unknown
 		}
-		seconds, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
-		if err != nil {
-			return time.Time{}
+		head := strings.TrimSpace(string(out))
+		mu.Lock()
+		if cachedHead != head {
+			cachedHead = head
+			cachedTimes = make(map[string]time.Time)
 		}
-		return time.Unix(seconds, 0).UTC()
+		times := cachedTimes
+		mu.Unlock()
+		return func(path string) time.Time {
+			absolutePath, err := filepath.Abs(path)
+			if err != nil {
+				return time.Time{}
+			}
+			rel, err := filepath.Rel(absoluteCloneDir, absolutePath)
+			if err != nil {
+				return time.Time{}
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if timestamp, ok := times[rel]; ok {
+				return timestamp
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), gitPullTimeout)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "git", "--git-dir="+filepath.Join(absoluteCloneDir, ".git"),
+				"--work-tree="+absoluteCloneDir, "--no-replace-objects", "--literal-pathspecs",
+				"log", "-1", "--no-show-signature", "--format=%ct", head, "--", filepath.ToSlash(rel))
+			cmd.Dir = absoluteCloneDir
+			cmd.Env = append(gitSourceEnv(), "GIT_NO_LAZY_FETCH=1", "GIT_ALLOW_PROTOCOL=")
+			out, err := cmd.Output()
+			if err != nil {
+				logger.Warn("git source file history unavailable", "path", path, "error", err)
+				return time.Time{}
+			}
+			if strings.TrimSpace(string(out)) == "" {
+				times[rel] = time.Time{}
+				return time.Time{}
+			}
+			seconds, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+			if err != nil {
+				return time.Time{}
+			}
+			timestamp := time.Unix(seconds, 0).UTC()
+			times[rel] = timestamp
+			return timestamp
+		}
 	})
 }
 

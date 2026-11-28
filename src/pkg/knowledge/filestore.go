@@ -39,7 +39,7 @@ type FileStore struct {
 	prevPageCount int
 	embedCache    *EmbeddingCache
 	accessCounts  map[string]int
-	modTime       func(string) time.Time
+	modTime       func() func(string) time.Time
 }
 
 type filePage struct {
@@ -73,7 +73,7 @@ func NewFileStore(rootDir string, name string, logger *slog.Logger) (*FileStore,
 	return newFileStore(rootDir, name, logger, nil)
 }
 
-func newFileStore(rootDir string, name string, logger *slog.Logger, modTime func(string) time.Time) (*FileStore, error) {
+func newFileStore(rootDir string, name string, logger *slog.Logger, modTime func() func(string) time.Time) (*FileStore, error) {
 	info, err := os.Stat(rootDir)
 	if err != nil {
 		return nil, fmt.Errorf("vault directory %s: %w", rootDir, err)
@@ -166,6 +166,10 @@ func (s *FileStore) factPath(title string) string {
 
 func (s *FileStore) reindex() {
 	pages := make(map[string]filePage)
+	var modTimeForPath func(string) time.Time
+	if s.modTime != nil {
+		modTimeForPath = s.modTime()
+	}
 
 	err := filepath.WalkDir(s.rootDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -209,8 +213,8 @@ func (s *FileStore) reindex() {
 		embedding := s.embedCache.Embed(embeddingText)
 
 		modTime := info.ModTime()
-		if s.modTime != nil {
-			modTime = s.modTime(path)
+		if modTimeForPath != nil {
+			modTime = modTimeForPath(path)
 		}
 
 		page := filePage{
