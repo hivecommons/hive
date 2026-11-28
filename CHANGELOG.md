@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.12)
+
+### Fixed
+
+- Exclude unsupported non-GitHub repositories from contributor catalogs and issue assignments.
+
 ## 2026-11-28 (v5.384.11)
 
 ### Changed
