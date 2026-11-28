@@ -17634,6 +17634,532 @@ test('#10040 headless Codex usage-limit refusal is a quota hold, not an ordinary
   assert.strictEqual(paneClassifier.headlessQuotaExhaustion('', 'codex'), null);
 });
 
+// The Claude Code CLI's limit line, verbatim from a contributor on a production
+// hive running headless: every task exited 1 within two seconds with this as
+// its last output line, the relay reported failure_kind "unspecified" and asked
+// for work again, and the hub gave it twelve more assignments in thirty hours.
+// The separator is U+00B7 MIDDLE DOT.
+const CLAUDE_HEADLESS_LIMIT_LINE = 'You\'ve hit your weekly limit · resets Dec 1, 3pm (UTC)';
+
+test('headless Claude limit line is a quota hold that ends at the reset the CLI stated', () => {
+  const h = paneClassifier.headlessQuotaExhaustion;
+  const now = Date.UTC(2026, 10, 28, 9, 0, 0); // Sat Nov 28 2026, 09:00 UTC
+  const dec1 = Date.UTC(2026, 11, 1, 15, 0, 0);
+
+  const hit = h(CLAUDE_HEADLESS_LIMIT_LINE, 'claude', now);
+  assert.ok(hit, 'the observed line must be recognised');
+  assert.strictEqual(hit.resetMs, dec1 - now, 'the wait runs to Dec 1 15:00 UTC');
+  assert.strictEqual(hit.calendarReset, true, 'a dated reset must be marked so the hold is not cut to the countdown ceiling');
+  assert.ok(!hit.requiresRecovery, 'a reset with its zone is a deadline the relay can release on');
+  assert.strictEqual(hit.line, CLAUDE_HEADLESS_LIMIT_LINE);
+
+  // The CLI may typeset the apostrophe.
+  const curly = h('You’ve hit your weekly limit · resets Dec 1, 3pm (UTC)', 'claude', now);
+  assert.ok(curly, 'a curly apostrophe is the same line');
+  assert.strictEqual(curly.resetMs, dec1 - now);
+
+  // The wordings of the CLI's message builder this rule covers: the limit
+  // with no name, with a one or two word name, the org and channel monthly
+  // spend or usage limits, and the usage-credits sentence. (The builder has
+  // a few team and organization overage sentences besides; those are left to
+  // the ordinary failure path.)
+  for (const sentence of [
+    'You\'ve hit your limit',
+    'You\'ve hit your session limit',
+    'You\'ve hit your usage limit',
+    'You\'ve hit your 5-hour limit',
+    'You\'ve hit your Opus weekly limit',
+    'You\'ve hit your org\'s monthly spend limit',
+    'You\'ve hit your org\'s monthly usage limit',
+    'You\'ve hit your channel\'s monthly usage limit',
+    'You\'ve hit your channel\'s monthly spend limit',
+    'You’ve hit your org’s monthly spend limit',
+    'You\'re out of usage credits',
+    'You’re out of usage credits',
+  ]) {
+    const other = h(`${sentence} · resets 3pm (UTC)`, 'claude', now);
+    assert.ok(other, `must be recognised: ${sentence}`);
+    assert.strictEqual(other.resetMs, 6 * 60 * 60 * 1000, `resets the same day: ${sentence}`);
+    assert.strictEqual(other.calendarReset, true);
+  }
+
+  // On a workstation the CLI prints its own zone, and the relay need not share it.
+  const workstation = h('You\'ve hit your weekly limit · resets Dec 1, 3pm (America/New_York)', 'claude', now);
+  assert.ok(workstation);
+  assert.strictEqual(workstation.resetMs, Date.UTC(2026, 11, 1, 20, 0, 0) - now, '3pm in New York in December is 20:00 UTC');
+  assert.strictEqual(workstation.calendarReset, true);
+
+  // Surrounding whitespace is the capture's, not the CLI's.
+  assert.ok(h(`  ${CLAUDE_HEADLESS_LIMIT_LINE}\n`, 'claude', now));
+});
+
+test('headless Claude limit line with no reset the relay can read gets the bounded fallback, not an open-ended hold', () => {
+  const h = paneClassifier.headlessQuotaExhaustion;
+  const now = Date.UTC(2026, 10, 28, 9, 0, 0);
+  for (const line of [
+    'You\'ve hit your weekly limit · resets Dec 1, 3pm',               // no zone
+    'You\'ve hit your weekly limit · resets 3pm',
+    'You\'ve hit your weekly limit · resets 3pm (Not/AZone)',          // a zone Intl does not know
+    'You\'ve hit your weekly limit · resets Mar 9, 3pm (UTC)',         // past the bound
+    'You\'ve hit your weekly limit',                                        // no reset at all
+    'You\'ve hit your weekly limit.',
+    'You\'ve hit your limit',
+    'You\'re out of usage credits',
+  ]) {
+    const hit = h(line, 'claude', now);
+    assert.ok(hit, `still a limit refusal: ${line}`);
+    assert.strictEqual(hit.resetMs, null, `no deadline may be guessed: ${line}`);
+    assert.ok(!hit.requiresRecovery,
+      `an unread reset must not park the relay until someone restarts it: ${line}`);
+    assert.ok(!hit.calendarReset, `no dated reset was read: ${line}`);
+  }
+
+  // The CLI prints the time-only form for a reset that has just passed, too.
+  // First refusal at 14:59:59 for a 15:00 reset; the line read at 15:00:01
+  // must not become "tomorrow at 3pm".
+  const session = 'You\'ve hit your session limit · resets 3pm (UTC)';
+  const before = h(session, 'claude', Date.UTC(2026, 10, 28, 14, 59, 59));
+  assert.strictEqual(before.resetMs, 1000);
+  assert.strictEqual(before.calendarReset, true);
+  const after = h(session, 'claude', Date.UTC(2026, 10, 28, 15, 0, 1));
+  assert.ok(after, 'still recognised');
+  assert.strictEqual(after.resetMs, null, 'a reset a second ago is not a day-long hold');
+  assert.ok(!after.requiresRecovery);
+  assert.ok(!after.calendarReset);
+});
+
+test('headless Claude limit matcher ignores quoted text, other errors and the other backend', () => {
+  const h = paneClassifier.headlessQuotaExhaustion;
+  const now = Date.UTC(2026, 10, 28, 9, 0, 0);
+  const codexLine = 'ERROR: You’ve hit your usage limit. Upgrade to Pro or try again at Oct 6th, 2026 10:34 PM.';
+  for (const line of [
+    `The CLI printed "${CLAUDE_HEADLESS_LIMIT_LINE}" and exited`,   // quoted mid-line
+    'echo "You\'ve hit your weekly limit"',
+    'echo "You\'re out of usage credits"',
+    `> ${CLAUDE_HEADLESS_LIMIT_LINE}`,
+    'Error: You\'ve hit your weekly limit · resets Dec 1, 3pm (UTC)',
+    'You\'ve hit your weekly limit of three retries, giving up',    // prose that only starts the same way
+    'You\'ve hit your limits',
+    'You\'ve hit your very own weekly limit · resets 3pm (UTC)',
+    'You\'ve hit your team\'s monthly spend limit',                 // not a wording the CLI has
+    'You\'re out of usage credits for this demo',
+    'You\'re out of luck',
+    'You\'ve hit your rate limit',                                  // a throttle, not an allowance
+    'You\'ve hit your API rate limit',
+    'Error: connect ECONNREFUSED 127.0.0.1:443',
+    'fatal: could not read from remote repository',
+    '',
+  ]) {
+    assert.strictEqual(h(line, 'claude', now), null, `must not park the relay: ${JSON.stringify(line)}`);
+  }
+  assert.strictEqual(h(undefined, 'claude', now), null);
+  // Each backend keeps its own rule.
+  assert.strictEqual(h(CLAUDE_HEADLESS_LIMIT_LINE, 'codex', now), null, 'the Claude line is not a Codex refusal');
+  assert.strictEqual(h(codexLine, 'claude', now), null, 'the Codex line is not a Claude refusal');
+  assert.strictEqual(h(CLAUDE_HEADLESS_LIMIT_LINE, 'litellm', now), null, 'a proxy backend is not a Claude subscription');
+  // And the Codex rule is unchanged, open-ended hold included.
+  const codex = h(codexLine, 'codex', now);
+  assert.strictEqual(codex.requiresRecovery, true);
+  assert.strictEqual(codex.resetMs, null);
+});
+
+test('parseClaudeLimitResetMs reads a calendar reset in the zone the CLI printed, against the given clock', () => {
+  const p = paneClassifier.parseClaudeLimitResetMs;
+  const HOUR = 60 * 60 * 1000;
+  const now = Date.UTC(2026, 10, 28, 9, 0, 0); // Nov 28 2026, 09:00 UTC
+
+  // Month and day: the next time that date comes round.
+  assert.strictEqual(p('resets Dec 1, 3pm (UTC)', now), Date.UTC(2026, 11, 1, 15, 0, 0) - now);
+  assert.strictEqual(p('resets Nov 28, 3pm (UTC)', now), 6 * HOUR, 'later the same day');
+  assert.strictEqual(p('resets Dec 1, 3:30pm (UTC)', now), Date.UTC(2026, 11, 1, 15, 30, 0) - now);
+  assert.strictEqual(p('resets December 1, 3pm (UTC)', now), Date.UTC(2026, 11, 1, 15, 0, 0) - now);
+
+  // Time only: the next time the clock reads that.
+  assert.strictEqual(p('resets 3pm (UTC)', now), 6 * HOUR, 'same day');
+  assert.strictEqual(p('resets 3:30pm (UTC)', now), 6 * HOUR + 30 * 60 * 1000);
+  assert.strictEqual(p('resets 8am (UTC)', now), 23 * HOUR, 'an hour gone today, so tomorrow');
+  assert.strictEqual(p('resets 12am (UTC)', now), 15 * HOUR, '12am is midnight');
+  assert.strictEqual(p('resets 12pm (UTC)', now), 3 * HOUR, '12pm is noon');
+  assert.strictEqual(p('resets 3PM (UTC)', now), 6 * HOUR);
+  assert.strictEqual(p('resets 3pm (Etc/UTC)', now), 6 * HOUR, 'the same zone under its other name');
+
+  // Time only, just passed: the CLI prints this form for a reset at most a day
+  // away INCLUDING one already behind the clock. Within ten minutes that is a
+  // limit that has lifted, not a reset a day off.
+  assert.strictEqual(p('resets 3pm (UTC)', Date.UTC(2026, 10, 28, 14, 59, 59)), 1000);
+  assert.strictEqual(p('resets 3pm (UTC)', Date.UTC(2026, 10, 28, 15, 0, 0)), null, 'this very second is no wait at all');
+  assert.strictEqual(p('resets 3pm (UTC)', Date.UTC(2026, 10, 28, 15, 0, 1)), null);
+  assert.strictEqual(p('resets 3pm (UTC)', Date.UTC(2026, 10, 28, 15, 10, 0)), null, 'ten minutes is still just passed');
+  assert.strictEqual(p('resets 3pm (UTC)', Date.UTC(2026, 10, 28, 15, 10, 1)), 24 * HOUR - 601 * 1000,
+    'past the window it is tomorrow');
+  // The same case across the zone's midnight: 11:55pm read at 00:02 the next
+  // day is seven minutes past, not a reset almost a day off.
+  assert.strictEqual(p('resets 11:55pm (UTC)', Date.UTC(2026, 10, 29, 0, 2, 0)), null);
+  assert.strictEqual(p('resets 11:55pm (UTC)', Date.UTC(2026, 10, 29, 0, 6, 0)), 24 * HOUR - 11 * 60 * 1000,
+    'past the window it is tonight');
+
+  // A year boundary. The CLI prints the year when it is not the current one.
+  const dec31 = Date.UTC(2026, 11, 31, 20, 0, 0);
+  assert.strictEqual(p('resets Jan 2, 2027, 3pm (UTC)', dec31), Date.UTC(2027, 0, 2, 15, 0, 0) - dec31);
+  assert.strictEqual(p('resets Jan 2, 2027, 3:30pm (UTC)', dec31), Date.UTC(2027, 0, 2, 15, 30, 0) - dec31);
+  assert.strictEqual(p('resets 3am (UTC)', dec31), 7 * HOUR, 'time only, over the same boundary');
+  assert.strictEqual(p('resets Dec 31, 3pm (UTC)', Date.UTC(2026, 11, 30, 20, 0, 0)), 19 * HOUR, 'late December, same year, no year printed');
+  assert.strictEqual(p('resets Jan 2, 3pm (UTC)', dec31), Date.UTC(2027, 0, 2, 15, 0, 0) - dec31,
+    'with no year the next occurrence is still next January');
+  assert.strictEqual(p('resets Jan 2, 2026, 3pm (UTC)', dec31), null, 'a stated year that has passed is not rolled forward');
+  assert.strictEqual(p('resets Jan 2, 2028, 3pm (UTC)', dec31), null, 'and one past the bound is no deadline');
+
+  // A named zone: the CLI prints the zone of the machine it runs on.
+  assert.strictEqual(p('resets Dec 1, 3pm (America/New_York)', now), Date.UTC(2026, 11, 1, 20, 0, 0) - now,
+    'December in New York is UTC-5');
+  assert.strictEqual(p('resets 3pm (America/New_York)', now), 11 * HOUR, '09:00 UTC is 04:00 there');
+  assert.strictEqual(p('resets 3pm (America/New_York)', Date.UTC(2026, 6, 1, 12, 0, 0)), 7 * HOUR,
+    'July in New York is UTC-4');
+  assert.strictEqual(p('resets 3pm (Asia/Kolkata)', now), 30 * 60 * 1000, 'a half-hour zone: 09:00 UTC is 14:30 there');
+  // "Today" is the zone's today: 02:00 UTC on the 28th is still 21:00 on the 27th in New York.
+  assert.strictEqual(p('resets 11pm (America/New_York)', Date.UTC(2026, 10, 28, 2, 0, 0)), 2 * HOUR);
+  // Across a clock change: the US moves to summer time on Mar 8 2026, so 3pm
+  // that day is 19:00 UTC, while "now" (15:00 the day before) is still UTC-5.
+  assert.strictEqual(p('resets Mar 8, 3pm (America/New_York)', Date.UTC(2026, 2, 7, 20, 0, 0)), 23 * HOUR);
+
+  // The whole line, as the CLI prints it.
+  assert.strictEqual(p(CLAUDE_HEADLESS_LIMIT_LINE, now), Date.UTC(2026, 11, 1, 15, 0, 0) - now);
+
+  // No zone, or one Intl does not know: no deadline.
+  assert.strictEqual(p('resets Dec 1, 3pm', now), null);
+  assert.strictEqual(p('resets 3pm', now), null);
+  assert.strictEqual(p('resets 3pm (Not/AZone)', now), null);
+  assert.strictEqual(p('resets 3pm (Mars/Olympus_Mons)', now), null);
+  assert.strictEqual(p('resets 3pm ()', now), null);
+  assert.strictEqual(p('resets 3pm (local time)', now), null);
+  // Not this grammar at all.
+  assert.strictEqual(p('resets 15:00 (UTC)', now), null, 'no am/pm');
+  assert.strictEqual(p('resets 13pm (UTC)', now), null);
+  assert.strictEqual(p('resets 0am (UTC)', now), null);
+  assert.strictEqual(p('resets 3:75pm (UTC)', now), null);
+  assert.strictEqual(p('resets Feb 30, 3pm (UTC)', now), null, 'no such day');
+  assert.strictEqual(p('resets Foo 1, 3pm (UTC)', now), null, 'no such month');
+  assert.strictEqual(p('Resets in 4h42m28s', now), null, 'a countdown is parseQuotaResetMs\'s job');
+  assert.strictEqual(p('', now), null);
+  assert.strictEqual(p(undefined, now), null);
+
+  // Bounded: a wait past eight days is not taken as a deadline. That is also
+  // where a date with no year that has already passed ends up.
+  assert.strictEqual(p('resets Dec 6, 9am (UTC)', now), 8 * 24 * HOUR, 'exactly the bound still counts');
+  assert.strictEqual(p('resets Dec 6, 10am (UTC)', now), null);
+  assert.strictEqual(p('resets Mar 9, 3pm (UTC)', now), null);
+  assert.strictEqual(p('resets Nov 27, 3pm (UTC)', now), null, 'yesterday rolls to next year and fails the bound');
+  assert.strictEqual(paneClassifier.CLAUDE_LIMIT_RESET_MAX_MS, 8 * 24 * HOUR);
+});
+
+// claudeLimitLineFor builds the CLI's limit line for a reset `ahead` from the
+// real clock, on the hour, so a test that drives the relay (which reads
+// Date.now itself) does not depend on the day it runs.
+function claudeLimitLineFor(aheadMs) {
+  const HOUR = 60 * 60 * 1000;
+  const at = new Date(Math.ceil((Date.now() + aheadMs) / HOUR) * HOUR);
+  const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][at.getUTCMonth()];
+  const hour24 = at.getUTCHours();
+  const clock = `${hour24 % 12 === 0 ? 12 : hour24 % 12}${hour24 < 12 ? 'am' : 'pm'}`;
+  return { at: at.getTime(), line: `You've hit your weekly limit · resets ${month} ${at.getUTCDate()}, ${clock} (UTC)` };
+}
+
+test('a headless Claude limit refusal fails that one task as environment and parks the relay', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const dated = claudeLimitLineFor(2 * DAY);
+  const bare = 'You\'ve hit your limit';
+  for (const line of [CLAUDE_HEADLESS_LIMIT_LINE, dated.line, bare]) {
+    const err = new Error('claude failed'); err.code = 1;
+    const relay = loadRelay({ backend: 'claude', mode: 'headless', execFileResult: { err, stdout: `${line}\n` } });
+    const warn = console.warn; console.warn = () => {};
+    const error = console.error; console.error = () => {};
+    const log = console.log; console.log = () => {};
+    try {
+      const readyBefore = relay.__sent.filter(m => m.type === 'ready').length;
+      assignHeadlessTask(relay);
+      const failures = relay.__sent.filter(m => m.type === 'task_failed');
+      assert.strictEqual(failures.length, 1, 'the task the limit was seen on is still handed back, once');
+      assert.strictEqual(failures[0].failure_kind, 'environment',
+        'the provider refused the account; nothing about the issue failed');
+      assert.strictEqual(failures[0].permanent, false);
+      assert.ok(failures[0].reason.includes(`headless CLI exited with error: code 1: ${line}`),
+        `the CLI's own line must reach the hub: ${failures[0].reason}`);
+      assert.strictEqual(relay.getCurrentTask(), null);
+
+      // THE FIX: no `ready`. Before this the relay asked again at once, and
+      // the hub gave it twelve assignments in thirty hours.
+      assert.strictEqual(relay.quotaHoldActive(), true, 'the relay must park itself');
+      assert.strictEqual(relay.getQuotaHoldReason(), line);
+      assert.strictEqual(relay.__sent.filter(m => m.type === 'ready').length, readyBefore,
+        'a relay whose account is out of quota must not ask for more work');
+
+      // And a pushed assignment during the hold is declined, not run.
+      const spawned = relay.__execFileCalls.length;
+      assignHeadlessTask(relay, { task_id: 'ct-h-2', number: 8 });
+      assert.strictEqual(relay.__execFileCalls.length, spawned, 'no second CLI run while held');
+      const declined = relay.__sent.find(m => m.type === 'task_failed' && m.task_id === 'ct-h-2');
+      assert.ok(declined, 'the pushed task must be declined');
+      assert.strictEqual(declined.failure_kind, 'environment');
+
+      if (line === dated.line) {
+        // Two days is well past the six-hour ceiling a countdown gets: the hold
+        // must run to the stated reset, not re-probe (and fail a task) every
+        // six hours until then.
+        const until = relay.getQuotaHoldUntil();
+        assert.ok(Math.abs(until - (dated.at + relay.QUOTA_HOLD_GRACE_MS)) < 5000,
+          `the hold must end at the stated reset plus the grace: off by ${until - dated.at}ms`);
+        assert.ok(until - Date.now() > relay.QUOTA_HOLD_MAX_MS);
+      }
+      if (line === bare) {
+        // No reset to read: the bounded fallback, after which the relay tries
+        // again. Never a hold that only a restart ends.
+        const left = relay.getQuotaHoldUntil() - Date.now();
+        assert.ok(Number.isFinite(left) && left > 0 && left <= relay.QUOTA_HOLD_FALLBACK_MS,
+          `an unread reset must be a bounded hold, got ${left}ms`);
+      }
+    } finally { console.warn = warn; console.error = error; console.log = log; teardown(relay); }
+  }
+});
+
+test('a dated provider reset holds for days, is bounded, and tells the operator when work resumes', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const relay = loadRelay({ backend: 'claude', mode: 'headless' });
+  const warned = [];
+  const warn = console.warn; console.warn = (...a) => warned.push(a.join(' '));
+  const log = console.log; console.log = () => {};
+  try {
+    const dated = claudeLimitLineFor(3 * DAY);
+    relay.enterQuotaHold({ line: dated.line, resetMs: dated.at - Date.now(), calendarReset: true });
+    const until = relay.getQuotaHoldUntil();
+    assert.ok(Math.abs(until - (dated.at + relay.QUOTA_HOLD_GRACE_MS)) < 5000,
+      'a dated reset three days out must not be cut to the countdown ceiling');
+
+    // The operator log names the limit and the time work resumes, in UTC.
+    const resumes = `${new Date(dated.at).toISOString().slice(0, 16).replace('T', ' ')} UTC`;
+    const box = warned.join('\n');
+    assert.ok(box.includes(dated.line), `the provider's own line must be shown: ${box}`);
+    assert.ok(box.includes(resumes), `the log must say when work resumes (${resumes}): ${box}`);
+    assert.match(box, /\(in 3d[01]h\d+m\)/, `a multi-day wait is stated in days: ${box}`);
+
+    // The bound still holds: a dated claim past the classifier's own limit
+    // (which a caller should never pass) cannot wedge the relay for a month.
+    relay.releaseQuotaHold('reset for the cap check');
+    relay.enterQuotaHold({ line: 'resets some day', resetMs: 30 * DAY, calendarReset: true });
+    assert.ok(relay.getQuotaHoldUntil() - Date.now() <= relay.QUOTA_HOLD_CALENDAR_MAX_MS);
+    assert.ok(relay.QUOTA_HOLD_CALENDAR_MAX_MS < 9 * DAY);
+
+    // A countdown keeps its own, shorter ceiling.
+    relay.releaseQuotaHold('reset for the countdown check');
+    relay.enterQuotaHold({ line: 'Resets in 72h', resetMs: 3 * DAY });
+    assert.ok(relay.getQuotaHoldUntil() - Date.now() <= relay.QUOTA_HOLD_MAX_MS);
+
+    // The flag alone buys nothing: without a parsed reset it is the fallback.
+    relay.releaseQuotaHold('reset for the fallback check');
+    relay.enterQuotaHold({ line: 'no reset stated', resetMs: null, calendarReset: true });
+    assert.ok(relay.getQuotaHoldUntil() - Date.now() <= relay.QUOTA_HOLD_FALLBACK_MS);
+  } finally { console.warn = warn; console.log = log; teardown(relay); }
+});
+
+test('quota hold durations past a day are stated in days', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    const f = relay.formatQuotaHoldRemaining;
+    const MIN = 60 * 1000;
+    assert.strictEqual(f(45 * 1000), '45s');
+    assert.strictEqual(f(38 * MIN + 29 * 1000), '38m29s');
+    assert.strictEqual(f((4 * 60 + 42) * MIN + 28 * 1000), '4h42m28s');
+    assert.strictEqual(f(24 * 60 * MIN), '1d0h0m');
+    assert.strictEqual(f((3 * 24 * 60 + 6 * 60 + 5) * MIN + 30 * 1000), '3d6h5m');
+    assert.match(f(Infinity), /until quota recovery is confirmed/);
+  } finally { teardown(relay); }
+});
+
+test('an unreadable provider reset backs off: the fallback hold doubles per refusal, a finished task resets it, and it is capped', () => {
+  // A limit whose reset the relay cannot read gets the fallback window. Left
+  // at a flat fifteen minutes, a provider that keeps refusing would cost one
+  // failed assignment every fifteen minutes for as long as the limit lasted.
+  const bare = 'You\'ve hit your limit';
+  const refusal = Object.assign(new Error('claude failed'), { code: 1 });
+  // The fake CLI reads this object afresh on every run, so the test can make
+  // the next run refuse or succeed.
+  const result = { err: refusal, stdout: `${bare}\n` };
+  const relay = loadRelay({ backend: 'claude', mode: 'headless', execFileResult: result });
+  const warned = [];
+  const warn = console.warn; console.warn = (...a) => warned.push(a.join(' '));
+  const error = console.error; console.error = () => {};
+  const log = console.log; console.log = () => {};
+  let n = 0;
+  // One assignment that the provider refuses. Returns how long the relay
+  // parked itself for, then ends the hold as its timer would.
+  const refuse = () => {
+    n++;
+    result.err = refusal; result.stdout = `${bare}\n`;
+    const runs = relay.__execFileCalls.length;
+    warned.length = 0;
+    assignHeadlessTask(relay, { task_id: `ct-backoff-${n}`, number: 100 + n });
+    assert.ok(relay.__execFileCalls.length > runs, `setup: assignment ${n} must reach the CLI`);
+    assert.strictEqual(relay.quotaHoldActive(), true, `refusal ${n} must park the relay`);
+    const left = relay.getQuotaHoldUntil() - Date.now();
+    const box = warned.join('\n');
+    relay.releaseQuotaHold('test: the fallback window passed');
+    return { left, box };
+  };
+  // One assignment that runs to completion.
+  const complete = () => {
+    n++;
+    result.err = null; result.stdout = 'all done\n';
+    const before = relay.__sent.filter(m => m.type === 'task_complete').length;
+    assignHeadlessTask(relay, { task_id: `ct-backoff-${n}`, number: 100 + n });
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, before + 1,
+      'setup: the task must complete');
+    assert.strictEqual(relay.quotaHoldActive(), false);
+  };
+  const near = (got, want, what) => assert.ok(Math.abs(got - want) < 5000, `${what}: expected about ${want}ms, got ${got}ms`);
+  try {
+    const BASE = relay.QUOTA_HOLD_FALLBACK_MS;
+    const MAX = relay.QUOTA_HOLD_MAX_MS;
+    assert.strictEqual(BASE, 15 * 60 * 1000);
+    assert.strictEqual(MAX, 6 * 60 * 60 * 1000);
+
+    // Three refusals in a row: 15m, 30m, 1h.
+    const first = refuse();
+    near(first.left, BASE, 'first refusal');
+    assert.ok(first.box.includes('15m0s'), `the log must state the wait: ${first.box}`);
+    assert.match(first.box, /doubles each time/, `and that it grows if the provider keeps refusing: ${first.box}`);
+    const second = refuse();
+    near(second.left, 2 * BASE, 'second refusal in a row');
+    assert.ok(second.box.includes('30m0s'), `the log must state the longer wait: ${second.box}`);
+    assert.match(second.box, /refusal 2 in a row/, `and why it is longer: ${second.box}`);
+    near(refuse().left, 4 * BASE, 'third refusal in a row');
+
+    // A task that finishes is the provider serving this account again.
+    complete();
+    assert.strictEqual(relay.getQuotaFallbackStreak(), 0);
+    near(refuse().left, BASE, 'first refusal after a completed task');
+
+    // 30m, 1h, 2h, 4h, then the ceiling, and it stays there.
+    near(refuse().left, 2 * BASE, 'second');
+    near(refuse().left, 4 * BASE, 'third');
+    near(refuse().left, 8 * BASE, 'fourth');
+    near(refuse().left, 16 * BASE, 'fifth');
+    near(refuse().left, MAX, 'sixth: 8h would be past the ceiling');
+    near(refuse().left, MAX, 'seventh: still the ceiling');
+
+    // A repeat banner during a hold restates the same refusal: it neither
+    // lengthens that hold nor counts as another refusal.
+    complete();
+    relay.enterQuotaHold({ line: bare, resetMs: null });
+    relay.enterQuotaHold({ line: bare, resetMs: null });
+    relay.enterQuotaHold({ line: bare, resetMs: null });
+    near(relay.getQuotaHoldUntil() - Date.now(), BASE, 'a repeat banner mid-hold must not double the hold');
+    assert.strictEqual(relay.getQuotaFallbackStreak(), 1, 'and is one refusal, not three');
+
+    // A reset the relay CAN read is not part of this: it holds to the stated
+    // time whatever the streak is.
+    relay.releaseQuotaHold('test');
+    relay.enterQuotaHold({ line: AGY_QUOTA_BANNER, resetMs: 60 * 1000 });
+    near(relay.getQuotaHoldUntil() - Date.now(), 60 * 1000 + relay.QUOTA_HOLD_GRACE_MS, 'a stated reset');
+  } finally { console.warn = warn; console.error = error; console.log = log; teardown(relay); }
+});
+
+test('a timed quota hold releases once, when the wall clock reaches the reset and not before', () => {
+  // The release timer never sleeps longer than QUOTA_HOLD_RECHECK_MS and
+  // compares the wall clock each time it wakes, so a hold of days is not left
+  // to one long timer that stops counting while the machine is suspended.
+  // Date.now and the timer functions are replaced so the test owns both clocks.
+  const relay = loadRelay({ backend: 'agy' });
+  const realNow = Date.now;
+  const realSetTimeout = global.setTimeout;
+  const realClearTimeout = global.clearTimeout;
+  const warn = console.warn; console.warn = () => {};
+  const log = console.log; console.log = () => {};
+  let now = realNow();
+  const fake = [];
+  Date.now = () => now;
+  global.setTimeout = (fn, ms) => {
+    const t = { fn, ms, cleared: false, unref() { return t; }, ref() { return t; }, refresh() { return t; }, hasRef() { return false; } };
+    fake.push(t);
+    return t;
+  };
+  global.clearTimeout = (t) => { if (fake.includes(t)) t.cleared = true; else realClearTimeout(t); };
+  try {
+    const MIN = 60 * 1000;
+    const RECHECK = relay.QUOTA_HOLD_RECHECK_MS;
+    const ready = () => relay.__sent.filter(m => m.type === 'ready').length;
+    // The hold's own timer, which must be one of ours and still armed.
+    const armed = () => {
+      const t = relay.getQuotaHoldTimer();
+      assert.ok(t && fake.includes(t) && !t.cleared, 'a held relay must have its release timer armed');
+      return t;
+    };
+
+    relay.enterQuotaHold({ line: AGY_QUOTA_BANNER, resetMs: 12 * MIN });
+    const until = relay.getQuotaHoldUntil();
+    assert.strictEqual(until, now + 12 * MIN + relay.QUOTA_HOLD_GRACE_MS);
+    const readyBefore = ready();
+
+    // Twelve minutes is longer than the re-check interval: two full sleeps,
+    // each of which wakes, sees the reset is still ahead, and sleeps again.
+    for (let i = 0; i < 2; i++) {
+      const t = armed();
+      assert.strictEqual(t.ms, RECHECK, 'never one long sleep to the deadline');
+      now += t.ms;
+      t.fn();
+      assert.strictEqual(relay.quotaHoldActive(), true);
+      assert.strictEqual(ready(), readyBefore, 'nothing is released before the reset');
+    }
+
+    // The last sleep is only what is left.
+    let t = armed();
+    assert.strictEqual(t.ms, until - now);
+    assert.ok(t.ms < RECHECK);
+
+    // A timer that fires while the wall clock is still short of the reset
+    // releases nothing; it sleeps for the remainder.
+    now += 1000;
+    t.fn();
+    assert.strictEqual(relay.quotaHoldActive(), true);
+    assert.strictEqual(ready(), readyBefore);
+    t = armed();
+    assert.strictEqual(t.ms, until - now);
+
+    // The wall clock reaches the reset: released, exactly once.
+    now = until;
+    t.fn();
+    assert.strictEqual(relay.quotaHoldActive(), false);
+    assert.strictEqual(relay.getQuotaHoldUntil(), 0);
+    assert.strictEqual(relay.getQuotaHoldTimer(), null, 'no release timer is left behind');
+    assert.strictEqual(ready(), readyBefore + 1, 'release must ask for work once');
+
+    // A stale callback after the release does nothing.
+    t.fn();
+    assert.strictEqual(ready(), readyBefore + 1);
+    assert.strictEqual(relay.getQuotaHoldTimer(), null);
+
+    // A machine that was suspended: the timer wakes long after the reset. The
+    // very next wake releases, without sleeping out what it had left.
+    // (No `ready` count here: the one sent above is still unanswered, and the
+    // relay does not ask a hub twice.)
+    relay.enterQuotaHold({ line: AGY_QUOTA_BANNER, resetMs: 12 * MIN });
+    assert.notStrictEqual(relay.getQuotaHoldUntil(), 0, 'setup: held again');
+    t = armed();
+    assert.strictEqual(t.ms, RECHECK);
+    now += 9 * 60 * MIN;
+    t.fn();
+    assert.strictEqual(relay.getQuotaHoldUntil(), 0);
+    assert.strictEqual(relay.getQuotaHoldTimer(), null);
+  } finally {
+    // Torn down while the stand-ins are still in place, so cleanup clears the
+    // stand-in timers through the stand-in clearTimeout.
+    try { teardown(relay); } finally {
+      Date.now = realNow;
+      global.setTimeout = realSetTimeout;
+      global.clearTimeout = realClearTimeout;
+      console.warn = warn; console.log = log;
+    }
+  }
+});
+
 for (const provider of ['openai-codex', 'openrouter', 'anthropic']) {
   test(`#10389 Pi ${provider} ignores unrelated pool readings and explains the missing reader`, () => {
     const dir = poolDir6953();

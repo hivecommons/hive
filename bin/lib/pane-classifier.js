@@ -199,6 +199,150 @@ function parseQuotaResetMs(line) {
   return total > 0 ? total : null;
 }
 
+// Claude Code's limit line states a CALENDAR reset, not a countdown. Observed
+// verbatim as the last output line of a headless `claude -p` run that exited 1
+// within two seconds (a contributor on a production hive, out of their weekly
+// allowance; the separator is U+00B7):
+//
+//   You've hit your weekly limit · resets Dec 1, 3pm (UTC)
+//
+// The shapes below are the ones the CLI's own message builder prints, not
+// guesses from that one line:
+//
+//   resets 3pm (UTC)               the reset is at most 24 hours away,
+//                                  INCLUDING one that has just passed
+//   resets 3:30pm (UTC)            any of the forms, with minutes
+//   resets Dec 1, 3pm (UTC)        further off, same year
+//   resets Jan 2, 2027, 3pm (UTC)  the year appears when it is not this year
+//
+// Always a 12-hour clock with am/pm, and always the zone in parentheses
+// straight after it. THE ZONE IS THE CLI PROCESS'S OWN: `UTC` in a container,
+// an IANA name such as `America/New_York` on a workstation. Whatever it is,
+// Intl resolves it here, so the answer does not depend on the relay sharing
+// the CLI's zone. A line with no zone, or one Intl does not know, returns
+// null: a deadline is never built on a guessed zone.
+//
+// BOUNDED. A wait past eight days returns null rather than a deadline. That
+// also catches a date with no year that has already passed: it rolls to next
+// year and fails here.
+const CLAUDE_LIMIT_RESET_MAX_MS = 8 * 24 * 60 * 60 * 1000;
+const CLAUDE_LIMIT_RESET_RE =
+  /\bresets\s+(?:([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(?:(\d{4}),?\s+)?)?(\d{1,2})(?::(\d{2}))?\s*([ap]m)\s*\(([^()]*)\)/i;
+// What an IANA zone name can look like (America/Argentina/Buenos_Aires,
+// Etc/GMT+2, UTC). Anything else never reaches Intl.
+const CLAUDE_LIMIT_ZONE_NAME_RE = /^[A-Za-z][A-Za-z0-9_+\-/]{0,63}$/;
+const CLAUDE_LIMIT_MONTHS = [
+  'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december',
+];
+// The CLI prints the time-only form for a reset that has JUST PASSED as well
+// as for one still ahead. A relay whose task was refused at 14:59:59 for a
+// 15:00 reset reads the line at 15:00:01; taking "the next 3pm" there would
+// park it for a day over a limit that lifted a second ago. Inside this window
+// a time-only reset behind the clock is not a deadline at all.
+const CLAUDE_LIMIT_JUST_PASSED_MS = 10 * 60 * 1000;
+
+// claudeLimitZoneClock returns a formatter that reads an instant as wall-clock
+// fields in the named zone, or null when Intl does not know the zone.
+function claudeLimitZoneClock(zone) {
+  if (!CLAUDE_LIMIT_ZONE_NAME_RE.test(zone)) return null;
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: zone, hourCycle: 'h23',
+      year: 'numeric', month: 'numeric', day: 'numeric',
+      hour: 'numeric', minute: 'numeric', second: 'numeric',
+    });
+  } catch (_) {
+    return null; // RangeError: not a zone this runtime has
+  }
+}
+
+// claudeLimitWallClock reads utcMs on the zone's wall clock and returns it as
+// if those fields were UTC, so wall times can be compared and stepped with
+// plain Date arithmetic. (That value minus utcMs is the zone's offset.)
+function claudeLimitWallClock(clock, utcMs) {
+  const f = {};
+  for (const part of clock.formatToParts(new Date(utcMs))) f[part.type] = parseInt(part.value, 10);
+  return Date.UTC(f.year, f.month - 1, f.day, f.hour % 24, f.minute, f.second);
+}
+
+// claudeLimitInstant returns the UTC instant at which the zone's wall clock
+// reads the given fields. The zone's offset is taken at a first estimate and
+// then again at the corrected instant, which settles every wall time that
+// exists exactly once. One that a clock change skips or repeats lands on one
+// side of the change or the other, an hour apart; for a hold deadline either
+// is acceptable.
+function claudeLimitInstant(clock, year, month, day, hour, minute) {
+  const wall = Date.UTC(year, month, day, hour, minute);
+  const offsetAt = (utcMs) => claudeLimitWallClock(clock, utcMs) - Math.floor(utcMs / 1000) * 1000;
+  const estimate = wall - offsetAt(wall);
+  return wall - offsetAt(estimate);
+}
+
+// parseClaudeLimitResetMs returns the milliseconds from nowMs until the reset
+// the line states, or null when it states none this function may trust. The
+// clock is a parameter so the answer is a pure function of its inputs.
+//
+//   - Month, day and year: that date. Already past is null.
+//   - Month and day: the next time that date comes round, this year or next.
+//   - Time only: today in the stated zone if still ahead, else tomorrow,
+//     except inside CLAUDE_LIMIT_JUST_PASSED_MS, which is null.
+//
+// Never zero or negative: the result is a wait.
+function parseClaudeLimitResetMs(line, nowMs = Date.now()) {
+  if (!Number.isFinite(nowMs)) return null;
+  const m = CLAUDE_LIMIT_RESET_RE.exec(String(line || ''));
+  if (!m) return null;
+
+  const clock = claudeLimitZoneClock(m[7].trim());
+  if (!clock) return null;
+
+  const hour12 = parseInt(m[4], 10);
+  const minute = m[5] ? parseInt(m[5], 10) : 0;
+  if (hour12 < 1 || hour12 > 12 || minute > 59) return null;
+  const hour = (hour12 % 12) + (m[6].toLowerCase() === 'pm' ? 12 : 0);
+
+  // Today's date where the CLI is, which is not always today's date in UTC.
+  const today = new Date(claudeLimitWallClock(clock, nowMs));
+  let at = null;
+  if (m[1]) {
+    const word = m[1].toLowerCase();
+    const month = CLAUDE_LIMIT_MONTHS.findIndex((name) => name.startsWith(word));
+    const day = parseInt(m[2], 10);
+    if (month < 0) return null;
+    const years = m[3]
+      ? [parseInt(m[3], 10)]
+      : [today.getUTCFullYear(), today.getUTCFullYear() + 1];
+    for (const year of years) {
+      // Date.UTC rolls an impossible day forward (Feb 30 becomes Mar 2); a
+      // date that does not survive the round trip does not exist that year.
+      const check = new Date(Date.UTC(year, month, day));
+      if (check.getUTCMonth() !== month || check.getUTCDate() !== day) continue;
+      const candidate = claudeLimitInstant(clock, year, month, day, hour, minute);
+      if (candidate > nowMs) { at = candidate; break; }
+    }
+  } else {
+    const y = today.getUTCFullYear();
+    const mo = today.getUTCMonth();
+    const d = today.getUTCDate();
+    at = claudeLimitInstant(clock, y, mo, d, hour, minute);
+    if (at <= nowMs) {
+      if (nowMs - at <= CLAUDE_LIMIT_JUST_PASSED_MS) return null;
+      // Date.UTC carries day + 1 over a month or year end by itself.
+      at = claudeLimitInstant(clock, y, mo, d + 1, hour, minute);
+    } else {
+      // A reset just before the zone's midnight, read just after it: today's
+      // occurrence is a day ahead, but yesterday's has only just passed.
+      const before = claudeLimitInstant(clock, y, mo, d - 1, hour, minute);
+      if (Number.isFinite(before) && before <= nowMs && nowMs - before <= CLAUDE_LIMIT_JUST_PASSED_MS) return null;
+    }
+  }
+  if (at === null || !Number.isFinite(at)) return null;
+  const wait = at - nowMs;
+  if (wait <= 0 || wait > CLAUDE_LIMIT_RESET_MAX_MS) return null;
+  return wait;
+}
+
 // Codex uses a square error glyph, not "API Error:". Keep the glyph and
 // refusal at column zero; indented prompt/prose rows and fenced examples are not UI.
 // Scan fence context before taking the tail so a long quoted example stays inert.
@@ -244,11 +388,70 @@ function codexQuotaExhaustion(text) {
 // rather than the TUI's ■ banner. Only the last non-empty line counts, so
 // quoted refusal text earlier in task output cannot park the relay. The reset
 // text has no timezone, so recovery is always required.
-function headlessQuotaExhaustion(diagnostic, backend) {
-  if (backend !== 'codex') return null;
+//
+// Claude Code (`claude -p`) has its own line, and until it was listed here a
+// contributor on a production hive who had used up their weekly allowance was
+// given twelve more assignments in thirty hours: each run exited 1 within two
+// seconds, the relay reported an ordinary failure and asked for work again,
+// and every one of those assignments booked a failure cooldown on an issue
+// nothing was wrong with. The line, verbatim (the separator is U+00B7):
+//
+//   You've hit your weekly limit · resets Dec 1, 3pm (UTC)
+//
+// That is the only wording seen live. The others accepted here are the ones
+// the CLI's own message builder can produce for the same refusal, which is
+// `You've hit your <name>` or `You're out of usage credits`, then optionally
+// ` · resets ...`:
+//
+//   You've hit your limit                        (no name: the fallthrough
+//                                                 when overage is rejected)
+//   You've hit your <one or two words> limit     (weekly is the one seen; for
+//                                                 example session, 5-hour)
+//   You've hit your org's monthly spend limit
+//   You've hit your channel's monthly spend limit
+//   You're out of usage credits
+//
+// Matched as conservatively as the Codex rule: the last line only, anchored at
+// its first character, so the sentence quoted in task output or inside a shell
+// command is inert. And the sentence must END there, or go on only with a full
+// stop or the middle dot that introduces the reset: prose that merely starts
+// the same way ("...weekly limit of three retries") is not the CLI's refusal.
+// "rate limit" is left out on purpose. That is a throttle that clears in
+// seconds, not an allowance that is spent, and the ordinary failure path
+// already handles it.
+//
+// With a reset parseClaudeLimitResetMs can read, the result is
+// { resetMs, calendarReset: true } and the hold releases at that time. Without
+// one (no reset on the line, no zone, a time-only reset that has just passed,
+// one past the bound) it is { resetMs: null } and NOT requiresRecovery: the
+// caller's bounded fallback window applies and the relay tries again after it.
+// Codex needs requiresRecovery because its clock time can never be trusted;
+// here an unread reset is the exception, and parking a contributor until
+// someone restarts the relay is too high a price for it. nowMs is injected for
+// tests.
+//
+// Each backend keeps its own rule: the Codex line under `claude`, or the
+// Claude line under `codex` or under a proxy backend that merely runs the
+// claude binary, is somebody's task output and not this CLI's refusal.
+const CLAUDE_HEADLESS_LIMIT_RE = new RegExp('^(?:' + [
+  'You[’\']ve hit your (?!(?:[A-Za-z0-9-]+\\s+)?rate\\s)(?:[A-Za-z0-9][A-Za-z0-9-]*\\s+){0,2}limit',
+  'You[’\']ve hit your (?:org|channel)[’\']s monthly (?:spend|usage) limit',
+  'You[’\']re out of usage credits',
+].join('|') + ')\\s*(?:$|[.·])', 'i');
+
+function headlessQuotaExhaustion(diagnostic, backend, nowMs = Date.now()) {
   const line = String(diagnostic || '').trim();
-  if (!/^ERROR:\s+You[’']ve hit your usage limit\./i.test(line)) return null;
-  return { line: line.slice(0, 500), resetMs: null, requiresRecovery: true };
+  if (backend === 'codex') {
+    if (!/^ERROR:\s+You[’']ve hit your usage limit\./i.test(line)) return null;
+    return { line: line.slice(0, 500), resetMs: null, requiresRecovery: true };
+  }
+  if (backend === 'claude') {
+    if (!CLAUDE_HEADLESS_LIMIT_RE.test(line)) return null;
+    const resetMs = parseClaudeLimitResetMs(line, nowMs);
+    if (resetMs === null) return { line: line.slice(0, 500), resetMs: null };
+    return { line: line.slice(0, 500), resetMs, calendarReset: true };
+  }
+  return null;
 }
 
 function paneQuotaExhaustion(text) {
@@ -1179,6 +1382,8 @@ module.exports = {
   // set (#6541) — what lets the relay stop asking for work and come back.
   paneQuotaExhaustion,
   parseQuotaResetMs,
+  parseClaudeLimitResetMs,
+  CLAUDE_LIMIT_RESET_MAX_MS,
   paneShowsLoginRequiredError,
   paneUnknownAPIErrorLine,
   classifyPane,
