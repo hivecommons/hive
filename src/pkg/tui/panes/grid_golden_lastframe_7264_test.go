@@ -68,13 +68,20 @@ func TestLastFrameDropsSupersededRepaints(t *testing.T) {
 // If this ever fails, the golden was regenerated from a multi-frame capture
 // and the two halves of the scheme have drifted apart -- which would silently
 // re-admit exactly the timing dependence #7264 removed.
+//
+// Every teatest-driven golden normalized through lastFrame is listed here:
+// grid.golden (#7264) and too_small.golden (#20243).
 func TestLastFrameIsIdempotentOnTheCommittedGolden(t *testing.T) {
-	golden, err := os.ReadFile(filepath.Join("testdata", "grid.golden"))
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
-	}
-	if got := lastFrame(golden); !bytes.Equal(got, golden) {
-		t.Errorf("the committed golden is not a normalized single frame: "+
-			"lastFrame changed it from %d to %d bytes", len(golden), len(got))
+	for _, name := range []string{"grid.golden", "too_small.golden"} {
+		t.Run(name, func(t *testing.T) {
+			golden, err := os.ReadFile(filepath.Join("testdata", name))
+			if err != nil {
+				t.Fatalf("read golden: %v", err)
+			}
+			if got := lastFrame(golden); !bytes.Equal(got, golden) {
+				t.Errorf("the committed golden is not a normalized single frame: "+
+					"lastFrame changed it from %d to %d bytes", len(golden), len(got))
+			}
+		})
 	}
 }

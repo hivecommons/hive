@@ -25,6 +25,12 @@ import (
 // the poll T12 issues on startup cannot make this frame depend on whether a
 // hive is running on the developer's machine.
 //
+// The stream is reduced to its final frame with lastFrame for the same reason
+// as the grid golden (#7264, #20243): WithInitialTermSize queues a second
+// WindowSizeMsg, the standard renderer repaints unconditionally on it, and
+// whether the quit key lands before or after that repaint is a scheduling
+// race — so a loaded CI shard can capture two copies of the identical frame.
+//
 // Regenerate exactly like the grid golden:
 //
 //	cd src && go test ./pkg/tui/panes/... -update
@@ -42,5 +48,5 @@ func TestTooSmallGolden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read final output: %v", err)
 	}
-	requireGolden(t, out, filepath.Join("testdata", "too_small.golden"))
+	requireGolden(t, lastFrame(out), filepath.Join("testdata", "too_small.golden"))
 }
