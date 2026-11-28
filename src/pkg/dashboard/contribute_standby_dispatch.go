@@ -104,7 +104,7 @@ func (h *ContributeWSHub) DispatchStandby(lane, key string) (*WSMessage, error) 
 	itemTiers := standbyItemTiersFromConfig(cfg.Hub.StandbyItemTiers)
 	standbyItem := standbypkg.Item{Repo: item.Repo, Labels: item.Labels}
 	itemMatch := itemTiers.Match(standbyItem, standbyProposeItemTier(standbyItem))
-	cand, err := h.pickStandbyCandidate(cfg, lane, itemMatch)
+	cand, err := h.pickStandbyCandidate(cfg, lane, item.Repo, itemMatch)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +217,7 @@ func (h *ContributeWSHub) standbyDispatchItem(lane, key string) (ReadyQueueItem,
 	return ReadyQueueItem{}, fmt.Errorf("no dispatchable standby item")
 }
 
-func (h *ContributeWSHub) pickStandbyCandidate(cfg *config.Config, lane string, itemMatch standbypkg.ItemMatch) (standbyDispatchCandidate, error) {
+func (h *ContributeWSHub) pickStandbyCandidate(cfg *config.Config, lane, repo string, itemMatch standbypkg.ItemMatch) (standbyDispatchCandidate, error) {
 	agentCfg := cfg.Agents[lane]
 	policy := standbypkg.LanePolicy{
 		Floor:    standbypkg.NormalizeTier(agentCfg.Standby.StandbyFloor()),
@@ -242,6 +242,13 @@ func (h *ContributeWSHub) pickStandbyCandidate(cfg *config.Config, lane string, 
 		}
 		conn.mu.Unlock()
 		if !ok {
+			continue
+		}
+		// A relay the hub is holding (provider quota exhausted, or its
+		// fork of this repository not pushable) would fail the item the
+		// same way ordinary work fails, so it is not a candidate either.
+		if reason := h.contributorHoldReason(conn, repo, now); reason != "" {
+			h.logger.Info("[contribute-ws] standby candidate did not qualify", "lane", lane, "username", conn.profile.GitHubUsername, "reason", reason)
 			continue
 		}
 		candidateConfig := standbyConfigFromState(state)

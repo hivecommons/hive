@@ -243,6 +243,16 @@ type ContributorProfile struct {
 	CurrentTask *WSTaskAssign  `json:"current_task,omitempty"`
 	ActiveTasks []WSTaskAssign `json:"active_tasks,omitempty"`
 	Sessions    int            `json:"sessions,omitempty"`
+	// RepoPushHolds lists the repositories this contributor is not offered
+	// tasks from right now because their agent could not push to their fork
+	// (contribute_repo_push_hold.go); filled on the list response only,
+	// never persisted.
+	RepoPushHolds []ContributorRepoPushHoldView `json:"repo_push_holds,omitempty"`
+	// QuotaHolds lists the holds that keep this contributor from being
+	// offered any task right now because their provider account is out of
+	// quota (contribute_quota_hold.go), one per relay session; filled on the
+	// list response only, never persisted.
+	QuotaHolds []ContributorQuotaHoldView `json:"quota_holds,omitempty"`
 	// Version is the profile's optimistic-concurrency token (hivecommons/hive H2,
 	// CWE-613/639). It is bumped on every persisted change. A caller that loaded the
 	// profile at version N may only persist its edit if the on-disk version is still

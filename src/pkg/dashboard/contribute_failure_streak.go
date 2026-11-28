@@ -22,7 +22,11 @@ package dashboard
 //   - The signal is HUB-measured (assignment-to-task_failed wall clock), never
 //     the client-declared failure_kind — routing on a self-reported value is
 //     the ROUTE half of #2547 and stays undecided. A relay cannot fake its way
-//     INTO or OUT of the streak with a declared kind.
+//     INTO or OUT of the streak with a declared kind. One failure REASON does
+//     leave the streak: a provider-quota refusal (contribute_quota_hold.go)
+//     is not counted and clears it, because the quota hold it books instead
+//     keeps that contributor out of all work for at least as long as this
+//     pause would. A relay gains nothing by wording a failure that way.
 //   - A failure with no measurable duration (the task was adopted on reconnect
 //     without a fresh assignment) is NOT counted: better to miss a streak than
 //     to invent one from a clock we never started.

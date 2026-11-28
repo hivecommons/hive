@@ -45,6 +45,9 @@ import (
 //     is still counted, as before;
 //   - it is not in a failure-streak pause: a relay whose runtime keeps dying
 //     is connected but is not doing the lane's work;
+//   - the hub is not holding it for an exhausted provider quota
+//     (contribute_quota_hold.go): task selection hands it nothing until the
+//     quota is back, whether or not the relay reported a quota hold itself;
 //   - its identity has not used up its hourly or daily task allowance
 //     (hub.tier_limits max_per_hour / max_per_day for its trust tier). Task
 //     selection refuses such a relay with hourly_limit / daily_limit until the
@@ -61,7 +64,10 @@ import (
 //     task. Such a relay is connected and idle: the queue has nothing it may
 //     take. Observed on 2026-11-08: a relay covered the scanner lane while
 //     every ready it sent was answered no_matching_work. One empty answer
-//     between two tasks does not drop it (see coverageNoWorkWindow).
+//     between two tasks does not drop it (see coverageNoWorkWindow). A relay
+//     held out of every queued repository by a push hold
+//     (contribute_repo_push_hold.go) is answered no_matching_work too, so
+//     this rule drops it the same way.
 //
 // A relay that is busy on a task still counts — it is draining the lane,
 // which is the point. That includes a relay working only a fix-pr task, and a
@@ -105,18 +111,24 @@ func (h *ContributeWSHub) RoleCoverage(now time.Time) map[string]governor.Contri
 	}
 	h.mu.RUnlock()
 
-	// The failure-streak ledger and the assignment-rate windows each have
-	// their own lock (failureStreakMu, rateMu); consult them with h.mu
-	// released so neither is ever nested inside it. The rate check is a scan
-	// of at most a day of assignment stamps for one identity, once per
-	// candidate per governor evaluation, and never takes selectMu. The tier
-	// gate reads only the config, from the tier copied out under c.mu above.
+	// The failure-streak ledger, the quota holds and the assignment-rate
+	// windows each have their own lock (failureStreakMu, quotaHoldMu, rateMu);
+	// they are consulted here with h.mu released. (The hold mutexes are
+	// leaves, taken with nothing else held or wanted, so standby dispatch
+	// may take them under h.mu.RLock; nothing takes h.mu while holding one.)
+	// The rate check is a scan of at most a day of assignment stamps for one
+	// identity, once per candidate per governor evaluation, and never takes
+	// selectMu. The tier gate reads only the config, from the tier copied out
+	// under c.mu above.
 	byRole := make(map[string]map[string]struct{})
 	for _, cand := range candidates {
 		if h.tierAccessGateReason(cand.tier) != "" {
 			continue
 		}
 		if paused, _, _ := h.contributorFailureStreakActive(cand.identity, now); paused {
+			continue
+		}
+		if _, held := h.contributorQuotaHoldActive(cand.identity, now); held {
 			continue
 		}
 		if h.tierRateLimitReached(cand.identity, cand.tier, now).Reason != "" {
