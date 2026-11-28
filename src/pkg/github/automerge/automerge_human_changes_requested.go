@@ -171,18 +171,9 @@ func (c *Engine) humanChangesRequestedForHeadRead(ctx context.Context, owner, re
 		if found {
 			// A later trusted approval on this same head can acknowledge a body-
 			// only fix. Persist it so the planner also stops scheduling a fix.
-			if approval, approved := c.latestTrustedHumanReview(ctx, owner, repo, number, head, "APPROVED"); approved && approval.GetSubmittedAt().After(standing.RecordedAt) {
-				req := review.HumanChangeRequest{
-					Repo: owner + "/" + repo, Number: number, HeadSHA: head,
-					Source: review.HumanChangeRequestSourceReview, SourceID: approval.GetID(),
-					Actor: hgithub.SafeGetLogin(approval.GetUser()), Body: approval.GetBody(), URL: approval.GetHTMLURL(),
-					Kind: review.HumanChangeRequestKindApprove, RecordedAt: approval.GetSubmittedAt().Time,
-				}
-				if err := c.humanChangeRequests.Record(req); err == nil {
-					c.noteStageTrustedHumanApproval(owner, repo, number, head, req.Actor)
+			if approval, approved := c.laterTrustedApproval(ctx, owner, repo, number, head, standing.RecordedAt); approved {
+				if _, recorded := c.recordTrustedApproval(owner, repo, number, head, approval, false); recorded {
 					return false, readOK
-				} else {
-					c.warn("could not record approval clearing human change request", "pr", number, "error", err)
 				}
 			}
 			c.noteStageHumanChangeRequest(owner, repo, number, head, standing.Actor)
@@ -418,6 +409,14 @@ func (t *StageTracker) forgetHumanMergeNoChangeRequest(key string) {
 // otherwise keep answering requires_human and shadow the instruction
 // recorded before it. Comment and dashboard decisions are durable and are
 // never revalidated here.
+//
+// The record is dropped only on a definite answer: the review list was
+// read and either the record's own review no longer stands as an approval
+// in it, or every approval in it was placed against head. A failed review
+// read, or an approval whose reach to head could not be read
+// (reviewReachesHeadKnown), keeps the record until a read settles it, so a
+// GitHub outage or rate-limit window never revokes a person's approval
+// (it used to, on every lane that reconciles).
 func (c *Engine) reconcileReviewBackedApproval(ctx context.Context, owner, repo string, number int, head string) (review.HumanChangeRequest, bool) {
 	if c == nil || c.humanChangeRequests == nil || strings.TrimSpace(head) == "" {
 		return review.HumanChangeRequest{}, false
@@ -427,7 +426,38 @@ func (c *Engine) reconcileReviewBackedApproval(ctx context.Context, owner, repo 
 	if !found || !standing.IsApproval() || standing.Source != review.HumanChangeRequestSourceReview {
 		return standing, found
 	}
-	if live, ok := c.latestTrustedHumanReview(ctx, owner, repo, number, head, "APPROVED"); ok && live.GetID() == standing.SourceID {
+	// latestTrustedHumanReview's APPROVED pick, keeping track of whether
+	// every read behind it succeeded.
+	reviews, definite := c.standingTrustedHumanReviewsRead(ctx, owner, repo, number)
+	// own: the record's review still stands as an approval in a list that
+	// was read. When the list was read and it does not, the record is
+	// definitely revoked (dismissed, or the reviewer's latest opinion
+	// changed): no other approval's unread reach can make it live again.
+	own := false
+	for _, rv := range reviews {
+		if rv.GetID() == standing.SourceID && strings.EqualFold(rv.GetState(), "APPROVED") {
+			own = true
+		}
+	}
+	var live *gh.PullRequestReview
+	for _, rv := range reviews {
+		if !own || !strings.EqualFold(rv.GetState(), "APPROVED") {
+			continue
+		}
+		reach, known := c.reviewReachesHeadKnown(ctx, owner, repo, number, head, rv)
+		if !known {
+			definite = false
+			continue
+		}
+		if reach.ok && (live == nil || rv.GetSubmittedAt().After(live.GetSubmittedAt().Time)) {
+			live = rv
+		}
+	}
+	if live != nil && live.GetID() == standing.SourceID {
+		return standing, true
+	}
+	if !definite {
+		c.debug("review-backed approval kept: its review could not be read", "repo", key, "pr", number, "head", head, "review", standing.SourceID)
 		return standing, true
 	}
 	if err := c.humanChangeRequests.Forget(key, number, standing.Source, standing.SourceID); err != nil {
@@ -435,6 +465,45 @@ func (c *Engine) reconcileReviewBackedApproval(ctx context.Context, owner, repo 
 		return review.HumanChangeRequest{}, false
 	}
 	return c.humanChangeRequests.For(key, number, head)
+}
+
+// laterTrustedApproval is the newest standing trusted APPROVED review that
+// reaches head (latestTrustedHumanReview), when it was submitted after
+// after: the approval that can supersede a decision recorded at that time.
+func (c *Engine) laterTrustedApproval(ctx context.Context, owner, repo string, number int, head string, after time.Time) (*gh.PullRequestReview, bool) {
+	approval, approved := c.latestTrustedHumanReview(ctx, owner, repo, number, head, "APPROVED")
+	if !approved || !approval.GetSubmittedAt().After(after) {
+		return nil, false
+	}
+	return approval, true
+}
+
+// recordTrustedApproval records approval as an approval-kind decision on
+// head and returns the record. It is then the newest decision on head for
+// every reader: the stage reads the head as approved, and the planner kicks
+// no fix for the instruction it superseded. A dismissal of the review drops
+// the record again wherever reconcileReviewBackedApproval runs: the self
+// lane's change-request read, the requires_human release
+// (trustedHumanApprovalForRequiresHuman) and, for a record made over a
+// delegated direction (supersedesDelegated), every stage pass that reads
+// it (foldRecordedDecision). False when the record could not be written.
+func (c *Engine) recordTrustedApproval(owner, repo string, number int, head string, approval *gh.PullRequestReview, supersedesDelegated bool) (review.HumanChangeRequest, bool) {
+	if c == nil || c.humanChangeRequests == nil || approval == nil || strings.TrimSpace(head) == "" {
+		return review.HumanChangeRequest{}, false
+	}
+	req := review.HumanChangeRequest{
+		Repo: owner + "/" + repo, Number: number, HeadSHA: head,
+		Source: review.HumanChangeRequestSourceReview, SourceID: approval.GetID(),
+		Actor: hgithub.SafeGetLogin(approval.GetUser()), Body: approval.GetBody(), URL: approval.GetHTMLURL(),
+		Kind: review.HumanChangeRequestKindApprove, RecordedAt: approval.GetSubmittedAt().Time,
+		SupersedesDelegated: supersedesDelegated,
+	}
+	if err := c.humanChangeRequests.Record(req); err != nil {
+		c.warn("could not record approval clearing human change request", "pr", number, "error", err)
+		return review.HumanChangeRequest{}, false
+	}
+	c.noteStageTrustedHumanApproval(owner, repo, number, head, req.Actor)
+	return req, true
 }
 
 // sentinelBlockedUnlessHumanChangesRequested refines the contributor lane's

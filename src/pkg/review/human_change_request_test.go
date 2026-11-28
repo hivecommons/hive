@@ -1,6 +1,7 @@
 package review
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -292,6 +293,30 @@ func TestHumanChangeRequestApprovalKindIsNotAFixRequest(t *testing.T) {
 	}
 	if got := HumanApprovalFor(reloaded, liveCaseRepo, liveCaseNumber, liveCaseHead); got != nil {
 		t.Fatalf("superseded approval still standing: %+v", got)
+	}
+}
+
+// A ledger written before the Delegated field existed loads every record as
+// a person's own decision, and a delegated record survives a reload marked.
+func TestHumanChangeRequestDelegatedFieldIsBackwardCompatible(t *testing.T) {
+	path := filepath.Join(t.TempDir(), HumanChangeRequestsFile)
+	old := `[{"repo":"hivecommons/hive","number":12968,"head_sha":"e653b6d","source":"decision","source_id":0,"actor":"clubanderson","body":"update the PR body","recorded_at":"2026-10-27T18:30:00Z"}]`
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := NewHumanChangeRequests(path)
+	got, ok := store.For(liveCaseRepo, liveCaseNumber, liveCaseHead)
+	if !ok || got.Delegated || got.Body != "update the PR body" {
+		t.Fatalf("old record = %+v ok=%v, want a person's decision", got, ok)
+	}
+	delegated := liveCaseRequest()
+	delegated.SourceID, delegated.Delegated = 0, true
+	delegated.RecordedAt = time.Date(2026, 10, 27, 19, 0, 0, 0, time.UTC)
+	if err := store.Record(delegated); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := NewHumanChangeRequests(path).For(liveCaseRepo, liveCaseNumber, liveCaseHead); !ok || !got.Delegated {
+		t.Fatalf("reloaded delegated record = %+v ok=%v", got, ok)
 	}
 }
 

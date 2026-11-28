@@ -109,6 +109,31 @@ func TestRecordOperatorPullRequestDecisionRecordsChangeRequestAndReplies(t *test
 	}
 }
 
+// A direction the "Let hive decide" delegate records is marked Delegated, so
+// a later approval of the same head can supersede it; a person's own
+// direction from the dashboard is not.
+func TestRecordOperatorPullRequestDecisionMarksDelegatedDirection(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		delegated bool
+	}{
+		{name: "the person's own direction", delegated: false},
+		{name: "the delegate's direction", delegated: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := newUnparkPRClient(t, []unparkWireIssue{hiveParkedPR()}, nil)
+			store := review.NewHumanChangeRequests("")
+			if _, err := c.RecordOperatorPullRequestDecisionWith(context.Background(), "org/repo", liveDecisionPR, "maintainer", liveDecisionText, store, PullRequestDecisionOptions{Delegated: tc.delegated}); err != nil {
+				t.Fatalf("decision: %v", err)
+			}
+			got, ok := store.For("org/repo", liveDecisionPR, liveDecisionHead)
+			if !ok || got.Delegated != tc.delegated || got.Actor != "maintainer" || got.Source != review.HumanChangeRequestSourceDecision || got.IsApproval() {
+				t.Fatalf("stored request = %+v ok=%v, want delegated=%v", got, ok, tc.delegated)
+			}
+		})
+	}
+}
+
 func TestRecordOperatorPullRequestDecisionRefusesBodyOnlyClankerEvidence(t *testing.T) {
 	for _, marker := range []struct{ name, body string }{
 		{"origin", "<!-- hive:origin hive=contributors-hive -->"},

@@ -9,6 +9,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/evidence"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
@@ -345,6 +346,17 @@ func (c *Engine) trustedHumanApprovalForRequiresHuman(ctx context.Context, owner
 	// No live trusted approval on head: a persisted review-backed approval
 	// is revoked, so drop it before reading the recorded decision.
 	c.reconcileReviewBackedApproval(ctx, owner, repo, number, head)
+	// A review-backed record still standing here could not be confirmed:
+	// the live read above would have found its review. Reconcile keeps it
+	// when the read failed, so the stage does not flap during an outage, but
+	// an unverified approval never releases requires_human on its own; the
+	// next pass that reads the review releases it.
+	if c.humanChangeRequests == nil {
+		return "", false
+	}
+	if req, ok := c.humanChangeRequests.For(owner+"/"+repo, number, head); ok && req.IsApproval() && req.Source == review.HumanChangeRequestSourceReview {
+		return "", false
+	}
 	return c.recordedHumanApprovalForHead(ctx, owner, repo, number, head)
 }
 

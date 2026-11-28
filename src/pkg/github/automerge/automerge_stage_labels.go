@@ -32,6 +32,7 @@ import (
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/prstatus"
+	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
@@ -751,19 +752,39 @@ func (c *Engine) noteStageHumanChangeRequest(owner, repo string, number int, hea
 // restarts and across the drain that clears the tracker's details. A
 // decision recorded on the previous head is carried onto this one first
 // when the hive's own base refresh is all that moved the head
-// (hivecommons/hive#15649).
+// (hivecommons/hive#15649). A direction the "Let hive decide" delegate
+// recorded gives way to a trusted approval of the head after it
+// (supersedeDelegatedDirection).
 func (c *Engine) foldRecordedDecision(ctx context.Context, list []stageObservation) {
 	if c == nil || c.humanChangeRequests == nil {
 		return
 	}
+	// The delegated-direction reads run once per head per pass, on the first
+	// observation that reaches it (tried). superseded is the direction an
+	// approval replaced on a head this pass, and revoked the approval a
+	// dismissal took back: the lanes read the store before either change,
+	// so every observation of that head drops what they noted from it.
+	tried := map[string]bool{}
+	superseded := map[string]review.HumanChangeRequest{}
+	revoked := map[string]review.HumanChangeRequest{}
 	for i := range list {
 		o := &list[i]
 		if o.HeadSHA == "" {
 			continue
 		}
 		req, ok := c.recordedDecisionFor(ctx, o.Owner, o.Repo, o.Number, o.BaseRef, o.HeadSHA)
+		if ok && !tried[o.HeadSHA] {
+			tried[o.HeadSHA] = true
+			req, ok = c.revalidateDelegatedDecision(ctx, *o, req, superseded, revoked)
+		}
+		if approval, dropped := revoked[o.HeadSHA]; dropped && (!ok || !req.IsApproval()) {
+			dropRevokedApproval(o, approval)
+		}
 		if !ok {
 			continue
+		}
+		if direction, replaced := superseded[o.HeadSHA]; replaced && req.IsApproval() {
+			dropSupersededDirection(o, direction, req)
 		}
 		// A standing change request is the person's answer whether or not
 		// a reviewer verdict was read for the head: a lane that skipped
@@ -772,11 +793,129 @@ func (c *Engine) foldRecordedDecision(ctx context.Context, list []stageObservati
 		if !req.IsApproval() && o.Detail.HumanChangeRequestHead != o.HeadSHA {
 			o.Detail.HumanChangeRequester, o.Detail.HumanChangeRequestHead = strings.TrimSpace(req.Actor), o.HeadSHA
 		}
+		if v := o.Detail.Verdict; !req.IsApproval() && v.DecisionAnswered && v.DecisionAnsweredHead == o.HeadSHA && v.DecisionDirective == review.DecisionDirectiveApprove {
+			// The lane folded an approval into its verdict and the store's
+			// newest decision is now an instruction: the lane read the
+			// approval before it reconciled it away as dismissed. The
+			// instruction is what the next pass reads, so answer with it now.
+			dropRevokedApproval(o, review.HumanChangeRequest{Actor: v.DecisionAnsweredBy})
+		}
 		if o.Detail.VerdictKnown && o.Detail.Verdict.DecisionAnswered && o.Detail.Verdict.DecisionAnsweredHead == o.HeadSHA {
 			continue
 		}
 		o.Detail.Verdict = o.Detail.Verdict.WithDecisionAnswer(strings.ToLower(req.Actor), o.HeadSHA, req.Directive())
 		o.Detail = normalizeStageDetail(o.Detail)
+	}
+}
+
+// revalidateDelegatedDecision is the decision standing on o's head once the
+// delegated-direction rule has run on req, the recorded one. An approval
+// this pass recorded over a delegated direction (SupersedesDelegated) is
+// checked against the live review first (reconcileReviewBackedApproval, which
+// drops it only on a definite read): a dismissed one is dropped and noted in
+// revoked, and the direction under it stands again. A delegated direction is
+// then superseded by a later trusted approval (supersedeDelegatedDirection,
+// noted in superseded). Any other decision is returned as it is, with no
+// read. False when nothing stands on the head any more.
+func (c *Engine) revalidateDelegatedDecision(ctx context.Context, o stageObservation, req review.HumanChangeRequest, superseded, revoked map[string]review.HumanChangeRequest) (review.HumanChangeRequest, bool) {
+	var dropped review.HumanChangeRequest
+	if req.IsApproval() && req.SupersedesDelegated && req.Source == review.HumanChangeRequestSourceReview {
+		standing, found := c.reconcileReviewBackedApproval(ctx, o.Owner, o.Repo, o.Number, o.HeadSHA)
+		if !found {
+			// A failed Forget still took the record out of memory: read
+			// what the store answers now rather than trust either result.
+			standing, found = c.humanChangeRequests.For(o.Owner+"/"+o.Repo, o.Number, o.HeadSHA)
+		}
+		if !found || standing.Source != req.Source || standing.SourceID != req.SourceID {
+			dropped = req
+			if !found {
+				revoked[o.HeadSHA] = dropped
+				c.info("stage labels: approval over a delegated direction was taken back; no decision stands on the head", "repo", o.Owner+"/"+o.Repo, "pr", o.Number, "head", o.HeadSHA, "approved_by", dropped.Actor, "review", dropped.SourceID)
+				return review.HumanChangeRequest{}, false
+			}
+			req = standing
+		}
+	}
+	if req.Delegated && !req.IsApproval() {
+		if approval, ok := c.supersedeDelegatedDirection(ctx, o, req); ok {
+			superseded[o.HeadSHA], req = req, approval
+		}
+	}
+	if dropped.SourceID != 0 && !req.IsApproval() {
+		revoked[o.HeadSHA] = dropped
+		c.info("stage labels: approval over a delegated direction was taken back; the direction stands again", "repo", o.Owner+"/"+o.Repo, "pr", o.Number, "head", o.HeadSHA, "approved_by", dropped.Actor, "review", dropped.SourceID, "direction_by", req.Actor)
+	}
+	return req, true
+}
+
+// supersedeDelegatedDirection records the trusted approval that supersedes
+// direction, a "Let hive decide" direction standing on o's head, and returns
+// it as the head's decision. The delegate wrote the direction for the
+// person who clicked, so it is the hive's own direction and never a
+// maintainer's change request (hivecommons/hive#15063): once a trusted
+// merger approves the head after it (laterTrustedApproval, the self lane's
+// rule for a body-only fix), the head is approved, not waiting on a commit
+// that a PR-body edit never brings. A person's standing CHANGES_REQUESTED
+// review is theirs, not the delegate's: one on the head, or carried onto it
+// over the hive's own base merge (carriedTrustedHumanChangesRequested),
+// keeps the head blocked, and the direction stands beside it as before; so
+// does a review list or base-refresh proof that could not be read. The
+// change-request reads run only once an approval qualifies. A direction a
+// person typed is never passed here.
+func (c *Engine) supersedeDelegatedDirection(ctx context.Context, o stageObservation, direction review.HumanChangeRequest) (review.HumanChangeRequest, bool) {
+	approval, ok := c.laterTrustedApproval(ctx, o.Owner, o.Repo, o.Number, o.HeadSHA, direction.RecordedAt)
+	if !ok {
+		return review.HumanChangeRequest{}, false
+	}
+	reviews, read := c.standingTrustedHumanReviewsRead(ctx, o.Owner, o.Repo, o.Number)
+	if !read || newestReviewOnHead(reviews, "CHANGES_REQUESTED", o.HeadSHA) != nil {
+		return review.HumanChangeRequest{}, false
+	}
+	if _, _, carried, definite := c.carriedTrustedHumanChangesRequested(ctx, o.Owner, o.Repo, o.Number, o.HeadSHA, reviews); carried || !definite {
+		return review.HumanChangeRequest{}, false
+	}
+	req, ok := c.recordTrustedApproval(o.Owner, o.Repo, o.Number, o.HeadSHA, approval, true)
+	if ok {
+		c.info("stage labels: delegated direction superseded by a later trusted approval", "repo", o.Owner+"/"+o.Repo, "pr", o.Number, "head", o.HeadSHA, "direction_by", direction.Actor, "recorded_at", direction.RecordedAt, "approved_by", req.Actor, "approved_at", req.RecordedAt)
+	}
+	return req, ok
+}
+
+// dropSupersededDirection takes off o what the lanes read from direction
+// before approval superseded it on o's head: the change requester they
+// noted for its actor and the changes_requested answer folded into the
+// verdict. A requester other than the direction's actor came from somewhere
+// else (a review, a returned stage label) and stays. The approval is noted
+// in their place.
+func dropSupersededDirection(o *stageObservation, direction, approval review.HumanChangeRequest) {
+	actor := strings.TrimPrefix(strings.TrimSpace(direction.Actor), "@")
+	requester := strings.TrimPrefix(strings.TrimSpace(o.Detail.HumanChangeRequester), "@")
+	if o.Detail.HumanChangeRequestHead == o.HeadSHA && actor != "" && strings.EqualFold(requester, actor) {
+		o.Detail.HumanChangeRequester, o.Detail.HumanChangeRequestHead = "", ""
+	}
+	if v := o.Detail.Verdict; v.DecisionAnswered && v.DecisionAnsweredHead == o.HeadSHA && v.DecisionDirective != review.DecisionDirectiveApprove {
+		// The fold below re-answers the verdict with the approval.
+		o.Detail.Verdict.DecisionAnswered = false
+	}
+	if login := strings.TrimSpace(approval.Actor); login != "" && o.Detail.HumanApprovalHead != o.HeadSHA {
+		o.Detail.HumanApprover, o.Detail.HumanApprovalHead = login, o.HeadSHA
+	}
+}
+
+// dropRevokedApproval is dropSupersededDirection the other way round: the
+// lanes read approval, now dismissed, as the head's answer, so o loses the
+// approver they noted for its reviewer and the approve answer folded into
+// the verdict, and the fold re-answers it with the direction that stands.
+func dropRevokedApproval(o *stageObservation, approval review.HumanChangeRequest) {
+	actor := strings.TrimSpace(approval.Actor)
+	if actor == "" {
+		return
+	}
+	if o.Detail.HumanApprovalHead == o.HeadSHA && strings.EqualFold(strings.TrimSpace(o.Detail.HumanApprover), actor) {
+		o.Detail.HumanApprover, o.Detail.HumanApprovalHead = "", ""
+	}
+	if v := o.Detail.Verdict; v.DecisionAnswered && v.DecisionAnsweredHead == o.HeadSHA && v.DecisionDirective == review.DecisionDirectiveApprove && strings.EqualFold(v.DecisionAnsweredBy, actor) {
+		o.Detail.Verdict.DecisionAnswered = false
 	}
 }
 
