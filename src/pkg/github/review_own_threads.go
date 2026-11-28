@@ -79,10 +79,23 @@ const ownThreadsTrigger = "merge-refused-unresolved-conversations"
 const ownThreadsReadyTrigger = "ready-for-human-merge"
 
 // unresolvedConversationsRE matches GitHub's refusal when the base requires
-// conversation resolution: the GraphQL enqueuePullRequest UNPROCESSABLE
-// ("Pull request All comments must be resolved.") and the REST merge 405
-// ("Repository rule violations found\n\nAll comments must be resolved.").
-var unresolvedConversationsRE = regexp.MustCompile(`(?i)all comments must be resolved`)
+// conversation resolution. GitHub words the same rule more than one way:
+//
+//   - "All comments must be resolved": the GraphQL enqueuePullRequest
+//     UNPROCESSABLE ("Pull request All comments must be resolved.") and the
+//     REST merge 405 ("Repository rule violations found\n\nAll comments must
+//     be resolved."), the GraphQL one seen 2026-11-20;
+//   - "A conversation must be resolved": the GraphQL enqueuePullRequest
+//     UNPROCESSABLE ("Pull request A conversation must be resolved before
+//     this pull request can be merged."), seen in a production hive's
+//     contributor lane from 2026-11-27, where it did not match and the enqueue
+//     was retried as an uncertain outcome on every sweep;
+//   - "conversations must be resolved": the plural of the same phrase, not
+//     yet seen in a log, matched so a rewording to it is still named.
+//
+// The GraphQL error type (UNPROCESSABLE) does not identify this refusal: it
+// is the type of every enqueue refusal, so only the message is matched.
+var unresolvedConversationsRE = regexp.MustCompile(`(?i)(?:all comments|a conversation|conversations) must be resolved`)
 
 // IsUnresolvedConversationsError reports whether err is GitHub refusing a
 // merge or a merge-queue enqueue because review conversations on the PR are

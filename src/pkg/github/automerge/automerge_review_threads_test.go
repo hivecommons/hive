@@ -20,6 +20,13 @@ import (
 // projectbluefin/ps-printer-app#221, 2026-11-20).
 var errUnresolvedConversations = errors.New("graphql: UNPROCESSABLE: Pull request All comments must be resolved")
 
+// errConversationMustBeResolved is GitHub's other wording of the same
+// enqueue refusal, as the client renders it (seen in a production hive's
+// contributor lane, 2026-11-27). It did not match, so the refusal came back
+// as "effect outcome uncertain, reconciliation required" and the lane
+// enqueued the same head on every sweep.
+var errConversationMustBeResolved = errors.New("graphql: UNPROCESSABLE: Pull request A conversation must be resolved before this pull request can be merged.")
+
 // threadResolverFake is a native-queue transport that can also resolve the
 // hive's own review threads, the way *hgithub.Client does.
 type threadResolverFake struct {
@@ -223,6 +230,54 @@ func parksAtOnce(t *testing.T, outcome hgithub.OwnReviewThreadsOutcome) {
 		}
 		now = now.Add(mergeRefusalRecheck)
 	}
+}
+
+// The "A conversation must be resolved" wording is the same refusal: the
+// enqueue reaches the boundary as a definite NotApplied (no uncertain
+// outcome), and the hive's own outdated non-blocking note, the only open
+// thread, is resolved so the next pass enqueues the same head. A person's
+// thread parks the PR for a person, and the lane does not enqueue that head
+// again while the park is remembered.
+func TestNativeQueueConversationMustBeResolvedWording(t *testing.T) {
+	t.Run("own outdated note only", func(t *testing.T) {
+		c, r, pr, claim, b := threadResolverEngine(hgithub.OwnReviewThreadsOutcome{Unresolved: 1, Resolvable: 1, Resolved: 1})
+		r.enqueueErr = errConversationMustBeResolved
+		reason, err := c.tryNativeQueue(context.Background(), pr, claim)
+		if err != nil || reason != autoMergeReasonReviewThreadsResolved {
+			t.Fatalf("first pass: reason=%q err=%v, want %q and no error", reason, err, autoMergeReasonReviewThreadsResolved)
+		}
+		if r.calls != 1 || r.enqueues != 1 {
+			t.Fatalf("resolver calls=%d enqueues=%d, want 1 and 1", r.calls, r.enqueues)
+		}
+		if len(b.errs) != 1 || !errors.Is(b.errs[0], effects.ErrNotApplied) {
+			t.Fatalf("the refused enqueue must reach the boundary as NotApplied, got %v", b.errs)
+		}
+		reason, err = c.tryNativeQueue(context.Background(), pr, claim)
+		if err != nil || !strings.Contains(reason, "queued (position 2, AWAITING_CHECKS)") || r.enqueues != 2 {
+			t.Fatalf("second pass: reason=%q err=%v enqueues=%d, want the PR queued", reason, err, r.enqueues)
+		}
+	})
+	t.Run("person's thread", func(t *testing.T) {
+		now := time.Date(2026, 11, 28, 7, 0, 0, 0, time.UTC)
+		c, r, pr, claim, b := threadResolverEngine(hgithub.OwnReviewThreadsOutcome{Unresolved: 2, Resolvable: 1, Others: 1, Skipped: "not-every-thread-resolvable"})
+		r.enqueueErr = errConversationMustBeResolved
+		c.now = func() time.Time { return now }
+		for pass := 0; pass < 3; pass++ {
+			reason, err := c.tryNativeQueue(context.Background(), pr, claim)
+			if err != nil || reason != autoMergeReasonUnresolvedReviewThreads {
+				t.Fatalf("pass %d: reason=%q err=%v, want %q and no error", pass, reason, err, autoMergeReasonUnresolvedReviewThreads)
+			}
+		}
+		if r.enqueues != 1 || r.calls != 1 {
+			t.Fatalf("enqueues=%d resolver calls=%d, want one attempt for the parked head", r.enqueues, r.calls)
+		}
+		if len(b.errs) != 1 || !errors.Is(b.errs[0], effects.ErrNotApplied) {
+			t.Fatalf("the refused enqueue must reach the boundary as NotApplied, got %v", b.errs)
+		}
+		if got := c.knownUnresolvedThreads(claim.Repo, 7, "sha7"); got != autoMergeReasonUnresolvedReviewThreads {
+			t.Fatalf("knownUnresolvedThreads = %q, want the park remembered", got)
+		}
+	})
 }
 
 // Any other enqueue failure is unchanged: still an error with the old

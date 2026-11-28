@@ -313,7 +313,8 @@ bots' P3 findings are routed too.
 the trusted-bot lane), trusted-author, the `/lgtm` queued lane and the
 contributor lane — on each of their three merge calls: the native merge-queue
 enqueue (GraphQL `UNPROCESSABLE`, "Pull request All comments must be
-resolved."), the direct REST merge (405 "Repository rule violations found …
+resolved." or "Pull request A conversation must be resolved before this pull
+request can be merged."), the direct REST merge (405 "Repository rule violations found …
 All comments must be resolved."), and the serialized lane
 (`merge_strategy: hive_serialized`, the same 405 on the lane's merge). The
 agent `hive-merge` relay (`merge_pr`) does not: it keeps its own refusal
