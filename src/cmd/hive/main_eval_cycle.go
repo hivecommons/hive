@@ -650,6 +650,11 @@ func runEvalCycle(
 	// after those two calls: Mergeable and the failing-check names it sorts on
 	// are populated by EnrichCIStatus, not by EnumerateActionable.
 	if !budgetDecision.SkipOptional {
+		for _, prs := range [][]github.PullRequest{actionable.PRs.Items, actionable.PRs.Held} {
+			enrichGitHubPRs(cfg, prs, func(prs []github.PullRequest) {
+				ghClient.PostReviewConversationBlockers(ctx, prs)
+			})
+		}
 		postRecommendationsForCycle(ctx, cfg, ghClient, actionable, logger)
 	}
 
@@ -1597,6 +1602,8 @@ func runEvalCycle(
 				issueNum:       issueNum,
 				hasPinnedIssue: hasPinnedAdvisoryIssue,
 				ensureErr:      advisoryEnsureErr,
+				// #20226: a Forgejo-only hive has no GitHub issue to post to.
+				primaryNotOnGitHub: !cfg.RepoOnGitHub(primaryRepo),
 			}, advisoryPublishDeps{
 				postGitHub: ghClient.PostAdvisoryDigest,
 				postLinear: func(ctx context.Context, linearIssue, md string) error {

@@ -357,6 +357,9 @@ type StageTrackerItem struct {
 	BaseRef        string `json:"base_ref,omitempty"`
 	ClaimReference bool   `json:"claim_reference,omitempty"`
 	IsTracker      bool   `json:"is_tracker,omitempty"`
+
+	ReviewConversationBlocker string `json:"review_conversation_blocker,omitempty"`
+
 	// Umbrella is the rule that marks an open issue an umbrella (label:epic,
 	// marker, title-prefix:[epic], task-list, sub-issues, tracker-detector),
 	// and OwnerOnly the rule that marks it owner-only (hivecommons/hive#19078).
@@ -806,6 +809,8 @@ type StageTrackerLinkedIssue struct {
 
 // StageTrackerLinkedPR is one covering PR nested under an issue row.
 type StageTrackerLinkedPR struct {
+	ReviewConversationBlocker string `json:"review_conversation_blocker,omitempty"`
+
 	CIActivity     *StageTrackerActivity       `json:"ci_activity,omitempty"`
 	ReviewActivity *StageTrackerActivity       `json:"review_activity,omitempty"`
 	CodeActivity   *StageTrackerActivity       `json:"code_activity,omitempty"`

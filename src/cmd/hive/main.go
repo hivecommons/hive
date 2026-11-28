@@ -4383,6 +4383,16 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 		b.logger.Error("failed to create github proxy", "error", err)
 	} else {
 		b.githubProxy.SetUpstreamProxy(upstreamproxy.Default())
+		b.inferenceSinkMu.Lock()
+		b.inferenceActivity = b.githubProxy.InferenceActivity
+		b.inferenceSinkMu.Unlock()
+		if mgr, ok := b.agentMgr.(interface {
+			StartInferenceActivityRefresh(context.Context, func(context.Context) (map[string]time.Time, error))
+		}); ok {
+			go mgr.StartInferenceActivityRefresh(b.ctx, func(context.Context) (map[string]time.Time, error) {
+				return b.githubProxy.InferenceActivity(), nil
+			})
+		}
 		b.githubProxy.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, canaryLeakHandler)
 		// REST accounting and the shared core-bucket snapshot the agent
 		// GitHub budget reads live in pkg/github; the proxy takes them through

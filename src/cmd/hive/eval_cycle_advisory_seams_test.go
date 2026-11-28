@@ -299,6 +299,33 @@ func TestPublishAdvisoryDigest_NoPinnedIssueRecordsCause(t *testing.T) {
 	}
 }
 
+// #20226: a Forgejo-only hive has no GitHub issue for the digest. It must skip
+// without recording the #4167 stale error (which the hub would flag every
+// cycle), while a Linear target on the same hive still posts.
+func TestPublishAdvisoryDigest_PrimaryNotOnGitHubSkipsQuietly(t *testing.T) {
+	r := &publishRecorder{}
+	route := githubRoute()
+	route.primaryRepo = "acme/forgejo-only"
+	route.hasPinnedIssue = false
+	route.issueNum = 0
+	route.primaryNotOnGitHub = true
+	for i := 0; i < 2; i++ {
+		got := publishAdvisoryDigest(context.Background(), "md", twoFindingDigest(), route, r.deps(), restoreTestLogger())
+		if got != advisoryPublishSkipped {
+			t.Fatalf("cycle %d: outcome = %v, want skipped", i, got)
+		}
+	}
+	if len(r.errors) != 0 || len(r.github) != 0 || len(r.posted) != 0 {
+		t.Fatalf("a non-GitHub primary repo must record nothing: %+v", r)
+	}
+
+	r = &publishRecorder{}
+	linear := advisoryPublishRoute{target: config.AdvisoryTargetLinear, linearIssue: "HIVE-9", primaryRepo: "acme/forgejo-only", primaryNotOnGitHub: true}
+	if got := publishAdvisoryDigest(context.Background(), "md", twoFindingDigest(), linear, r.deps(), restoreTestLogger()); got != advisoryPublishPosted || len(r.linear) != 1 {
+		t.Fatalf("Linear target on a Forgejo hive must still post: outcome=%v recorder=%+v", got, r)
+	}
+}
+
 func TestPublishAdvisoryDigest_LinearRoutes(t *testing.T) {
 	linear := advisoryPublishRoute{target: config.AdvisoryTargetLinear, linearIssue: "HIVE-9", primaryRepo: "acme/widget", hasPinnedIssue: true, issueNum: 4}
 

@@ -1064,6 +1064,9 @@ type PullRequest struct {
 	// CI (#7471). Never consulted by any gate — mergeableFromState owns the
 	// policy; this is the evidence the pill tooltip shows for it.
 	MergeableState string `json:"mergeable_state,omitempty"`
+	// Set only by enrichment when there is enough evidence to replace or
+	// remove an existing review-conversation notice.
+	reviewConversationKnown bool
 	// Supersedes is the PR this one declares it supersedes ("Supersedes
 	// #N" in the body: the hive's adoption / takeover / re-author copy of
 	// a contributor PR), read from the list payload; 0 when none.
@@ -2630,9 +2633,10 @@ func pullRequestAttributionRecord(repo string, pr *gh.PullRequest, meta Invocati
 // (hivecommons/hive#7515, step 2) — which required checks are red or have
 // never reported, and GitHub's own review decision — so that the dashboard
 // pill can name the unsatisfied rule instead of repeating the word
-// "blocked". Those facts are gathered from data this pass already walks
-// plus at most one GraphQL query per repository; nothing here is per-hover
-// and nothing here is per-PR beyond the calls that were already made.
+// "blocked". Review verdicts come from a batched query; a blocked PR with
+// review threads may also need a base-policy read and paginated thread reads.
+// Resolution does not change the head SHA or thread total, so the thread
+// read cannot be cached on either. Nothing is fetched on hover.
 //
 // For each red PR it also resolves SharedCIIncident (hivecommons/hive#10528):
 // one comment listing per red PR, plus one issue GET per distinct incident
@@ -3830,7 +3834,7 @@ const (
 // comment-only because its head is not in the base repository and the fork
 // did not grant maintainer edits.
 func ReachableAction(pr PullRequest) string {
-	if pr.FromFork && !pr.MaintainerCanModify {
+	if strings.HasPrefix(pr.HeadRef, "refs/pull/") || (pr.FromFork && !pr.MaintainerCanModify) {
 		return ReachableActionCommentOnly
 	}
 	return ReachableActionPush

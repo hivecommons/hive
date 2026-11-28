@@ -196,6 +196,12 @@ func (f *fakeCaps) ClearInferenceRoute(_ context.Context, agent string) error {
 	return f.fail
 }
 
+func (f *fakeCaps) InferenceActivity(context.Context) (map[string]time.Time, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return map[string]time.Time{}, f.fail
+}
+
 func (f *fakeCaps) BeginEffect(_ context.Context, claim EffectClaim) (BeginEffectResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -902,19 +908,19 @@ func TestNotConfiguredSentinelStringAndCodes(t *testing.T) {
 }
 
 // bareCaps has no Configured method: the server assumes every capability
-// except the optional-interface ones (policy, inference routes, effects, the
-// agent mint, Bob) and the knowledge adviser, which is off unless Configured
-// says it is on.
+// except the optional-interface ones (policy, inference routes and activity,
+// effects, agent mint, Bob) and the knowledge adviser, which is off unless
+// Configured says it is on.
 type bareCaps struct{ Capabilities }
 
 func TestCapabilitiesWithoutConfiguredHaveAll(t *testing.T) {
 	c, _ := serveUnix(t, NewServer(bareCaps{&fakeCaps{}}, ""), "")
 	h, err := c.Health(context.Background())
-	if err != nil || len(h.Capabilities) != len(allCapabilities)-6 {
+	if err != nil || len(h.Capabilities) != len(allCapabilities)-7 {
 		t.Errorf("health = %+v, %v", h, err)
 	}
 	for _, name := range h.Capabilities {
-		if name == CapabilityPolicy || name == CapabilityInferenceRoutes || name == CapabilityEffects || name == CapabilityKnowledgeAdvise {
+		if name == CapabilityPolicy || name == CapabilityInferenceRoutes || name == CapabilityInferenceActivity || name == CapabilityEffects || name == CapabilityKnowledgeAdvise {
 			t.Errorf("health lists %s for a Capabilities without the optional interface", name)
 		}
 	}

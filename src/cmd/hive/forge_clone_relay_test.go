@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -211,6 +212,90 @@ func TestForgeCloneRelayHandsTheAgentABundle(t *testing.T) {
 	}
 	if args := strings.Join(fetch.args, " "); !strings.Contains(args, "https://fj.example/acme/widgets.git") || !strings.Contains(args, "--no-recurse-submodules") {
 		t.Errorf("fetch args = %q", args)
+	}
+}
+
+func TestForgeCloneRelayPullRef(t *testing.T) {
+	h := newCloneHarness(t)
+	req := goodClone()
+	req.PR = 50
+	path := writeRelayRequest(t, h.relay.cloneDir, "worker-pr.json", req)
+	h.relay.scanOnce(context.Background())
+	var resp forgeCloneResponse
+	readRelayResult(t, path, &resp)
+	if !resp.OK {
+		t.Fatalf("clone failed: %+v", resp)
+	}
+	fetches := h.callsOf("fetch")
+	if len(fetches) != 1 || !strings.Contains(strings.Join(fetches[0].args, " "), "+refs/pull/50/head:refs/hive/pull/50/head") {
+		t.Fatalf("PR head not fetched: %+v", fetches)
+	}
+}
+
+func TestForgeCloneRelayRejectsNegativePR(t *testing.T) {
+	h := newCloneHarness(t)
+	req := goodClone()
+	req.PR = -1
+	path := writeRelayRequest(t, h.relay.cloneDir, "worker-invalid-pr.json", req)
+	h.relay.scanOnce(context.Background())
+	var resp forgeCloneResponse
+	readRelayResult(t, path, &resp)
+	if resp.OK || !strings.Contains(resp.Error, "positive pull request number") || len(h.callsOf("fetch")) != 0 {
+		t.Fatalf("invalid PR was not rejected before fetch: %+v", resp)
+	}
+}
+
+func TestForgeCloneRelayDeliversUnbranchedPullCommit(t *testing.T) {
+	upstream := t.TempDir()
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull,
+			"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.com",
+			"GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.com")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git(upstream, "init", "-b", "main")
+	git(upstream, "commit", "--allow-empty", "-m", "base")
+	git(upstream, "checkout", "--detach")
+	git(upstream, "commit", "--allow-empty", "-m", "pull head")
+	head := git(upstream, "rev-parse", "HEAD")
+	git(upstream, "update-ref", "refs/pull/50/head", head)
+
+	h := newCloneHarness(t)
+	forgeCloneExec = func(ctx context.Context, dir string, _ []string, args ...string) (string, error) {
+		if args[0] == "fetch" {
+			for i, arg := range args {
+				if arg == "https://fj.example/acme/widgets.git" {
+					args[i] = upstream
+				}
+			}
+		}
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_DIR="+dir, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull)
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	req := goodClone()
+	req.PR = 50
+	path := writeRelayRequest(t, h.relay.cloneDir, "worker-real-pr.json", req)
+	h.relay.scanOnce(context.Background())
+	var resp forgeCloneResponse
+	readRelayResult(t, path, &resp)
+	if !resp.OK {
+		t.Fatalf("clone failed: %+v", resp)
+	}
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	git("", "clone", "--no-checkout", resp.Bundle, checkout)
+	git(checkout, "fetch", resp.Bundle, "+refs/hive/pull/50/head:refs/hive/pull/50/head")
+	if got := git(checkout, "rev-parse", "refs/hive/pull/50/head"); got != head {
+		t.Fatalf("pull head = %s, want %s", got, head)
 	}
 }
 

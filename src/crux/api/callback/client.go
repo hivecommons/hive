@@ -133,6 +133,13 @@ func (c *Client) RecordUsage(ctx context.Context, rec UsageRecord) error {
 	return c.do(ctx, http.MethodPost, PathUsage, rec, nil)
 }
 
+// InferenceActivity reads the authenticated translator activity snapshot.
+func (c *Client) InferenceActivity(ctx context.Context) (map[string]time.Time, error) {
+	var out map[string]time.Time
+	err := c.do(ctx, http.MethodGet, PathInferenceActivity, nil, &out)
+	return out, err
+}
+
 // ScanCanary is POST /v1/scan/canary.
 func (c *Client) ScanCanary(ctx context.Context, req CanaryScanRequest) (CanaryScanResponse, error) {
 	var out CanaryScanResponse

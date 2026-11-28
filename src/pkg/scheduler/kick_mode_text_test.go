@@ -363,3 +363,32 @@ func TestGHAuthTitleProseMatchesRelay(t *testing.T) {
 		t.Errorf("${GH_AUTH} lost the corrected-emoji example:\n%s", block)
 	}
 }
+
+// hivecommons/hive#20222: on a hive whose repos are all on Forgejo the
+// work-source seam names the forge tools (hive-clone, hive-push-branch) and
+// not the GitHub `hive-gh pr view` paragraph. A GitHub hive and a mixed hive
+// keep governorWorkSourceRule.
+func TestWorkSourceSeamNamesForgeToolsOnForgejoOnlyHive(t *testing.T) {
+	s := modeKickScheduler(t, "ISSUES_AND_PRS", 4)
+	if msg := modeKick(t, s, "scanner"); !strings.Contains(msg, governorWorkSourceRule) {
+		t.Fatalf("a GitHub hive kick must keep governorWorkSourceRule:\n%s", msg)
+	}
+
+	s.cfg.Project.Forge = config.ForgeForgejo
+	msg := modeKick(t, s, "scanner")
+	for _, want := range []string{"hive-clone --repo <owner/repo> [--pr <N>]", "hive-push-branch", "no Forgejo equivalent"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("Forgejo-only kick lacks %q:\n%s", want, msg)
+		}
+	}
+	for _, banned := range []string{governorWorkSourceRule, "hive-gh pr view", "gh pr view <n>"} {
+		if strings.Contains(msg, banned) {
+			t.Errorf("Forgejo-only kick still carries %q:\n%s", banned, msg)
+		}
+	}
+
+	s.cfg.Project.RepoPolicies = []config.RepoPolicy{{Repo: "test-org/docs", Forge: config.ForgeGitHub}}
+	if got := s.governorWorkSourceRuleFor("scanner"); got != governorWorkSourceRule {
+		t.Errorf("a mixed hive must keep governorWorkSourceRule, got %q", got)
+	}
+}

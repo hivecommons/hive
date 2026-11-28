@@ -11,6 +11,39 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.5)
+
+### Fixed
+
+- Name `hive-clone` and `hive-push-branch` instead of `hive-gh` in the kick text on a hive whose repos are all on Forgejo, so an agent learns how to get a checkout ([#20222](https://github.com/hivecommons/hive/issues/20222)).
+
+## 2026-11-28 (v5.384.4)
+
+### Fixed
+
+- Avoid restarting working agents when their own claude or codex transcript or their inference requests show activity; the busy-no-activity silence clock still starts at `busy_since` when neither is known ([#20213](https://github.com/hivecommons/hive/issues/20213)).
+- Allow Forgejo spokes serving their own key list to start before integration audiences exist, warning about unconfigured tiers until setup is complete.
+
+## 2026-11-28 (v5.384.3)
+
+### Fixed
+
+- Hive no longer types the "You produced a plan but executed nothing" action nudge after a kicked turn that was seen working for more than 5 minutes, or when the output from before the kick has been cleared or has scrolled out of the captured window, since neither case is a prose-only reply (#20214). The turn length now comes from how long the turn was seen busy, so a slow governor tick no longer skips the check, and tool markers are counted only after the lines that were in scrollback when the kick was sent.
+- Allow pod-run agents to fetch a Forgejo AGit pull request head through `hive-clone --pr` without treating it as a writable branch.
+
+## 2026-11-28 (v5.384.2)
+
+### Fixed
+
+- Hub dashboard: a hub running with `HIVE_HUB_MODE=self-hosted` no longer shows hosted-fleet controls (Usage by cluster, Cluster Health, the Scale Controls fleet knobs and per-cluster limits, `+ Add Hosted Hive`, Request a hive, and the Users quota column); Register your own hive is the only way to add a hive. Hubs without the mode set are unchanged.
+- Show self-registered spokes' project names and disambiguate duplicate hive titles on the hub dashboard.
+
+## 2026-11-28 (v5.384.1)
+
+### Fixed
+
+- Creating an agent with a custom prompt in the Create Agent dialog now saves the prompt as `<name>.md` and points `kick_template` at it, so the new agent runs your prompt instead of the built-in one; `POST /api/agents` takes the text in `agent.prompt_template` and refuses a `kick_template` that is not a bare file name with a 400 (#20205).
+
 ## 2026-11-28 (v5.384.0)
 
 ### Added

@@ -43,6 +43,7 @@ func (m *Manager) markProviderErrorLocked(agent *AgentProcess, match providerErr
 	agent.LastError = match.Line
 	agent.lastInferKickPane = ""
 	agent.actionNudgeSent = false
+	agent.lastInferKickBusyAt = time.Time{}
 	return delay
 }
 
