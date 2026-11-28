@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/config"
 )
 
 // Contributor repository scope (hivecommons/hive#12805, RFC #12570 §4).
@@ -328,5 +330,32 @@ func TestContributeRepositories_ListsEligibleRepos(t *testing.T) {
 		if msg := hub.selectTask(conn); msg == nil || msg.Type != "task_assign" || msg.Repo != r.FullName {
 			t.Fatalf("scope %s must select %s work, got %+v", r.ID, r.FullName, msg)
 		}
+	}
+}
+
+func TestContributeRepositories_ExcludesUnsupportedForges(t *testing.T) {
+	hub, s := covK2Hub(t)
+	twoRepoStatus(s)
+	s.deps.Config.Project.Forge = config.ForgeForgejo
+	s.deps.Config.Project.RepoPolicies = []config.RepoPolicy{{Repo: "testsuite", Forge: config.ForgeGitHub}}
+
+	repos := s.contributeEligibleRepositories()
+	if len(repos) != 1 || repos[0].ID != scopeIDTestsuite {
+		t.Fatalf("catalog must contain only GitHub repositories: %+v", repos)
+	}
+	conn := lockScopeConn(hub, "forge-test", "c-forge-test")
+	msg := hub.selectTask(conn)
+	if msg == nil || msg.Type != "task_assign" || msg.Repo != "myorg/testsuite" {
+		t.Fatalf("unrestricted selection must skip Forgejo work: %+v", msg)
+	}
+
+	s.deps.Config.Project.RepoPolicies = nil
+	if repos := s.contributeEligibleRepositories(); len(repos) != 0 {
+		t.Fatalf("Forgejo-only catalog must be empty: %+v", repos)
+	}
+	other := lockScopeConn(hub, "forge-other", "c-forge-other")
+	msg = hub.selectTask(other)
+	if msg == nil || msg.Type != "task_unavailable" {
+		t.Fatalf("Forgejo-only hive must not assign work: %+v", msg)
 	}
 }

@@ -6,6 +6,8 @@ For labels that make work eligible or ineligible for contributors, see [Hive Lab
 
 The hive operator chooses eligible repositories, labels, and models. You choose the coding tool, model, and machine. Your provider credentials stay local; Hive supplies short-lived GitHub access for each assigned task.
 
+Contributor assignments currently support GitHub repositories only: task credentials are minted by a GitHub App. GitLab, Gitea, and Forgejo repositories are excluded from the repository catalog and issue selection, including on mixed-forge hives. A hive with only those repositories therefore has no contributor work to offer.
+
 ## Pick your route
 
 | You want to… | Read |

@@ -794,6 +794,10 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 		if len(repo.ActionableIssues) == 0 {
 			continue
 		}
+		// Non-GitHub repositories cannot receive GitHub App credentials.
+		if h.server.deps != nil && h.server.deps.Config.ForgeKindForRepo(repo.Full) != config.ForgeGitHub {
+			continue
+		}
 		if config.MatchesAny(repo.Full, disabledRepos) || config.MatchesAny(repo.Name, disabledRepos) {
 			issuesSeen += len(repo.ActionableIssues)
 			filtered[filterDisabledRepo] += len(repo.ActionableIssues)

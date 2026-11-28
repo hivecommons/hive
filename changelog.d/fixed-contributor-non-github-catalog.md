@@ -1,0 +1,1 @@
+- Exclude unsupported non-GitHub repositories from contributor catalogs and issue assignments.
