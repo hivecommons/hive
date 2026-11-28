@@ -31,6 +31,16 @@ func TestForgejoIntegrationValidate(t *testing.T) {
 	if err := withSlash.Validate(); err != nil || withSlash.IssuerOrigin() != "https://keys.example.com" {
 		t.Fatalf("trailing slash: %v %q", err, withSlash.IssuerOrigin())
 	}
+	bootstrap := validIntegration()
+	bootstrap.ServeKeyList = true
+	bootstrap.Audiences = nil
+	if err := bootstrap.Validate(); err != nil {
+		t.Fatalf("served key list without audiences: %v", err)
+	}
+	bootstrap.Issuer = "http://invalid"
+	if err := bootstrap.Validate(); err == nil {
+		t.Fatal("bootstrap must still validate the issuer")
+	}
 	for name, mutate := range map[string]func(*ForgejoIntegrationConfig){
 		"http issuer":      func(c *ForgejoIntegrationConfig) { c.Issuer = "http://keys.example.com" },
 		"issuer with path": func(c *ForgejoIntegrationConfig) { c.Issuer = "https://keys.example.com/jwt" },

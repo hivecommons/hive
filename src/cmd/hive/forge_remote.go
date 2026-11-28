@@ -152,4 +152,7 @@ func (b *boot) wireForgeRemotes() {
 	if w := b.cfg.ForgejoSharedWriteTokenWarning(); w != "" && b.logger != nil {
 		b.logger.Warn(w, "fix", "forgejo.integration")
 	}
+	if in := b.cfg.Forgejo.Integration; in != nil && in.ServeKeyList && len(in.Audiences) == 0 && b.logger != nil {
+		b.logger.Warn("forgejo integration has no audiences configured; clone and push will fail until audiences are added", "fix", "forgejo.integration.audiences")
+	}
 }
