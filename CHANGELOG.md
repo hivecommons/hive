@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v6.65.1)
+
+### Fixed
+
+- A merge-queue enqueue that GitHub refuses with "A conversation must be resolved before this pull request can be merged." is now handled like the "All comments must be resolved" refusal. GitHub uses both wordings for a base that requires conversation resolution, and the hive only recognised the second one, so the first came back as "effect outcome uncertain, reconciliation required" and the lane enqueued the same head again on every sweep (one PR was retried about 950 times in 16 hours, held only by the hive's own outdated low-severity note). The automerge lanes now resolve the hive's own non-blocking threads when they are the only ones open and enqueue on the next pass, and park the PR at `085-needs-decision` with `unresolved-review-threads` when a person's thread is open, asking GitHub again only after a new push or 30 minutes.
+
 ## 2026-11-28 (v6.65.0)
 
 ### Added
