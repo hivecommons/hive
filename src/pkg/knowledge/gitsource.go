@@ -163,8 +163,12 @@ func (g *GitSource) Sync(ctx context.Context) (err error) {
 	if err := gitSourcePull(ctx, g.cloneDir, g.config.URL); err != nil {
 		return fmt.Errorf("git source %s: pull failed: %w", g.config.Name, err)
 	}
-	if err := gitSourceEnsureFullHistory(ctx, g.cloneDir, g.config.URL, g.config.Branch); err != nil {
-		return fmt.Errorf("git source %s: fetching history: %w", g.config.Name, err)
+	historyErr := gitSourceEnsureFullHistory(ctx, g.cloneDir, g.config.URL, g.config.Branch)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if historyErr != nil {
+		g.logger.Warn("git source history unavailable; freshness may be unknown", "name", g.config.Name, "error", historyErr)
 	}
 
 	g.mu.RLock()
@@ -173,6 +177,9 @@ func (g *GitSource) Sync(ctx context.Context) (err error) {
 
 	if store != nil {
 		store.Reindex()
+	}
+	if historyErr != nil {
+		return fmt.Errorf("git source %s: fetching history: %w", g.config.Name, historyErr)
 	}
 	return nil
 }

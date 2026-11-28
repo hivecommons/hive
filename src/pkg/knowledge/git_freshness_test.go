@@ -275,4 +275,15 @@ func TestGitSourceInitAndSyncWithCompleteHistory(t *testing.T) {
 		t.Fatalf("init after unshallow failure: %v", err)
 	}
 	assertFreshness(t, reused.Store(), "old", "")
+	freshnessCommit(t, work, "2023-04-05T06:07:08Z", "docs/later.md", "# Later")
+	freshnessGit(t, work, nil, "push", remote, "HEAD:refs/heads/main")
+	if err := reused.Sync(context.Background()); err == nil || reused.Info().FailureSince.IsZero() {
+		t.Fatalf("unshallow failure did not start a failure interval: %v", err)
+	}
+	assertFreshness(t, reused.Store(), "later", "")
+	t.Setenv("TEST_FAIL_UNSHALLOW", "")
+	if err := reused.Sync(context.Background()); err != nil || !reused.Info().FailureSince.IsZero() {
+		t.Fatalf("successful sync did not clear failure interval: %v", err)
+	}
+	assertFreshness(t, reused.Store(), "later", "2023-04-05T06:07:08Z")
 }
