@@ -1220,11 +1220,12 @@ func mergeTrainReadinessOf(reason string) int {
 		}
 	}
 	switch {
-	case reason == prstage.AutoMergeReasonReviewThreadsPending:
-		// GitHub refused the merge for unresolved conversations and the
-		// lane is waiting to ask again: the stage stays 100 (the hive's
-		// wait, not a person's), but the head is not a ready front, so the
-		// train merges the PRs behind it meanwhile.
+	case reason == prstage.AutoMergeReasonReviewThreadsPending, strings.HasPrefix(reason, nativeQueueReasonEnqueue):
+		// GitHub refused the merge for unresolved conversations, or did
+		// not accept a merge-queue enqueue, and the lane is waiting to ask
+		// again: the stage stays 100 (the hive's wait, not a person's),
+		// but the head is not a ready front, so the train merges the PRs
+		// behind it meanwhile.
 		return mergeTrainReadinessUnready
 	case reason == "", strings.HasPrefix(reason, prstage.ContributorLaneReasonSoaking),
 		stageengine.MergeQueueReason(reason):
