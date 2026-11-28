@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -159,8 +160,7 @@ func TestKickUndeliverableBeforeStallRestartIsNotSelfReported(t *testing.T) {
 		t.Fatalf("self-reported before the stall restart was attempted: %q", evs[0].Message)
 	}
 
-	// Non-Copilot backends have no transcript cache; they too wait for the
-	// restart instead of reporting on the third kick.
+	// An agent with no known transcript also waits for recovery evidence.
 	agent.LastTranscriptActivity = time.Time{}
 	for i := 0; i < 3; i++ {
 		m.markKickUndeliverableLocked(agent, clock, "CLI did not reach input prompt")
@@ -261,7 +261,7 @@ func TestStallRestartThatDoesNotRecoverSelfReportsOnce(t *testing.T) {
 	for _, want := range []string{
 		"after busy-no-activity restart did not recover the session",
 		"kick undeliverable 4 times in a row",
-		"transcript silent for 1h17m",
+		"activity silent for 1h17m",
 		"restarted 12m0s ago at " + restartAt.Format(time.RFC3339),
 		"1 restart(s) this episode",
 	} {
@@ -326,13 +326,26 @@ func TestBusyNoActivityStallEscalatesOnlyPastRecoveryBars(t *testing.T) {
 		t.Fatalf("wedged pane reason = %q, want busy-no-activity restart reason", reason)
 	}
 
-	// No transcript cache (non-Copilot backends): silence is measured from
-	// the first undeliverable kick.
+	// No transcript and no inference activity: silence is measured from the
+	// first undeliverable kick, so a wedged pane is still recovered.
 	noCache := stuck()
 	noCache.LastTranscriptActivity = time.Time{}
 	noCache.BusySince = now.Add(-61 * time.Minute)
 	if got := busyNoActivityStall(noCache, working, now); got == "" {
 		t.Fatal("no-transcript wedged pane did not escalate")
+	}
+	noCache.LastInferenceActivity = now.Add(-time.Minute)
+	if got := busyNoActivityStall(noCache, working, now); got != "" {
+		t.Fatalf("agent with recent inference request escalated: %s", got)
+	}
+	// A request from before the busy episode is ignored, not a sign of life.
+	noCache.LastInferenceActivity = now.Add(-62 * time.Minute)
+	if got := busyNoActivityStall(noCache, working, now); got == "" {
+		t.Fatal("request before the busy episode suppressed recovery")
+	}
+	noCache.LastInferenceActivity = now.Add(-60 * time.Minute)
+	if got := busyNoActivityStall(noCache, working, now); got == "" {
+		t.Fatal("agent with a stale inference request did not escalate")
 	}
 
 	// A live CLI stuck off its input prompt (#12916): every kick times out
@@ -495,6 +508,138 @@ func TestAllStatusesReadsCachedTranscriptActivityWithoutScanning(t *testing.T) {
 	// Inside the scan interval the agent is not re-scanned.
 	if n := m.refreshTranscriptActivity(caches, func() time.Time { return now.Add(time.Second) }, nil); n != 0 {
 		t.Fatalf("refresh inside the interval scanned %d agents, want 0", n)
+	}
+}
+
+func TestTranscriptRefreshUsesBackendHomes(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	oldInference := inferenceHomePrefixOverride
+	oldCodex := codexHomePrefix
+	inferenceHomePrefixOverride = filepath.Join(root, "inference-")
+	codexHomePrefix = filepath.Join(root, "codex-")
+	t.Cleanup(func() {
+		inferenceHomePrefixOverride = oldInference
+		codexHomePrefix = oldCodex
+	})
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	agents := filepath.Join(root, "agents")
+	for _, tc := range []struct {
+		name, backend, path string
+		uid                 int
+	}{
+		{"claude", "claude", filepath.Join(root, "home", ".claude", "projects", testClaudeSlug(filepath.Join(agents, "claude")), "12345678-1234-1234-1234-123456789abc.jsonl"), 0},
+		{"inference", "litellm", filepath.Join(root, "inference-inference", ".claude", "projects", testClaudeSlug(filepath.Join(agents, "inference")), "12345678-1234-1234-1234-123456789abc.jsonl"), 1001},
+		{"codex", "codex", filepath.Join(root, "codex-codex", "sessions", "2026", "11", "28", "rollout-2026-11-28T12-00-00-12345678-1234-1234-1234-123456789abc.jsonl"), 1002},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.MkdirAll(filepath.Dir(tc.path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(tc.path, []byte("{}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(tc.path, now, now); err != nil {
+				t.Fatal(err)
+			}
+			m := NewManager(map[string]config.AgentConfig{tc.name: {Backend: tc.backend}}, slog.New(slog.NewTextHandler(io.Discard, nil)), ProjectContext{})
+			m.workDir = agents
+			a := m.agents[tc.name]
+			a.UID = tc.uid
+			a.BusySince = now.Add(-2 * time.Hour)
+			a.KicksUndeliverable = busyNoActivityRecoveryKicks
+			m.refreshTranscriptActivity(map[string]*transcriptSessionCache{}, func() time.Time { return now }, nil)
+			if !a.LastTranscriptActivity.Equal(now) {
+				t.Fatalf("activity = %v, want %v", a.LastTranscriptActivity, now)
+			}
+			if reason := busyNoActivityStall(a, "◉ Working (12m · esc interrupt)", now); reason != "" {
+				t.Fatalf("active agent would restart: %s", reason)
+			}
+		})
+	}
+}
+
+func testClaudeSlug(workDir string) string {
+	return claudeSlugUnsafe.ReplaceAllString(filepath.Clean(workDir), "-")
+}
+
+func writeTranscriptAt(t *testing.T, path string, mod time.Time) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(path, mod, mod); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClaudeProjectActivityIncludesSubagents(t *testing.T) {
+	home := t.TempDir()
+	workDir := "/data/agents/worker"
+	project := filepath.Join(home, ".claude", "projects", testClaudeSlug(workDir))
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	writeTranscriptAt(t, filepath.Join(project, "session.jsonl"), now.Add(-time.Hour))
+	writeTranscriptAt(t, filepath.Join(project, "session", "subagents", "agent-worker.jsonl"), now)
+	scan := transcriptActivityScan{name: "worker", backend: "claude", home: home, target: kickTranscriptTarget{workDir: workDir}}
+	if got, ok := scanAgentTranscript(scan, nil, now); !ok || !got.Equal(now) {
+		t.Fatalf("subagent activity = %v, %v; want %v, true", got, ok, now)
+	}
+}
+
+// A HOME shared by several agents (uid<=0, HIVE_SHARED_AGENT_HOME) holds
+// every agent's claude projects; a sibling's fresh transcript must not keep a
+// wedged pane from being recovered.
+func TestClaudeTranscriptScanIgnoresSiblingProjectsInSharedHome(t *testing.T) {
+	home := t.TempDir()
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	writeTranscriptAt(t, filepath.Join(home, ".claude", "projects", testClaudeSlug("/data/agents/sibling"), "s.jsonl"), now)
+	scan := transcriptActivityScan{name: "wedged", backend: "claude", home: home, target: kickTranscriptTarget{workDir: "/data/agents/wedged"}}
+	if got, ok := scanAgentTranscript(scan, nil, now); ok {
+		t.Fatalf("sibling activity counted for wedged agent: %v", got)
+	}
+	writeTranscriptAt(t, filepath.Join(home, ".claude", "projects", testClaudeSlug("/data/agents/wedged"), "w.jsonl"), now.Add(-3*time.Hour))
+	if got, ok := scanAgentTranscript(scan, nil, now); !ok || !got.Equal(now.Add(-3*time.Hour)) {
+		t.Fatalf("own activity = %v, %v; want %v, true", got, ok, now.Add(-3*time.Hour))
+	}
+	scan.target.workDir = ""
+	if got, ok := scanAgentTranscript(scan, nil, now); ok {
+		t.Fatalf("scan without a workDir read the shared home: %v", got)
+	}
+}
+
+// Long-lived transcript roots hold thousands of old sessions; the newest
+// session must still be found rather than the scan giving up (#20213).
+func TestTranscriptScanFindsNewestSessionInLargeRoots(t *testing.T) {
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-30 * 24 * time.Hour)
+
+	home := t.TempDir()
+	workDir := "/data/agents/worker"
+	project := filepath.Join(home, ".claude", "projects", testClaudeSlug(workDir))
+	for i := 0; i < 2100; i++ {
+		writeTranscriptAt(t, filepath.Join(project, fmt.Sprintf("old-%04d.jsonl", i)), old)
+	}
+	writeTranscriptAt(t, filepath.Join(project, "zz-new.jsonl"), now)
+	scan := transcriptActivityScan{name: "worker", backend: "claude", home: home, target: kickTranscriptTarget{workDir: workDir}}
+	if got, ok := scanAgentTranscript(scan, nil, now); !ok || !got.Equal(now) {
+		t.Fatalf("claude activity = %v, %v; want %v, true", got, ok, now)
+	}
+
+	oldCodex := codexHomePrefix
+	codexHomePrefix = filepath.Join(t.TempDir(), "codex-")
+	t.Cleanup(func() { codexHomePrefix = oldCodex })
+	sessions := filepath.Join(codexHomePath("worker"), "sessions")
+	for i := 0; i < 2100; i++ {
+		day := old.AddDate(0, 0, -i)
+		writeTranscriptAt(t, filepath.Join(sessions, day.Format("2006"), day.Format("01"), day.Format("02"), fmt.Sprintf("rollout-%d.jsonl", i)), old)
+	}
+	writeTranscriptAt(t, filepath.Join(sessions, "2026", "11", "28", "rollout-new.jsonl"), now)
+	scan = transcriptActivityScan{name: "worker", backend: "codex"}
+	if got, ok := scanAgentTranscript(scan, nil, now); !ok || !got.Equal(now) {
+		t.Fatalf("codex activity = %v, %v; want %v, true", got, ok, now)
 	}
 }
 

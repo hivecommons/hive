@@ -109,14 +109,15 @@ type RepoAutoMergeResolver func(repo string) bool
 // Deps is what hive has. Nil fields are capabilities this hive does not
 // provide.
 type Deps struct {
-	Tokens       TokenScoper
-	REST         RESTAccounting
-	Usage        UsageSink
-	Canary       CanaryScanner
-	Text         TextScanner
-	Conditions   ConditionReporter
-	Linear       LinearResolver
-	PullRequests PRCreator
+	Tokens            TokenScoper
+	REST              RESTAccounting
+	Usage             UsageSink
+	InferenceActivity func() map[string]time.Time
+	Canary            CanaryScanner
+	Text              TextScanner
+	Conditions        ConditionReporter
+	Linear            LinearResolver
+	PullRequests      PRCreator
 	// RepoPRRefusal is the per-repo open-PRs gate CreatePR asks first: why a
 	// new PR may not open in repo, or "" when it may. The callback request
 	// names no agent, so a workflow_only repo refuses here (fail closed).
@@ -220,6 +221,8 @@ func (c *Capabilities) Configured(capability string) bool {
 		return c.deps.Policy != nil
 	case callback.CapabilityInferenceRoutes:
 		return c.deps.Inference != nil
+	case callback.CapabilityInferenceActivity:
+		return c.deps.InferenceActivity != nil
 	case callback.CapabilityEffects:
 		return c.deps.Mutation != nil
 	case callback.CapabilityAgentMint:
@@ -230,6 +233,14 @@ func (c *Capabilities) Configured(capability string) bool {
 		return c.knowledgeAdviseOn()
 	}
 	return false
+}
+
+// InferenceActivity reads the proxy snapshot for the sidecar runtime.
+func (c *Capabilities) InferenceActivity(context.Context) (map[string]time.Time, error) {
+	if c.deps.InferenceActivity == nil {
+		return nil, callback.ErrNotConfigured
+	}
+	return c.deps.InferenceActivity(), nil
 }
 
 // Handler is the callback HTTP handler for deps: the thing hive mounts.

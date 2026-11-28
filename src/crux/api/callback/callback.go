@@ -32,6 +32,7 @@
 //	POST /v1/policy/repo-auto-merge whether auto-merge is enabled for a repo
 //	PUT  /v1/inference/routes/{agent}    route an agent's inference traffic (stage 4)
 //	DELETE /v1/inference/routes/{agent}  clear that route
+//	GET  /v1/inference/activity         latest observed inference request by agent
 //	POST /v1/effects                begin a journaled external mutation (stage 4)
 //	POST /v1/effects/{id}/end       report how it ended
 //	POST /v1/tokens/mint            issue an agent's short-lived mint credential (stage 4)
@@ -55,22 +56,23 @@ const Version = "v1"
 
 // Routes.
 const (
-	PathHealth           = "/" + Version + "/health"
-	PathTokens           = "/" + Version + "/tokens"
-	PathGitHubREST       = "/" + Version + "/github/rest"
-	PathGitHubRateLimit  = "/" + Version + "/github/rate-limit"
-	PathUsage            = "/" + Version + "/usage"
-	PathScanCanary       = "/" + Version + "/scan/canary"
-	PathScanText         = "/" + Version + "/scan/text"
-	PathConditions       = "/" + Version + "/conditions"
-	PathLinearCredential = "/" + Version + "/linear/credential"
-	PathPulls            = "/" + Version + "/pulls"
-	PathPolicy           = "/" + Version + "/policy"
-	PathRepoAutoMerge    = "/" + Version + "/policy/repo-auto-merge"
-	PathInferenceRoutes  = "/" + Version + "/inference/routes"
-	PathEffects          = "/" + Version + "/effects"
-	PathAgentMint        = "/" + Version + "/tokens/mint"
-	PathBobCredential    = "/" + Version + "/bob/credential"
+	PathHealth            = "/" + Version + "/health"
+	PathTokens            = "/" + Version + "/tokens"
+	PathGitHubREST        = "/" + Version + "/github/rest"
+	PathGitHubRateLimit   = "/" + Version + "/github/rate-limit"
+	PathUsage             = "/" + Version + "/usage"
+	PathScanCanary        = "/" + Version + "/scan/canary"
+	PathScanText          = "/" + Version + "/scan/text"
+	PathConditions        = "/" + Version + "/conditions"
+	PathLinearCredential  = "/" + Version + "/linear/credential"
+	PathPulls             = "/" + Version + "/pulls"
+	PathPolicy            = "/" + Version + "/policy"
+	PathRepoAutoMerge     = "/" + Version + "/policy/repo-auto-merge"
+	PathInferenceRoutes   = "/" + Version + "/inference/routes"
+	PathInferenceActivity = "/" + Version + "/inference/activity"
+	PathEffects           = "/" + Version + "/effects"
+	PathAgentMint         = "/" + Version + "/tokens/mint"
+	PathBobCredential     = "/" + Version + "/bob/credential"
 	// PathKnowledgeAdvise is the mid-task knowledge adviser route.
 	PathKnowledgeAdvise = "/" + Version + "/knowledge/advise"
 )
@@ -226,6 +228,8 @@ const (
 	// CapabilityInferenceRoutes covers the inference route routes; served
 	// only by a Capabilities that also implements InferenceRouter.
 	CapabilityInferenceRoutes = "inference_routes"
+	// CapabilityInferenceActivity provides the translator's activity snapshot.
+	CapabilityInferenceActivity = "inference_activity"
 	// CapabilityEffects covers the effect routes; served only by a
 	// Capabilities that also implements EffectBoundary.
 	CapabilityEffects = "effects"
@@ -452,6 +456,11 @@ type GitHubAccounting interface {
 // UsageRecorder records inference token usage.
 type UsageRecorder interface {
 	RecordUsage(ctx context.Context, rec UsageRecord) error
+}
+
+// InferenceActivityReader reads the latest request observed for each agent.
+type InferenceActivityReader interface {
+	InferenceActivity(context.Context) (map[string]time.Time, error)
 }
 
 // CanaryScanner scans a GitHub write body for planted canaries.

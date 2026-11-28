@@ -193,7 +193,9 @@ type GitHubProxy struct {
 	certMu    sync.RWMutex
 	certCache map[string]cachedCert
 
-	inference *inferenceRouter
+	inference           *inferenceRouter
+	inferenceActivityMu sync.RWMutex
+	inferenceActivity   map[string]time.Time
 
 	// entitlements caches the per-key entitled model set for LiteLLM
 	// gateways (keyed by endpoint), learned from a key-info probe or a

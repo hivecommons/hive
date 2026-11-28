@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent"
@@ -147,6 +148,11 @@ func (h *hiveCallback) install(ctx context.Context, rt crux.Runtime, srv *serve.
 	// event stream) and forwards to srv.ConditionReporter; setting the
 	// manager directly would be overwritten when Serve starts.
 	srv.ConditionReporter = h.set.Conditions
+	if m, ok := rt.(interface {
+		StartInferenceActivityRefresh(context.Context, func(context.Context) (map[string]time.Time, error))
+	}); ok {
+		go m.StartInferenceActivityRefresh(ctx, h.client.InferenceActivity)
+	}
 	toolapprove.SetDefaultTextScanner(h.set.Text)
 	seams := "text scanner, conditions"
 	if m, ok := rt.(hiveCapTarget); ok {
