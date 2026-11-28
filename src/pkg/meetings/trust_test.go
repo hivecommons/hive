@@ -62,6 +62,8 @@ func TestTrustedOwnerIDAutoApprovesAndAudits(t *testing.T) {
 		mt, ok := m.findNative("q-second")
 		return ok && mt.State == StateJoining
 	})
+	// The joining state is saved before the request handler calls the audit hook.
+	eventually(t, "automatic approval audited", func() bool { return len(audited()) > 0 })
 	mt, _ := m.findNative("q-second")
 	if got := audited(); len(got) != 1 || got[0] != ownerDiscordID+"|"+mt.ID {
 		t.Fatalf("audit = %v", got)
