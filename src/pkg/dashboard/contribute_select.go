@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -800,11 +801,23 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			filtered[filterDisabledRepo] += len(repo.ActionableIssues)
 			continue
 		}
-		if !repoScope.allows(repoScopeID(repoScopeDefaultForge, scopeHost, repo.Full)) {
+		onGitHub := h.server.deps == nil || h.server.deps.Config.RepoOnGitHub(repo.Full)
+		inScope := repoScope.allows(repoScopeID(repoScopeDefaultForge, scopeHost, repo.Full))
+		if !inScope && !onGitHub {
+			cfg := h.server.deps.Config
+			forge := cfg.ForgeKindForRepo(repo.Full)
+			if u, err := url.Parse(cfg.ForgeURLForRepo(repo.Full)); err == nil && u.Host != "" {
+				inScope = repoScope.allows(repoScopeID(forge, u.Host, repo.Full))
+				if !inScope && forge == config.ForgeForgejo {
+					inScope = repoScope.allows(repoScopeID(config.ForgeGitea, u.Host, repo.Full))
+				}
+			}
+		}
+		if !inScope {
 			continue
 		}
 		// Contributor credentials are minted by the GitHub App.
-		if h.server.deps != nil && !h.server.deps.Config.RepoOnGitHub(repo.Full) {
+		if !onGitHub {
 			issuesSeen += len(repo.ActionableIssues)
 			filtered[filterUnsupportedForge] += len(repo.ActionableIssues)
 			continue

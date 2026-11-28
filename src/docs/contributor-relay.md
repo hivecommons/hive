@@ -8,7 +8,7 @@ The hive operator chooses eligible repositories, labels, and models. You choose 
 
 Contributor assignments currently support GitHub repositories only: task credentials are minted by a GitHub App. GitLab, Gitea, and Forgejo repositories are excluded from the repository catalog and issue selection, including on mixed-forge hives. A hive with only those repositories therefore has no contributor work to offer.
 
-When actionable issues are skipped for this reason, `task_unavailable.filtered` includes `unsupported_forge` with the number skipped. An unrestricted relay receives `no_matching_work`; a relay with a selected repository scope receives `no_selected_work` and only counts matching repositories.
+When actionable issues are skipped for this reason, `task_unavailable.filtered` includes `unsupported_forge` with the number skipped. An unrestricted relay receives `no_matching_work`; a relay with a selected repository scope receives `no_selected_work` and only counts matching repositories, including their configured forge and host. Forgejo repositories also match existing `gitea` scope IDs on the same host. The ready queue excludes unsupported repositories and identifies them as `unsupported_forge` in withheld diagnostics.
 
 ## Pick your route
 
