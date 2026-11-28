@@ -194,9 +194,23 @@ loops, so the proxy enforces two safeguards:
   is full, every new store evicts a body some poller is about to revalidate,
   and that poll is charged again. The **ETag cache** row under Debug → GitHub
   API budget (and `etag_cache.bytes` / `max_bytes` in `/api/gh-rate-limits`)
-  shows the fill level; raising the cap from Settings → Forge App applies at
-  once. Bodies are stored gzip-compressed, so the cap is several times its
-  size in raw JSON.
+  shows the fill level; raising the cap from Settings → Forge App, or with the
+  admin MCP operation `github.settings`, applies at once. Bodies are stored
+  gzip-compressed, so the cap is several times its size in raw JSON.
+
+The reserve floors and the ETag cache bounds are on Settings → Forge App. The
+admin MCP operation `github.settings` changes the same fields (`api_reserve`,
+`api_critical`, `agent_reserve_floor`, `pr_detail_ttl_s`,
+`graphql_pr_batch_page_size`, `etag_cache_max_mb`, `etag_cache_max_entries`)
+through `write_preview` and `write_confirm`. Its preview shows each field
+before and after, names a lower floor as widening, and says how much more
+memory a bigger ETag cache may use. `agent_reserve_floor`, `pr_detail_ttl_s`,
+`graphql_pr_batch_page_size` and the ETag cache bounds apply without a
+restart, whichever way they are saved. `api_reserve` and `api_critical` apply
+when the hive rebuilds its GitHub client: a hive running as a GitHub App does
+that on the save (`reinit: ok` in the answer), and any other hive applies
+them at the next restart. See
+[the admin MCP guide](../admin-mcp.md#registered-operations).
 
 ### Hub bearer validation and exhausted user tokens
 

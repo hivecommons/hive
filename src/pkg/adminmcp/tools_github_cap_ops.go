@@ -23,6 +23,9 @@ import (
 const (
 	WriteOpAgentGitHubAPIHourlyCap = "agent.github_api_hourly_cap"
 	WriteOpGitHubAgentAPIHourlyCap = "github.agent_api_hourly_cap"
+	// WriteOpGitHubSettings changes the other GitHub API budget settings of
+	// the same endpoint (tools_github_settings_ops.go).
+	WriteOpGitHubSettings = "github.settings"
 
 	// defaultAgentGitHubAPIHourlyCap mirrors config.DefaultAgentsGitHubAPIHourlyCap;
 	// it is only used to word a preview when the fleet value cannot be read.

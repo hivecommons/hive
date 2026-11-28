@@ -31,7 +31,7 @@ const SettingsSectionDefault = "governor"
 var settingsSections = []SettingsSection{
 	{SettingsSectionDefault, "/api/config/governor", "Governor settings: modes and cadences, labels, budget, hub, LiteLLM, watchdog, trajectory, classifier, release sentinel, contribute, health and the other Governor/Features tabs."},
 	{"project", "/api/config", "Project summary: org, repos, primary repo, AI author, hive id, hub URL, GitHub base URL, issue bands, writing guide and the active issue filter."},
-	{"github_apps", "/api/config/github/forge-apps", "GitHub/forge connection: API and base URLs, App slug, forge, OAuth client id, key file path."},
+	{"github_apps", "/api/config/github/forge-apps", "GitHub/forge connection: API and base URLs, App slug, forge, OAuth client id, key file path; under settings, the GitHub API budget and ETag cache settings (api_reserve, api_critical, agent_reserve_floor, pr_detail_ttl_s, graphql_pr_batch_page_size, etag_cache_max_mb, etag_cache_max_entries, with their defaults) that github.settings changes, and the fleet agent cap."},
 	{"authorized_users", "/api/config/authorized-users", "Users authorized on this dashboard."},
 	{"dashboard", "/api/config/dashboard", "Dashboard settings."},
 	{"channels", "/api/config/channels", "Channels: email, push, Slack, Matrix, Microsoft Teams and Telegram targets, GitHub mentions and Actions identity (secret values are never returned; secrets are named by environment variable)."},
