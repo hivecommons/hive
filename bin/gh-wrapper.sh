@@ -157,6 +157,17 @@ if ! _contributor_mode; then
     # mangled a multiline command) hung until the tool timeout and read as a
     # network failure. Fail loud and instant instead.
     export GH_PROMPT_DISABLED=1
+  elif [[ -n "${HIVE_NO_GITHUB_FORGE:-}" ]]; then
+    # Every repo of this hive is on another forge (#20222), so no GitHub token
+    # is ever minted and there is nothing for the operator to repair. Say so,
+    # and name the tools that do work. The variable only picks this wording:
+    # the call is denied either way.
+    _forge="${HIVE_NO_GITHUB_FORGE}"
+    _hint="read work from this kick's prompt and the hive's relays (hive-open-issue, hive-open-pr, hive-push-branch)"
+    if [[ "$_forge" == "forgejo" ]]; then
+      _hint="for a checkout run 'hive-clone --repo <owner/repo> [--pr <N>]' (update with --fetch), push with 'hive-push-branch', and read the PRs/issues this kick's prompt lists; there is no agent tool for a PR's comments, reviews or checks yet"
+    fi
+    _deny no_github_repo "this hive has no GitHub repository: every repo is on ${_forge}, so gh and hive-gh cannot reach it and no GitHub token exists to repair — do not report a token fault; ${_hint}."
   else
     _deny token_cache_unavailable "per-agent scoped GitHub token not available, unreadable, or empty (${HIVE_AGENT_TOKEN_CACHE:-HIVE_AGENT_TOKEN_CACHE unset}); not falling back to the shared App token (audit H3) — report to the operator: on per-UID deployments repair token delivery, on native/shared-UID GitHub Enterprise set GH_HOST (e.g. github.ibm.com) before launch; see src/docs/troubleshooting.md#hive_agent_token_cache-unset-no-read-credential-available."
   fi

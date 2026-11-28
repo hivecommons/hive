@@ -510,6 +510,32 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# ── #20222: a hive with no GitHub repository names the forge tools ───────────
+# On a Forgejo-only hive no GitHub token is minted, so the token-delivery
+# message sent operators to repair something that is not broken. With
+# HIVE_NO_GITHUB_FORGE set the call is still denied, with reason=no_github_repo.
+echo "-- no-GitHub hive denies with the forge tools, not a token fault (#20222) --"
+out="$(
+  HIVE_GH_WRAPPER_REAL_GH="$STUB" \
+  STUB_LOG="$STUB_LOG" \
+  HIVE_AGENT="testagent" \
+  HIVE_AGENT_ID="testagent" \
+  HIVE_AGENT_MODE="ISSUES_PRS_MERGE" \
+  HIVE_AGENT_TOKEN_CACHE="$EMPTY_CACHE" \
+  HIVE_NO_GITHUB_FORGE="forgejo" \
+  HIVE_CONTRIBUTOR_MODE="false" \
+  bash "$WRAPPER" pr view 50 --repo owner/repo 2>&1
+)"
+rc=$?
+if [[ $rc -eq 1 && "$out" == *"reason=no_github_repo"* && "$out" == *"hive-clone --repo"* && "$out" != *"repair token delivery"* ]]; then
+  echo "  PASS: no-GitHub hive names hive-clone and does not blame token delivery"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL: no-GitHub hive names hive-clone and does not blame token delivery"
+  echo "        got rc=$rc out='$out'"
+  FAIL=$((FAIL + 1))
+fi
+
 # ── #4044: author gate must work for App INSTALLATION tokens ─────────────────
 # Staff agents hold ghs_ installation tokens, for which `gh api user` 403s
 # unconditionally — the #3982 oracle could NEVER resolve for them, so every

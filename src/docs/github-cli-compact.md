@@ -79,6 +79,7 @@ The prose may be reworded; the codes are stable identifiers:
 |---|---|---|
 | `gh_unavailable` | wrapper | real `gh` binary missing from the image |
 | `token_cache_unavailable` | wrapper | per-agent scoped token not delivered (audit H3) |
+| `no_github_repo` | wrapper | every repo of the hive is on another forge (`HIVE_NO_GITHUB_FORGE`), so no GitHub token exists; names `hive-clone` / `hive-push-branch` instead (#20222) |
 | `agent_restriction` | wrapper | per-agent pattern rule in `/etc/hive/restrictions/<agent>.json` |
 | `contributor_auth` | wrapper | `gh auth` in contributor mode (#6659) |
 | `surface_allowlist` | wrapper | subcommand not on the deny-by-default allowlist (#3840) |
