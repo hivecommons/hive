@@ -32,8 +32,8 @@
 # Verbs outside the table pass through to gh unchanged.
 #
 # On a forge-only hive, `pr view` / `issue view` / `pr checks <n>` on a repo
-# off github.com are answered by the hive's read relay with the same compact
-# keys (see "Forgejo repos" below); GitHub calls are unchanged.
+# off github.com are answered by the hive's read relay with a subset of the
+# compact keys (see "Forgejo repos" below); GitHub calls are unchanged.
 
 set -euo pipefail
 
@@ -141,7 +141,10 @@ _verb "$subcmd" "$action" || exec gh "$@"
 # GitHub repo to talk to. There, `pr view` / `issue view` / `pr checks` on a
 # repo that is not on github.com are answered by the hive's read relay
 # (src/cmd/hive/forge_read_relay.go), which reads the forge adapter and
-# hands back the same compact JSON keys as the GitHub projection below. The
+# hands back the GitHub projection's key names below, minus the keys it has
+# no Forgejo source for: mergeStateStatus, reviewDecision, additions,
+# deletions, changedFiles (pr view) and stateReason, milestone (issue view).
+# A gate that reads one of those gets null. The
 # relay creates its queue only on a hive whose repos are all off GitHub, so
 # on a GitHub hive the queue is absent and nothing here changes.
 READ_DIR="${HIVE_GH_READ_REQUEST_DIR:-/var/run/hive-metrics/read-requests}"

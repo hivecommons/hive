@@ -377,7 +377,7 @@ func TestWorkSourceSeamNamesForgeToolsOnForgejoOnlyHive(t *testing.T) {
 
 	s.cfg.Project.Forge = config.ForgeForgejo
 	msg := modeKick(t, s, "scanner")
-	for _, want := range []string{"hive-clone --repo <owner/repo> [--pr <N>]", "hive-push-branch", "no Forgejo equivalent", "hive-gh pr view <N> --repo <owner/repo>", "hive-gh pr checks <N>"} {
+	for _, want := range []string{"hive-clone --repo <owner/repo> [--pr <N>]", "hive-push-branch", "no Forgejo equivalent", "hive-gh pr view <N> --repo <owner/repo>", "hive-gh pr checks <N>", "overrides your role policy below"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("Forgejo-only kick lacks %q:\n%s", want, msg)
 		}

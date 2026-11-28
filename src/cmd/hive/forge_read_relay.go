@@ -33,8 +33,11 @@ import (
 //   - The hive reads through the forge adapter (forge.ReadAPI) with the
 //     token work discovery already uses; the token never leaves the hive.
 //   - The answer is the compact JSON projection hive-gh prints for GitHub,
-//     with the same keys, written into the queue as a new file of mode 0600
-//     owned by the requesting agent's UID, so no other agent can read it.
+//     with the same key names where it carries them, written into the queue as
+//     a new file of mode 0600 owned by the requesting agent's UID, so no
+//     other agent can read it. It is a subset: a pull request carries no
+//     mergeStateStatus, reviewDecision, additions, deletions or
+//     changedFiles, and an issue no stateReason or milestone.
 //     The result next to the request only names that file. A view the agent
 //     leaves behind is removed after forgeReadViewTTL.
 
@@ -207,8 +210,12 @@ func (r *forgeRequestRelay) handleRead(ctx context.Context, path string) (read b
 
 // forgeReadView reads one pull request, issue or check list and returns it
 // as the compact projection hive-gh prints on GitHub (bin/hive-gh.sh), with
-// the same keys, so a policy or agent reading those keys works on either
-// forge.
+// the same key names, so a policy or agent reading those keys works on either
+// forge. It is a subset of that projection: Forgejo's API has no
+// counterpart this adapter reads for mergeStateStatus, reviewDecision,
+// additions, deletions, changedFiles (pull request) or stateReason and
+// milestone (issue), so those keys are absent and a gate reading them gets
+// null.
 func forgeReadView(ctx context.Context, api forge.ReadAPI, repo, kind string, number int) ([]byte, error) {
 	var view any
 	switch kind {
