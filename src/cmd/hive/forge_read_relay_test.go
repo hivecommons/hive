@@ -109,6 +109,34 @@ func (h *readHarness) readView(t *testing.T, req forgeReadRequest, into any) for
 	return resp
 }
 
+// Forgejo reports mergeable=false on a merged or closed pull request too; only
+// an open one's false is a conflict, and the rest read as gh's UNKNOWN.
+func TestForgeReadViewMergeable(t *testing.T) {
+	for _, tc := range []struct {
+		state            string
+		merged, mergable bool
+		want             string
+	}{
+		{"open", false, true, "MERGEABLE"},
+		{"open", false, false, "CONFLICTING"},
+		{"closed", true, false, "UNKNOWN"},
+		{"closed", false, false, "UNKNOWN"},
+	} {
+		api := &fakeReadAPI{pull: forge.PullView{Number: 7, State: tc.state, Merged: tc.merged, Mergeable: tc.mergable}}
+		b, err := forgeReadView(context.Background(), api, "acme/widgets", "pr", 7)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var view map[string]any
+		if err := json.Unmarshal(b, &view); err != nil {
+			t.Fatal(err)
+		}
+		if view["mergeable"] != tc.want {
+			t.Errorf("state=%s merged=%v mergeable=%v: got %v, want %s", tc.state, tc.merged, tc.mergable, view["mergeable"], tc.want)
+		}
+	}
+}
+
 func TestForgeReadRelayPullView(t *testing.T) {
 	h := newReadHarness(t)
 	var view map[string]any

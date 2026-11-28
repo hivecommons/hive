@@ -365,8 +365,9 @@ func TestGHAuthTitleProseMatchesRelay(t *testing.T) {
 }
 
 // hivecommons/hive#20222: on a hive whose repos are all on Forgejo the
-// work-source seam names the forge tools (hive-clone, hive-push-branch) and
-// not the GitHub `hive-gh pr view` paragraph. A GitHub hive and a mixed hive
+// work-source seam names the forge tools (hive-clone, hive-push-branch, and
+// the read relay's hive-gh pr/issue view and pr checks, #20230) and not the
+// GitHub work-source paragraph. A GitHub hive and a mixed hive
 // keep governorWorkSourceRule.
 func TestWorkSourceSeamNamesForgeToolsOnForgejoOnlyHive(t *testing.T) {
 	s := modeKickScheduler(t, "ISSUES_AND_PRS", 4)
@@ -376,12 +377,12 @@ func TestWorkSourceSeamNamesForgeToolsOnForgejoOnlyHive(t *testing.T) {
 
 	s.cfg.Project.Forge = config.ForgeForgejo
 	msg := modeKick(t, s, "scanner")
-	for _, want := range []string{"hive-clone --repo <owner/repo> [--pr <N>]", "hive-push-branch", "no Forgejo equivalent"} {
+	for _, want := range []string{"hive-clone --repo <owner/repo> [--pr <N>]", "hive-push-branch", "no Forgejo equivalent", "hive-gh pr view <N> --repo <owner/repo>", "hive-gh pr checks <N>"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("Forgejo-only kick lacks %q:\n%s", want, msg)
 		}
 	}
-	for _, banned := range []string{governorWorkSourceRule, "hive-gh pr view", "gh pr view <n>"} {
+	for _, banned := range []string{governorWorkSourceRule, "gh pr view <n>", "do not run them", "no agent tool to read its comments, reviews or CI checks"} {
 		if strings.Contains(msg, banned) {
 			t.Errorf("Forgejo-only kick still carries %q:\n%s", banned, msg)
 		}
