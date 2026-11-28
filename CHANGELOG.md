@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.13)
+
+### Fixed
+
+- The hub dashboard header no longer shows upgrade kill switches that control nothing ([#20253](https://github.com/hivecommons/hive/issues/20253)). With `HIVE_HUB_RELEASE_TRACKING_DISABLED` set the `hub upgrades` switch is hidden, since the hub has no target to roll to and its Upgrade button and `auto` checkbox are already gone; with `HIVE_HUB_MODE=self-hosted` the `spoke upgrades` switch is hidden, since the hub provisions no hives. A switch that is currently paused stays visible so an admin can resume it, and with neither switch shown the bordered cluster is dropped.
+
 ## 2026-11-28 (v5.384.12)
 
 ### Fixed
