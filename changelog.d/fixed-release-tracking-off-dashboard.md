@@ -1,1 +1,0 @@
-- With `HIVE_HUB_RELEASE_TRACKING_DISABLED=true` the dashboard now shows "Release tracking is off" instead of a disabled Upgrade button and spinner that waited forever, and hides the hub `auto` checkbox, the all-"unknown" channel block and the "collecting…" image-pulls line (#20188).
