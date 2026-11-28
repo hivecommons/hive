@@ -734,6 +734,29 @@ Hive now treats the login as the one piece of `.claude` state that *is* shared, 
 
 When the file cannot be read either way (a deployment without `su-exec`), nothing is moved or relinked, the agent keeps the token it already had, and one `ERROR` per agent and file version names the path. The one exception is a dashboard sign-in: a fresh shared login is newer than anything an unreadable private copy could hold, so that trigger moves the unreadable file aside unread and relinks the agent. Memory, transcripts and todos stay per agent throughout; only the credential file is published.
 
+#### Signing Codex agents in on a spoke
+
+Every Codex agent's `CODEX_HOME/auth.json` is a link to one shared file, `/data/home/.codex/auth.json` (`codexSharedAuthFile`, linked by `setupCodexHome`), so one login serves every Codex agent of the hive. A plain `codex login` cannot finish on a cluster spoke: it waits for the browser on a `127.0.0.1` callback, which reaches the machine running the browser, not the pod. `codex login --device-auth` needs no callback (the contributor setup uses it, see [backend-setup.md](../../docs/backend-setup.md)); when device sign-in is not available for your account, sign in on a local machine and copy the login to the spoke:
+
+1. On your own machine, run `codex login` and finish the ChatGPT sign-in. The CLI writes `~/.codex/auth.json` (or `$CODEX_HOME/auth.json` when `CODEX_HOME` is set).
+2. Copy that file into the hive container over an authenticated channel, without leaving a copy in a shared place on the way:
+
+   ```bash
+   kubectl exec -i deploy/hive -c hive -- tee /data/home/.codex/auth.json >/dev/null < ~/.codex/auth.json
+   ```
+
+   `kubectl cp ~/.codex/auth.json <pod>:/data/home/.codex/auth.json -c hive` works too.
+3. Give the file the owner and mode the shared directory uses. The entrypoint keeps `/data/home/.codex` owned by `dev:node`, mode `2775`, and every agent runs as its own UID in the `node` group, so each agent must be able to read and rewrite the file when its CLI refreshes the token:
+
+   ```bash
+   kubectl exec deploy/hive -c hive -- sh -c 'chown dev:node /data/home/.codex/auth.json && chmod 0660 /data/home/.codex/auth.json'
+   ```
+
+4. Restart the Codex agents (or let their next launch pick it up). An agent whose `auth.json` is a regular file rather than the link, left by a login made in its own terminal after a `codex logout`, keeps that file and logs a warning instead of being relinked ([#20002](https://github.com/hivecommons/hive/issues/20002)); move that file aside and restart the agent so it links to the shared login.
+5. Delete the local copy, or at least stop using that login on your machine. From now on the spoke owns the login and the agents' CLIs refresh it. Refresh tokens rotate: whichever side refreshes first invalidates the refresh token the other side holds, and a reused refresh token is rejected, so running Codex locally on the same login logs out either your machine or the whole hive ([#18740](https://github.com/hivecommons/hive/issues/18740)). Sign in again locally if you need Codex there too.
+
+API-key mode (`CODEX_API_KEY` or `OPENAI_API_KEY`, see [env-vars.md](env-vars.md)) needs no browser sign-in. OpenAI's Sign in with ChatGPT for apps, which would give a hive its own limited share of a ChatGPT plan, is not supported yet; see [#20272](https://github.com/hivecommons/hive/issues/20272).
+
 Every hive-side write to a shared login or CLI config (`.claude/.credentials.json`, `.copilot/config.json`, the durable Copilot token) goes through `crux/sharedfile`: a randomly named temporary beside the target, mode and owner set on the open descriptor, verified, then renamed into place, and only when the target is absent or a regular file inside a regular directory the server owns. Anything else at those paths is refused and logged once. The entrypoint's root permission guard applies the same rule to the files it repairs, and the shared dot-dirs carry the sticky bit so a dev-owned entry cannot be replaced by another uid.
 
 ### CLI auto-memory (`agents.cli_memory`)
