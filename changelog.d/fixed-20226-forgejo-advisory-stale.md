@@ -1,0 +1,1 @@
+- Stop warning every cycle and flagging a stale advisory on the hub when a hive's primary repo is on Forgejo, Gitea or GitLab and `governor.advisory.target` is `github`: the digest has no GitHub issue there, so it is kept on the dashboard and not posted ([#20226](https://github.com/hivecommons/hive/issues/20226)).
