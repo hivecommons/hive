@@ -223,8 +223,15 @@ func (c *Client) PostReviewConversationBlockers(ctx context.Context, prs []PullR
 		if !c.WritebackAllowed(repo, c.WritebackItemForPR(*pr), writeback.KindReviewConversationNotice, body).Allowed {
 			continue
 		}
-		_, err := c.UpsertPRStatusSection(ctx, repo, pr.Number, reviewConversationStatusSection, body)
-		c.noteWritebackOutcome(repo, nil, err)
+		// Only a write that reached GitHub tells the gate anything: a clear
+		// with nothing to remove is not a 2xx, and a failed read of the
+		// comments is not a write 403.
+		wrote, writeErr, err := c.upsertPRStatusSectionWrites(ctx, repo, pr.Number, reviewConversationStatusSection, body)
+		if writeErr != nil {
+			c.noteWritebackOutcome(repo, nil, writeErr)
+		} else if wrote {
+			c.noteWritebackOutcome(repo, nil, nil)
+		}
 		if err != nil {
 			c.logger.Warn("review conversations: could not update the PR status comment", "repo", repo, "pr", pr.Number, "error", err)
 		}

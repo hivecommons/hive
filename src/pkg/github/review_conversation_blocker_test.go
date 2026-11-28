@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -228,5 +230,51 @@ func TestReviewConversationBlockerNotice(t *testing.T) {
 	body, _ := s.comments[0]["body"].(string)
 	if section, ok := prstatus.Get(body, reviewConversationStatusSection); !ok || !strings.Contains(section, "#discussion_r3000000000") || !strings.Contains(section, "1 unresolved review thread") {
 		t.Fatalf("status comment did not identify the blocking discussion: %q", body)
+	}
+}
+
+// Only a write that reached GitHub is a write outcome: a clear with nothing
+// to remove must not mark the repo writable, and a 403 reading the comments
+// must not record a forbidden write.
+func TestReviewConversationBlockerWritebackOutcome(t *testing.T) {
+	ctx := context.Background()
+	var listForbidden atomic.Bool
+	s := &statusCommentServer{}
+	comments := s.start(t).Config.Handler
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if listForbidden.Load() && r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments") {
+			w.Header().Set("Content-Type", "application/json")
+			http.Error(w, `{"message":"Resource not accessible by integration"}`, http.StatusForbidden)
+			return
+		}
+		comments.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	c := testClient(t, srv.URL)
+	c.SetAppBotLogin("hive-app[bot]")
+	statePath := filepath.Join(t.TempDir(), "writeback.json")
+	gate := writeback.New(writeback.Config{}, writeback.Deps{}, statePath)
+	c.SetWritebackGate(gate)
+	pr := PullRequest{Repo: "o/r", Number: 5, Author: "hive-app[bot]", AppAuthored: true, MergeableState: "clean", CommentCount: 1, reviewConversationKnown: true}
+	writable := func() (bool, bool) {
+		rs := gate.Snapshot().Repos["o/r"]
+		state, _ := os.ReadFile(statePath) // Written only when the gate records an outcome.
+		return rs.Writable, strings.Contains(string(state), "last_forbidden")
+	}
+	c.PostReviewConversationBlockers(ctx, []PullRequest{pr}) // Nothing to clear.
+	if w, f := writable(); w || f {
+		t.Fatalf("no-op clear recorded writable=%t forbidden=%t", w, f)
+	}
+	listForbidden.Store(true)
+	c.PostReviewConversationBlockers(ctx, []PullRequest{pr})
+	if w, f := writable(); w || f {
+		t.Fatalf("read 403 recorded writable=%t forbidden=%t", w, f)
+	}
+	listForbidden.Store(false)
+	pr.MergeableState = "blocked"
+	pr.Protection = &ProtectionFacts{UnresolvedReviewThreads: 1}
+	c.PostReviewConversationBlockers(ctx, []PullRequest{pr})
+	if w, _ := writable(); !w {
+		t.Fatal("a posted notice did not mark the repo writable")
 	}
 }
