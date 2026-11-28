@@ -97,7 +97,11 @@ type rawReviewThread struct {
 	Path       string `json:"path"`
 	Line       *int   `json:"line"`
 	Comments   struct {
-		Nodes []rawReviewComment `json:"nodes"`
+		// TotalCount is how many comments the thread holds; more than
+		// len(Nodes) means the query's first page did not read them all.
+		// Zero when a query did not ask for it.
+		TotalCount int                `json:"totalCount"`
+		Nodes      []rawReviewComment `json:"nodes"`
 	} `json:"comments"`
 }
 
@@ -111,6 +115,18 @@ type rawReviewComment struct {
 	} `json:"author"`
 	Body       string `json:"body"`
 	DatabaseID int64  `json:"databaseId"`
+	// CreatedAt is when the comment was written; zero when a query did not
+	// ask for it.
+	CreatedAt time.Time `json:"createdAt"`
+	// PublishedAt is when the comment became visible. A reply drafted
+	// inside a pending review is created before it is published. Zero when
+	// a query did not ask for it or GitHub reports none.
+	PublishedAt time.Time `json:"publishedAt"`
+	// OriginalCommit is the commit the comment was made on. Its OID is
+	// empty when a query did not ask for it or GitHub no longer names it.
+	OriginalCommit struct {
+		OID string `json:"oid"`
+	} `json:"originalCommit"`
 }
 
 // SetReviewBots installs classification.review_bots. Nil-receiver safe and
@@ -252,25 +268,54 @@ func hasBotThread(threads []rawReviewThread, bots config.ReviewBotsConfig) bool 
 
 // reviewThreadsQuery is the per-PR GraphQL query. comments(first: 50) — not
 // the sketch's 10 — so a thread the hive has already replied in a few times
-// still shows every hive reply to the attempt counter.
+// still shows every hive reply to the attempt counter. The PR's author and
+// head commit, each comment's times and commit and the thread's comment
+// count are for the hive's own threads (review_own_threads.go): whose reply
+// a reply is, whether the hive approved a later head after it, and whether
+// every reply was read.
 const reviewThreadsQuery = `query($owner: String!, $repo: String!, $number: Int!, $after: String) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
-      headRefName
+      headRefName headRefOid
+      author { __typename login }
       reviewThreads(first: 100, after: $after) {
         pageInfo { hasNextPage endCursor }
         nodes {
           id isResolved isOutdated path line
-          comments(first: 50) { nodes { author { __typename login } body databaseId } }
+          comments(first: 50) { totalCount nodes { author { __typename login } body databaseId createdAt publishedAt originalCommit { oid } } }
         }
       }
     }
   }
 }`
 
+// reviewThreadsRead is one read of a PR's review threads with the PR facts
+// the same query returns.
+type reviewThreadsRead struct {
+	HeadRef string
+	// HeadSHA is the PR's head commit when the threads were read.
+	HeadSHA string
+	// AuthorLogin and AuthorType are the PR author's login and GraphQL actor
+	// type (User, Bot, …), spelled the way a thread comment's author is.
+	AuthorLogin string
+	AuthorType  string
+	Threads     []rawReviewThread
+}
+
 // fetchReviewThreads returns every review thread on owner/repo#number plus
 // the PR's head ref, following reviewThreads pagination.
 func (c *Client) fetchReviewThreads(ctx context.Context, owner, repo string, number int) (headRef string, threads []rawReviewThread, err error) {
+	read, err := c.readReviewThreads(ctx, owner, repo, number)
+	if err != nil {
+		return "", nil, err
+	}
+	return read.HeadRef, read.Threads, nil
+}
+
+// readReviewThreads is fetchReviewThreads with the PR's author and head
+// commit.
+func (c *Client) readReviewThreads(ctx context.Context, owner, repo string, number int) (reviewThreadsRead, error) {
+	var read reviewThreadsRead
 	var after *string
 	for {
 		vars := map[string]any{"owner": owner, "repo": repo, "number": number}
@@ -280,7 +325,12 @@ func (c *Client) fetchReviewThreads(ctx context.Context, owner, repo string, num
 		var data struct {
 			Repository struct {
 				PullRequest *struct {
-					HeadRefName   string `json:"headRefName"`
+					HeadRefName string `json:"headRefName"`
+					HeadRefOid  string `json:"headRefOid"`
+					Author      struct {
+						Login    string `json:"login"`
+						Typename string `json:"__typename"`
+					} `json:"author"`
 					ReviewThreads struct {
 						PageInfo struct {
 							HasNextPage bool   `json:"hasNextPage"`
@@ -292,16 +342,17 @@ func (c *Client) fetchReviewThreads(ctx context.Context, owner, repo string, num
 			} `json:"repository"`
 		}
 		if err := c.graphQL(ctx, reviewThreadsQuery, vars, &data); err != nil {
-			return "", nil, err
+			return reviewThreadsRead{}, err
 		}
 		pr := data.Repository.PullRequest
 		if pr == nil {
-			return "", nil, fmt.Errorf("%s/%s#%d: pull request not found", owner, repo, number)
+			return reviewThreadsRead{}, fmt.Errorf("%s/%s#%d: pull request not found", owner, repo, number)
 		}
-		headRef = pr.HeadRefName
-		threads = append(threads, pr.ReviewThreads.Nodes...)
+		read.HeadRef, read.HeadSHA = pr.HeadRefName, pr.HeadRefOid
+		read.AuthorLogin, read.AuthorType = pr.Author.Login, pr.Author.Typename
+		read.Threads = append(read.Threads, pr.ReviewThreads.Nodes...)
 		if !pr.ReviewThreads.PageInfo.HasNextPage || pr.ReviewThreads.PageInfo.EndCursor == "" {
-			return headRef, threads, nil
+			return read, nil
 		}
 		cursor := pr.ReviewThreads.PageInfo.EndCursor
 		after = &cursor

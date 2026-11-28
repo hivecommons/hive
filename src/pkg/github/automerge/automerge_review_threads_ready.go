@@ -24,10 +24,12 @@ import (
 // writes 090 (hgithub.Client.ResolveOwnReviewThreadsForHumanMerge): only on
 // a base it reads as requiring conversation resolution, only when every
 // unresolved thread is the hive's own and marked non-blocking, with the
-// rules of the merge-refusal path. It runs from ApplyStageLabels on the
-// live engine, the pass that writes the 090 label and entry comment for an
-// auto-merge-off repository too; an observe-only engine never calls it. A
-// held 090 (sentinel alert, hold label) waits for the gate to lift.
+// rules of the merge-refusal path, the author-reply rule and its evidence
+// for this head included (ownThreadsEvidence). It runs from
+// ApplyStageLabels on the live engine, the pass that writes the 090 label
+// and entry comment for an auto-merge-off repository too; an observe-only
+// engine never calls it. A held 090 (sentinel alert, hold label) waits for
+// the gate to lift.
 //
 // The resolve and the replies are unsolicited writes on the PR, so the
 // write-back gate decides them first, under the kind the 090 / 085 entry
@@ -42,8 +44,12 @@ import (
 // transport without it resolves nothing at 090. reply asks for one reply
 // in each thread before it is resolved.
 type readyOwnReviewThreadResolver interface {
-	ResolveOwnReviewThreadsForHumanMerge(ctx context.Context, repo string, number int, base string, reply bool) (hgithub.OwnReviewThreadsOutcome, error)
+	ResolveOwnReviewThreadsForHumanMerge(ctx context.Context, repo string, number int, base string, reply bool, evidence hgithub.OwnThreadsEvidence) (hgithub.OwnReviewThreadsOutcome, error)
 }
+
+// As for ownReviewThreadResolver: the client must keep satisfying the
+// interface the stage pass asserts for.
+var _ readyOwnReviewThreadResolver = (*hgithub.Client)(nil)
 
 func readyOwnThreadsKey(repo string, number int, head string) string {
 	return "ready-threads|" + strings.ToLower(strings.TrimSpace(repo)) + "#" + strconv.Itoa(number) + "@" + strings.TrimSpace(head)
@@ -93,7 +99,7 @@ func (c *Engine) resolveOwnThreadsAtReady(ctx context.Context, obs stageObservat
 		return
 	}
 	reply := !c.stagePolicy().QuietNotifications
-	out, err := r.ResolveOwnReviewThreadsForHumanMerge(ctx, repo, obs.Number, base, reply)
+	out, err := r.ResolveOwnReviewThreadsForHumanMerge(ctx, repo, obs.Number, base, reply, c.ownThreadsEvidence(repo, obs.Number, head))
 	switch {
 	case err != nil:
 		c.warn("stage labels: could not read review threads for a person's merge", "repo", obs.Display, "pr", obs.Number, "head", head, "error", err)
@@ -106,10 +112,11 @@ func (c *Engine) resolveOwnThreadsAtReady(ctx context.Context, obs stageObservat
 		m.forgetOnce(key)
 	case out.Resolved > 0:
 		c.info("stage labels: resolved the hive's own non-blocking review threads for a person's merge", "repo", obs.Display, "pr", obs.Number, "head", head,
-			"resolved", out.Resolved, "failed", out.Failed, "remaining", out.Remaining(), "replied", reply)
+			"resolved", out.Resolved, "own_author_answered", out.OwnAuthorAnswered, "failed", out.Failed, "remaining", out.Remaining(), "replied", reply)
 	case out.NeedsPerson():
 		c.info("stage labels: review threads at 090 still need a person", "repo", obs.Display, "pr", obs.Number, "head", head,
-			"unresolved", out.Unresolved, "others", out.Others, "own_answered", out.OwnAnswered, "own_blocking", out.OwnBlocking, "skipped", out.Skipped)
+			"unresolved", out.Unresolved, "others", out.Others, "own_answered", out.OwnAnswered, "own_blocking", out.OwnBlocking,
+			"own_author_answered", out.OwnAuthorAnswered, "skipped", out.Skipped)
 	default:
 		c.debug("stage labels: no review threads to resolve at 090", "repo", obs.Display, "pr", obs.Number, "head", head, "unresolved", out.Unresolved, "skipped", out.Skipped)
 	}

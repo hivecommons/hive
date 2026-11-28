@@ -28,16 +28,25 @@ type readyThreadsTransport struct {
 	mu      sync.Mutex
 	calls   []string
 	replies []bool
-	outcome hgithub.OwnReviewThreadsOutcome
-	err     error
+	// evidence is what the stage pass passed on each call.
+	evidence []hgithub.OwnThreadsEvidence
+	outcome  hgithub.OwnReviewThreadsOutcome
+	err      error
 }
 
-func (t *readyThreadsTransport) ResolveOwnReviewThreadsForHumanMerge(_ context.Context, repo string, number int, base string, reply bool) (hgithub.OwnReviewThreadsOutcome, error) {
+func (t *readyThreadsTransport) ResolveOwnReviewThreadsForHumanMerge(_ context.Context, repo string, number int, base string, reply bool, evidence hgithub.OwnThreadsEvidence) (hgithub.OwnReviewThreadsOutcome, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.calls = append(t.calls, repo+"#"+strconv.Itoa(number)+"@"+base)
 	t.replies = append(t.replies, reply)
+	t.evidence = append(t.evidence, evidence)
 	return t.outcome, t.err
+}
+
+func (t *readyThreadsTransport) evidenceList() []hgithub.OwnThreadsEvidence {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]hgithub.OwnThreadsEvidence(nil), t.evidence...)
 }
 
 func (t *readyThreadsTransport) replyList() []bool {
@@ -51,6 +60,10 @@ func (t *readyThreadsTransport) callList() []string {
 	defer t.mu.Unlock()
 	return append([]string(nil), t.calls...)
 }
+
+// readyThreadsApprovedAt is when the hive's review approved the head in
+// readyThreadsStageEngine.
+var readyThreadsApprovedAt = time.Date(2026, 11, 25, 11, 0, 0, 0, time.UTC)
 
 // readyThreadsStageEngine is a contributor PR #9 on acme/widget (base main)
 // whose only objection is trust: an approved, green head lands at 090.
@@ -66,7 +79,7 @@ func readyThreadsStageEngineQuiet(t *testing.T, outcome hgithub.OwnReviewThreads
 	api, closeAPI := seededStageAPI(t)
 	t.Cleanup(closeAPI)
 	clock := &contributorLaneClock{at: time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)}
-	verdict := &ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}
+	verdict := &ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve", ReviewAskedAt: readyThreadsApprovedAt}
 	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
 	if quiet {
 		api.statefulComments = true
@@ -116,6 +129,22 @@ func TestReadyForHumanMergeResolvesOwnThreadsOncePerHead(t *testing.T) {
 	sweep(contributorLaneReasonClaimTier, "sha2", "role/contributor", "author/human", "stage/090-ready-for-human-merge")
 	if got := tr.callList(); len(got) != 2 {
 		t.Fatalf("new head: calls = %v, want a second", got)
+	}
+}
+
+// The stage pass hands the client the head it is handing to a person and
+// when the hive's review approved it: the evidence the author-reply rule
+// needs for a thread the PR's author replied in, the same as on the
+// merge-refusal path.
+func TestReadyForHumanMergePassesHeadEvidence(t *testing.T) {
+	_, tr, sweep, store := readyThreadsStageEngine(t, hgithub.OwnReviewThreadsOutcome{Unresolved: 1, Resolvable: 1, OwnAuthorAnswered: 1, Resolved: 1})
+	sweep(contributorLaneReasonClaimTier, "sha", "role/contributor", "author/human", "stage/050-review-pending")
+	if got := stageOf(t, store, 9); got != stagelabels.ReadyForHumanMerge {
+		t.Fatalf("stage = %v, want 090", got)
+	}
+	got := tr.evidenceList()
+	if len(got) != 1 || got[0].HeadSHA != "sha" || !got[0].HeadReviewAskedAt.Equal(readyThreadsApprovedAt) {
+		t.Fatalf("evidence = %+v, want head sha approved at %s", got, readyThreadsApprovedAt)
 	}
 }
 

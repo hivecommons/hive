@@ -191,6 +191,85 @@ func TestContributorLaneVerdictFromArtifactPrefersNewestHeadAggregate(t *testing
 	}
 }
 
+// ReviewAskedAt is when the reviews behind an approving verdict for the head
+// were asked for, the time the merge lanes compare with a PR author's reply
+// in one of the hive's own review threads. It is the earliest dispatch, not
+// when a report arrived or a collect merged the verdict: a review takes
+// minutes, and a reply written while it ran would then look older than a
+// review that never saw it. It is known only when every perspective the
+// verdict holds has a report with a dispatch time for the head: with one
+// missing, the earliest known time could be later than the true earliest.
+// A verdict re-stamped from an earlier head with no session holds no report
+// and has none, and neither has an advisory review or a verdict that is not
+// an approve.
+func TestContributorLaneVerdictFromArtifactReviewAskedAt(t *testing.T) {
+	asked := time.Date(2026, 11, 27, 17, 3, 0, 0, time.UTC)
+	received := asked.Add(6 * time.Minute)
+	collected := received.Add(4 * time.Minute)
+	// receipt is a report asked for at at and received six minutes later;
+	// a zero at is a report with no dispatch of its own.
+	receipt := func(p review.Perspective, at time.Time) review.ReportReceipt {
+		r := review.ReportReceipt{Perspective: p, Agent: "reviewer", ReceivedAt: received}
+		if !at.IsZero() {
+			r.DispatchedAt, r.ReceivedAt = at, at.Add(6*time.Minute)
+		}
+		return r
+	}
+	both := map[review.Perspective]review.Verdict{review.PerspectiveCorrectness: review.VerdictApprove, review.PerspectiveSecurity: review.VerdictApprove}
+	approve := func(mut func(*review.Aggregate)) review.Aggregate {
+		agg := review.Aggregate{Repo: "acme/widget", Number: 7, HeadSHA: "sha7", Verdict: review.VerdictApprove, MergeEligible: true,
+			Perspectives: map[review.Perspective]review.Verdict{review.PerspectiveCorrectness: review.VerdictApprove},
+			RecordedAt:   collected.Add(18 * time.Hour), FirstRecordedAt: collected,
+			ReportReceipts: []review.ReportReceipt{receipt(review.PerspectiveCorrectness, asked)}}
+		if mut != nil {
+			mut(&agg)
+		}
+		return agg
+	}
+	for _, tc := range []struct {
+		name string
+		agg  review.Aggregate
+		want time.Time
+	}{
+		{"reviewed head: when the review was asked for, not when it arrived", approve(nil), asked},
+		{"two perspectives: the earliest dispatch", approve(func(a *review.Aggregate) {
+			a.Perspectives = both
+			a.ReportReceipts = []review.ReportReceipt{receipt(review.PerspectiveSecurity, asked.Add(3*time.Minute)), receipt(review.PerspectiveCorrectness, asked)}
+		}), asked},
+		{"two perspectives, one report with no dispatch of its own", approve(func(a *review.Aggregate) {
+			a.Perspectives = both
+			a.ReportReceipts = []review.ReportReceipt{receipt(review.PerspectiveSecurity, time.Time{}), receipt(review.PerspectiveCorrectness, asked)}
+		}), time.Time{}},
+		{"two perspectives, one with no report", approve(func(a *review.Aggregate) { a.Perspectives = both }), time.Time{}},
+		{"no perspective recorded", approve(func(a *review.Aggregate) { a.Perspectives = nil }), time.Time{}},
+		{"delta session", approve(func(a *review.Aggregate) {
+			a.Delta = &review.DeltaReviewInfo{PreviousHead: "sha6", ChangedLines: 12}
+		}), asked},
+		{"re-stamped with no session", approve(func(a *review.Aggregate) {
+			a.Delta = &review.DeltaReviewInfo{PreviousHead: "sha6", Trivial: true, BaseSync: true}
+			a.ReportReceipts = nil
+		}), time.Time{}},
+		{"an advisory report: received, never dispatched", approve(func(a *review.Aggregate) {
+			a.ReportReceipts = append(a.ReportReceipts, receipt(review.PerspectiveCorrectness, time.Time{}))
+		}), time.Time{}},
+		{"approve that is not merge-eligible", approve(func(a *review.Aggregate) { a.MergeEligible = false }), time.Time{}},
+		{"changes requested", approve(func(a *review.Aggregate) { a.Verdict, a.MergeEligible = review.VerdictChangesRequested, false }), time.Time{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			artifact := review.Artifact{Items: []review.Aggregate{tc.agg}}
+			got := contributorLaneVerdictFromArtifact(artifact, "acme/widget", 7, "sha7", artifact.HasAggregateApproval("acme/widget", 7, "sha7"))
+			if !got.ReviewAskedAt.Equal(tc.want) {
+				t.Fatalf("ReviewAskedAt = %s, want %s (verdict %+v)", got.ReviewAskedAt, tc.want, got)
+			}
+		})
+	}
+	// An approve the caller could not confirm carries no time either.
+	artifact := review.Artifact{Items: []review.Aggregate{approve(nil)}}
+	if got := contributorLaneVerdictFromArtifact(artifact, "acme/widget", 7, "sha7", false); got.Approved || !got.ReviewAskedAt.IsZero() {
+		t.Fatalf("unconfirmed approve: Approved=%v ReviewAskedAt=%s, want neither", got.Approved, got.ReviewAskedAt)
+	}
+}
+
 // hivecommons/hive#13205: the reviewer wrote head_sha "98489e7" and the
 // aggregate was keyed by it, so the lane's full-head lookup found nothing
 // and logged contributor-lane:no-verdict every cycle although the swarm had

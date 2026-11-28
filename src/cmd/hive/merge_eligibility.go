@@ -336,6 +336,7 @@ func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, n
 		return automerge.ContributorLaneVerdict{
 			Configured:         true,
 			Approved:           approved && match.MergeEligible && match.Verdict == review.VerdictApprove,
+			ReviewAskedAt:      headReviewAskedAt(match, approved),
 			Verdict:            string(match.Verdict),
 			DecisionRequested:  match.DecisionRequested,
 			DecisionQuestion:   match.DecisionQuestion,
@@ -350,6 +351,42 @@ func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, n
 		}
 	}
 	return automerge.ContributorLaneVerdict{Configured: true, Approved: approved}
+}
+
+// headReviewAskedAt is the earliest time one of the reviews behind match,
+// the newest verdict for a head, was asked for (its report's DispatchedAt),
+// when match is an approving, merge-eligible verdict: every review behind
+// the approve was asked for at or after it, so each reviewer read the pull
+// request no earlier. Zero otherwise, and zero unless every perspective the
+// verdict holds has a report for the head and every report has a dispatch
+// time: an advisory review, or a report the relay does not treat as a
+// dispatch's own answer, has none, and with one missing the earliest known
+// time could be later than the true earliest. A verdict re-stamped from an
+// earlier head with no review session holds no report and has none. It is
+// not when a report was received, and not RecordedAt or FirstRecordedAt: a
+// review takes minutes, so a reply written while it ran is older than the
+// report's arrival although the reviewer never saw it.
+func headReviewAskedAt(match review.Aggregate, approved bool) time.Time {
+	if !approved || !match.MergeEligible || match.Verdict != review.VerdictApprove || len(match.Perspectives) == 0 {
+		return time.Time{}
+	}
+	reported := map[review.Perspective]bool{}
+	var first time.Time
+	for _, r := range match.ReportReceipts {
+		if r.DispatchedAt.IsZero() {
+			return time.Time{}
+		}
+		reported[r.Perspective] = true
+		if first.IsZero() || r.DispatchedAt.Before(first) {
+			first = r.DispatchedAt
+		}
+	}
+	for p := range match.Perspectives {
+		if !reported[p] {
+			return time.Time{}
+		}
+	}
+	return first
 }
 
 func sentinelTrustedAuthorFunc(cfg *config.Config, ghClient *github.Client) func(repo, login string) github.SentinelAuthorTrust {
