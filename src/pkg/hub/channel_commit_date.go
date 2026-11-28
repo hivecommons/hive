@@ -39,7 +39,8 @@ var (
 )
 
 // commitDateHTTPError is a non-200 reply to a commit-date fetch. Wait is how
-// long to park all commit-date fetches when Status is a 403/429.
+// long to park all commit-date fetches when Status is a 403/429; it comes from
+// commitMsgThrottleWait, so it is already defaulted and capped at an hour.
 type commitDateHTTPError struct {
 	SHA    string
 	Status int
@@ -133,7 +134,8 @@ func commitDateForSHA(sha string, logger *slog.Logger) time.Time {
 		commitDateBackoffUntil[key] = githubWarnNow().Add(commitDateBackoff)
 		var wait time.Duration
 		if throttled {
-			wait = commitDateGlobalBackoffWait(httpErr)
+			// Already defaulted and capped by commitMsgThrottleWait.
+			wait = httpErr.Wait
 			commitDateGlobalBackoffUntil = githubWarnNow().Add(wait)
 		}
 		commitDateMu.Unlock()
@@ -172,18 +174,4 @@ func annotateChannelCommitDates(targets []ChannelTarget, logger *slog.Logger) {
 			targets[i].CommittedAt = d.UTC().Format(time.RFC3339)
 		}
 	}
-}
-
-// commitDateGlobalBackoffWait is how long a throttled reply parks every
-// commit-date fetch: its reset hint, else commitDateBackoff, capped at
-// commitMsgGlobalBackoffMax.
-func commitDateGlobalBackoffWait(e *commitDateHTTPError) time.Duration {
-	wait := e.Wait
-	if wait <= 0 {
-		wait = commitDateBackoff
-	}
-	if wait > commitMsgGlobalBackoffMax {
-		wait = commitMsgGlobalBackoffMax
-	}
-	return wait
 }

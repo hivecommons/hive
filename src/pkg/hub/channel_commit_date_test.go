@@ -197,7 +197,7 @@ func TestCommitDateThrottleBacksOffAllSHAs(t *testing.T) {
 	fetchCommitDate = func(sha string, _ *slog.Logger) (time.Time, error) {
 		fetched = append(fetched, sha)
 		if fail {
-			return time.Time{}, &commitDateHTTPError{SHA: sha, Status: http.StatusForbidden}
+			return time.Time{}, &commitDateHTTPError{SHA: sha, Status: http.StatusForbidden, Wait: commitDateBackoff}
 		}
 		return time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), nil
 	}
@@ -232,18 +232,5 @@ func TestCommitDateThrottleBacksOffAllSHAs(t *testing.T) {
 	}
 	if len(fetched) != 2 {
 		t.Errorf("commit API calls = %v, want 2 after the back-off expired", fetched)
-	}
-}
-
-// The global back-off honours GitHub's reset hint but never exceeds an hour.
-func TestCommitDateGlobalBackoffWaitIsCapped(t *testing.T) {
-	if got := commitDateGlobalBackoffWait(&commitDateHTTPError{Status: 429, Wait: 3 * time.Hour}); got != commitMsgGlobalBackoffMax {
-		t.Errorf("wait = %s, want cap %s", got, commitMsgGlobalBackoffMax)
-	}
-	if got := commitDateGlobalBackoffWait(&commitDateHTTPError{Status: 403}); got != commitDateBackoff {
-		t.Errorf("wait with no hint = %s, want %s", got, commitDateBackoff)
-	}
-	if got := commitDateGlobalBackoffWait(&commitDateHTTPError{Status: 403, Wait: 2 * time.Minute}); got != 2*time.Minute {
-		t.Errorf("wait = %s, want the 2m hint", got)
 	}
 }
