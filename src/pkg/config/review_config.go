@@ -654,6 +654,18 @@ type AutoMergeConfig struct {
 	// needs a new approval. Unset (the default) keeps the rule absolute: a
 	// person merges every such pull request by hand.
 	HumanMergeOwnerApproval []string `yaml:"human_merge_owner_approval,omitempty" json:"human_merge_owner_approval,omitempty"`
+	// Promotions maps owner/repo to the repository's branch-promotion rules
+	// (automerge_promotions.go): a pull request that promotes a source
+	// branch taking changes only through pull requests to a target, opened
+	// by a listed author from a listed head ref, whose head tree and test
+	// merge are exactly the source branch's current tree. Where the self-authored sweep runs, the sentinel
+	// does not flag sensitive_path on it and that sweep's promotion lane may
+	// merge it with no linked issue and no author tier; trust carries over
+	// from the source to the target. The other merge gates still apply,
+	// except require_current_base, which the test-merge check replaces (the
+	// hive never updates a promotion branch). Unset (the default) changes
+	// nothing.
+	Promotions map[string][]PromotionRule `yaml:"promotions,omitempty" json:"promotions,omitempty"`
 	// Unset uses the default owner-merge rule; explicit empty lists disable
 	// their half of the title/label rule.
 	HumanMergeTitlePrefixes []string `yaml:"human_merge_title_prefixes,omitempty" json:"human_merge_title_prefixes,omitempty"`

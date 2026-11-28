@@ -434,6 +434,11 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 	}
 	ctx = contextWithExpectedCheckCache(ctx, newExpectedCheckCache())
 	ctx = contextWithLaneMergedBranches(ctx)
+	if opts.SelfAuthoredLaneActive {
+		// The promotion lane runs this pass, so a branch-promotion pull
+		// request is handed to it (prefilterContributorLanePRIn).
+		ctx = contextWithPromotionHandoff(ctx)
+	}
 	for _, displayRepo := range c.activeRepos() {
 		if len(result.Merged) >= maxMerges {
 			break
@@ -445,7 +450,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 		if !c.repoAutoMergeAllowed(displayRepo) {
 			c.info("contributor-lane automerge sweep skipped repo", "repo", displayRepo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled && c.repoObservedOnly(displayRepo))
 			c.observeAutoMergeOffRepo(ctx, stageLaneContributor, displayRepo, opts.Targets, func(ctx context.Context, oc *Engine, owner, repoName string, pr *gh.PullRequest) (string, error) {
-				if reason := oc.sentinelBlockedUnlessHumanChangesRequested(ctx, owner, repoName, pr, oc.prefilterContributorLanePR(pr, policy)); reason != "" {
+				if reason := oc.sentinelBlockedUnlessHumanChangesRequested(ctx, owner, repoName, pr, oc.prefilterContributorLanePRIn(ctx, owner, repoName, pr, policy)); reason != "" {
 					return reason, nil
 				}
 				_, reason, err := oc.trySweepContributorLanePR(mergeDecisionPriority(ctx), displayRepo, owner, repoName, pr.GetNumber(), policy)
@@ -462,7 +467,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 			continue
 		}
 		train := c.planMergeTrains(ctx, stageLaneContributor, displayRepo, owner, repoName, prs, func(pr *gh.PullRequest) string {
-			return c.prefilterContributorLanePR(pr, policy)
+			return c.prefilterContributorLanePRIn(ctx, owner, repoName, pr, policy)
 		})
 		for _, pr := range prs {
 			if len(result.Merged) >= maxMerges {
@@ -498,7 +503,7 @@ func (c *Engine) SweepContributorLaneAutoMerges(ctx context.Context, opts AutoMe
 				stage(reason, false, nil)
 				continue
 			}
-			if reason := c.sentinelBlockedUnlessHumanChangesRequested(ctx, owner, repoName, pr, c.prefilterContributorLanePR(pr, policy)); reason != "" {
+			if reason := c.sentinelBlockedUnlessHumanChangesRequested(ctx, owner, repoName, pr, c.prefilterContributorLanePRIn(ctx, owner, repoName, pr, policy)); reason != "" {
 				serialized, gate := c.serializedLane(displayRepo)
 				_, _, _ = c.rejectBeforeLane(ctx, serialized, gate, owner, repoName, number, pr, hgithub.PRAuditPathSweep, reason)
 				c.recordContributorLaneSkip(displayRepo, number, reason)
@@ -546,6 +551,16 @@ func (c *Engine) recordContributorLaneSkip(displayRepo string, number int, reaso
 // list payload. The trusted-author prefilter is not reused directly because
 // its final gate (authorized-users role) is exactly what this tier replaces.
 func (c *Engine) prefilterContributorLanePR(pr *gh.PullRequest, policy ContributorLanePolicy) string {
+	owner, repo := prBaseRepo(pr)
+	return c.prefilterContributorLanePRIn(context.Background(), owner, repo, pr, policy)
+}
+
+// prefilterContributorLanePRIn is prefilterContributorLanePR for a pull
+// request listed from owner/repo, which names the repository whose
+// promotion rules apply. ctx says whether the self-authored sweep runs this
+// pass (contextWithPromotionHandoff); only then is a branch-promotion pull
+// request handed to its promotion lane.
+func (c *Engine) prefilterContributorLanePRIn(ctx context.Context, owner, repo string, pr *gh.PullRequest, policy ContributorLanePolicy) string {
 	if pr == nil {
 		return "missing-head-sha"
 	}
@@ -568,6 +583,13 @@ func (c *Engine) prefilterContributorLanePR(pr *gh.PullRequest, policy Contribut
 			return trustedBotLaneSkipReason
 		}
 		return contributorLaneReasonAppAuthored
+	}
+	// A branch-promotion pull request whose head tree is the source
+	// branch's belongs to the self-authored sweep's promotion lane, which
+	// needs no claim or tier (automerge_promotion_lane.go). One that does
+	// not match stays here and is refused exactly as before.
+	if c.promotionLaneOwnsInPass(ctx, owner, repo, pr) {
+		return promotionLaneSkipReason
 	}
 	// author_association is deliberately not checked here: a verified claim
 	// marker or registry tier admits a FIRST_TIME_CONTRIBUTOR, and only
@@ -1507,8 +1529,8 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		return contributorLaneEval{}, "fetch-pr", err
 	}
 	c.noteStagePR(owner, repo, number, pr)
-	if reason := c.sentinelBlockedUnlessHumanChangesRequested(caller, owner, repo, pr, c.prefilterContributorLanePR(pr, policy)); reason != "" {
-		if reason == contributorLaneReasonAppAuthored || reason == trustedBotLaneSkipReason {
+	if reason := c.sentinelBlockedUnlessHumanChangesRequested(caller, owner, repo, pr, c.prefilterContributorLanePRIn(caller, owner, repo, pr, policy)); reason != "" {
+		if reason == contributorLaneReasonAppAuthored || reason == trustedBotLaneSkipReason || reason == promotionLaneSkipReason {
 			c.noteStageRole(owner, repo, number, stagelabels.RoleTrusted)
 		} else {
 			c.noteRegistryRole(owner, repo, number, hgithub.SafeGetLogin(pr.GetUser()), policy)

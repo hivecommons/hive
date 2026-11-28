@@ -77,6 +77,12 @@ const (
 	// the dashboard audit log: issue created → PR created → PR merged. Detail
 	// carries path= naming which hive path merged it (see PRAuditPath*).
 	AuditActionPRMerged = "pr_merged"
+	// AuditActionPromotionDecision records one auto_merge.promotions
+	// decision on a branch-promotion pull request (promotion.go): the
+	// sentinel's content exemption, the promotion lane's merge, or its
+	// refusal because the live tree check failed right before the merge.
+	// Detail carries decision=, head=, source=, source_sha= and tree=.
+	AuditActionPromotionDecision = "promotion_decision"
 	// AuditActionReleaseCreated is the audit action recorded when an eligible
 	// owner approval makes the hub create a GitHub release.
 	AuditActionReleaseCreated = "release_created"

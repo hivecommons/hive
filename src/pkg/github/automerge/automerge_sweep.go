@@ -191,6 +191,17 @@ type Options struct {
 	// switch: the review swarm's verdict is advisory on the trusted-bot lane
 	// (config.AutoMergeConfig.TrustedBotSkipsReview). nil means true.
 	TrustedBotSkipReview func() bool
+	// Promotions returns the live auto_merge.promotions rules for an
+	// owner/repo (config.AutoMergeConfig.PromotionRulesFor): the
+	// self-authored sweep's promotion lane (automerge_promotion_lane.go)
+	// merges a pull request one of them names whose head tree is, read live,
+	// exactly the source branch's tree. nil means no repository has one.
+	Promotions func(repo string) []config.PromotionRule
+	// PromotionBranches returns every configured auto_merge.promotions rule
+	// for an owner/repo, whether or not the promotion lane runs. The write
+	// guards read it: the hive never updates a branch a rule names. nil
+	// falls back to Promotions.
+	PromotionBranches func(repo string) []config.PromotionRule
 	// BotTakeoverEnabled returns the live auto_merge.bot_takeover.enabled
 	// switch: re-author a trusted github-actions[bot] PR whose
 	// `pull_request` checks can never run (#12003). nil means off.
@@ -433,6 +444,10 @@ type Engine struct {
 	trustedBotAuthors                 func() map[string]bool
 	reviewBotAuthors                  func() []string
 	trustedBotSkipReview              func() bool
+	promotions                        func(repo string) []config.PromotionRule
+	promotionBranches                 func(repo string) []config.PromotionRule
+	promotionRoutesMu                 sync.Mutex
+	promotionRoutes                   map[string]promotionRoute
 	botTakeoverEnabledFn              func() bool
 	onTerminalHold                    func(repo string, number int, headSHA, reason string)
 	trustedAuthorPolicy               func() TrustedAuthorPolicy
@@ -579,6 +594,8 @@ func New(transport Transport, opts Options) *Engine {
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
 		reviewBotAuthors:                  opts.ReviewBotAuthors,
 		trustedBotSkipReview:              opts.TrustedBotSkipReview,
+		promotions:                        opts.Promotions,
+		promotionBranches:                 opts.PromotionBranches,
 		rateLimitCautious:                 opts.RateLimitCautious,
 		botTakeoverEnabledFn:              opts.BotTakeoverEnabled,
 		onTerminalHold:                    opts.OnTerminalHold,
@@ -952,6 +969,8 @@ type AutoMergeSweepOptions struct {
 	// SelfMergeMinACMMLevel or auto_merge.self_authored off — the
 	// trusted-author tier evaluates them as before, so a bot an operator
 	// granted the required role still has a sweep that can merge it.
+	// SweepContributorLaneAutoMerges reads it too: only then does it hand a
+	// branch-promotion pull request to the promotion lane.
 	SelfAuthoredLaneActive bool
 	// Targets narrows an event-driven pass to the PRs a webhook named
 	// (hivecommons/hive#13377); nil evaluates every PR of every repo.

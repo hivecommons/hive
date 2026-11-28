@@ -90,6 +90,15 @@ func applyStageDriverOptions(opts *automerge.Options, cfg *config.Config, logger
 	// call so a reload applies without a restart.
 	opts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 	opts.ReviewBotAuthors = func() []string { return cfg.Review.EffectiveBotAuthors() }
+	// Branch-promotion rules (auto_merge.promotions): the self-authored
+	// sweep's promotion lane and the other lanes' hand-off to it. The lane
+	// is part of the self-authored sweep, so where that sweep does not run
+	// (auto_merge.self_authored off, or below its ACMM level) no rule is
+	// returned and every lane routes the pull request exactly as before.
+	opts.Promotions = promotionRulesFunc(cfg)
+	// The write guards read every configured rule, lane or no lane, so the
+	// hive never updates a promotion branch (as promotionBranchPR does here).
+	opts.PromotionBranches = func(repo string) []config.PromotionRule { return cfg.AutoMerge.PromotionRulesFor(repo) }
 	// Human-merge paths (#11038).
 	opts.HumanMergePaths = func(repo string) []string { return humanMergePathsFor(cfg, repo) }
 	opts.HumanMergePinOnly = func(repo string) (config.PinOnlyException, bool) { return humanMergePinOnlyFor(cfg, repo) }

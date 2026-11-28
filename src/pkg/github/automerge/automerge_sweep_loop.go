@@ -186,7 +186,7 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 		if !c.repoAutoMergeAllowed(repo) {
 			c.info("self-authored automerge sweep skipped repo", "repo", repo, "reason", "repo-auto-merge-disabled", "observe_only", c.stagePolicy().Enabled && c.repoObservedOnly(repo))
 			c.observeAutoMergeOffRepo(ctx, stageLaneSelf, repo, opts.Targets, func(ctx context.Context, oc *Engine, owner, repoName string, pr *gh.PullRequest) (string, error) {
-				if reason := oc.humanMergeRequiredUnlessHumanChangesRequested(ctx, owner, repoName, pr, oc.prefilterSelfAuthoredPR(pr)); reason != "" {
+				if reason := oc.humanMergeRequiredUnlessHumanChangesRequested(ctx, owner, repoName, pr, oc.prefilterSelfAuthoredPRIn(owner, repoName, pr)); reason != "" {
 					return reason, nil
 				}
 				_, reason, err := oc.trySweepSelfAuthoredPR(mergeDecisionPriority(ctx), repo, owner, repoName, pr.GetNumber(), false)
@@ -207,7 +207,9 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 		repoCandidates := 0
 		repoMergedBefore := len(result.Merged)
 		repoSkipReasons := make(map[string]int)
-		train := c.planMergeTrains(ctx, stageLaneSelf, repo, owner, repoName, prs, c.prefilterSelfAuthoredPR)
+		train := c.planMergeTrains(ctx, stageLaneSelf, repo, owner, repoName, prs, func(pr *gh.PullRequest) string {
+			return c.prefilterSelfAuthoredPRIn(owner, repoName, pr)
+		})
 		for _, pr := range prs {
 			if len(result.Merged) >= maxMerges {
 				break
@@ -320,7 +322,12 @@ func (c *Engine) SweepSelfAuthoredAutoMerges(ctx context.Context, opts AutoMerge
 			}
 			// A person's change request on a PR the human-merge rule stops
 			// still reaches the fixer (humanMergeRequiredUnlessHumanChangesRequested).
-			if reason := c.humanMergeRequiredUnlessHumanChangesRequested(ctx, owner, repoName, pr, c.prefilterSelfAuthoredPR(pr)); reason != "" {
+			if reason := c.humanMergeRequiredUnlessHumanChangesRequested(ctx, owner, repoName, pr, c.prefilterSelfAuthoredPRIn(owner, repoName, pr)); reason != "" {
+				if reason == "not-app-authored" {
+					// A promotion this lane queued earlier that no longer
+					// matches leaves the native merge queue.
+					c.promotionWithdrawIfStale(ctx, stageLaneSelf, owner, repoName, pr)
+				}
 				c.rejectPrefilteredBeforeLane(ctx, repo, owner, repoName, number, pr, hgithub.PRAuditPathSweep, reason)
 				c.info("automerge skip", "repo", repo, "pr", number, "reason", reason, "tier", tier)
 				result.Skipped++
@@ -461,6 +468,9 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 				if opts.SelfAuthoredLaneActive && oc.isTrustedBotLaneAuthor(login) {
 					return trustedBotLaneSkipReason, nil
 				}
+				if opts.SelfAuthoredLaneActive && oc.promotionLaneOwns(ctx, owner, repoName, pr) {
+					return promotionLaneSkipReason, nil
+				}
 				if lane, _ := oc.sweepLaneForAuthor(login); lane == stageLaneSelf {
 					return trustedAuthorReasonAppAuthored, nil
 				}
@@ -484,6 +494,9 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 			login := hgithub.SafeGetLogin(pr.GetUser())
 			if opts.SelfAuthoredLaneActive && c.isTrustedBotLaneAuthor(login) {
 				return trustedBotLaneSkipReason
+			}
+			if opts.SelfAuthoredLaneActive && c.promotionLaneOwns(ctx, owner, repoName, pr) {
+				return promotionLaneSkipReason
 			}
 			if lane, _ := c.sweepLaneForAuthor(login); lane == stageLaneSelf {
 				return trustedAuthorReasonAppAuthored
@@ -532,6 +545,15 @@ func (c *Engine) SweepTrustedAuthorAutoMerges(ctx context.Context, opts AutoMerg
 				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", trustedBotLaneSkipReason, "tier", "trusted-author")
 				result.Skipped++
 				stage(trustedBotLaneSkipReason, false, nil)
+				continue
+			}
+			if opts.SelfAuthoredLaneActive && c.promotionLaneOwns(ctx, owner, repoName, pr) {
+				// A branch-promotion pull request whose head tree is the
+				// source branch's: the self-authored sweep's promotion lane
+				// owns it (automerge_promotion_lane.go).
+				c.info("automerge skip", "repo", displayRepo, "pr", number, "reason", promotionLaneSkipReason, "tier", "trusted-author")
+				result.Skipped++
+				stage(promotionLaneSkipReason, false, nil)
 				continue
 			}
 			if lane, _ := c.sweepLaneForAuthor(hgithub.SafeGetLogin(pr.GetUser())); lane == stageLaneSelf {
@@ -716,9 +738,17 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 		close(done)
 		return done
 	}
+	// While this sweep runs with the self-authored lane, the promotion lane
+	// runs too, and the other lanes, the merge relay and integration
+	// execution may name it (promotionLaneOwns).
+	running := func() {}
+	if acmmAllowed {
+		running = c.markSelfAuthoredLaneRunning()
+	}
 	if c.openPRs != nil {
 		go func() {
 			defer close(done)
+			defer running()
 			c.runEventDrivenSweep(ctx, maxMerges, acmmAllowed)
 		}()
 		c.info("automerge lanes started event-driven on the forgestate cache",
@@ -732,6 +762,7 @@ func (c *Engine) StartSelfAuthoredAutoMergeSweep(ctx context.Context, maxMerges 
 	ctx = lowPriority(ctx)
 	go func() {
 		defer close(done)
+		defer running()
 		t := time.NewTicker(interval)
 		defer t.Stop()
 		c.sweepClock.armFloorEvery(c.now(), interval)
@@ -843,7 +874,7 @@ func (c *Engine) sweepPass(ctx context.Context, maxMerges int, acmmAllowed bool,
 	}
 	remaining -= len(result.Merged)
 	if remaining > 0 && c.currentContributorLanePolicy().Enabled {
-		laneResult, laneErr := c.SweepContributorLaneAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: remaining, Targets: targets})
+		laneResult, laneErr := c.SweepContributorLaneAutoMerges(ctx, AutoMergeSweepOptions{MaxMerges: remaining, SelfAuthoredLaneActive: acmmAllowed, Targets: targets})
 		if laneErr != nil {
 			// A client hand-over or shutdown cancels the whole sweep. Do not
 			// report that expected interruption as a failed contributor pass,
