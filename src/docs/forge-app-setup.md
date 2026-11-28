@@ -234,7 +234,7 @@ forgejo:
    The key host must be live before step 2.
    When the spoke serves the list, start it with `issuer`, `key_file` and
    `serve_key_list: true`, leaving `audiences` unset until step 3. It logs
-   a warning for each tier without its own audience. Git clone and push
+   one warning while `audiences` is empty. Git clone and push
    fail for tiers without an available less-privileged integration; no
    shared access token is substituted.
 2. For each tier, run
