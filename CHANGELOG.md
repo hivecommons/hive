@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-28 (v5.384.8)
+
+### Fixed
+
+- **The hive no longer approves, labels or merges a pull request with an open change request** ([#20067](https://github.com/hivecommons/hive/issues/20067)). One shared check (`pkg/reviewgate`) now runs before every path that approves a PR, writes `lgtm` / `approved`, queues it or merges it: the auto-merge sweep and every lane it runs (trusted, contributor, queued, ACMM L6 merge on green), the merge train and GitHub's native merge queue, the review swarm's approval, the agents' label relay, the hive-merge relay, the dashboard's Approve / Merge now / Queue merge / Let hive decide, and the Forgejo merge and approval-label paths. A reviewer with write access or above whose latest review is `CHANGES_REQUESTED` blocks, following GitHub's rules: a comment does not clear it, a change request on an older head still counts, and it lifts when that reviewer approves or the review is dismissed. A change request from a non-writer does not block, and a failed review read refuses rather than merging. Each gated attempt is logged and audited as `changes-requested-gate` with the reviewer and the review ID. An operator's explicit dashboard decision can still proceed, but the dashboard names the open change request first and asks for a reason, which is audited.
+- **The hive's own `lgtm` / `approved` label writes and its merge-train lane now respect the sentinel alert** ([#20067](https://github.com/hivecommons/hive/issues/20067)). An approval label written through the hive (its client or the agents' label relay) is refused while the configured sentinel label is on the PR, the same block the queue approval and the review swarm's approval already applied, and the queued (merge-train) lane now stops on a sentinel alert that lands after a merger queued the PR. Tide does not know about the sentinel label, so a person or tool adding `lgtm` + `approved` outside the hive can still merge such a PR until the Prow config adds it to Tide's `missingLabels`.
+- The hub no longer shows a Forgejo, Gitea or GitLab hive as a GitHub hive: the heartbeat now reports the primary repo's forge kind, instance URL and the hive's forge login (`forgejo.login`, else `project.ai_author`), and the hive row builds its Location pill, repo link, repo icon and `as:` line from them instead of linking to a `github.com` repository that does not exist (#20181).
+
 ## 2026-11-28 (v5.384.7)
 
 ### Fixed
