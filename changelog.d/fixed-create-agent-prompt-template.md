@@ -1,1 +1,0 @@
-- Creating an agent with a custom prompt in the Create Agent dialog now saves the prompt as `<name>.md` and points `kick_template` at it, so the new agent runs your prompt instead of the built-in one; `POST /api/agents` takes the text in `agent.prompt_template` and refuses a `kick_template` that is not a bare file name with a 400 (#20205).

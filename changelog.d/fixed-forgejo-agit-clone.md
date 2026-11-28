@@ -1,0 +1,1 @@
+- Allow pod-run agents to fetch a Forgejo AGit pull request head through `hive-clone --pr` without treating it as a writable branch.
