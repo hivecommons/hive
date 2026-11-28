@@ -32,8 +32,8 @@ import (
 //     and the next pass merges or enqueues the same head
 //     (review-threads-resolved, stage 100). A thread the PR's author
 //     replied in, and nobody else, counts once the thread is outdated, or
-//     the note is from an earlier head and the hive's review approved this
-//     one after the reply (ownThreadsEvidence);
+//     the note is from an earlier head and the hive's review of this one,
+//     asked for after the reply, approved it (ownThreadsEvidence);
 //   - a thread only a person can clear is open (another author's thread, a
 //     hive thread someone answered, a blocking hive finding): the PR parks at
 //     085 with unresolved-review-threads, and the lane does not call GitHub
@@ -87,8 +87,8 @@ var _ ownReviewThreadResolver = (*hgithub.Client)(nil)
 // ownThreadsEvidence is what the engine knows about head of repo
 // (owner/name) #number for the client's author-reply rule: the head itself
 // and, when the hive's own review of exactly that head is an approving,
-// merge-eligible verdict, when its reports came in
-// (ContributorLaneVerdict.ApprovedAt). It reads the reviewer verdict as
+// merge-eligible verdict, when the reviews behind it were asked for
+// (ContributorLaneVerdict.ReviewAskedAt). It reads the reviewer verdict as
 // recorded, not a lane's reading of it: a person's decision or a
 // trusted-bot review skip is not the hive's review of the head. With no
 // verdict reader, or no approve, only the head is named and the client
@@ -99,7 +99,7 @@ func (c *Engine) ownThreadsEvidence(repo string, number int, head string) hgithu
 		return ev
 	}
 	if v := c.contributorLaneVerdict(repo, number, ev.HeadSHA); v.Approved {
-		ev.HeadApprovedAt = v.ApprovedAt
+		ev.HeadReviewAskedAt = v.ReviewAskedAt
 	}
 	return ev
 }

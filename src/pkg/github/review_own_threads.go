@@ -54,8 +54,8 @@ import (
 // other replies are the PR author's is resolved too, once one of two
 // signals holds: the thread is outdated (the commented lines changed after
 // the note), or the note was left on an earlier head and the hive's own
-// review of the PR's current head approved it after the author's last
-// reply (OwnThreadsEvidence). With neither, the author's reply keeps the
+// review of the PR's current head, asked for after the author's last
+// reply, approved it (OwnThreadsEvidence). With neither, the author's reply keeps the
 // thread open as before. The reply's text is never read: a reply that
 // disagrees is treated like "Addressed" once a signal holds.
 //
@@ -212,15 +212,16 @@ const (
 // review store. The zero value claims nothing, and an outdated thread is
 // then the only evidence the author-reply rule accepts.
 type OwnThreadsEvidence struct {
-	// HeadSHA is the head the caller acted on. HeadApprovedAt counts only
+	// HeadSHA is the head the caller acted on. HeadReviewAskedAt counts only
 	// while it is still the PR's head when the threads are read.
 	HeadSHA string
-	// HeadApprovedAt is the earliest time a report behind the hive's own
-	// approving, merge-eligible verdict for HeadSHA was received: no report
-	// for that head arrived before it. Zero when there is no such verdict,
-	// when it was carried from an earlier head with no review session, or
-	// when a perspective's report time is not known.
-	HeadApprovedAt time.Time
+	// HeadReviewAskedAt is the earliest time one of the reviews behind the
+	// hive's own approving, merge-eligible verdict for HeadSHA was asked
+	// for: every reviewer read the pull request at or after it. Zero when
+	// there is no such verdict, when it was carried from an earlier head
+	// with no review session, or when a review's dispatch time is not
+	// known. It is the hive host's clock; a reply's time is GitHub's.
+	HeadReviewAskedAt time.Time
 }
 
 // ownThreadsPR is what classifyOwnReviewThread knows about the pull request
@@ -231,11 +232,11 @@ type ownThreadsPR struct {
 	// actor type, from the query that read the threads.
 	authorLogin string
 	authorType  string
-	// head and approvedAt are OwnThreadsEvidence.HeadSHA and HeadApprovedAt
+	// head and reviewAskedAt are OwnThreadsEvidence.HeadSHA and HeadReviewAskedAt
 	// once the caller's head is known to be the PR's current head; empty
 	// and zero otherwise.
-	head       string
-	approvedAt time.Time
+	head          string
+	reviewAskedAt time.Time
 }
 
 // isAuthor reports whether a review-thread comment is the pull request
@@ -260,9 +261,10 @@ func (p ownThreadsPR) isAuthor(cmt rawReviewComment) bool {
 //   - the thread is outdated: GitHub marks it so when the lines the note is
 //     anchored on changed in a later push;
 //   - the note was left on an earlier head, the hive's own review approved
-//     the PR's current head, and no report behind that verdict was received
-//     before the author's last reply was published (lastReply; dated is
-//     false when a reply's time is unknown, which rules this signal out).
+//     the PR's current head, and every review behind that verdict was asked
+//     for after the author's last reply was published (lastReply; dated is
+//     false when a reply's time is unknown, which rules this signal out),
+//     so each reviewer read the pull request with the reply in it.
 //     The review that left the note never counts, whatever its times say:
 //     it read the head the note is on. A note whose commit is unknown is
 //     treated as left on the current head.
@@ -270,7 +272,7 @@ func (p ownThreadsPR) actedOn(t rawReviewThread, lastReply time.Time, dated bool
 	if t.IsOutdated {
 		return true
 	}
-	if !dated || p.approvedAt.IsZero() || !p.approvedAt.After(lastReply) {
+	if !dated || p.reviewAskedAt.IsZero() || !p.reviewAskedAt.After(lastReply) {
 		return false
 	}
 	noteHead := strings.TrimSpace(t.Comments.Nodes[0].OriginalCommit.OID)
@@ -503,7 +505,7 @@ func (c *Client) resolveOwnReviewThreads(ctx context.Context, repo string, numbe
 	}
 	pr := ownThreadsPR{authorLogin: read.AuthorLogin, authorType: read.AuthorType}
 	if head := strings.TrimSpace(read.HeadSHA); head != "" && strings.EqualFold(head, strings.TrimSpace(evidence.HeadSHA)) {
-		pr.head, pr.approvedAt = head, evidence.HeadApprovedAt
+		pr.head, pr.reviewAskedAt = head, evidence.HeadReviewAskedAt
 	}
 	blockAt := c.reviewBlockAt()
 	var resolvable []rawReviewThread

@@ -79,7 +79,7 @@ func readyThreadsStageEngineQuiet(t *testing.T, outcome hgithub.OwnReviewThreads
 	api, closeAPI := seededStageAPI(t)
 	t.Cleanup(closeAPI)
 	clock := &contributorLaneClock{at: time.Date(2026, 11, 25, 12, 0, 0, 0, time.UTC)}
-	verdict := &ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve", ApprovedAt: readyThreadsApprovedAt}
+	verdict := &ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve", ReviewAskedAt: readyThreadsApprovedAt}
 	e, store := humanStageEngine(t, api.url, clock, verdict, 0)
 	if quiet {
 		api.statefulComments = true
@@ -143,7 +143,7 @@ func TestReadyForHumanMergePassesHeadEvidence(t *testing.T) {
 		t.Fatalf("stage = %v, want 090", got)
 	}
 	got := tr.evidenceList()
-	if len(got) != 1 || got[0].HeadSHA != "sha" || !got[0].HeadApprovedAt.Equal(readyThreadsApprovedAt) {
+	if len(got) != 1 || got[0].HeadSHA != "sha" || !got[0].HeadReviewAskedAt.Equal(readyThreadsApprovedAt) {
 		t.Fatalf("evidence = %+v, want head sha approved at %s", got, readyThreadsApprovedAt)
 	}
 }

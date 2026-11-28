@@ -259,7 +259,7 @@ func TestResolveOwnReviewThreadsForHumanMerge_OneThreadNeedsAPerson(t *testing.T
 func TestResolveOwnReviewThreadsForHumanMerge_AuthorReply(t *testing.T) {
 	low := ownMarked("**correctness (low):** rename this", "low")
 	addressed := authorReply("Addressed in 0bb2918.", 0)
-	approved := OwnThreadsEvidence{HeadSHA: "head1", HeadApprovedAt: ownReplyAt.Add(10 * time.Minute)}
+	approved := OwnThreadsEvidence{HeadSHA: "head1", HeadReviewAskedAt: ownReplyAt.Add(10 * time.Minute)}
 	for _, tc := range []struct {
 		name     string
 		outdated bool

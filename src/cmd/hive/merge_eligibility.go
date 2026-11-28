@@ -336,7 +336,7 @@ func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, n
 		return automerge.ContributorLaneVerdict{
 			Configured:         true,
 			Approved:           approved && match.MergeEligible && match.Verdict == review.VerdictApprove,
-			ApprovedAt:         headApprovedAt(match, approved),
+			ReviewAskedAt:      headReviewAskedAt(match, approved),
 			Verdict:            string(match.Verdict),
 			DecisionRequested:  match.DecisionRequested,
 			DecisionQuestion:   match.DecisionQuestion,
@@ -353,30 +353,32 @@ func contributorLaneVerdictFromArtifact(artifact review.Artifact, repo string, n
 	return automerge.ContributorLaneVerdict{Configured: true, Approved: approved}
 }
 
-// headApprovedAt is the earliest time the relay received one of the reports
-// behind match, the newest verdict for a head, when match is an approving,
-// merge-eligible verdict: no report for that head arrived before it. Zero
-// otherwise, and zero unless every perspective the verdict holds has a
-// dated report for the head: with one missing, the earliest known time
-// could be later than the true earliest. A verdict re-stamped from an
+// headReviewAskedAt is the earliest time one of the reviews behind match,
+// the newest verdict for a head, was asked for (its report's DispatchedAt),
+// when match is an approving, merge-eligible verdict: every review behind
+// the approve was asked for at or after it, so each reviewer read the pull
+// request no earlier. Zero otherwise, and zero unless every perspective the
+// verdict holds has a report for the head and every report has a dispatch
+// time: an advisory review, or a report the relay does not treat as a
+// dispatch's own answer, has none, and with one missing the earliest known
+// time could be later than the true earliest. A verdict re-stamped from an
 // earlier head with no review session holds no report and has none. It is
-// not RecordedAt or FirstRecordedAt: those are when a collect merged the
-// verdict into the artifact, which can be minutes after the review was
-// posted, so a reply written in between would look older than the review
-// it answers.
-func headApprovedAt(match review.Aggregate, approved bool) time.Time {
+// not when a report was received, and not RecordedAt or FirstRecordedAt: a
+// review takes minutes, so a reply written while it ran is older than the
+// report's arrival although the reviewer never saw it.
+func headReviewAskedAt(match review.Aggregate, approved bool) time.Time {
 	if !approved || !match.MergeEligible || match.Verdict != review.VerdictApprove || len(match.Perspectives) == 0 {
 		return time.Time{}
 	}
 	reported := map[review.Perspective]bool{}
 	var first time.Time
 	for _, r := range match.ReportReceipts {
-		if r.ReceivedAt.IsZero() {
+		if r.DispatchedAt.IsZero() {
 			return time.Time{}
 		}
 		reported[r.Perspective] = true
-		if first.IsZero() || r.ReceivedAt.Before(first) {
-			first = r.ReceivedAt
+		if first.IsZero() || r.DispatchedAt.Before(first) {
+			first = r.DispatchedAt
 		}
 	}
 	for p := range match.Perspectives {

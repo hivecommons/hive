@@ -191,28 +191,36 @@ func TestContributorLaneVerdictFromArtifactPrefersNewestHeadAggregate(t *testing
 	}
 }
 
-// ApprovedAt is when the reports behind an approving verdict for the head
-// came in, the time the merge lanes compare with a PR author's reply in one
-// of the hive's own review threads. It is the earliest report's arrival,
-// not when a collect merged the verdict: a collect can run minutes after
-// the review was posted, and a reply written in between would then look
-// older than the review it answers. It is known only when every perspective
-// the verdict holds has a dated report for the head: with one missing, the
-// earliest known arrival could be later than the true earliest. A verdict
-// re-stamped from an earlier head with no session holds no report and has
-// none, and neither has a verdict that is not an approve.
-func TestContributorLaneVerdictFromArtifactApprovedAt(t *testing.T) {
-	received := time.Date(2026, 11, 27, 17, 9, 0, 0, time.UTC)
+// ReviewAskedAt is when the reviews behind an approving verdict for the head
+// were asked for, the time the merge lanes compare with a PR author's reply
+// in one of the hive's own review threads. It is the earliest dispatch, not
+// when a report arrived or a collect merged the verdict: a review takes
+// minutes, and a reply written while it ran would then look older than a
+// review that never saw it. It is known only when every perspective the
+// verdict holds has a report with a dispatch time for the head: with one
+// missing, the earliest known time could be later than the true earliest.
+// A verdict re-stamped from an earlier head with no session holds no report
+// and has none, and neither has an advisory review or a verdict that is not
+// an approve.
+func TestContributorLaneVerdictFromArtifactReviewAskedAt(t *testing.T) {
+	asked := time.Date(2026, 11, 27, 17, 3, 0, 0, time.UTC)
+	received := asked.Add(6 * time.Minute)
 	collected := received.Add(4 * time.Minute)
+	// receipt is a report asked for at at and received six minutes later;
+	// a zero at is a report with no dispatch of its own.
 	receipt := func(p review.Perspective, at time.Time) review.ReportReceipt {
-		return review.ReportReceipt{Perspective: p, Agent: "reviewer", ReceivedAt: at}
+		r := review.ReportReceipt{Perspective: p, Agent: "reviewer", ReceivedAt: received}
+		if !at.IsZero() {
+			r.DispatchedAt, r.ReceivedAt = at, at.Add(6*time.Minute)
+		}
+		return r
 	}
 	both := map[review.Perspective]review.Verdict{review.PerspectiveCorrectness: review.VerdictApprove, review.PerspectiveSecurity: review.VerdictApprove}
 	approve := func(mut func(*review.Aggregate)) review.Aggregate {
 		agg := review.Aggregate{Repo: "acme/widget", Number: 7, HeadSHA: "sha7", Verdict: review.VerdictApprove, MergeEligible: true,
 			Perspectives: map[review.Perspective]review.Verdict{review.PerspectiveCorrectness: review.VerdictApprove},
 			RecordedAt:   collected.Add(18 * time.Hour), FirstRecordedAt: collected,
-			ReportReceipts: []review.ReportReceipt{receipt(review.PerspectiveCorrectness, received)}}
+			ReportReceipts: []review.ReportReceipt{receipt(review.PerspectiveCorrectness, asked)}}
 		if mut != nil {
 			mut(&agg)
 		}
@@ -223,21 +231,25 @@ func TestContributorLaneVerdictFromArtifactApprovedAt(t *testing.T) {
 		agg  review.Aggregate
 		want time.Time
 	}{
-		{"reviewed head", approve(nil), received},
-		{"two perspectives: the earliest report", approve(func(a *review.Aggregate) {
+		{"reviewed head: when the review was asked for, not when it arrived", approve(nil), asked},
+		{"two perspectives: the earliest dispatch", approve(func(a *review.Aggregate) {
 			a.Perspectives = both
-			a.ReportReceipts = []review.ReportReceipt{receipt(review.PerspectiveSecurity, received.Add(3*time.Minute)), receipt(review.PerspectiveCorrectness, received)}
-		}), received},
+			a.ReportReceipts = []review.ReportReceipt{receipt(review.PerspectiveSecurity, asked.Add(3*time.Minute)), receipt(review.PerspectiveCorrectness, asked)}
+		}), asked},
+		{"two perspectives, one report with no dispatch of its own", approve(func(a *review.Aggregate) {
+			a.Perspectives = both
+			a.ReportReceipts = []review.ReportReceipt{receipt(review.PerspectiveSecurity, time.Time{}), receipt(review.PerspectiveCorrectness, asked)}
+		}), time.Time{}},
 		{"two perspectives, one with no report", approve(func(a *review.Aggregate) { a.Perspectives = both }), time.Time{}},
 		{"no perspective recorded", approve(func(a *review.Aggregate) { a.Perspectives = nil }), time.Time{}},
 		{"delta session", approve(func(a *review.Aggregate) {
 			a.Delta = &review.DeltaReviewInfo{PreviousHead: "sha6", ChangedLines: 12}
-		}), received},
+		}), asked},
 		{"re-stamped with no session", approve(func(a *review.Aggregate) {
 			a.Delta = &review.DeltaReviewInfo{PreviousHead: "sha6", Trivial: true, BaseSync: true}
 			a.ReportReceipts = nil
 		}), time.Time{}},
-		{"a report with no arrival time", approve(func(a *review.Aggregate) {
+		{"an advisory report: received, never dispatched", approve(func(a *review.Aggregate) {
 			a.ReportReceipts = append(a.ReportReceipts, receipt(review.PerspectiveCorrectness, time.Time{}))
 		}), time.Time{}},
 		{"approve that is not merge-eligible", approve(func(a *review.Aggregate) { a.MergeEligible = false }), time.Time{}},
@@ -246,15 +258,15 @@ func TestContributorLaneVerdictFromArtifactApprovedAt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			artifact := review.Artifact{Items: []review.Aggregate{tc.agg}}
 			got := contributorLaneVerdictFromArtifact(artifact, "acme/widget", 7, "sha7", artifact.HasAggregateApproval("acme/widget", 7, "sha7"))
-			if !got.ApprovedAt.Equal(tc.want) {
-				t.Fatalf("ApprovedAt = %s, want %s (verdict %+v)", got.ApprovedAt, tc.want, got)
+			if !got.ReviewAskedAt.Equal(tc.want) {
+				t.Fatalf("ReviewAskedAt = %s, want %s (verdict %+v)", got.ReviewAskedAt, tc.want, got)
 			}
 		})
 	}
 	// An approve the caller could not confirm carries no time either.
 	artifact := review.Artifact{Items: []review.Aggregate{approve(nil)}}
-	if got := contributorLaneVerdictFromArtifact(artifact, "acme/widget", 7, "sha7", false); got.Approved || !got.ApprovedAt.IsZero() {
-		t.Fatalf("unconfirmed approve: Approved=%v ApprovedAt=%s, want neither", got.Approved, got.ApprovedAt)
+	if got := contributorLaneVerdictFromArtifact(artifact, "acme/widget", 7, "sha7", false); got.Approved || !got.ReviewAskedAt.IsZero() {
+		t.Fatalf("unconfirmed approve: Approved=%v ReviewAskedAt=%s, want neither", got.Approved, got.ReviewAskedAt)
 	}
 }
 

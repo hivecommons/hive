@@ -317,8 +317,8 @@ when all of these hold:
 - one of two signals holds. Either the thread is outdated (GitHub marks it
   so when the lines the note is anchored on changed in a later push), or
   the pull request has moved to a newer head than the one the note was left
-  on and the hive's own review of that newer head approved it after the
-  author's last reply in the thread.
+  on and the hive's own review of that newer head, asked for after the
+  author's last reply in the thread, approved it.
 
 With neither signal the author's reply keeps the thread open, as before: a
 person, or a later review of a new head, settles it. A blocking finding
@@ -339,11 +339,18 @@ The author is matched by GitHub account type and login (case does not
 matter), both read in the same query as the threads. The approval is the
 reviewer's recorded verdict for exactly the head the lane is merging or
 handing over, and it counts only while that is still the pull request's head
-when the threads are read. Its time is when the first of the reviewers'
-reports for that head came in, not when the verdict was later collected: the
-rule is that no report for that head arrived before the reply. A reply's
-time is when it was published (one drafted inside a pending review counts
-from when the review was submitted). The note must also have been left on an
+when the threads are read. Its time is when the first of the reviews behind
+it was asked for, not when a report arrived or the verdict was collected: a
+review takes minutes, and a reply written while it ran would be older than
+the report although the reviewer never saw it. The rule is that every
+review behind the approve was asked for after the reply, so each reviewer
+read the pull request with the reply in it. A review with no dispatch time
+(an advisory one, for example) cannot show that, and the signal is then
+off. The two times come from different clocks, the hive host's and
+GitHub's: a reply published within their difference of the review being
+asked for can fall on the wrong side, which a reviewer starting seconds
+later still reads. A reply's time is when it was published (one drafted
+inside a pending review counts from when the review was submitted). The note must also have been left on an
 earlier head, so the review that left a note can never pass for an answer to
 the reply under it. A verdict with a perspective whose report time is not
 known gives no approval time. A

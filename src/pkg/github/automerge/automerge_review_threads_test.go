@@ -114,13 +114,13 @@ func TestNativeQueueUnresolvedConversationsAuthorAnsweredNoteResolvesThenEnqueue
 	var asked []string
 	c.contributorLaneVerdict = func(repo string, number int, head string) ContributorLaneVerdict {
 		asked = append(asked, fmt.Sprintf("%s#%d@%s", repo, number, head))
-		return ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve", ApprovedAt: approvedAt}
+		return ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve", ReviewAskedAt: approvedAt}
 	}
 	reason, err := c.tryNativeQueue(context.Background(), pr, claim)
 	if err != nil || reason != autoMergeReasonReviewThreadsResolved {
 		t.Fatalf("first pass: reason=%q err=%v, want %q and no error", reason, err, autoMergeReasonReviewThreadsResolved)
 	}
-	if len(r.evidence) != 1 || r.evidence[0].HeadSHA != "sha7" || !r.evidence[0].HeadApprovedAt.Equal(approvedAt) {
+	if len(r.evidence) != 1 || r.evidence[0].HeadSHA != "sha7" || !r.evidence[0].HeadReviewAskedAt.Equal(approvedAt) {
 		t.Fatalf("evidence = %+v, want head sha7 approved at %s", r.evidence, approvedAt)
 	}
 	if want := []string{"acme/widget#7@sha7"}; fmt.Sprint(asked) != fmt.Sprint(want) {
@@ -148,9 +148,9 @@ func TestUnresolvedThreadsRefusalPassesHeadEvidence(t *testing.T) {
 		verdict *ContributorLaneVerdict
 		want    time.Time
 	}{
-		{"approved", &ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve", ApprovedAt: approvedAt}, approvedAt},
+		{"approved", &ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve", ReviewAskedAt: approvedAt}, approvedAt},
 		{"approve carried with no time", &ContributorLaneVerdict{Configured: true, Approved: true, Verdict: "approve"}, time.Time{}},
-		{"changes requested", &ContributorLaneVerdict{Configured: true, Verdict: "changes_requested", ApprovedAt: approvedAt}, time.Time{}},
+		{"changes requested", &ContributorLaneVerdict{Configured: true, Verdict: "changes_requested", ReviewAskedAt: approvedAt}, time.Time{}},
 		{"no verdict reader", nil, time.Time{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -167,7 +167,7 @@ func TestUnresolvedThreadsRefusalPassesHeadEvidence(t *testing.T) {
 			}
 			check := func(path string, r *threadResolverFake) {
 				t.Helper()
-				if len(r.evidence) != 1 || r.evidence[0].HeadSHA != "sha7" || !r.evidence[0].HeadApprovedAt.Equal(tc.want) {
+				if len(r.evidence) != 1 || r.evidence[0].HeadSHA != "sha7" || !r.evidence[0].HeadReviewAskedAt.Equal(tc.want) {
 					t.Fatalf("%s: evidence = %+v, want head sha7 approved at %s", path, r.evidence, tc.want)
 				}
 			}

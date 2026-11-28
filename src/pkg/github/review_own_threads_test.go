@@ -88,7 +88,7 @@ func authorReply(body string, after time.Duration) gqlComment {
 // head1, received at ownReplyAt plus after.
 func approvedPR(after time.Duration) ownThreadsPR {
 	pr := ownAuthorPR
-	pr.head, pr.approvedAt = "head1", ownReplyAt.Add(after)
+	pr.head, pr.reviewAskedAt = "head1", ownReplyAt.Add(after)
 	return pr
 }
 
@@ -161,7 +161,7 @@ func TestClassifyOwnReviewThread(t *testing.T) {
 		{name: "author replied, approved after the reply, note left on that head in another case", thread: typedRawThread("A", false, false, onHead("HEAD1"), addressed), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
 		{name: "author replied, approved after the reply, note left on that head", thread: typedRawThread("A", false, false, onHead("head1"), addressed), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
 		{name: "author replied, approved after the reply, note commit unknown", thread: typedRawThread("A", false, false, onHead(""), addressed), pr: approvedPR(10 * time.Minute), want: ownThreadAnswered},
-		{name: "author replied, approved after the reply, head not confirmed", thread: typedRawThread("A", false, false, low, addressed), pr: ownThreadsPR{authorLogin: "author", authorType: "User", approvedAt: ownReplyAt.Add(10 * time.Minute)}, want: ownThreadAnswered},
+		{name: "author replied, approved after the reply, head not confirmed", thread: typedRawThread("A", false, false, low, addressed), pr: ownThreadsPR{authorLogin: "author", authorType: "User", reviewAskedAt: ownReplyAt.Add(10 * time.Minute)}, want: ownThreadAnswered},
 		{name: "author replied, no evidence", thread: typedRawThread("A", false, false, low, addressed), pr: ownAuthorPR, want: ownThreadAnswered},
 		{name: "author replied, approved before the reply", thread: typedRawThread("A", false, false, low, addressed), pr: approvedPR(-10 * time.Minute), want: ownThreadAnswered},
 		{name: "author replied, approved at the reply's time", thread: typedRawThread("A", false, false, low, addressed), pr: approvedPR(0), want: ownThreadAnswered},
@@ -372,7 +372,7 @@ func collectOwnThreadAudits(c *Client) *[]string {
 func TestResolveOwnReviewThreadsForMerge_AuthorRepliedAndNoteActedOn(t *testing.T) {
 	low := ownMarked("**docs-currency (low):** the header still names 6.0.3.", "low")
 	addressed := authorReply("Addressed in 0bb2918: the header names the new version.", 0)
-	approved := OwnThreadsEvidence{HeadSHA: "head1", HeadApprovedAt: ownReplyAt.Add(10 * time.Minute)}
+	approved := OwnThreadsEvidence{HeadSHA: "head1", HeadReviewAskedAt: ownReplyAt.Add(10 * time.Minute)}
 	for _, tc := range []struct {
 		name     string
 		thread   *gqlThread
@@ -380,9 +380,9 @@ func TestResolveOwnReviewThreadsForMerge_AuthorRepliedAndNoteActedOn(t *testing.
 	}{
 		{"outdated, head approved", ownAuthorPRThread("T-low", true, low, addressed), approved},
 		{"outdated, no verdict known", ownAuthorPRThread("T-low", true, low, addressed), OwnThreadsEvidence{}},
-		{"outdated, approve is older than the reply", ownAuthorPRThread("T-low", true, low, addressed), OwnThreadsEvidence{HeadSHA: "head1", HeadApprovedAt: ownReplyAt.Add(-time.Hour)}},
+		{"outdated, approve is older than the reply", ownAuthorPRThread("T-low", true, low, addressed), OwnThreadsEvidence{HeadSHA: "head1", HeadReviewAskedAt: ownReplyAt.Add(-time.Hour)}},
 		{"not outdated, head approved after the reply", ownAuthorPRThread("T-low", false, low, addressed), approved},
-		{"not outdated, head approved, head spelled in another case", ownAuthorPRThread("T-low", false, low, addressed), OwnThreadsEvidence{HeadSHA: " HEAD1 ", HeadApprovedAt: approved.HeadApprovedAt}},
+		{"not outdated, head approved, head spelled in another case", ownAuthorPRThread("T-low", false, low, addressed), OwnThreadsEvidence{HeadSHA: " HEAD1 ", HeadReviewAskedAt: approved.HeadReviewAskedAt}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := ownThreadsMock(tc.thread)
@@ -408,7 +408,7 @@ func TestResolveOwnReviewThreadsForMerge_AuthorReplyNotEnough(t *testing.T) {
 	low := ownMarked("**docs-currency (low):** the header still names 6.0.3.", "low")
 	addressed := authorReply("Addressed in 0bb2918: the header names the new version.", 0)
 	stranger := gqlComment{Author: "maintainer", AuthorType: "User", Body: "keep this open", CreatedAt: ownReplyAt.Add(time.Minute)}
-	approved := OwnThreadsEvidence{HeadSHA: "head1", HeadApprovedAt: ownReplyAt.Add(10 * time.Minute)}
+	approved := OwnThreadsEvidence{HeadSHA: "head1", HeadReviewAskedAt: ownReplyAt.Add(10 * time.Minute)}
 	// noteOn moves the note in th to the commit sha ("" is unknown).
 	noteOn := func(th *gqlThread, sha string) *gqlThread {
 		th.Comments[0].Commit = sha
@@ -434,11 +434,11 @@ func TestResolveOwnReviewThreadsForMerge_AuthorReplyNotEnough(t *testing.T) {
 		{"not outdated, head approved, the note's commit is unknown", noteOn(ownAuthorPRThread("T-x", false, low, addressed), ""), approved},
 		{"author then another account", ownAuthorPRThread("T-x", true, low, addressed, stranger), approved},
 		{"not outdated, no verdict known", ownAuthorPRThread("T-x", false, low, addressed), OwnThreadsEvidence{}},
-		{"not outdated, head approved before the reply", ownAuthorPRThread("T-x", false, low, addressed), OwnThreadsEvidence{HeadSHA: "head1", HeadApprovedAt: ownReplyAt.Add(-time.Hour)}},
+		{"not outdated, head approved before the reply", ownAuthorPRThread("T-x", false, low, addressed), OwnThreadsEvidence{HeadSHA: "head1", HeadReviewAskedAt: ownReplyAt.Add(-time.Hour)}},
 		{"not outdated, reply written before the approve but published after it", ownAuthorPRThread("T-x", false, low, drafted), approved},
 		{"outdated, more comments than were read", moreThanRead(ownAuthorPRThread("T-x", true, low, addressed)), approved},
-		{"not outdated, the approve is for another head", ownAuthorPRThread("T-x", false, low, addressed), OwnThreadsEvidence{HeadSHA: "head0", HeadApprovedAt: approved.HeadApprovedAt}},
-		{"not outdated, approve with no head named", ownAuthorPRThread("T-x", false, low, addressed), OwnThreadsEvidence{HeadApprovedAt: approved.HeadApprovedAt}},
+		{"not outdated, the approve is for another head", ownAuthorPRThread("T-x", false, low, addressed), OwnThreadsEvidence{HeadSHA: "head0", HeadReviewAskedAt: approved.HeadReviewAskedAt}},
+		{"not outdated, approve with no head named", ownAuthorPRThread("T-x", false, low, addressed), OwnThreadsEvidence{HeadReviewAskedAt: approved.HeadReviewAskedAt}},
 		{"blocking finding the author answered", ownAuthorPRThread("T-x", true, ownMarked("x is nil here", "high"), addressed), approved},
 		{"unmatched comment the author answered", ownAuthorPRThread("T-x", true, ownMarked(ownBodyStyleInfo, reviewFindingSeverityUnmatched), addressed), approved},
 	} {
