@@ -79,7 +79,7 @@ func (c *ForgejoIntegrationConfig) Validate() error {
 	if err := c.validatePreviousKeyFiles(field); err != nil {
 		return err
 	}
-	if len(c.Audiences) == 0 {
+	if len(c.Audiences) == 0 && !c.ServeKeyList {
 		return fmt.Errorf("%s.audiences: at least one token tier needs the audience of its Forgejo integration", field)
 	}
 	if c.RESTAudience != "" && strings.TrimSpace(c.RESTAudience) == "" {

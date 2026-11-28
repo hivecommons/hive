@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/agentmode"
 	"github.com/hivecommons/hive/crux/forgejwt"
 	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/crux/pushbroker"
@@ -210,5 +211,31 @@ func TestWireForgeRemotesWarnsWhenTiersShareTheWriteToken(t *testing.T) {
 	b.wireForgeRemotes()
 	if strings.Contains(logs.String(), "forgejo.integration is not set") {
 		t.Fatalf("a GitHub-only hive warned: %q", logs.String())
+	}
+}
+
+func TestForgejoServedKeyListBootstrap(t *testing.T) {
+	t.Cleanup(func() { proxy.SetForgeHosts(nil) })
+	var logs bytes.Buffer
+	cfg := forgejoTestConfig()
+	cfg.Forgejo.Integration = &config.ForgejoIntegrationConfig{
+		Issuer: "https://keys.example.com", KeyFile: "/key.pem", ServeKeyList: true,
+	}
+	b := &boot{cfg: cfg, logger: slog.New(slog.NewTextHandler(&logs, nil))}
+	b.wireForgeRemotes()
+	if got := strings.Count(logs.String(), "level=WARN"); got != 1 || !strings.Contains(logs.String(), "no audiences configured") {
+		t.Fatalf("got %d warnings, want one bootstrap warning: %s", got, logs.String())
+	}
+	for _, tier := range agentmode.KnownTokenTiers {
+		minter := forgejoMinter(cfg).(pushbroker.TieredMinter).WithTier(tier)
+		if _, err := minter.MintPushToken(context.Background(), "team/app"); err == nil || !strings.Contains(err.Error(), "no integration audiences") {
+			t.Errorf("tier %s: expected missing audience error, got %v", tier, err)
+		}
+	}
+	logs.Reset()
+	cfg.Forgejo.Integration.Audiences = map[string]string{"advisor": "aud"}
+	b.wireForgeRemotes()
+	if strings.Contains(logs.String(), "level=WARN") {
+		t.Fatalf("unexpected partial configuration warning: %s", logs.String())
 	}
 }
